@@ -9,6 +9,7 @@
     <RepositoryUrl>https://github.com/dlqw/Lunil</RepositoryUrl>
     <PackageProjectUrl>https://github.com/dlqw/Lunil</PackageProjectUrl>
     <PackageTags>lua;lua54;compiler;runtime;dotnet</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <LangVersion>14.0</LangVersion>
     <Nullable>enable</Nullable>
@@ -22,5 +23,8 @@
 
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="$(MSBuildThisFileDirectory)README.zh-CN.md" Pack="true" PackagePath="\" Link="README.zh-CN.md" />
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Link="LICENSE" />
+    <None Include="$(MSBuildThisFileDirectory)assets/lunil-logo.svg" Pack="true" PackagePath="assets/" Link="assets/lunil-logo.svg" />
   </ItemGroup>
 </Project>

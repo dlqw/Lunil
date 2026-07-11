@@ -57,6 +57,11 @@ foreach ($project in $projects) {
 }
 
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination $stagingRoot
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.zh-CN.md') -Destination $stagingRoot
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination $stagingRoot
+$assetDirectory = Join-Path $stagingRoot 'assets'
+New-Item -ItemType Directory -Path $assetDirectory | Out-Null
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'assets/lunil-logo.svg') -Destination $assetDirectory
 Copy-Item -LiteralPath $changelog -Destination (Join-Path $stagingRoot 'CHANGELOG.md')
 
 $archive = Join-Path $OutputDirectory "$bundleName.zip"
