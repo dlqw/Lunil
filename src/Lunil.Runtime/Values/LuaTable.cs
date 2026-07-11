@@ -93,8 +93,12 @@ public sealed class LuaTable : LuaGcObject
 
     public LuaValue Get(LuaValue key)
     {
-        ValidateKey(key);
         Owner.ValidateValue(key);
+        if (key.IsNil || key.Kind == LuaValueKind.Float && double.IsNaN(key.AsFloat()))
+        {
+            return LuaValue.Nil;
+        }
+
         if (TryGetArrayIndex(key, out var index) && index <= _array.Count)
         {
             return _array[index - 1];

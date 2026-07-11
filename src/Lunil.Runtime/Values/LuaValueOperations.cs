@@ -4,8 +4,31 @@ using Lunil.IR.Canonical;
 
 namespace Lunil.Runtime.Values;
 
-internal static class LuaValueOperations
+public static class LuaValueOperations
 {
+    public static string FormatFloat(double value)
+    {
+        if (double.IsPositiveInfinity(value))
+        {
+            return "inf";
+        }
+
+        if (double.IsNegativeInfinity(value))
+        {
+            return "-inf";
+        }
+
+        if (double.IsNaN(value))
+        {
+            return "nan";
+        }
+
+        var text = value.ToString("G14", CultureInfo.InvariantCulture).ToLowerInvariant();
+        return double.IsFinite(value) && !text.Contains('.') && !text.Contains('e')
+            ? text + ".0"
+            : text;
+    }
+
     public static bool NumberEquals(LuaValue left, LuaValue right)
     {
         if (left.Kind == LuaValueKind.Integer && right.Kind == LuaValueKind.Integer)
@@ -158,9 +181,16 @@ internal static class LuaValueOperations
             return LuaValue.FromInteger(remainder);
         }
 
-        var a = ToNumber(left);
-        var b = ToNumber(right);
-        return LuaValue.FromFloat(a - Math.Floor(a / b) * b);
+        var dividendNumber = ToNumber(left);
+        var divisorNumber = ToNumber(right);
+        var floatingRemainder = dividendNumber % divisorNumber;
+        if (floatingRemainder > 0 ? divisorNumber < 0 :
+            floatingRemainder < 0 && divisorNumber > 0)
+        {
+            floatingRemainder += divisorNumber;
+        }
+
+        return LuaValue.FromFloat(floatingRemainder);
     }
 
     private static LuaValue Concatenate(LuaState state, LuaValue left, LuaValue right)
@@ -179,7 +209,7 @@ internal static class LuaValueOperations
         LuaValueKind.Integer => System.Text.Encoding.ASCII.GetBytes(
             value.AsInteger().ToString(CultureInfo.InvariantCulture)),
         LuaValueKind.Float => System.Text.Encoding.ASCII.GetBytes(
-            value.AsFloat().ToString("G14", CultureInfo.InvariantCulture)),
+            FormatFloat(value.AsFloat())),
         _ => throw new LuaRuntimeException($"Cannot concatenate a {value.Kind} value."),
     };
 
@@ -187,6 +217,12 @@ internal static class LuaValueOperations
     {
         if (IsNumber(left) && IsNumber(right))
         {
+            if (left.Kind == LuaValueKind.Float && double.IsNaN(left.AsFloat()) ||
+                right.Kind == LuaValueKind.Float && double.IsNaN(right.AsFloat()))
+            {
+                return false;
+            }
+
             return CompareNumbers(left, right) < 0;
         }
 
@@ -202,6 +238,12 @@ internal static class LuaValueOperations
     {
         if (IsNumber(left) && IsNumber(right))
         {
+            if (left.Kind == LuaValueKind.Float && double.IsNaN(left.AsFloat()) ||
+                right.Kind == LuaValueKind.Float && double.IsNaN(right.AsFloat()))
+            {
+                return false;
+            }
+
             return CompareNumbers(left, right) <= 0;
         }
 

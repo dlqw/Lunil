@@ -69,6 +69,12 @@ public sealed class LuaHeap
 
     public bool StressEveryAllocation => _options.StressEveryAllocation;
 
+    public bool IsRunning { get; private set; } = true;
+
+    public int Pause { get; private set; } = 200;
+
+    public int StepMultiplier { get; private set; } = 100;
+
     internal IReadOnlyList<LuaGcObject> Objects => _objects;
 
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
@@ -131,6 +137,11 @@ public sealed class LuaHeap
 
     public void SafePoint()
     {
+        if (!IsRunning)
+        {
+            return;
+        }
+
         if (!_allocatedSinceSafePoint && Phase == LuaGcPhase.Paused &&
             _allocationDebt < _options.StepSizeBytes)
         {
@@ -197,6 +208,32 @@ public sealed class LuaHeap
         FinishActiveCycle();
         _allocationDebt = 0;
         _allocatedSinceSafePoint = false;
+    }
+
+    public void Stop() => IsRunning = false;
+
+    public void Restart() => IsRunning = true;
+
+    public int SetPause(int value)
+    {
+        var previous = Pause;
+        if (value != 0)
+        {
+            Pause = value;
+        }
+
+        return previous;
+    }
+
+    public int SetStepMultiplier(int value)
+    {
+        var previous = StepMultiplier;
+        if (value != 0)
+        {
+            StepMultiplier = value;
+        }
+
+        return previous;
     }
 
     public int RunPendingFinalizers(

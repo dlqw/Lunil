@@ -121,6 +121,8 @@ public static class LuaLowerer
             private readonly List<int> _activeSymbolIds = [];
             private readonly List<Scope> _scopes = [];
             private readonly List<GotoPatch> _gotos = [];
+            private readonly List<PendingLocal> _locals = [];
+            private readonly Dictionary<int, PendingLocal> _localBySymbol = [];
             private readonly Stack<LoopContext> _loops = [];
             private int _nextRegister;
             private int _localTop;
@@ -139,18 +141,35 @@ public static class LuaLowerer
             public void LowerBody(LuaSyntaxNode body)
             {
                 LowerBlock(body, createScope: false);
-                Emit(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0, span: body.Span));
+                var terminalOffset = body.Span.Length == 0 ? body.Span.Start : body.Span.End - 1;
+                Emit(new LuaIrInstruction(
+                    LuaIrOpcode.Return,
+                    0,
+                    0,
+                    span: body.Span,
+                    sourceLine: _owner._model.Syntax.Source.GetLocation(terminalOffset).Line + 1));
                 ResolveGotos();
             }
 
             public LuaIrFunction Build()
             {
                 var code = _instructions.ToImmutableArray();
+                foreach (var local in _locals)
+                {
+                    local.EndProgramCounter ??= code.Length;
+                }
+
                 return new LuaIrFunction
                 {
                     Id = _info.Id,
                     ParentFunctionId = _parent?._info.Id ?? -1,
                     Span = _info.Span,
+                    LineDefined = _info.Id == 0
+                        ? 0
+                        : _owner._model.Syntax.Source.GetLocation(_info.Span.Start).Line + 1,
+                    LastLineDefined = _info.Id == 0
+                        ? 0
+                        : _owner._model.Syntax.Source.GetLocation(_info.Span.End).Line + 1,
                     ParameterCount = _info.Symbols.Count(static symbol =>
                         symbol.Kind == LuaSymbolKind.Parameter),
                     IsVarArg = _info.IsVarArg,
@@ -158,6 +177,13 @@ public static class LuaLowerer
                     Constants = _constants.ToImmutableArray(),
                     Upvalues = _upvalues.ToImmutableArray(),
                     Instructions = code,
+                    LocalVariables =
+                    [
+                        .. _locals.Select(local => new LuaIrLocalVariable(
+                            Encoding.UTF8.GetBytes(local.Name).ToImmutableArray(),
+                            local.StartProgramCounter,
+                            local.EndProgramCounter!.Value)),
+                    ],
                     BasicBlocks = LuaIrControlFlow.Build(code),
                 };
             }
@@ -467,7 +493,8 @@ public static class LuaLowerer
                     LuaIrOpcode.Closure,
                     destination,
                     nested.Id,
-                    span: functionNode.Span));
+                    span: body.ChildTokens().Last(static token =>
+                        token.Kind == LuaTokenKind.EndKeyword).Span));
             }
 
             private void LowerReturn(LuaSyntaxNode statement)
@@ -495,13 +522,20 @@ public static class LuaLowerer
             {
                 var endJumps = new List<int>();
                 var nodes = statement.ChildNodes().ToArray();
-                LowerConditionalPart(nodes[0], nodes[1], endJumps, statement.Span);
+                var thenSpan = statement.ChildTokens().First(static token =>
+                    token.Kind == LuaTokenKind.ThenKeyword).Span;
+                var endSpan = statement.ChildTokens().Last(static token =>
+                    token.Kind == LuaTokenKind.EndKeyword).Span;
+                LowerConditionalPart(nodes[0], nodes[1], endJumps, endSpan, thenSpan);
                 foreach (var clause in nodes.Skip(2))
                 {
                     if (clause.Kind == LuaSyntaxKind.ElseIfClause)
                     {
                         var clauseNodes = clause.ChildNodes().ToArray();
-                        LowerConditionalPart(clauseNodes[0], clauseNodes[1], endJumps, clause.Span);
+                        var clauseThenSpan = clause.ChildTokens().First(static token =>
+                            token.Kind == LuaTokenKind.ThenKeyword).Span;
+                        LowerConditionalPart(
+                            clauseNodes[0], clauseNodes[1], endJumps, endSpan, clauseThenSpan);
                     }
                     else if (clause.Kind == LuaSyntaxKind.ElseClause)
                     {
@@ -520,7 +554,8 @@ public static class LuaLowerer
                 LuaSyntaxNode condition,
                 LuaSyntaxNode block,
                 List<int> endJumps,
-                TextSpan span)
+                TextSpan span,
+                TextSpan controlSpan)
             {
                 var test = Reserve(1);
                 LowerExpression(condition, test, 1);
@@ -528,7 +563,7 @@ public static class LuaLowerer
                     LuaIrOpcode.JumpIfFalse,
                     test,
                     -1,
-                    span: condition.Span));
+                    span: controlSpan));
                 ResetTemporaries();
                 LowerBlock(block);
                 endJumps.Add(Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: -1, c: -1, span: span)));
@@ -574,7 +609,7 @@ public static class LuaLowerer
                     span: nodes[^1].Span));
                 CloseCurrentScope(statement.Span);
                 Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, _scopes[^1].EntryRegister));
-                Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: start, c: -1, span: statement.Span));
+                Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: start, c: -1, span: nodes[^1].Span));
                 PatchTarget(exit, _instructions.Count);
                 _loops.Pop();
                 CloseCurrentScope(statement.Span);
@@ -641,6 +676,14 @@ public static class LuaLowerer
                 LowerExpressionList(expressionList, controlBase, 4);
                 _nextRegister = controlBase + 4;
                 _localTop = _nextRegister;
+                Emit(new LuaIrInstruction(
+                    LuaIrOpcode.MarkToBeClosed,
+                    controlBase + 3,
+                    span: statement.Span));
+                for (var index = 0; index < 4; index++)
+                {
+                    AddSyntheticLocal("(for state)");
+                }
 
                 var nameTokens = GetChild(statement, LuaSyntaxKind.NameList).ChildTokens()
                     .Where(static token => token.Kind == LuaTokenKind.Identifier).ToArray();
@@ -1129,6 +1172,9 @@ public static class LuaLowerer
                 _symbolRegisters.Add(symbol.Id, register);
                 _activeSymbolIds.Add(symbol.Id);
                 _scopes[^1].DeclaredSymbols.Add(symbol.Id);
+                var local = new PendingLocal(symbol.Name, _instructions.Count);
+                _locals.Add(local);
+                _localBySymbol.Add(symbol.Id, local);
                 _localTop = _nextRegister;
                 if (markToBeClosed)
                 {
@@ -1144,6 +1190,13 @@ public static class LuaLowerer
                     _scopes.Count == 0 ? null : _scopes[^1],
                     _localTop,
                     _activeSymbolIds.Count));
+            }
+
+            private void AddSyntheticLocal(string name)
+            {
+                var local = new PendingLocal(name, _instructions.Count);
+                _locals.Add(local);
+                _scopes[^1].SyntheticLocals.Add(local);
             }
 
             private void CloseCurrentScope(TextSpan span)
@@ -1165,7 +1218,17 @@ public static class LuaLowerer
 
                 foreach (var symbolId in scope.DeclaredSymbols)
                 {
+                    if (_localBySymbol.Remove(symbolId, out var local))
+                    {
+                        local.EndProgramCounter = _instructions.Count;
+                    }
+
                     _symbolRegisters.Remove(symbolId);
+                }
+
+                foreach (var local in scope.SyntheticLocals)
+                {
+                    local.EndProgramCounter ??= _instructions.Count;
                 }
 
                 if (_activeSymbolIds.Count > scope.EntryActiveSymbolCount)
@@ -1211,6 +1274,16 @@ public static class LuaLowerer
 
             private int Emit(LuaIrInstruction instruction)
             {
+                if (instruction.SourceLine == 0 && instruction.Span.Length > 0 && instruction.Span.Start <=
+                    _owner._model.Syntax.Source.Length)
+                {
+                    instruction = instruction with
+                    {
+                        SourceLine = _owner._model.Syntax.Source
+                            .GetLocation(instruction.Span.Start).Line + 1,
+                    };
+                }
+
                 _instructions.Add(instruction);
                 return _instructions.Count - 1;
             }
@@ -1223,6 +1296,15 @@ public static class LuaLowerer
             private static bool IsExpandable(LuaSyntaxNode expression) =>
                 expression.Kind is LuaSyntaxKind.CallExpression or
                     LuaSyntaxKind.MethodCallExpression or LuaSyntaxKind.VarArgExpression;
+
+            private sealed class PendingLocal(string name, int startProgramCounter)
+            {
+                public string Name { get; } = name;
+
+                public int StartProgramCounter { get; } = startProgramCounter;
+
+                public int? EndProgramCounter { get; set; }
+            }
 
             private static LuaSyntaxNode GetChild(LuaSyntaxNode node, LuaSyntaxKind kind) =>
                 node.ChildNodes().Single(child => child.Kind == kind);
@@ -1264,6 +1346,8 @@ public static class LuaLowerer
                 public int EntryActiveSymbolCount { get; } = entryActiveSymbolCount;
 
                 public List<int> DeclaredSymbols { get; } = [];
+
+                public List<PendingLocal> SyntheticLocals { get; } = [];
 
                 public Dictionary<string, Label> Labels { get; } = new(StringComparer.Ordinal);
             }

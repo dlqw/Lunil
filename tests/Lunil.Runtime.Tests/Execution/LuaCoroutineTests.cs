@@ -109,6 +109,36 @@ public sealed class LuaCoroutineTests
     }
 
     [Fact]
+    public void ResumableNativePreservesPerInvocationStateAcrossCallYieldAndGc()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StressEveryAllocation = true },
+        });
+        state.SetGlobal(
+            "statebridge",
+            LuaValue.FromFunction(new LuaNativeFunction("statebridge", StatefulBridgeStep)));
+        var entry = Compile(
+            state,
+            "local marker = { answer = 42 }; return statebridge(function() return 7 end, marker)");
+        var thread = state.CreateThread(entry);
+        using var threadRoot = state.CreateHandle(LuaValue.FromThread(thread));
+        var interpreter = new LuaInterpreter();
+
+        var yielded = interpreter.Resume(state, thread);
+        state.Heap.CollectFull();
+        var completed = interpreter.Resume(state, thread, [LuaValue.FromInteger(9)]);
+
+        Assert.Equal([LuaValue.FromInteger(7)], yielded.Values.ToArray());
+        Assert.Equal(LuaValueKind.Table, completed.Values[0].Kind);
+        Assert.Equal(
+            LuaValue.FromInteger(42),
+            completed.Values[0].AsTable().Get(LuaValue.FromString(
+                state.Strings.GetOrCreate("answer"u8))));
+        Assert.Equal(LuaValue.FromInteger(9), completed.Values[1]);
+    }
+
+    [Fact]
     public void CloseSuspendedCoroutinePassesNilAndRunsClosers()
     {
         var values = Execute(
@@ -392,6 +422,24 @@ public sealed class LuaCoroutineTests
             _ => throw new InvalidOperationException(),
         };
     }
+
+    private static LuaNativeStep StatefulBridgeStep(
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> values) => continuationId switch
+        {
+            0 => LuaNativeStep.CallLua(
+                values[0],
+                [],
+                continuationId: 1,
+                stateValues: [values[1]]),
+            1 => LuaNativeStep.Yielded(
+                values.ToArray(),
+                continuationId: 2,
+                stateValues: context.InvocationState.ToArray()),
+            2 => LuaNativeStep.Completed([.. context.InvocationState, .. values]),
+            _ => throw new InvalidOperationException(),
+        };
 
     private static LuaClosure Compile(LuaState state, string source)
     {

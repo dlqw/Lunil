@@ -23,7 +23,7 @@ public sealed class LuaGarbageCollectorTests
 
         Assert.False(table.IsAlive);
         Assert.False(text.IsAlive);
-        Assert.Equal(2, state.Heap.ObjectCount);
+        Assert.Equal(3, state.Heap.ObjectCount);
         Assert.Equal(baselineBytes, state.Heap.LogicalBytes);
     }
 

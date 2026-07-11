@@ -14,7 +14,9 @@ public sealed class LuaFrame
         LuaValue[] varArgs,
         LuaProtectedCallKind protectionKind = LuaProtectedCallKind.None,
         LuaValue errorHandler = default,
-        bool isCloseHandler = false)
+        bool isCloseHandler = false,
+        bool isDebugHook = false,
+        bool isHidden = false)
     {
         Closure = closure;
         Base = @base;
@@ -25,6 +27,8 @@ public sealed class LuaFrame
         Continuation.ProtectionKind = protectionKind;
         Continuation.ErrorHandler = errorHandler;
         Continuation.IsCloseHandler = isCloseHandler;
+        IsDebugHook = isDebugHook;
+        IsHidden = isHidden;
     }
 
     public LuaClosure Closure { get; }
@@ -40,6 +44,20 @@ public sealed class LuaFrame
     public int ExpectedResults { get; }
 
     public IReadOnlyList<LuaValue> VarArgs { get; }
+
+    public bool IsDebugHook { get; internal set; }
+
+    public bool IsHidden { get; internal set; }
+
+    internal string? PendingDebugHookEvent { get; set; }
+
+    public bool IsTailCall { get; internal set; }
+
+    internal int LastDebugHookLine { get; set; } = -1;
+
+    internal int DebugHookCheckedProgramCounter { get; set; } = -1;
+
+    internal int ReturnHookProgramCounter { get; set; } = -1;
 
     internal LuaValue[] VarArgStorage => (LuaValue[])VarArgs;
 

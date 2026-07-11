@@ -69,6 +69,9 @@ public sealed record LuaIrUpvalue(
     LuaIrUpvalueSourceKind SourceKind,
     int SourceIndex)
 {
+    /// <summary>The PUC descriptor kind used for regular, constant, and to-be-closed captures.</summary>
+    public byte Kind { get; init; }
+
     /// <summary>The original binary debug name when it cannot be represented losslessly as UTF-16.</summary>
     public ImmutableArray<byte> DebugName { get; init; } = [];
 }

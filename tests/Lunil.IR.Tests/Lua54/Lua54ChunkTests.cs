@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 
 namespace Lunil.IR.Tests.Lua54;
@@ -106,6 +107,80 @@ public sealed class Lua54ChunkTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void CanonicalWriterRecreatesPucExecutableChunkAndStripsDebugInformation()
+    {
+        var module = Lua54PrototypeConverter.Convert(
+            Convert.FromBase64String(PucLua548Fixture));
+        var path = Path.Combine(Path.GetTempPath(), $"canonical-writer-{Guid.NewGuid():N}.luac");
+        try
+        {
+            var bytes = Lua54CanonicalPrototypeWriter.Write(
+                module,
+                module.MainFunctionId,
+                stripDebugInformation: true);
+            var chunk = Lua54ChunkReader.Read(bytes);
+            Assert.Null(chunk.MainPrototype.Source);
+            Assert.Empty(chunk.MainPrototype.LineInfo);
+            Assert.Empty(chunk.MainPrototype.LocalVariables);
+
+            if (!IsPucLuaAvailable())
+            {
+                return;
+            }
+
+            File.WriteAllBytes(path, bytes);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "lua",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("-e");
+            startInfo.ArgumentList.Add(
+                $"local f=assert(loadfile([==[{path}]==], 'b')); print(f())");
+            using var process = Process.Start(startInfo) ??
+                throw new InvalidOperationException("Could not start PUC Lua.");
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+            Assert.Equal("42\thello", output.Trim());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void PrototypeConverterExpandsSetListBlocksToCanonicalArrayIndexes()
+    {
+        var prototype = new Lua54Prototype
+        {
+            MaximumStackSize = 52,
+            Code =
+            [
+                Lua54Instruction.CreateAbc(Lua54Opcode.NewTable, 0, 0, 51),
+                Lua54Instruction.CreateAx(Lua54Opcode.ExtraArgument, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.SetList, 0, 50, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.SetList, 0, 1, 1),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ReturnOne, 0, 0, 0),
+            ],
+        };
+        var module = Lua54PrototypeConverter.Convert(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype));
+
+        var setLists = module.Functions[0].Instructions
+            .Where(static instruction => instruction.Opcode == LuaIrOpcode.SetList)
+            .ToArray();
+
+        Assert.Equal(1, setLists[0].B);
+        Assert.Equal(51, setLists[1].B);
     }
 
     [Fact]
