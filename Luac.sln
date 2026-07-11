@@ -31,6 +31,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "benchmarks", "benchmarks", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luac.Runtime.Benchmarks", "benchmarks\Luac.Runtime.Benchmarks\Luac.Runtime.Benchmarks.csproj", "{F2F3B328-15C7-47D6-B4DC-3BE271145D96}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luac.StandardLibrary", "src\Luac.StandardLibrary\Luac.StandardLibrary.csproj", "{A3FDE6B3-8842-4864-9410-8FCDE18B8389}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -173,6 +175,18 @@ Global
 		{F2F3B328-15C7-47D6-B4DC-3BE271145D96}.Release|x64.Build.0 = Release|Any CPU
 		{F2F3B328-15C7-47D6-B4DC-3BE271145D96}.Release|x86.ActiveCfg = Release|Any CPU
 		{F2F3B328-15C7-47D6-B4DC-3BE271145D96}.Release|x86.Build.0 = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|x64.Build.0 = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Debug|x86.Build.0 = Debug|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|x64.ActiveCfg = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|x64.Build.0 = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|x86.ActiveCfg = Release|Any CPU
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -189,5 +203,6 @@ Global
 		{995F4FC7-586C-4C07-A066-54C09F62A550} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{DF9BB663-8236-4DA3-BF9A-6EB8A451D053} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F2F3B328-15C7-47D6-B4DC-3BE271145D96} = {66320409-64EC-F7C5-3DEF-65E7510DAAD1}
+		{A3FDE6B3-8842-4864-9410-8FCDE18B8389} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

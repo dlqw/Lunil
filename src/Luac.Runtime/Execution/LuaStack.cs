@@ -82,5 +82,13 @@ public sealed class LuaStack
             visitor.Visit(_values[index]);
         }
     }
+
+    internal ReadOnlySpan<LuaValue> AsReadOnlySpan(int start, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        EnsureCapacity(checked(start + length));
+        return _values.AsSpan(start, length);
+    }
 }
 #pragma warning restore CA1711

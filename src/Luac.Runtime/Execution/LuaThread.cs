@@ -5,8 +5,10 @@ namespace Luac.Runtime.Execution;
 
 public enum LuaThreadStatus : byte
 {
+    New,
     Suspended,
     Running,
+    Normal,
     Dead,
     Error,
 }
@@ -25,7 +27,32 @@ public sealed class LuaThread : LuaGcObject
 
     public LuaStack Stack { get; }
 
-    public LuaThreadStatus Status { get; internal set; } = LuaThreadStatus.Suspended;
+    public LuaThreadStatus Status { get; internal set; } = LuaThreadStatus.New;
+
+    public LuaValue Entry { get; private set; }
+
+    public bool Started { get; internal set; }
+
+    public LuaValue TerminalError { get; internal set; }
+
+    public IReadOnlyList<LuaValue> YieldedValues => _yieldedValues;
+
+    public IReadOnlyList<LuaValue> ResumeValues => _resumeValues;
+
+    internal LuaThread? Resumer { get; set; }
+
+    internal LuaThread? ActiveResumee { get; set; }
+
+    internal bool IsClosing { get; set; }
+
+    internal bool CloseHadError { get; set; }
+
+    private readonly LuaValueWindow _yieldedValues = new();
+    private readonly LuaValueWindow _resumeValues = new();
+
+    internal ReadOnlySpan<LuaValue> YieldedSpan => _yieldedValues.AsSpan();
+
+    internal ReadOnlySpan<LuaValue> ResumeSpan => _resumeValues.AsSpan();
 
     public IReadOnlyList<LuaFrame> Frames => _frames;
 
@@ -35,6 +62,8 @@ public sealed class LuaThread : LuaGcObject
 
     internal LuaUnwindState? UnwindState { get; set; }
 
+    internal LuaContinuation RootContinuation { get; } = new();
+
     internal void PushFrame(LuaFrame frame)
     {
         Owner.WriteBarrier(this, frame.Closure);
@@ -42,6 +71,8 @@ public sealed class LuaThread : LuaGcObject
         {
             Owner.WriteBarrier(this, value);
         }
+
+        Owner.WriteBarrier(this, frame.Continuation.ErrorHandler);
 
         _frames.Add(frame);
     }
@@ -85,11 +116,108 @@ public sealed class LuaThread : LuaGcObject
         CloseUpvalues(0);
         _frames.Clear();
         UnwindState = null;
-        Status = LuaThreadStatus.Suspended;
+        RootContinuation.Reset();
+        Entry = LuaValue.Nil;
+        Started = false;
+        TerminalError = LuaValue.Nil;
+        Resumer = null;
+        ActiveResumee = null;
+        IsClosing = false;
+        CloseHadError = false;
+        _yieldedValues.Clear();
+        _resumeValues.Clear();
+        Status = LuaThreadStatus.New;
+    }
+
+    internal void Initialize(LuaValue entry)
+    {
+        if (entry.Kind != LuaValueKind.Function)
+        {
+            throw new LuaRuntimeException("A coroutine entry must be a function.");
+        }
+
+        Owner.ValidateValue(entry);
+        Reset();
+        Entry = entry;
+        Owner.WriteBarrier(this, entry);
+    }
+
+    internal void SetYieldedValues(ReadOnlySpan<LuaValue> values) =>
+        SetValueWindow(_yieldedValues, values);
+
+    internal void SetResumeValues(ReadOnlySpan<LuaValue> values) =>
+        SetValueWindow(_resumeValues, values);
+
+    internal void ClearTransferValues()
+    {
+        _yieldedValues.Clear();
+        _resumeValues.Clear();
+    }
+
+    private void SetValueWindow(LuaValueWindow window, ReadOnlySpan<LuaValue> values)
+    {
+        foreach (var value in values)
+        {
+            Owner.ValidateValue(value);
+            Owner.WriteBarrier(this, value);
+        }
+
+        window.Set(values);
+    }
+
+    internal void FinishClosed()
+    {
+        var top = 0;
+        foreach (var frame in _frames)
+        {
+            top = Math.Max(top, frame.Top);
+            frame.Continuation.Reset();
+        }
+
+        CloseUpvalues(0);
+        _frames.Clear();
+        if (top > 0)
+        {
+            Stack.Clear(0, top);
+        }
+
+        UnwindState = null;
+        RootContinuation.Reset();
+        Entry = LuaValue.Nil;
+        TerminalError = LuaValue.Nil;
+        Resumer = null;
+        ActiveResumee = null;
+        IsClosing = false;
+        CloseHadError = false;
+        _yieldedValues.Clear();
+        _resumeValues.Clear();
+        Status = LuaThreadStatus.Dead;
     }
 
     internal override void Traverse(LuaGcVisitor visitor)
     {
+        visitor.Visit(Entry);
+        visitor.Visit(TerminalError);
+        if (Resumer is not null)
+        {
+            visitor.Visit(Resumer);
+        }
+
+        if (ActiveResumee is not null)
+        {
+            visitor.Visit(ActiveResumee);
+        }
+
+        foreach (var value in _yieldedValues)
+        {
+            visitor.Visit(value);
+        }
+
+        foreach (var value in _resumeValues)
+        {
+            visitor.Visit(value);
+        }
+
         foreach (var frame in _frames)
         {
             visitor.Visit(frame.Closure);
@@ -99,22 +227,18 @@ public sealed class LuaThread : LuaGcObject
                 visitor.Visit(value);
             }
 
-            if (frame.PendingReturnValues is not null)
+            visitor.Visit(frame.Continuation.Value);
+            visitor.Visit(frame.Continuation.ErrorHandler);
+            foreach (var value in frame.Continuation.Values)
             {
-                foreach (var value in frame.PendingReturnValues)
-                {
-                    visitor.Visit(value);
-                }
+                visitor.Visit(value);
             }
+        }
 
-            if (frame.PendingTailCall is not null)
-            {
-                visitor.Visit(frame.PendingTailCall.Callable);
-                foreach (var value in frame.PendingTailCall.Arguments)
-                {
-                    visitor.Visit(value);
-                }
-            }
+        visitor.Visit(RootContinuation.Value);
+        foreach (var value in RootContinuation.Values)
+        {
+            visitor.Visit(value);
         }
 
         foreach (var upvalue in _openUpvalues.Values)
@@ -127,6 +251,61 @@ public sealed class LuaThread : LuaGcObject
             visitor.Visit(UnwindState.Error);
         }
     }
+}
+
+internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
+{
+    private LuaValue[] _values = [];
+
+    public int Count { get; private set; }
+
+    public LuaValue this[int index] => index >= 0 && index < Count
+        ? _values[index]
+        : throw new ArgumentOutOfRangeException(nameof(index));
+
+    public void Set(ReadOnlySpan<LuaValue> values)
+    {
+        if (_values.Length < values.Length)
+        {
+            var capacity = Math.Max(4, _values.Length);
+            while (capacity < values.Length)
+            {
+                capacity = checked(capacity * 2);
+            }
+
+            Array.Resize(ref _values, capacity);
+        }
+
+        if (Count > values.Length)
+        {
+            Array.Clear(_values, values.Length, Count - values.Length);
+        }
+
+        values.CopyTo(_values);
+        Count = values.Length;
+    }
+
+    public void Clear()
+    {
+        if (Count != 0)
+        {
+            Array.Clear(_values, 0, Count);
+            Count = 0;
+        }
+    }
+
+    public ReadOnlySpan<LuaValue> AsSpan() => _values.AsSpan(0, Count);
+
+    public IEnumerator<LuaValue> GetEnumerator()
+    {
+        for (var index = 0; index < Count; index++)
+        {
+            yield return _values[index];
+        }
+    }
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
+        GetEnumerator();
 }
 
 internal sealed class LuaUnwindState

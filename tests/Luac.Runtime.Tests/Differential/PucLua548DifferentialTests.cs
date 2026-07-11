@@ -52,6 +52,21 @@ public sealed class PucLua548DifferentialTests
         Assert.Equal(expected, actual);
     }
 
+    [Fact]
+    public void DeterministicCoroutineStateMachineFuzzMatchesPucLua548()
+    {
+        if (!IsPucLuaAvailable())
+        {
+            return;
+        }
+
+        for (var seed = 0; seed < 16; seed++)
+        {
+            var source = GenerateCoroutineStateMachine(seed);
+            Assert.Equal(RunPucLua(source), RunLuac(source));
+        }
+    }
+
     public static TheoryData<string> Scripts => new()
     {
         """
@@ -91,6 +106,71 @@ public sealed class PucLua548DifferentialTests
             count = count + 1
         end
         emit(decimal + 3, -decimal, hexadecimal * 2, count)
+        """,
+        """
+        local co = coroutine.create(function(a)
+            local self, ismain = coroutine.running()
+            local b, c = coroutine.yield(a, nil, coroutine.status(self), ismain,
+                coroutine.isyieldable())
+            return b, c
+        end)
+        emit(coroutine.status(co))
+        emit(coroutine.resume(co, 3))
+        emit(coroutine.status(co))
+        emit(coroutine.resume(co, 4, 5))
+        emit(coroutine.status(co))
+        local wrapped = coroutine.wrap(function(v) return v * 2 end)
+        emit(wrapped(6))
+        """,
+        """
+        local outer
+        local inner = coroutine.create(function()
+            emit(coroutine.status(outer))
+            coroutine.yield(8)
+            return 9
+        end)
+        outer = coroutine.create(function()
+            emit(coroutine.resume(inner))
+            emit(coroutine.resume(inner))
+        end)
+        emit(coroutine.resume(outer))
+        """,
+        """
+        local seen = false
+        local mt = { __close = function(self, err) seen = err ~= nil end }
+        local co = coroutine.create(function()
+            local value <close> = setmetatable({}, mt)
+            return nil + 1
+        end)
+        local resumed, original = coroutine.resume(co)
+        emit(resumed, original ~= nil, seen)
+        local closed, closeError = coroutine.close(co)
+        emit(closed, closeError ~= nil, seen, coroutine.status(co))
+        """,
+        """
+        local co = coroutine.create(function() return coroutine.yield(2, nil, 3) end)
+        emit(coroutine.resume(co))
+        emit(coroutine.resume(co, 4, nil, 5))
+        local resumed, resumeError = coroutine.resume(co)
+        emit(resumed, resumeError ~= nil)
+        local wrapped = coroutine.wrap(function() return nil + 1 end)
+        local ok, wrapError = pcall(wrapped)
+        emit(ok, wrapError ~= nil)
+        """,
+        """
+        local mt = {
+            __add = function()
+                local resumed = coroutine.yield(6)
+                return resumed
+            end
+        }
+        local value = setmetatable({}, mt)
+        local co = coroutine.create(function()
+            local ok, result = xpcall(function() return value + value end, function(e) return e end)
+            return ok, result
+        end)
+        emit(coroutine.resume(co))
+        emit(coroutine.resume(co, 7))
         """,
     };
 
@@ -145,6 +225,7 @@ public sealed class PucLua548DifferentialTests
         var output = new List<string>();
         var state = new LuaState();
         state.InstallProtectedCallFunctions();
+        state.InstallCoroutineModule();
         state.SetGlobal(
             "setmetatable",
             LuaValue.FromFunction(new LuaNativeFunction(
@@ -168,6 +249,34 @@ public sealed class PucLua548DifferentialTests
         Assert.Empty(lowering.Diagnostics);
         new LuaInterpreter().Execute(state, state.CreateMainClosure(lowering.Module!));
         return output.ToArray();
+    }
+
+    private static string GenerateCoroutineStateMachine(int seed)
+    {
+        var random = new Random(seed);
+        var source = new StringBuilder(
+            "local threads = {}\n" +
+            "for i = 1, 8 do threads[i] = coroutine.create(function(v) " +
+            "local a = coroutine.yield(v, i); " +
+            "local b = coroutine.yield(a, i * 2); return b, i * 3 end) end\n");
+        for (var action = 0; action < 96; action++)
+        {
+            var thread = random.Next(1, 9);
+            switch (random.Next(3))
+            {
+                case 0:
+                    source.Append(CultureInfo.InvariantCulture, $"emit(coroutine.resume(threads[{thread}], {action}))\n");
+                    break;
+                case 1:
+                    source.Append(CultureInfo.InvariantCulture, $"emit(coroutine.status(threads[{thread}]))\n");
+                    break;
+                default:
+                    source.Append(CultureInfo.InvariantCulture, $"emit(coroutine.close(threads[{thread}]))\n");
+                    break;
+            }
+        }
+
+        return source.ToString();
     }
 
     private static string Encode(LuaValue value) => value.Kind switch

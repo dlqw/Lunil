@@ -44,7 +44,7 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         var tag when ReferenceEquals(tag, FloatTag) => LuaValueKind.Float,
         LuaString => LuaValueKind.String,
         LuaTable => LuaValueKind.Table,
-        LuaClosure or LuaNativeFunction => LuaValueKind.Function,
+        LuaClosure or LuaNativeFunction or LuaNativeClosure => LuaValueKind.Function,
         LuaThread => LuaValueKind.Thread,
         _ => throw new InvalidOperationException("The Lua value contains an unknown reference kind."),
     };
@@ -86,6 +86,12 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         return new LuaValue(value, 0);
     }
 
+    public static LuaValue FromFunction(LuaNativeClosure value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new LuaValue(value, 0);
+    }
+
     public static LuaValue FromThread(LuaThread value)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -113,7 +119,14 @@ public readonly struct LuaValue : IEquatable<LuaValue>
 
     public LuaClosure? TryGetClosure() => _tagOrReference as LuaClosure;
 
-    public LuaNativeFunction? TryGetNativeFunction() => _tagOrReference as LuaNativeFunction;
+    public LuaNativeFunction? TryGetNativeFunction() => _tagOrReference switch
+    {
+        LuaNativeFunction descriptor => descriptor,
+        LuaNativeClosure closure => closure.Descriptor,
+        _ => null,
+    };
+
+    public LuaNativeClosure? TryGetNativeClosure() => _tagOrReference as LuaNativeClosure;
 
     public LuaThread AsThread() => _tagOrReference as LuaThread ?? throw TypeError("thread");
 

@@ -30,12 +30,31 @@ public sealed class LuaState
 
     public LuaThread MainThread { get; }
 
+    public LuaThread? RunningThread { get; internal set; }
+
+    internal bool RunningThreadIsYieldable { get; set; }
+
     public event Action<LuaValue>? WarningRaised;
 
     public LuaTable CreateTable() => new(Heap);
 
     public LuaThread CreateThread(int initialStackCapacity = 128) =>
         new(Heap, initialStackCapacity);
+
+    public LuaThread CreateThread(LuaValue entry, int initialStackCapacity = 128)
+    {
+        var thread = new LuaThread(Heap, initialStackCapacity);
+        thread.Initialize(entry);
+        return thread;
+    }
+
+    public LuaThread CreateThread(LuaClosure entry, int initialStackCapacity = 128) =>
+        CreateThread(LuaValue.FromFunction(entry), initialStackCapacity);
+
+    public LuaNativeClosure CreateNativeClosure(
+        LuaNativeFunction descriptor,
+        ReadOnlySpan<LuaValue> captures = default) =>
+        new(Heap, descriptor, captures);
 
     public LuaHandle CreateHandle(LuaValue value) => Heap.CreateHandle(value);
 
@@ -83,6 +102,13 @@ public sealed class LuaState
                 "xpcall",
                 static (_, _) => throw new InvalidOperationException("xpcall is a VM intrinsic."),
                 LuaNativeFunctionKind.ProtectedCallWithHandler)));
+    }
+
+    public LuaTable InstallCoroutineModule()
+    {
+        var module = LuaCoroutineModule.CreateModule(this);
+        SetGlobal("coroutine", LuaValue.FromTable(module));
+        return module;
     }
 
     public LuaValue GetGlobal(string name)

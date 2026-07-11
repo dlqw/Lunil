@@ -22,9 +22,9 @@ public sealed class LuaFrame
         ReturnBase = returnBase;
         ExpectedResults = expectedResults;
         VarArgs = varArgs;
-        ProtectionKind = protectionKind;
-        ErrorHandler = errorHandler;
-        IsCloseHandler = isCloseHandler;
+        Continuation.ProtectionKind = protectionKind;
+        Continuation.ErrorHandler = errorHandler;
+        Continuation.IsCloseHandler = isCloseHandler;
     }
 
     public LuaClosure Closure { get; }
@@ -45,32 +45,8 @@ public sealed class LuaFrame
 
     internal List<int> ToBeClosedSlots { get; } = [];
 
-    internal LuaResultTransform PendingResultTransform { get; set; }
+    internal LuaContinuation Continuation { get; } = new();
 
-    internal LuaProtectedCallKind ProtectionKind { get; }
-
-    internal LuaValue ErrorHandler { get; }
-
-    internal LuaValue[]? PendingReturnValues { get; set; }
-
-    internal LuaPendingTailCall? PendingTailCall { get; set; }
-
-    internal int PendingTailProtectedReturnRegister { get; set; } = -1;
-
-    internal bool IsCloseHandler { get; }
-}
-
-internal sealed class LuaPendingTailCall
-{
-    public LuaPendingTailCall(LuaValue callable, LuaValue[] arguments)
-    {
-        Callable = callable;
-        Arguments = arguments;
-    }
-
-    public LuaValue Callable { get; }
-
-    public LuaValue[] Arguments { get; }
 }
 
 internal enum LuaProtectedCallKind : byte

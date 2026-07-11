@@ -20,6 +20,8 @@ contains:
   randomized hashing, and storage/shape/metatable versions;
 - a baseline canonical IR interpreter with Lua/native calls, multiple results,
   varargs, control flow, numeric-string coercion, resource budgets, and tail calls;
+- an explicit non-recursive coroutine scheduler, resumable native continuation ABI,
+  owner-aware native closures, and the complete Lua 5.4 `coroutine` module;
 - shared type/object metatable dispatch for core metamethods, protected Lua-value
   errors, `pcall`/`xpcall`, and resumable reverse-order `__close` unwinding;
 - all PUC Lua 5.4 opcodes and binary-compatible 32-bit instruction layouts;
@@ -32,6 +34,8 @@ contains:
 
 The approved architecture and compatibility contract are documented in
 [`docs/compiler-design.md`](docs/compiler-design.md).
+The frozen 0.3.0 runtime ABI is documented in
+[`docs/runtime-continuation-abi.md`](docs/runtime-continuation-abi.md).
 
 ## Build and test
 
