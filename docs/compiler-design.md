@@ -1,4 +1,4 @@
-# Luac 编译器与运行时技术设计
+# Lunil 编译器与运行时技术设计
 
 状态：已批准并进入实现
 目标版本：Lua 5.4.8、.NET 10
@@ -6,7 +6,7 @@
 
 ## 1. 目标与范围
 
-Luac 是完全使用 C# 实现的 Lua 5.4 编译器、运行时与静态分析工具链。项目必须提供：
+Lunil 是完全使用 C# 实现的 Lua 5.4 编译器、运行时与静态分析工具链。项目必须提供：
 
 - Lua 5.4.8 源码解析、编译与执行；
 - Lua 5.4 完整语言语义、协程、元方法、逻辑垃圾回收和标准库；
@@ -339,7 +339,7 @@ VmSignal Execute(LuaThread thread, ref LuaFrame frame);
 
 ## 11. 编译缓存
 
-项目缓存默认位于 `obj/luac/`，全局缓存位于用户缓存目录。缓存分为源码/CST 索引、绑定与类型结果、canonical IR、优化 IR/profile、持久化 CIL/PDB。
+项目缓存默认位于 `obj/lunil/`，全局缓存位于用户缓存目录。缓存分为源码/CST 索引、绑定与类型结果、canonical IR、优化 IR/profile、持久化 CIL/PDB。
 
 缓存键至少包含：
 
@@ -371,31 +371,31 @@ VmSignal Execute(LuaThread thread, ref LuaFrame frame);
 
 ```text
 src/
-  Luac.Core/
-  Luac.Syntax/
-  Luac.EmmyLua/
-  Luac.Semantics/
-  Luac.IR/
-  Luac.Runtime.Abstractions/
-  Luac.Runtime/
-  Luac.StandardLibrary/
-  Luac.CodeGen.Cil/
-  Luac.Compiler/
-  Luac.Hosting/
-  Luac.Build/
-  Luac.Cli/
+  Lunil.Core/
+  Lunil.Syntax/
+  Lunil.EmmyLua/
+  Lunil.Semantics/
+  Lunil.IR/
+  Lunil.Runtime.Abstractions/
+  Lunil.Runtime/
+  Lunil.StandardLibrary/
+  Lunil.CodeGen.Cil/
+  Lunil.Compiler/
+  Lunil.Hosting/
+  Lunil.Build/
+  Lunil.Cli/
 
 tests/
-  Luac.Core.Tests/
-  Luac.Syntax.Tests/
-  Luac.Semantics.Tests/
-  Luac.Runtime.Tests/
-  Luac.StandardLibrary.Tests/
-  Luac.BackendDifferential.Tests/
-  Luac.Conformance.Tests/
-  Luac.Fuzz.Tests/
-  Luac.NativeAot.Tests/
-  Luac.Benchmarks/
+  Lunil.Core.Tests/
+  Lunil.Syntax.Tests/
+  Lunil.Semantics.Tests/
+  Lunil.Runtime.Tests/
+  Lunil.StandardLibrary.Tests/
+  Lunil.BackendDifferential.Tests/
+  Lunil.Conformance.Tests/
+  Lunil.Fuzz.Tests/
+  Lunil.NativeAot.Tests/
+  Lunil.Benchmarks/
 ```
 
 Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Runtime 不反向依赖 Compiler；标准库通过 Runtime Abstractions 获取宿主能力。跨层数据结构放在最窄的共同抽象项目，禁止形成循环引用。
@@ -423,7 +423,7 @@ Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Run
 - 对照 PUC Lua 5.4.8、MoonSharp 与本项目解释器基线；
 - 未通过全部语义测试的优化不得进入默认优化级别。
 
-0.2.0 的 Windows x64/.NET 10 Release 基线使用 `benchmarks/Luac.Runtime.Benchmarks` 固化。1,000,000 次 table get/set 的代表值约为 199 ns/op，单次 10,000 轮空 numeric-for 约 5.2 ms，带加法约 9.9 ms，1,000 个 table 的 full logical GC 约 0.71 ms。空循环的稳态执行固定分配约 5 KiB（frame/结果对象），不再随 10,000 次循环迭代增长；单元门槛为每次热执行不超过 16 KiB。数值仅作为本机回归基线，不是跨硬件的绝对门槛。
+0.2.0 的 Windows x64/.NET 10 Release 基线使用 `benchmarks/Lunil.Runtime.Benchmarks` 固化。1,000,000 次 table get/set 的代表值约为 199 ns/op，单次 10,000 轮空 numeric-for 约 5.2 ms，带加法约 9.9 ms，1,000 个 table 的 full logical GC 约 0.71 ms。空循环的稳态执行固定分配约 5 KiB（frame/结果对象），不再随 10,000 次循环迭代增长；单元门槛为每次热执行不超过 16 KiB。数值仅作为本机回归基线，不是跨硬件的绝对门槛。
 
 ## 15. 可观测性与失败模型
 

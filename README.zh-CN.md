@@ -1,0 +1,296 @@
+<p align="center">
+  <img src="assets/lunil-logo.svg" width="168" alt="Lunil 标志">
+</p>
+
+<h1 align="center">Lunil</h1>
+
+<p align="center">
+  面向现代 .NET、以正确性为先的 Lua 5.4 编译器与托管运行时。
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <strong>简体中文</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.5.0--alpha.1-7c3aed?style=flat-square"></a>
+  <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
+  <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
+  <img alt="平台" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-0ea5e9?style=flat-square">
+</p>
+
+Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器管线与运行时。它在保留 Lua
+面向字节的源码及二进制字符串语义的同时，提供不可变语法树、语义分析、
+经过验证的 canonical IR、PUC Lua 二进制 chunk 互操作、托管解释器和显式逻辑垃圾回收器。
+
+> [!IMPORTANT]
+> Lunil 当前版本是 **`0.5.0-alpha.1`**。编译器与运行时基础已经可用并具有较完整的
+> 测试，但公共 API、标准库、Lua 官方测试套件覆盖和优化执行后端尚未全部完成。
+> 当前版本还不是生产稳定的 Lua 替代实现。
+
+## 目录
+
+- [为什么选择 Lunil](#为什么选择-lunil)
+- [项目状态](#项目状态)
+- [功能](#功能)
+- [快速开始](#快速开始)
+- [将 Lunil 用作库](#将-lunil-用作库)
+- [技术架构](#技术架构)
+- [仓库结构](#仓库结构)
+- [兼容性与平台](#兼容性与平台)
+- [软件包与发布](#软件包与发布)
+- [文档索引](#文档索引)
+- [参与贡献](#参与贡献)
+- [安全问题](#安全问题)
+- [开源许可](#开源许可)
+
+## 为什么选择 Lunil
+
+- **Lua 语义优先**：目标是忠实实现 Lua 5.4.8 的语法、opcode、数值行为、多返回值、
+  vararg、协程、元表、待关闭变量和二进制 chunk，不用 CLR 行为静默替代 Lua 行为。
+- **托管且可嵌入**：面向 .NET 10 使用 C# 实现，提供显式所有权、资源预算、handle、
+  protected error 和宿主 API。
+- **统一且可验证的 IR**：源码编译与导入的 PUC Lua chunk 最终汇合到同一份 canonical
+  register IR，并执行结构和控制流验证。
+- **面向多层执行后端**：当前 reference interpreter 是语义基线，后续 CoreCLR CIL JIT、
+  持久化 CIL 和 NativeAOT 后端共享同一契约。
+- **可测试性是架构的一部分**：内置确定性 fuzz、GC stress、畸形输入、二进制往返和
+  PUC Lua 差分测试。
+
+## 项目状态
+
+| 领域 | 状态 | 说明 |
+| --- | --- | --- |
+| Lexer 与 parser | 已实现 | 完整 Lua 5.4 文法、无损 trivia、有界错误恢复 |
+| Binding 与 lowering | 已实现 | 局部变量、捕获、`_ENV`、属性、label/goto、verified canonical IR |
+| 二进制 chunk | 已实现 | 有界 Lua 5.4 reader/writer/verifier 与 PUC prototype 转换 |
+| Reference interpreter | 已实现 | 调用、vararg、多返回值、控制流、协程、错误和 close unwind |
+| Runtime 与逻辑 GC | 已实现 | 表、值、元表、配额、handle、弱表、ephemeron 和 finalizer |
+| 标准库 | 进行中 | coroutine 模块可用；尚未发布完整 Lua 5.4 标准库 |
+| JIT / AOT 后端 | 计划中 | CoreCLR CIL JIT、持久化 CIL、构建期 NativeAOT |
+| 稳定性契约 | Alpha | `1.0.0` 前仍可能发生破坏性 API 更新 |
+
+## 功能
+
+### 编译器与 IR
+
+- 不可变的字节型 `SourceText`，同时提供 byte 与 UTF-16 诊断位置。
+- 保留 trivia 的无损 lexer，以及完整的数值/字符串 literal 解码。
+- 覆盖完整 Lua 5.4 文法、支持错误恢复的不可变语法树。
+- 支持局部变量、捕获、`_ENV`、属性、label 和 goto 的 lexical binding。
+- 从语法/语义模型 lowering 到经过验证的 canonical register IR。
+- 完整 Lua 5.4 opcode 模型与二进制兼容的 32 位指令布局。
+- 有界 PUC Lua 5.4 binary chunk 读取、写入、验证和转换。
+
+### 运行时
+
+- 16 字节 tagged value 表示和 Lua 二进制字符串。
+- Heap-owned table、closure、thread、upvalue 和 native callable descriptor。
+- Array 加开放寻址 hash 的 Lua table，支持 tombstone 与稳定的 `next` 遍历。
+- 支持 barrier、remembered set、弱表、ephemeron、finalizer、resurrection、配额和宿主
+  handle 的增量/分代三色逻辑 GC。
+- 支持 numeric-string coercion、资源预算、tail call、多返回值、vararg 和开放栈窗口的
+  reference interpreter。
+- 非递归协程调度器与可恢复 native continuation ABI。
+- 类型/对象共享元表派发、`pcall`/`xpcall` 和可恢复的 `__close` unwind。
+
+### 验证与质量
+
+- 面向执行的 binary chunk 与 canonical IR verifier。
+- PUC Lua 5.4.8 二进制与运行时差分 fixture。
+- 确定性的畸形 IR、table、GC 与 coroutine fuzz。
+- GC stress、所有权测试和 runtime benchmark harness。
+- Windows、Linux、macOS CI，以及 x64/Arm64 发布产物。
+
+## 快速开始
+
+### 环境要求
+
+- [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0) 或兼容的
+  10.0 patch 版本；
+- Git；
+- 可选：用于互操作 fixture 的 PUC Lua 5.4.8 工具。
+
+### 从源码构建
+
+```bash
+git clone https://github.com/dlqw/Lunil.git
+cd Lunil
+dotnet restore Lunil.sln
+dotnet build Lunil.sln --configuration Release --no-restore
+dotnet test Lunil.sln --configuration Release --no-build --no-restore
+```
+
+检查格式或运行 benchmark：
+
+```bash
+dotnet format Lunil.sln --verify-no-changes --no-restore
+dotnet run --configuration Release \
+  --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
+```
+
+## 将 Lunil 用作库
+
+在第一个 tag prerelease 发布前，请从 checkout 直接引用项目。Tag 发布会将对应的
+`Lunil.*` NuGet package 和 symbol package 发布到 GitHub Packages。
+
+下面的示例依次完成 Lua 源码解析、binding、canonical IR lowering、IR 验证和
+reference interpreter 执行：
+
+```csharp
+using Lunil.Core.Text;
+using Lunil.IR.Canonical;
+using Lunil.Runtime;
+using Lunil.Runtime.Execution;
+using Lunil.Semantics.Binding;
+using Lunil.Semantics.Lowering;
+using Lunil.Syntax.Parsing;
+
+const string lua = """
+    local total = 0
+    for i = 1, 10 do
+        total = total + i
+    end
+    return total
+    """;
+
+var syntax = LuaParser.Parse(SourceText.FromUtf8(lua));
+var semantics = LuaBinder.Bind(syntax);
+var lowering = LuaLowerer.Lower(semantics);
+
+if (!lowering.Succeeded || lowering.Module is null)
+{
+    foreach (var diagnostic in lowering.Diagnostics)
+    {
+        Console.Error.WriteLine($"{diagnostic.Code}: {diagnostic.Message}");
+    }
+
+    return;
+}
+
+var verificationErrors = LuaIrVerifier.Verify(lowering.Module);
+if (!verificationErrors.IsEmpty)
+{
+    throw new InvalidOperationException("Generated IR failed verification.");
+}
+
+var state = new LuaState();
+var closure = state.CreateMainClosure(lowering.Module);
+var result = new LuaInterpreter().Execute(state, closure);
+
+Console.WriteLine(result.Values[0].AsInteger()); // 55
+```
+
+执行经过验证的 PUC Lua 5.4 binary chunk：
+
+```csharp
+var bytecode = File.ReadAllBytes("program.luac");
+var state = new LuaState();
+var result = new LuaInterpreter().ExecuteBinaryChunk(state, bytecode);
+```
+
+处理不可信源码或 bytecode 时，应根据宿主需求配置有界 parser/chunk option、解释器
+instruction/stack budget 和 heap quota。
+
+## 技术架构
+
+```mermaid
+flowchart LR
+    Source[Lua source bytes] --> Text[SourceText]
+    Text --> Lexer[Lossless lexer]
+    Lexer --> Parser[Error-tolerant parser]
+    Parser --> Binder[Semantic binder]
+    Binder --> Lowerer[Canonical lowering]
+
+    Chunk[PUC Lua 5.4 chunk] --> Reader[Reader + verifier]
+    Reader --> Converter[Prototype converter]
+
+    Lowerer --> IR[Verified canonical register IR]
+    Converter --> IR
+    IR --> Interpreter[Reference interpreter]
+    Interpreter --> Runtime[Lua runtime model]
+    Runtime --> Heap[Logical heap + GC]
+
+    IR -. planned .-> JIT[CoreCLR CIL JIT]
+    IR -. planned .-> AOT[Persisted CIL / NativeAOT]
+```
+
+编译器边界以 byte 为基础，内部使用不可变 syntax/semantic model，并 lowering 到与后端无关的
+IR。运行时显式建模 Lua object、所有权、stack、continuation 与逻辑 GC，不依赖 CLR object
+生命周期隐式表达 Lua 语义。这为解释器和后续执行后端提供了共同的语义契约。
+
+## 仓库结构
+
+```text
+Lunil/
+├── src/
+│   ├── Lunil.Core/              # source text、diagnostic、Lua numeric
+│   ├── Lunil.Syntax/            # lexer、token、parser、immutable syntax
+│   ├── Lunil.Semantics/         # binding 与 canonical lowering
+│   ├── Lunil.IR/                # canonical IR 与 Lua 5.4 binary chunk
+│   ├── Lunil.Runtime/           # value、table、GC、interpreter、coroutine
+│   └── Lunil.StandardLibrary/   # 标准库注册和模块
+├── tests/                       # unit、差分、fuzz 与 GC stress 测试
+├── benchmarks/                  # runtime benchmark harness
+├── docs/                        # 架构、ABI、分支与版本文档
+├── scripts/                     # release bundle 与 NuGet 打包脚本
+├── changelogs/                  # 按版本组织的发布日志
+└── .github/workflows/           # CI 与 tag 驱动的发布自动化
+```
+
+## 兼容性与平台
+
+- **语言目标**：Lua 5.4.8。
+- **运行时目标**：.NET 10。
+- **CI 主机**：Windows、Ubuntu Linux、macOS。
+- **发布 RID**：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、
+  `osx-arm64`。
+- **Binary chunk**：严格有界的 Lua 5.4 格式和显式 target 描述；不兼容的数值表示会被拒绝，
+  不会静默截断。
+
+兼容性契约和当前里程碑的非目标请阅读[编译器设计](docs/compiler-design.md)。
+
+## 软件包与发布
+
+Lunil 遵循 [SemVer 2.0](https://semver.org/lang/zh-CN/)，当前晋级顺序是：
+
+```text
+0.5.0-alpha.N -> 0.5.0-beta.N -> 0.5.0-rc.N -> 0.5.0
+```
+
+不可变的 `v<SemVer>` tag 会触发版本一致性验证、六 RID bundle、带 symbol 的 NuGet
+package、GitHub Packages 发布和 GitHub Release。带 suffix 的版本会自动标记为 prerelease。
+兼容性和晋级规则见[版本策略](docs/versioning.md)。
+
+## 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| [编译器设计](docs/compiler-design.md) | 架构、兼容性契约、IR 和后端设计 |
+| [运行时 continuation ABI](docs/runtime-continuation-abi.md) | `0.3.0` 冻结的 continuation/yield 边界 |
+| [PUC prototype 导入](docs/puc-prototype-import.md) | PUC Lua prototype 到 canonical IR 的转换 |
+| [版本策略](docs/versioning.md) | SemVer、alpha/beta/RC 晋级与发布流程 |
+| [分支管理](docs/branching.md) | 受保护的 `main`、分支命名与合并策略 |
+| [更新日志](changelogs/) | 按版本组织的发布说明 |
+
+## 参与贡献
+
+欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`fix/*` 或 `docs/*` 分支上
+开发，根据影响补充测试与 changelog，并在提交前运行完整 build、test 和 format 命令。
+`main` 受保护，所有必需检查通过后使用 squash merge。
+
+参与前请阅读[分支管理](docs/branching.md)。
+
+## 安全问题
+
+疑似安全漏洞请不要提交公开 issue。请通过
+[GitHub 私密漏洞报告](https://github.com/dlqw/Lunil/security/advisories/new)提交最小复现、
+受影响版本和影响评估。
+
+## 开源许可
+
+Lunil 使用 [MIT License](LICENSE) 开源。
+
+Lua 是 Lua.org、PUC-Rio 的商标。Lunil 是独立实现，与 Lua.org 或 PUC-Rio 无隶属或背书关系。

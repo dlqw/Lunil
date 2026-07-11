@@ -1,6 +1,16 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>0.4.0</VersionPrefix>
+    <VersionPrefix>0.5.0</VersionPrefix>
+    <VersionSuffix>alpha.1</VersionSuffix>
+    <Product>Lunil</Product>
+    <Authors>rdququ</Authors>
+    <Description>Lunil Lua 5.4 compiler and runtime component.</Description>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/dlqw/Lunil</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/dlqw/Lunil</PackageProjectUrl>
+    <PackageTags>lua;lua54;compiler;runtime;dotnet</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <LangVersion>14.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -8,5 +18,13 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Link="README.md" />
+    <None Include="$(MSBuildThisFileDirectory)README.zh-CN.md" Pack="true" PackagePath="\" Link="README.zh-CN.md" />
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Link="LICENSE" />
+    <None Include="$(MSBuildThisFileDirectory)assets/lunil-logo.svg" Pack="true" PackagePath="assets/" Link="assets/lunil-logo.svg" />
+  </ItemGroup>
 </Project>

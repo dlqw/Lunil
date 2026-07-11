@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "fix/**"
+      - "docs/**"
+      - "release/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Restore
+        run: dotnet restore Lunil.sln
+      - name: Build
+        run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+      - name: Test
+        run: dotnet test Lunil.sln --configuration Release --no-build --no-restore
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ./scripts/Get-LunilVersion.ps1
+          "value=$version" >> $env:GITHUB_OUTPUT
+      - name: Build native-platform bundle
+        shell: pwsh
+        run: ./scripts/New-ReleaseBundle.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Version '${{ steps.version.outputs.value }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lunil-${{ matrix.rid }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+  formatting-and-packages:
+    name: Formatting and packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Restore
+        run: dotnet restore Lunil.sln
+      - name: Verify formatting
+        run: dotnet format Lunil.sln --verify-no-changes --no-restore
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ./scripts/Get-LunilVersion.ps1
+          "value=$version" >> $env:GITHUB_OUTPUT
+      - name: Build NuGet packages
+        shell: pwsh
+        run: ./scripts/New-NuGetPackages.ps1 -Version '${{ steps.version.outputs.value }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lunil-nuget
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error

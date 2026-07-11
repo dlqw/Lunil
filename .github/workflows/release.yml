@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate tag, project version, and changelog
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v(?<version>(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?)$') {
+            throw "Release tag must use v<SemVer> without build metadata: $tag"
+          }
+          $version = $Matches.version
+          $projectVersion = ./scripts/Get-LunilVersion.ps1
+          if ($projectVersion -ne $version) {
+            throw "Tag $tag does not match project version $projectVersion."
+          }
+          if (-not (Test-Path "changelogs/$version.md" -PathType Leaf)) {
+            throw "Missing changelogs/$version.md."
+          }
+          "value=$version" >> $env:GITHUB_OUTPUT
+
+  bundles:
+    name: Bundle (${{ matrix.rid }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-latest
+            rid: win-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-latest
+            rid: linux-arm64
+          - os: macos-latest
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Build release bundle
+        shell: pwsh
+        run: ./scripts/New-ReleaseBundle.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Version '${{ needs.validate.outputs.version }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.rid }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+
+  packages:
+    name: NuGet packages
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Build packages
+        shell: pwsh
+        run: ./scripts/New-NuGetPackages.ps1 -Version '${{ needs.validate.outputs.version }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-nuget
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release and packages
+    needs:
+      - validate
+      - bundles
+      - packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish GitHub packages
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dotnet nuget add source 'https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json' `
+            --name github --username '${{ github.repository_owner }}' --password $env:GITHUB_TOKEN `
+            --store-password-in-clear-text
+          Get-ChildItem artifacts -Filter '*.nupkg' | ForEach-Object {
+            dotnet nuget push $_.FullName --source github --api-key $env:GITHUB_TOKEN --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Package publish failed: $($_.Name)" }
+          }
+      - name: Create GitHub prerelease
+        if: contains(needs.validate.outputs.version, '-')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg --verify-tag --generate-notes --prerelease --title 'Lunil ${{ needs.validate.outputs.version }}'
+      - name: Create stable GitHub release
+        if: ${{ !contains(needs.validate.outputs.version, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg --verify-tag --generate-notes --title 'Lunil ${{ needs.validate.outputs.version }}'
