@@ -9,6 +9,7 @@ public enum LuaIrOpcode : byte
     LoadConstant,
     LoadNil,
     Move,
+    SetTop,
     GetUpvalue,
     SetUpvalue,
     NewTable,

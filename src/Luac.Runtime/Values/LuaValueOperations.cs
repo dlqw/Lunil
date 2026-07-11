@@ -1,4 +1,5 @@
 using System.Globalization;
+using Luac.Core.Numerics;
 using Luac.IR.Canonical;
 
 namespace Luac.Runtime.Values;
@@ -64,6 +65,30 @@ internal static class LuaValueOperations
             LuaIrBinaryOperator.ShiftRight => LuaValue.FromInteger(Shift(ToInteger(left), ToInteger(right), left: false)),
             _ => throw new InvalidOperationException($"Unknown binary operation {operation}."),
         };
+
+    public static bool TryToNumber(LuaValue value, out LuaValue number)
+    {
+        if (IsNumber(value))
+        {
+            number = value;
+            return true;
+        }
+
+        if (value.Kind == LuaValueKind.String &&
+            LuaNumberParser.TryParseString(value.AsString().AsSpan(), out var parsed))
+        {
+            number = parsed.Kind switch
+            {
+                LuaNumberKind.Integer => LuaValue.FromInteger(parsed.Integer),
+                LuaNumberKind.Float => LuaValue.FromFloat(parsed.Float),
+                _ => throw new InvalidOperationException(),
+            };
+            return true;
+        }
+
+        number = LuaValue.Nil;
+        return false;
+    }
 
     private static LuaValue Arithmetic(
         LuaValue left,
@@ -265,8 +290,8 @@ internal static class LuaValueOperations
     private static bool IsNumber(LuaValue value) =>
         value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
 
-    private static double ToNumber(LuaValue value) => IsNumber(value)
-        ? value.AsFloat()
+    private static double ToNumber(LuaValue value) => TryToNumber(value, out var number)
+        ? number.AsFloat()
         : throw new LuaRuntimeException($"Expected number, got {value.Kind}.");
 
     private static long ToInteger(LuaValue value) => value.TryGetInteger(out var integer)

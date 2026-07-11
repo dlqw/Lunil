@@ -1,5 +1,6 @@
 using System.Globalization;
 using Luac.Runtime.Execution;
+using Luac.Runtime.Memory;
 
 namespace Luac.Runtime.Values;
 
@@ -13,6 +14,7 @@ public enum LuaValueKind : byte
     String,
     Table,
     Function,
+    Thread,
 }
 #pragma warning restore CA1720
 
@@ -43,6 +45,7 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         LuaString => LuaValueKind.String,
         LuaTable => LuaValueKind.Table,
         LuaClosure or LuaNativeFunction => LuaValueKind.Function,
+        LuaThread => LuaValueKind.Thread,
         _ => throw new InvalidOperationException("The Lua value contains an unknown reference kind."),
     };
 
@@ -83,6 +86,12 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         return new LuaValue(value, 0);
     }
 
+    public static LuaValue FromThread(LuaThread value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new LuaValue(value, 0);
+    }
+
     public bool AsBoolean() => Kind == LuaValueKind.Boolean
         ? _payload != 0
         : throw TypeError("boolean");
@@ -105,6 +114,10 @@ public readonly struct LuaValue : IEquatable<LuaValue>
     public LuaClosure? TryGetClosure() => _tagOrReference as LuaClosure;
 
     public LuaNativeFunction? TryGetNativeFunction() => _tagOrReference as LuaNativeFunction;
+
+    public LuaThread AsThread() => _tagOrReference as LuaThread ?? throw TypeError("thread");
+
+    public LuaGcObject? TryGetGcObject() => _tagOrReference as LuaGcObject;
 
     public bool TryGetInteger(out long value)
     {
@@ -184,6 +197,7 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         LuaValueKind.String => AsString().ToString(),
         LuaValueKind.Table => $"table: 0x{_tagOrReference!.GetHashCode():x}",
         LuaValueKind.Function => $"function: 0x{_tagOrReference!.GetHashCode():x}",
+        LuaValueKind.Thread => $"thread: 0x{_tagOrReference!.GetHashCode():x}",
         _ => throw new InvalidOperationException(),
     };
 

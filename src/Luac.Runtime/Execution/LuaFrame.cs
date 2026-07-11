@@ -1,4 +1,5 @@
 using Luac.Runtime.Values;
+using Luac.Runtime.Operations;
 
 namespace Luac.Runtime.Execution;
 
@@ -10,7 +11,10 @@ public sealed class LuaFrame
         int top,
         int returnBase,
         int expectedResults,
-        LuaValue[] varArgs)
+        LuaValue[] varArgs,
+        LuaProtectedCallKind protectionKind = LuaProtectedCallKind.None,
+        LuaValue errorHandler = default,
+        bool isCloseHandler = false)
     {
         Closure = closure;
         Base = @base;
@@ -18,6 +22,9 @@ public sealed class LuaFrame
         ReturnBase = returnBase;
         ExpectedResults = expectedResults;
         VarArgs = varArgs;
+        ProtectionKind = protectionKind;
+        ErrorHandler = errorHandler;
+        IsCloseHandler = isCloseHandler;
     }
 
     public LuaClosure Closure { get; }
@@ -37,4 +44,40 @@ public sealed class LuaFrame
     internal LuaValue[] VarArgStorage => (LuaValue[])VarArgs;
 
     internal List<int> ToBeClosedSlots { get; } = [];
+
+    internal LuaResultTransform PendingResultTransform { get; set; }
+
+    internal LuaProtectedCallKind ProtectionKind { get; }
+
+    internal LuaValue ErrorHandler { get; }
+
+    internal LuaValue[]? PendingReturnValues { get; set; }
+
+    internal LuaPendingTailCall? PendingTailCall { get; set; }
+
+    internal int PendingTailProtectedReturnRegister { get; set; } = -1;
+
+    internal bool IsCloseHandler { get; }
+}
+
+internal sealed class LuaPendingTailCall
+{
+    public LuaPendingTailCall(LuaValue callable, LuaValue[] arguments)
+    {
+        Callable = callable;
+        Arguments = arguments;
+    }
+
+    public LuaValue Callable { get; }
+
+    public LuaValue[] Arguments { get; }
+}
+
+internal enum LuaProtectedCallKind : byte
+{
+    None,
+    ProtectedCall,
+    ProtectedCallWithHandler,
+    ErrorHandler,
+    Finalizer,
 }

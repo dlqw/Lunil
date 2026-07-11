@@ -2,7 +2,7 @@
 
 状态：已批准并进入实现
 目标版本：Lua 5.4.8、.NET 10
-文档版本：0.1
+文档版本：0.2
 
 ## 1. 目标与范围
 
@@ -177,7 +177,7 @@ Canonical IR 接近 PUC Lua 5.4 的寄存器 VM，能够无损表示 binary chun
 
 ### 6.1 Canonical 指令 ABI
 
-源码 lowering 和 chunk 导入必须产生相同的 `LuaIrModule`/`LuaIrFunction`。函数使用连续编号，保存父函数编号、参数数、vararg 标记、最大寄存器窗口、二进制常量、upvalue 来源、线性指令和从指令重建的基本块。当前格式版本为 1；缓存或 AOT artifact 必须把该版本纳入兼容键。
+源码 lowering 和 chunk 导入必须产生相同的 `LuaIrModule`/`LuaIrFunction`。函数使用连续编号，保存父函数编号、参数数、vararg 标记、最大寄存器窗口、二进制常量、upvalue 来源、线性指令和从指令重建的基本块。当前格式版本为 2；版本 2 增加 `SetTop`，使作用域/循环边界可以清除死亡临时寄存器，避免它们成为逻辑 GC 的伪根。缓存或 AOT artifact 必须把该版本纳入兼容键。
 
 寄存器窗口约定如下：
 
@@ -274,11 +274,15 @@ yield 返回显式 `VmSignal.Yield`，而不是保留 CLR 调用栈。resume 从
 
 ### 8.6 当前基线运行时边界
 
-首个可执行基线已经采用引用字段加 64 位 payload 的 16-byte `LuaValue`，并实现二进制 `LuaString`、弱短字符串驻留入口、integer/float 键归一的 array/hash table、可增长 `LuaStack`、显式 `LuaFrame`/`LuaThread`、open/closed `LuaUpvalue` 及 Lua/托管闭包。`LuaInterpreter` 直接执行 canonical IR，Lua 调用只压入逻辑 frame，不递归保留 CLR 调用栈；指令数、栈槽和调用深度均有独立预算。
+0.2.0 运行时基线采用引用字段加 64 位 payload 的 16-byte `LuaValue`。所有 collectable value 具有唯一 `LuaHeap` owner 和稳定对象编号；栈、table、upvalue、闭包、线程、handle、永久根及 pending continuation 的写入都执行 owner 校验与 barrier。跨 `LuaState` 写入和逻辑回收后的悬空对象访问会产生 Lua 运行时错误。
 
-基线已覆盖局部变量、upvalue、`_ENV`、表访问、函数/方法调用、开放多返回值、vararg、短路、算术/位运算、结构化控制流、goto 和三类循环。integer 算术使用 unchecked 二进制补码，floor division、modulo、shift 和 integer/float 精确相等不依赖 C# 默认运算符语义。
+`LuaHeap` 已实现 incremental/generational 三色状态机、gray/gray-again、old-to-young remembered set、逻辑分配债务、配额、安全点、每次分配触发的 stress 模式、minor/major promotion，以及独立于 CLR GC 的 sweep。atomic 阶段处理动态 `__mode`、弱键/弱值、PUC 字符串强引用例外、ephemeron fixed point 和 finalizer separation；finalizer 在解释器安全点执行，可通过 `LuaHandle` 复活对象，且异常进入 warning 通道。
 
-该基线不是元方法、逻辑 GC 或协程的替代实现。现阶段 table 操作只走 raw storage，非 nil `<close>` 值在缺少 `__close` 时按 Lua 错误拒绝；元表链、受保护错误展开、yield continuation、弱表/ephemeron/finalizer 和 barrier 按 `tasklist/0.1.0.md` 的依赖顺序继续实现。
+`LuaTable` 使用连续 array part 与开放寻址 hash part，hash 删除保留 tombstone 以支持 `next(table, deletedKey)`，rehash 后失效的键按 Lua 错误拒绝。键实现 integer/float 归一、NaN 拒绝、每 state 随机 seed，并分别维护 storage、shape、metatable version。逻辑容量变化计入 heap quota，所有强弱边及 metatable 写入都经过 barrier。
+
+`LuaInterpreter` 直接执行 canonical IR，Lua 调用和 Lua 元方法只压入显式 frame。共享调度覆盖 `__index`、`__newindex`、`__call`、算术/位运算、`__len`、`__concat`、`__eq`、`__lt`、`__le` 及其 fallback；类型元表与对象元表走同一路径，并具有 2,000 层链预算。普通算术和 numeric-for 使用与 lexer 共享的 Lua 数字解析器转换完整数字字符串，integer loop 在边界处用宽中间值判定，避免 64 位回绕造成额外迭代。
+
+Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换仍按 `tasklist/0.2.0.md` 的依赖计划推进。
 
 ## 9. 执行后端
 
@@ -414,6 +418,8 @@ Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Run
 - 分别测量冷启动、解释器吞吐、JIT 预热、稳定吞吐、AOT 体积和峰值内存；
 - 对照 PUC Lua 5.4.8、MoonSharp 与本项目解释器基线；
 - 未通过全部语义测试的优化不得进入默认优化级别。
+
+0.2.0 的 Windows x64/.NET 10 Release 基线使用 `benchmarks/Luac.Runtime.Benchmarks` 固化。1,000,000 次 table get/set 的代表值约为 199 ns/op，单次 10,000 轮空 numeric-for 约 5.2 ms，带加法约 9.9 ms，1,000 个 table 的 full logical GC 约 0.71 ms。空循环的稳态执行固定分配约 5 KiB（frame/结果对象），不再随 10,000 次循环迭代增长；单元门槛为每次热执行不超过 16 KiB。数值仅作为本机回归基线，不是跨硬件的绝对门槛。
 
 ## 15. 可观测性与失败模型
 

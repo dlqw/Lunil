@@ -219,6 +219,67 @@ public sealed class LuaInterpreterTests
             Execute(source));
     }
 
+    [Fact]
+    public void CoercesCompleteNumericStringsForArithmetic()
+    {
+        const string source = """
+            local integer = "12"
+            local hexadecimalFloat = "0x1.ap1"
+            return integer + 3, -integer, hexadecimalFloat * 2
+            """;
+
+        Assert.Equal(
+            [LuaValue.FromInteger(15), LuaValue.FromInteger(-12), LuaValue.FromFloat(6.5)],
+            Execute(source));
+    }
+
+    [Fact]
+    public void NumericForCoercesStringsAndStopsBeforeIntegerOverflow()
+    {
+        const string source = """
+            local sum = 0
+            for i = "1", "3", "1" do sum = sum + i end
+            local count = 0
+            for i = 0x7ffffffffffffffe, 0x7fffffffffffffff do
+                count = count + 1
+            end
+            return sum, count
+            """;
+
+        Assert.Equal(
+            [LuaValue.FromInteger(6), LuaValue.FromInteger(2)],
+            Execute(source));
+    }
+
+    [Fact]
+    public void NumericForRejectsAZeroStep()
+    {
+        var state = new LuaState();
+        var module = Compile("for i = 1, 2, 0 do end");
+
+        var exception = Assert.Throws<LuaRuntimeException>(() =>
+            new LuaInterpreter().Execute(state, state.CreateMainClosure(module)));
+
+        Assert.Contains("step is zero", exception.ErrorValue.AsString().ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmptyNumericForHotPathStaysWithinTheAllocationBudget()
+    {
+        var module = Compile("for i = 1, 10000 do end");
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+        var interpreter = new LuaInterpreter();
+        _ = interpreter.Execute(state, closure);
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        _ = interpreter.Execute(state, closure);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.InRange(allocated, 0, 16_384);
+    }
+
     private static LuaValue[] Execute(string source, LuaState? state = null)
     {
         state ??= new LuaState();

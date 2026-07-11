@@ -1,19 +1,19 @@
 using System.Text;
+using Luac.Runtime.Memory;
 
 namespace Luac.Runtime.Values;
 
 /// <summary>An immutable binary Lua string. UTF-16 is only a diagnostic view.</summary>
-public sealed class LuaString : IEquatable<LuaString>
+public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
 {
     private readonly byte[] _bytes;
     private readonly int _hashCode;
 
-    public LuaString(ReadOnlySpan<byte> bytes)
+    internal LuaString(LuaHeap owner, ReadOnlySpan<byte> bytes)
+        : base(owner, checked(32 + bytes.Length))
     {
         _bytes = bytes.ToArray();
-        var hash = new HashCode();
-        hash.AddBytes(_bytes);
-        _hashCode = hash.ToHashCode();
+        _hashCode = ComputeHashCode(_bytes);
     }
 
     public int Length => _bytes.Length;
@@ -30,22 +30,38 @@ public sealed class LuaString : IEquatable<LuaString>
     public override int GetHashCode() => _hashCode;
 
     public override string ToString() => Encoding.UTF8.GetString(_bytes);
+
+    internal override void Traverse(LuaGcVisitor visitor)
+    {
+    }
+
+    internal static int ComputeHashCode(ReadOnlySpan<byte> bytes)
+    {
+        var hash = new HashCode();
+        hash.AddBytes(bytes);
+        return hash.ToHashCode();
+    }
 }
 
 public sealed class LuaStringPool
 {
     private const int MaximumInternedLength = 40;
+    private readonly LuaHeap _heap;
     private readonly Dictionary<int, List<WeakReference<LuaString>>> _shortStrings = [];
+
+    internal LuaStringPool(LuaHeap heap)
+    {
+        _heap = heap;
+    }
 
     public LuaString GetOrCreate(ReadOnlySpan<byte> bytes)
     {
-        var candidate = new LuaString(bytes);
         if (bytes.Length > MaximumInternedLength)
         {
-            return candidate;
+            return new LuaString(_heap, bytes);
         }
 
-        var hashCode = candidate.GetHashCode();
+        var hashCode = LuaString.ComputeHashCode(bytes);
         if (!_shortStrings.TryGetValue(hashCode, out var bucket))
         {
             bucket = [];
@@ -54,16 +70,17 @@ public sealed class LuaStringPool
 
         for (var index = bucket.Count - 1; index >= 0; index--)
         {
-            if (!bucket[index].TryGetTarget(out var existing))
+            if (!bucket[index].TryGetTarget(out var existing) || !existing.IsAlive)
             {
                 bucket.RemoveAt(index);
             }
-            else if (existing.Equals(candidate))
+            else if (existing.AsSpan().SequenceEqual(bytes))
             {
                 return existing;
             }
         }
 
+        var candidate = new LuaString(_heap, bytes);
         bucket.Add(new WeakReference<LuaString>(candidate));
         return candidate;
     }

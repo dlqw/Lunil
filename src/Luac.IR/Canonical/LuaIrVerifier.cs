@@ -26,6 +26,12 @@ public static class LuaIrVerifier
         options ??= LuaIrVerifierOptions.Default;
         var errors = ImmutableArray.CreateBuilder<LuaIrVerificationError>();
 
+        if (module.Functions.IsDefault)
+        {
+            errors.Add(new(-1, -1, "The function array is not initialized."));
+            return errors.ToImmutable();
+        }
+
         if (module.FormatVersion != LuaIrModule.CurrentFormatVersion)
         {
             errors.Add(new(-1, -1, $"Unsupported canonical IR version {module.FormatVersion}."));
@@ -44,6 +50,12 @@ public static class LuaIrVerifier
         for (var index = 0; index < module.Functions.Length; index++)
         {
             var function = module.Functions[index];
+            if (function is null)
+            {
+                errors.Add(new(index, -1, "The function entry is null."));
+                continue;
+            }
+
             if (function.Id != index)
             {
                 errors.Add(new(function.Id, -1, "Function identifiers must be dense and ordered."));
@@ -61,13 +73,14 @@ public static class LuaIrVerifier
         LuaIrVerifierOptions options,
         ImmutableArray<LuaIrVerificationError>.Builder errors)
     {
-        if (function.RegisterCount < function.ParameterCount ||
+        if (function.ParameterCount < 0 ||
+            function.RegisterCount < function.ParameterCount ||
             function.RegisterCount > options.MaximumRegistersPerFunction)
         {
             errors.Add(new(function.Id, -1, "The function register count is invalid."));
         }
 
-        if (function.Instructions.IsEmpty ||
+        if (function.Instructions.IsDefaultOrEmpty ||
             function.Instructions.Length > options.MaximumInstructionsPerFunction)
         {
             errors.Add(new(function.Id, -1, "The function instruction count is invalid."));
@@ -79,7 +92,19 @@ public static class LuaIrVerifier
             errors.Add(new(function.Id, -1, "The parent function identifier is invalid."));
         }
 
-        VerifyUpvalues(module, function, errors);
+        if (function.Constants.IsDefault)
+        {
+            errors.Add(new(function.Id, -1, "The constant array is not initialized."));
+        }
+
+        if (function.Upvalues.IsDefault)
+        {
+            errors.Add(new(function.Id, -1, "The upvalue array is not initialized."));
+        }
+        else
+        {
+            VerifyUpvalues(module, function, errors);
+        }
 
         for (var pc = 0; pc < function.Instructions.Length; pc++)
         {
@@ -87,11 +112,7 @@ public static class LuaIrVerifier
         }
 
         var expectedBlocks = LuaIrControlFlow.Build(function.Instructions);
-        if (expectedBlocks.Length != function.BasicBlocks.Length ||
-            expectedBlocks.Where((expected, index) =>
-                expected.Start != function.BasicBlocks[index].Start ||
-                expected.Length != function.BasicBlocks[index].Length ||
-                !expected.Successors.SequenceEqual(function.BasicBlocks[index].Successors)).Any())
+        if (!BlocksMatch(expectedBlocks, function.BasicBlocks))
         {
             errors.Add(new(function.Id, -1, "Basic blocks do not match the instruction control flow."));
         }
@@ -114,7 +135,13 @@ public static class LuaIrVerifier
                 continue;
             }
 
-            var parent = module.Functions[function.ParentFunctionId];
+            if ((uint)function.ParentFunctionId >= (uint)module.Functions.Length ||
+                module.Functions[function.ParentFunctionId] is not { } parent)
+            {
+                errors.Add(new(function.Id, -1, $"Upvalue '{upvalue.Name}' has no valid parent function."));
+                continue;
+            }
+
             var valid = upvalue.SourceKind switch
             {
                 LuaIrUpvalueSourceKind.Register =>
@@ -148,6 +175,7 @@ public static class LuaIrVerifier
                 (uint)instruction.B < (uint)function.Constants.Length,
             LuaIrOpcode.LoadNil => RegisterRange(instruction.A, instruction.B),
             LuaIrOpcode.Move => Register(instruction.A) && Register(instruction.B),
+            LuaIrOpcode.SetTop => instruction.A >= 0 && instruction.A <= function.RegisterCount,
             LuaIrOpcode.GetUpvalue => Register(instruction.A) &&
                 (uint)instruction.B < (uint)function.Upvalues.Length,
             LuaIrOpcode.SetUpvalue => (uint)instruction.A < (uint)function.Upvalues.Length &&
@@ -161,7 +189,8 @@ public static class LuaIrVerifier
                 Register(instruction.C) && (instruction.D == -1 || RegisterRange(instruction.C, instruction.D)),
             LuaIrOpcode.Closure => Register(instruction.A) &&
                 (uint)instruction.B < (uint)module.Functions.Length &&
-                module.Functions[instruction.B].ParentFunctionId == function.Id,
+                module.Functions[instruction.B] is { } nested &&
+                nested.ParentFunctionId == function.Id,
             LuaIrOpcode.VarArg => Register(instruction.A) &&
                 (instruction.B == -1 || RegisterRange(instruction.A, instruction.B)),
             LuaIrOpcode.Unary => Register(instruction.A) && Register(instruction.B) &&
@@ -193,5 +222,28 @@ public static class LuaIrVerifier
         bool Target(int value) => (uint)value < (uint)function.Instructions.Length;
         bool Count(int value) => value == -1 || value >= 0;
         bool CloseBase(int value) => value == -1 || Register(value);
+    }
+
+    private static bool BlocksMatch(
+        ImmutableArray<LuaIrBasicBlock> expected,
+        ImmutableArray<LuaIrBasicBlock> actual)
+    {
+        if (actual.IsDefault || expected.Length != actual.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < expected.Length; index++)
+        {
+            if (expected[index].Start != actual[index].Start ||
+                expected[index].Length != actual[index].Length ||
+                actual[index].Successors.IsDefault ||
+                !expected[index].Successors.SequenceEqual(actual[index].Successors))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

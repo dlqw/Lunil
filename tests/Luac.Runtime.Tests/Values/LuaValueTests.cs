@@ -16,8 +16,8 @@ public sealed class LuaValueTests
     public void PreservesBinaryStringsAndNormalizesNumericEquality()
     {
         var bytes = new byte[] { 0, 0xff, 0x61 };
-        var first = LuaValue.FromString(new LuaString(bytes));
-        var second = LuaValue.FromString(new LuaString(bytes));
+        var first = LuaValue.FromString(new LuaState().Strings.GetOrCreate(bytes));
+        var second = LuaValue.FromString(new LuaState().Strings.GetOrCreate(bytes));
 
         Assert.Equal(first, second);
         Assert.Equal(LuaValue.FromInteger(1), LuaValue.FromFloat(1.0));
@@ -29,7 +29,7 @@ public sealed class LuaValueTests
     [Fact]
     public void TableUsesArrayPartAndUnifiedIntegerFloatKeys()
     {
-        var table = new LuaTable();
+        var table = new LuaState().CreateTable();
         table.Set(LuaValue.FromInteger(1), LuaValue.FromInteger(10));
         table.Set(LuaValue.FromFloat(2.0), LuaValue.FromInteger(20));
 
@@ -43,7 +43,7 @@ public sealed class LuaValueTests
     [Fact]
     public void InternsShortStringsButNotLongStrings()
     {
-        var pool = new LuaStringPool();
+        var pool = new LuaState().Strings;
         var shortBytes = new byte[] { 0x61, 0x62 };
         var longBytes = Enumerable.Repeat((byte)0x61, 41).ToArray();
 

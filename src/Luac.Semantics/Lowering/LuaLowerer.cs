@@ -573,6 +573,7 @@ public static class LuaLowerer
                     -1,
                     span: nodes[^1].Span));
                 CloseCurrentScope(statement.Span);
+                Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, _scopes[^1].EntryRegister));
                 Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: start, c: -1, span: statement.Span));
                 PatchTarget(exit, _instructions.Count);
                 _loops.Pop();
@@ -619,6 +620,7 @@ public static class LuaLowerer
                     LuaIrOpcode.Close,
                     baseRegister + 3,
                     span: statement.Span));
+                Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, baseRegister + 4));
                 Emit(new LuaIrInstruction(
                     LuaIrOpcode.NumericForLoop,
                     baseRegister,
@@ -686,6 +688,7 @@ public static class LuaLowerer
                     LuaIrOpcode.Close,
                     variableBase,
                     span: statement.Span));
+                Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, variableBase));
                 Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: loopStart, c: -1, span: statement.Span));
                 var end = _instructions.Count;
                 PatchTarget(exit, end);
@@ -1155,6 +1158,11 @@ public static class LuaLowerer
             private void DeactivateCurrentScope()
             {
                 var scope = _scopes[^1];
+                if (_localTop > scope.EntryRegister)
+                {
+                    Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, scope.EntryRegister));
+                }
+
                 foreach (var symbolId in scope.DeclaredSymbols)
                 {
                     _symbolRegisters.Remove(symbolId);
@@ -1178,7 +1186,15 @@ public static class LuaLowerer
                 _scopes.RemoveAt(_scopes.Count - 1);
             }
 
-            private void ResetTemporaries() => _nextRegister = _localTop;
+            private void ResetTemporaries()
+            {
+                if (_nextRegister > _localTop)
+                {
+                    Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, _localTop));
+                }
+
+                _nextRegister = _localTop;
+            }
 
             private int Reserve(int count)
             {

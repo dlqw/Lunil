@@ -139,7 +139,7 @@ public sealed record LuaIrFunction
 
 public sealed record LuaIrModule
 {
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     public int FormatVersion { get; init; } = CurrentFormatVersion;
 
