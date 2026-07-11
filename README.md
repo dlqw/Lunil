@@ -26,8 +26,10 @@ contains:
   errors, `pcall`/`xpcall`, and resumable reverse-order `__close` unwinding;
 - all PUC Lua 5.4 opcodes and binary-compatible 32-bit instruction layouts;
 - bounded PUC Lua 5.4 binary chunk reading and writing;
+- complete PUC prototype-to-canonical-IR conversion and direct binary chunk execution;
 - immutable prototype, constant, upvalue, and debug-information models;
-- a structural chunk verifier;
+- an execution-grade chunk verifier covering operands, associated instructions,
+  control flow, open stack windows, debug tables, and to-be-closed state;
 - round-trip and PUC Lua 5.4.8 interoperability fixtures;
 - deterministic table/GC fuzzing, malformed-IR fuzzing, PUC Lua 5.4.8 runtime
   differential fixtures, GC-stress tests, and a runtime benchmark harness.

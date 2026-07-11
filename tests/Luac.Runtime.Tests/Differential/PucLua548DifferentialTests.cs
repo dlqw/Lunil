@@ -52,6 +52,18 @@ public sealed class PucLua548DifferentialTests
         Assert.Equal(expected, actual);
     }
 
+    [Theory]
+    [MemberData(nameof(Scripts))]
+    public void ImportedBinaryChunkMatchesPucLua548ObservableResults(string source)
+    {
+        if (!IsPucLuaAvailable())
+        {
+            return;
+        }
+
+        Assert.Equal(RunPucLua(source), RunBinaryChunk(source));
+    }
+
     [Fact]
     public void DeterministicCoroutineStateMachineFuzzMatchesPucLua548()
     {
@@ -63,7 +75,9 @@ public sealed class PucLua548DifferentialTests
         for (var seed = 0; seed < 16; seed++)
         {
             var source = GenerateCoroutineStateMachine(seed);
-            Assert.Equal(RunPucLua(source), RunLuac(source));
+            var expected = RunPucLua(source);
+            Assert.Equal(expected, RunLuac(source));
+            Assert.Equal(expected, RunBinaryChunk(source));
         }
     }
 
@@ -105,7 +119,11 @@ public sealed class PucLua548DifferentialTests
         for i = 0x7ffffffffffffffe, 0x7fffffffffffffff do
             count = count + 1
         end
-        emit(decimal + 3, -decimal, hexadecimal * 2, count)
+        local stringLimitCount = 0
+        for i = 0x7ffffffffffffffe, "9223372036854775807" do
+            stringLimitCount = stringLimitCount + 1
+        end
+        emit(decimal + 3, -decimal, hexadecimal * 2, count, stringLimitCount)
         """,
         """
         local co = coroutine.create(function(a)
@@ -172,6 +190,42 @@ public sealed class PucLua548DifferentialTests
         emit(coroutine.resume(co))
         emit(coroutine.resume(co, 7))
         """,
+        """
+        local function iterator(limit, control)
+            control = control + 1
+            if control <= limit then return control, control * 2 end
+        end
+        local sum = 0
+        for key, value in iterator, 4, 0 do
+            sum = sum + key + value
+        end
+        emit(sum)
+        """,
+        """
+        local object = {}
+        object.answer = 2
+        object[3] = 4
+        local key = 5
+        object[key] = 6
+        function object:add(value) return self.answer + value end
+        local left, right, suffix = "a", 1, "c"
+        local selected = true and object:add(3) or 0
+        local fallback = false and 9 or 7
+        emit(selected, fallback, object[3], object[key], #(left .. right .. suffix))
+        """,
+        """
+        local value = 7
+        emit(value == 7, value ~= 8, value < 8, value <= 7, value > 6, value >= 7,
+            (value & 3), (value | 8), (value ~ 2), value << 2, value >> 1,
+            -value, ~value, not value)
+        """,
+        """
+        local value = setmetatable({}, {
+            __shl = function() return "left" end,
+            __shr = function() return "right" end,
+        })
+        emit(value << 2, value >> 2, 2 << value)
+        """,
     };
 
     private static bool IsPucLuaAvailable()
@@ -223,6 +277,25 @@ public sealed class PucLua548DifferentialTests
     private static string[] RunLuac(string source)
     {
         var output = new List<string>();
+        var state = CreateState(output);
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        new LuaInterpreter().Execute(state, state.CreateMainClosure(lowering.Module!));
+        return output.ToArray();
+    }
+
+    private static string[] RunBinaryChunk(string source)
+    {
+        var output = new List<string>();
+        var state = CreateState(output);
+        var binary = CompileWithPucLuac(source);
+        new LuaInterpreter().ExecuteBinaryChunk(state, binary);
+        return output.ToArray();
+    }
+
+    private static LuaState CreateState(List<string> output)
+    {
         var state = new LuaState();
         state.InstallProtectedCallFunctions();
         state.InstallCoroutineModule();
@@ -244,11 +317,43 @@ public sealed class PucLua548DifferentialTests
                     output.Add(string.Join('|', arguments.ToArray().Select(Encode)));
                     return [];
                 })));
-        var lowering = LuaLowerer.Lower(
-            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
-        Assert.Empty(lowering.Diagnostics);
-        new LuaInterpreter().Execute(state, state.CreateMainClosure(lowering.Module!));
-        return output.ToArray();
+        return state;
+    }
+
+    private static byte[] CompileWithPucLuac(string source)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"luac-differential-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var sourcePath = Path.Combine(directory, "fixture.lua");
+            var outputPath = Path.Combine(directory, "fixture.luac");
+            File.WriteAllText(
+                sourcePath,
+                source,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "luac",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("-o");
+            startInfo.ArgumentList.Add(outputPath);
+            startInfo.ArgumentList.Add(sourcePath);
+            using var process = Process.Start(startInfo) ??
+                throw new InvalidOperationException("Could not start PUC luac.");
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+            return File.ReadAllBytes(outputPath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static string GenerateCoroutineStateMachine(int seed)

@@ -157,11 +157,11 @@ public static class Lua54ChunkWriter
                     WriteByte(17);
                     break;
                 case Lua54ConstantKind.Float:
-                    WriteByte(3);
+                    WriteByte(19);
                     WriteNumber(constant.FloatValue);
                     break;
                 case Lua54ConstantKind.Integer:
-                    WriteByte(19);
+                    WriteByte(3);
                     WriteInteger(constant.IntegerValue);
                     break;
                 case Lua54ConstantKind.ShortString:

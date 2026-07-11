@@ -263,8 +263,8 @@ public static class Lua54ChunkReader
             const byte nilTag = 0;
             const byte falseTag = 1;
             const byte trueTag = 17;
-            const byte floatTag = 3;
-            const byte integerTag = 19;
+            const byte integerTag = 3;
+            const byte floatTag = 19;
             const byte shortStringTag = 4;
             const byte longStringTag = 20;
 

@@ -1,5 +1,6 @@
 using System.Text;
 using Luac.IR.Canonical;
+using Luac.IR.Lua54;
 using Luac.Runtime.Execution;
 using Luac.Runtime.Memory;
 using Luac.Runtime.Values;
@@ -36,7 +37,8 @@ public sealed class LuaState
 
     public event Action<LuaValue>? WarningRaised;
 
-    public LuaTable CreateTable() => new(Heap);
+    public LuaTable CreateTable(int arrayCapacity = 0, int hashCapacity = 0) =>
+        new(Heap, arrayCapacity, hashCapacity);
 
     public LuaThread CreateThread(int initialStackCapacity = 128) =>
         new(Heap, initialStackCapacity);
@@ -122,10 +124,26 @@ public sealed class LuaState
     {
         ArgumentNullException.ThrowIfNull(module);
         var function = module.Functions[module.MainFunctionId];
+        var upvalues = new LuaUpvalue[function.Upvalues.Length];
+        for (var index = 0; index < upvalues.Length; index++)
+        {
+            upvalues[index] = new LuaUpvalue(
+                Heap,
+                index == 0 ? LuaValue.FromTable(Globals) : LuaValue.Nil);
+        }
+
         return new LuaClosure(
             Heap,
             module,
             function,
-            [new LuaUpvalue(Heap, LuaValue.FromTable(Globals))]);
+            upvalues);
     }
+
+    public LuaClosure LoadBinaryChunk(
+        ReadOnlySpan<byte> binaryChunk,
+        Lua54ChunkReaderOptions? options = null) =>
+        CreateMainClosure(Lua54PrototypeConverter.Convert(binaryChunk, options));
+
+    public LuaClosure LoadBinaryChunk(Lua54Chunk chunk) =>
+        CreateMainClosure(Lua54PrototypeConverter.Convert(chunk));
 }

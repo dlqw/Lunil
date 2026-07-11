@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Luac.IR.Canonical;
+using Luac.IR.Lua54;
 using Luac.Runtime.Memory;
 using Luac.Runtime.Operations;
 using Luac.Runtime.Values;
@@ -43,6 +44,16 @@ public sealed class LuaInterpreter
         }
 
         return result;
+    }
+
+    public LuaExecutionResult ExecuteBinaryChunk(
+        LuaState state,
+        ReadOnlySpan<byte> binaryChunk,
+        ReadOnlySpan<LuaValue> arguments = default,
+        Lua54ChunkReaderOptions? readerOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return Execute(state, state.LoadBinaryChunk(binaryChunk, readerOptions), arguments);
     }
 
     public LuaExecutionResult Start(
@@ -802,7 +813,13 @@ public sealed class LuaInterpreter
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.NewTable:
-                Write(thread, frame, instruction.A, LuaValue.FromTable(state.CreateTable()));
+                Write(
+                    thread,
+                    frame,
+                    instruction.A,
+                    LuaValue.FromTable(state.CreateTable(
+                        instruction.C,
+                        instruction.B == 0 ? 0 : 1 << (instruction.B - 1))));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.GetTable:
@@ -959,7 +976,7 @@ public sealed class LuaInterpreter
 
             frame.Continuation.Kind = LuaContinuationKind.CoroutineYield;
             frame.Continuation.Base = returnBase;
-            frame.Continuation.ExpectedResults = instruction.C;
+            frame.Continuation.ExpectedResults = tailCall ? -1 : instruction.C;
             frame.Continuation.State = (tailCall ? 1 : 0) | (protectedCall ? 8 : 0);
             if (!tailCall)
             {
@@ -1042,7 +1059,7 @@ public sealed class LuaInterpreter
 
         frame.Continuation.Kind = LuaContinuationKind.CoroutineResume;
         frame.Continuation.Base = returnBase;
-        frame.Continuation.ExpectedResults = instruction.C;
+        frame.Continuation.ExpectedResults = tailCall ? -1 : instruction.C;
         frame.Continuation.State = (tailCall ? 1 : 0) | (wrap ? 2 : 0) |
             (protectedCall ? 8 : 0);
         if (!tailCall)
@@ -2203,56 +2220,69 @@ public sealed class LuaInterpreter
         var initial = Read(thread, frame, instruction.A);
         var limit = Read(thread, frame, instruction.A + 1);
         var step = Read(thread, frame, instruction.A + 2);
-        if (!LuaValueOperations.TryToNumber(initial, out initial) ||
-            !LuaValueOperations.TryToNumber(limit, out limit) ||
-            !LuaValueOperations.TryToNumber(step, out step))
+        bool skipLoop;
+        if (initial.Kind == LuaValueKind.Integer && step.Kind == LuaValueKind.Integer)
         {
-            throw new LuaRuntimeException("Numeric for values must be numbers or numeric strings.");
-        }
-
-        var integerMode = initial.Kind == LuaValueKind.Integer &&
-            limit.Kind == LuaValueKind.Integer && step.Kind == LuaValueKind.Integer;
-        bool enters;
-        if (integerMode)
-        {
-            Write(thread, frame, instruction.A, initial);
-            Write(thread, frame, instruction.A + 1, limit);
-            Write(thread, frame, instruction.A + 2, step);
-            if (step.AsInteger() == 0)
+            var initialInteger = initial.AsInteger();
+            var stepInteger = step.AsInteger();
+            if (stepInteger == 0)
             {
                 throw new LuaRuntimeException("'for' step is zero.");
             }
 
-            enters = step.AsInteger() >= 0
-                ? initial.AsInteger() <= limit.AsInteger()
-                : initial.AsInteger() >= limit.AsInteger();
-        }
-        else
-        {
-            initial = LuaValue.FromFloat(initial.AsFloat());
-            limit = LuaValue.FromFloat(limit.AsFloat());
-            step = LuaValue.FromFloat(step.AsFloat());
-            Write(thread, frame, instruction.A, initial);
-            Write(thread, frame, instruction.A + 1, limit);
-            Write(thread, frame, instruction.A + 2, step);
-            if (step.AsFloat() == 0)
-            {
-                throw new LuaRuntimeException("'for' step is zero.");
-            }
-
-            enters = step.AsFloat() >= 0
-                ? initial.AsFloat() <= limit.AsFloat()
-                : initial.AsFloat() >= limit.AsFloat();
-        }
-
-        if (enters)
-        {
             Write(thread, frame, instruction.A + 3, initial);
-            frame.ProgramCounter++;
+            skipLoop = TryGetIntegerForLimit(limit, stepInteger, out var limitInteger)
+                ? stepInteger > 0
+                    ? initialInteger > limitInteger
+                    : initialInteger < limitInteger
+                : LimitOutsideIntegerRange(limit, stepInteger, out limitInteger);
+            if (!skipLoop)
+            {
+                ulong count;
+                if (stepInteger > 0)
+                {
+                    count = unchecked((ulong)limitInteger - (ulong)initialInteger);
+                    if (stepInteger != 1)
+                    {
+                        count /= (ulong)stepInteger;
+                    }
+                }
+                else
+                {
+                    count = unchecked((ulong)initialInteger - (ulong)limitInteger);
+                    count /= unchecked((ulong)(-(stepInteger + 1)) + 1);
+                }
+
+                Write(thread, frame, instruction.A + 1, LuaValue.FromInteger(unchecked((long)count)));
+            }
         }
         else
+        {
+            var initialFloat = ToNumericForFloat(initial, "initial value");
+            var limitFloat = ToNumericForFloat(limit, "limit");
+            var stepFloat = ToNumericForFloat(step, "step");
+            if (stepFloat == 0)
+            {
+                throw new LuaRuntimeException("'for' step is zero.");
+            }
+
+            skipLoop = 0 < stepFloat ? limitFloat < initialFloat : initialFloat < limitFloat;
+            if (!skipLoop)
+            {
+                Write(thread, frame, instruction.A, LuaValue.FromFloat(initialFloat));
+                Write(thread, frame, instruction.A + 1, LuaValue.FromFloat(limitFloat));
+                Write(thread, frame, instruction.A + 2, LuaValue.FromFloat(stepFloat));
+                Write(thread, frame, instruction.A + 3, LuaValue.FromFloat(initialFloat));
+            }
+        }
+
+        if (skipLoop)
         {
             frame.ProgramCounter = instruction.B;
+        }
+        else
+        {
+            frame.ProgramCounter++;
         }
     }
 
@@ -2262,31 +2292,35 @@ public sealed class LuaInterpreter
         LuaIrInstruction instruction)
     {
         var index = Read(thread, frame, instruction.A);
-        var limit = Read(thread, frame, instruction.A + 1);
+        var counterOrLimit = Read(thread, frame, instruction.A + 1);
         var step = Read(thread, frame, instruction.A + 2);
         bool continues;
-        if (index.Kind == LuaValueKind.Integer && limit.Kind == LuaValueKind.Integer &&
-            step.Kind == LuaValueKind.Integer)
+        if (step.Kind == LuaValueKind.Integer)
         {
-            var currentInteger = index.AsInteger();
+            var count = unchecked((ulong)counterOrLimit.AsInteger());
             var stepInteger = step.AsInteger();
-            var nextInteger = (Int128)currentInteger + stepInteger;
-            continues = stepInteger > 0
-                ? nextInteger <= limit.AsInteger()
-                : nextInteger >= limit.AsInteger();
-            index = LuaValue.FromInteger(unchecked(currentInteger + stepInteger));
+            continues = count > 0;
+            if (continues)
+            {
+                index = LuaValue.FromInteger(unchecked(index.AsInteger() + stepInteger));
+                Write(
+                    thread,
+                    frame,
+                    instruction.A + 1,
+                    LuaValue.FromInteger(unchecked((long)(count - 1))));
+            }
         }
         else
         {
             index = LuaValue.FromFloat(index.AsFloat() + step.AsFloat());
-            continues = step.AsFloat() >= 0
-                ? index.AsFloat() <= limit.AsFloat()
-                : index.AsFloat() >= limit.AsFloat();
+            continues = 0 < step.AsFloat()
+                ? index.AsFloat() <= counterOrLimit.AsFloat()
+                : counterOrLimit.AsFloat() <= index.AsFloat();
         }
 
-        Write(thread, frame, instruction.A, index);
         if (continues)
         {
+            Write(thread, frame, instruction.A, index);
             Write(thread, frame, instruction.A + 3, index);
             frame.ProgramCounter = instruction.B;
         }
@@ -2294,6 +2328,67 @@ public sealed class LuaInterpreter
         {
             frame.ProgramCounter++;
         }
+    }
+
+    private static bool TryGetIntegerForLimit(LuaValue value, long step, out long result)
+    {
+        if (value.Kind == LuaValueKind.Integer)
+        {
+            result = value.AsInteger();
+            return true;
+        }
+
+        if (!LuaValueOperations.TryToNumber(value, out var number))
+        {
+            throw new LuaRuntimeException("Numeric for limit must be a number.");
+        }
+
+        if (number.Kind == LuaValueKind.Integer)
+        {
+            result = number.AsInteger();
+            return true;
+        }
+
+        var floatingPoint = number.AsFloat();
+        var rounded = step < 0 ? Math.Ceiling(floatingPoint) : Math.Floor(floatingPoint);
+        if (double.IsFinite(rounded) &&
+            rounded >= long.MinValue &&
+            rounded < 9_223_372_036_854_775_808d)
+        {
+            result = (long)rounded;
+            return true;
+        }
+
+        result = 0;
+        return false;
+    }
+
+    private static bool LimitOutsideIntegerRange(LuaValue value, long step, out long limit)
+    {
+        if (!LuaValueOperations.TryToNumber(value, out var number))
+        {
+            throw new LuaRuntimeException("Numeric for limit must be a number.");
+        }
+
+        var floatingPoint = number.AsFloat();
+        if (0 < floatingPoint)
+        {
+            limit = long.MaxValue;
+            return step < 0;
+        }
+
+        limit = long.MinValue;
+        return step > 0;
+    }
+
+    private static double ToNumericForFloat(LuaValue value, string role)
+    {
+        if (!LuaValueOperations.TryToNumber(value, out var number))
+        {
+            throw new LuaRuntimeException($"Numeric for {role} must be a number.");
+        }
+
+        return number.AsFloat();
     }
 
     private bool TryCloseFrom(

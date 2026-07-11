@@ -17,9 +17,50 @@ public sealed class LuaTable : LuaGcObject
     private int _tombstoneCount;
     private LuaTable? _metatable;
 
-    internal LuaTable(LuaHeap owner)
-        : base(owner, 64)
+    internal LuaTable(LuaHeap owner, int arrayCapacity = 0, int hashCapacity = 0)
+        : base(owner, CalculateLogicalSize(arrayCapacity, hashCapacity))
     {
+        if (arrayCapacity != 0)
+        {
+            _array.AddRange(Enumerable.Repeat(LuaValue.Nil, arrayCapacity));
+        }
+
+        if (hashCapacity != 0)
+        {
+            _buckets = new Bucket[NormalizeHashCapacity(hashCapacity)];
+        }
+    }
+
+    private static long CalculateLogicalSize(int arrayCapacity, int hashCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(arrayCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegative(hashCapacity);
+        var actualHashCapacity = NormalizeHashCapacity(hashCapacity);
+        return checked(64 + arrayCapacity * 16L + actualHashCapacity * BucketLogicalSize);
+    }
+
+    private static int NormalizeHashCapacity(int requestedCapacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(requestedCapacity);
+        if (requestedCapacity == 0)
+        {
+            return 0;
+        }
+
+        if (requestedCapacity > 1 << 30)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(requestedCapacity),
+                "Lua table hash capacity exceeds the supported range.");
+        }
+
+        var capacity = InitialHashCapacity;
+        while (capacity < requestedCapacity)
+        {
+            capacity *= 2;
+        }
+
+        return capacity;
     }
 
     public int ArrayCapacity => _array.Count;

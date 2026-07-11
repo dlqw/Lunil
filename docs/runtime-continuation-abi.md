@@ -5,6 +5,9 @@
 0.3.0 将所有可恢复执行边界统一为显式、可遍历的 tagged continuation。canonical IR
 保持版本 2；Lua 的 yield 仍是带 `MayYield` effect 的 `Call` 结果，不增加专用指令。
 
+> 0.4.0 因增加 PUC debug provenance 将 canonical 格式升级为 v3；本文件冻结的
+> call/yield/close opcode 与 continuation 约定未改变。
+
 ## Lua continuation
 
 `LuaContinuationKind` 覆盖普通 Lua call、tail call、protected call/error handler、

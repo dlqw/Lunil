@@ -97,6 +97,28 @@ public static class LuaIrVerifier
             errors.Add(new(function.Id, -1, "The constant array is not initialized."));
         }
 
+        if (function.SourceName.IsDefault || function.LocalVariables.IsDefault)
+        {
+            errors.Add(new(function.Id, -1, "The function debug metadata is not initialized."));
+        }
+        else
+        {
+            if (function.LineDefined < 0 || function.LastLineDefined < function.LineDefined)
+            {
+                errors.Add(new(function.Id, -1, "The function source line range is invalid."));
+            }
+
+            foreach (var local in function.LocalVariables)
+            {
+                if (local.Name.IsDefault || local.StartProgramCounter < 0 ||
+                    local.EndProgramCounter < local.StartProgramCounter ||
+                    local.EndProgramCounter > function.Instructions.Length)
+                {
+                    errors.Add(new(function.Id, -1, "A debug-local program-counter range is invalid."));
+                }
+            }
+        }
+
         if (function.Upvalues.IsDefault)
         {
             errors.Add(new(function.Id, -1, "The upvalue array is not initialized."));
@@ -108,6 +130,12 @@ public static class LuaIrVerifier
 
         for (var pc = 0; pc < function.Instructions.Length; pc++)
         {
+            if (function.Instructions[pc].SourceLine < 0 ||
+                function.Instructions[pc].LogicalProgramCounter < -1)
+            {
+                errors.Add(new(function.Id, pc, "Instruction provenance is invalid."));
+            }
+
             VerifyInstruction(module, function, pc, function.Instructions[pc], errors);
         }
 
@@ -180,7 +208,8 @@ public static class LuaIrVerifier
                 (uint)instruction.B < (uint)function.Upvalues.Length,
             LuaIrOpcode.SetUpvalue => (uint)instruction.A < (uint)function.Upvalues.Length &&
                 Register(instruction.B),
-            LuaIrOpcode.NewTable => Register(instruction.A),
+            LuaIrOpcode.NewTable => Register(instruction.A) &&
+                instruction.B is >= 0 and <= 31 && instruction.C >= 0,
             LuaIrOpcode.GetTable => Register(instruction.A) && Register(instruction.B) &&
                 Register(instruction.C),
             LuaIrOpcode.SetTable => Register(instruction.A) && Register(instruction.B) &&

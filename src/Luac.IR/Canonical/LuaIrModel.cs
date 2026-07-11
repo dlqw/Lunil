@@ -67,7 +67,17 @@ public sealed record LuaIrUpvalue(
     string Name,
     int SymbolId,
     LuaIrUpvalueSourceKind SourceKind,
-    int SourceIndex);
+    int SourceIndex)
+{
+    /// <summary>The original binary debug name when it cannot be represented losslessly as UTF-16.</summary>
+    public ImmutableArray<byte> DebugName { get; init; } = [];
+}
+
+/// <summary>A debug-local range in canonical program-counter coordinates.</summary>
+public sealed record LuaIrLocalVariable(
+    ImmutableArray<byte> Name,
+    int StartProgramCounter,
+    int EndProgramCounter);
 
 /// <summary>
 /// Four integer operands keep decoding branch-free. Their meaning is defined by the opcode.
@@ -81,7 +91,9 @@ public readonly record struct LuaIrInstruction
         int b = 0,
         int c = 0,
         int d = 0,
-        TextSpan span = default)
+        TextSpan span = default,
+        int sourceLine = 0,
+        int logicalProgramCounter = -1)
     {
         Opcode = opcode;
         A = a;
@@ -89,6 +101,8 @@ public readonly record struct LuaIrInstruction
         C = c;
         D = d;
         Span = span;
+        SourceLine = sourceLine;
+        LogicalProgramCounter = logicalProgramCounter;
     }
 
     public LuaIrOpcode Opcode { get; init; }
@@ -102,6 +116,12 @@ public readonly record struct LuaIrInstruction
     public int D { get; init; }
 
     public TextSpan Span { get; init; }
+
+    /// <summary>One-based source line, or zero when line information is unavailable.</summary>
+    public int SourceLine { get; init; }
+
+    /// <summary>The producer's logical instruction number, or -1 for source-lowered IR.</summary>
+    public int LogicalProgramCounter { get; init; }
 
     public LuaIrInstructionEffects Effects => LuaIrInstructionFacts.GetEffects(Opcode);
 }
@@ -122,6 +142,12 @@ public sealed record LuaIrFunction
 
     public required TextSpan Span { get; init; }
 
+    public ImmutableArray<byte> SourceName { get; init; } = [];
+
+    public int LineDefined { get; init; }
+
+    public int LastLineDefined { get; init; }
+
     public int ParameterCount { get; init; }
 
     public bool IsVarArg { get; init; }
@@ -134,12 +160,14 @@ public sealed record LuaIrFunction
 
     public ImmutableArray<LuaIrInstruction> Instructions { get; init; } = [];
 
+    public ImmutableArray<LuaIrLocalVariable> LocalVariables { get; init; } = [];
+
     public ImmutableArray<LuaIrBasicBlock> BasicBlocks { get; init; } = [];
 }
 
 public sealed record LuaIrModule
 {
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
 
     public int FormatVersion { get; init; } = CurrentFormatVersion;
 

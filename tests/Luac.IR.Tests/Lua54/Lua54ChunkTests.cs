@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using Luac.IR.Lua54;
 
 namespace Luac.IR.Tests.Lua54;
@@ -52,6 +53,59 @@ public sealed class Lua54ChunkTests
         Assert.Contains(
             chunk.MainPrototype.Constants,
             constant => constant.StringValue?.ToString() == "hello");
+    }
+
+    [Fact]
+    public void WriterUsesNumericTagsAcceptedByPucLua548()
+    {
+        if (!IsPucLuaAvailable())
+        {
+            return;
+        }
+
+        var prototype = CreatePrototype() with
+        {
+            Code =
+            [
+                Lua54Instruction.CreateABx(Lua54Opcode.LoadConstant, 0, 0),
+                Lua54Instruction.CreateABx(Lua54Opcode.LoadConstant, 1, 1),
+                Lua54Instruction.CreateAbc(Lua54Opcode.Return, 0, 3, 0),
+            ],
+            Constants = [Lua54Constant.FromInteger(7), Lua54Constant.FromFloat(1.5)],
+            LineInfo = [],
+            AbsoluteLineInfo = [],
+            LocalVariables = [],
+        };
+        var path = Path.Combine(Path.GetTempPath(), $"luac-writer-{Guid.NewGuid():N}.luac");
+        try
+        {
+            File.WriteAllBytes(
+                path,
+                Lua54ChunkWriter.Write(new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype)));
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "lua",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("-e");
+            startInfo.ArgumentList.Add(
+                $"local f=assert(loadfile([==[{path}]==], 'b')); " +
+                "local a,b=f(); print(math.type(a), b)");
+            using var process = Process.Start(startInfo) ??
+                throw new InvalidOperationException("Could not start PUC Lua.");
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+            Assert.Equal("integer\t1.5", output.Trim());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -126,6 +180,81 @@ public sealed class Lua54ChunkTests
         Assert.Contains(errors, error => error.Message.Contains("Jump target", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void VerifierRejectsUnpairedMetamethodAndOutOfRangeRegisters()
+    {
+        var prototype = CreatePrototype() with
+        {
+            Code =
+            [
+                Lua54Instruction.CreateAbc(Lua54Opcode.MetamethodBinary, 0, 1, 6),
+                Lua54Instruction.CreateAbc(Lua54Opcode.Move, 0, 2, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0),
+            ],
+            LineInfo = [],
+            AbsoluteLineInfo = [],
+            LocalVariables = [],
+        };
+
+        var errors = Lua54ChunkVerifier.Verify(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype));
+
+        Assert.Contains(errors, error => error.Message.Contains("MMBIN", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Message.Contains("MOVE", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VerifierRejectsControlFlowIntoAssociatedInstruction()
+    {
+        var prototype = CreatePrototype() with
+        {
+            Code =
+            [
+                Lua54Instruction.CreateSignedJump(Lua54Opcode.Jump, 1),
+                Lua54Instruction.CreateAbc(Lua54Opcode.NewTable, 0, 0, 0),
+                Lua54Instruction.CreateAx(Lua54Opcode.ExtraArgument, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0),
+            ],
+            LineInfo = [],
+            AbsoluteLineInfo = [],
+            LocalVariables = [],
+        };
+
+        var errors = Lua54ChunkVerifier.Verify(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype));
+
+        Assert.Contains(
+            errors,
+            error => error.Message.Contains("associated instruction", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VerifierRejectsInconsistentToBeClosedControlFlow()
+    {
+        var prototype = CreatePrototype() with
+        {
+            Code =
+            [
+                Lua54Instruction.CreateAbc(Lua54Opcode.Test, 0, 0, 0, k: true),
+                Lua54Instruction.CreateSignedJump(Lua54Opcode.Jump, 2),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ToBeClosed, 1, 0, 0),
+                Lua54Instruction.CreateSignedJump(Lua54Opcode.Jump, 1),
+                Lua54Instruction.CreateAbc(Lua54Opcode.Move, 0, 0, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0),
+            ],
+            LineInfo = [],
+            AbsoluteLineInfo = [],
+            LocalVariables = [],
+        };
+
+        var errors = Lua54ChunkVerifier.Verify(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype));
+
+        Assert.Contains(
+            errors,
+            error => error.Message.Contains("to-be-closed", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static Lua54Prototype CreatePrototype() => new()
     {
         Source = Lua54String.FromUtf8("@roundtrip.lua"),
@@ -141,7 +270,7 @@ public sealed class Lua54ChunkTests
         ],
         Upvalues = [],
         NestedPrototypes = [],
-        LineInfo = [0],
+        LineInfo = [sbyte.MinValue],
         AbsoluteLineInfo = [new Lua54AbsoluteLineInfo(0, 1)],
         LocalVariables =
         [
@@ -149,4 +278,29 @@ public sealed class Lua54ChunkTests
         ],
         UpvalueNames = [],
     };
+
+    private static bool IsPucLuaAvailable()
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "lua",
+                Arguments = "-v",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            process?.WaitForExit(5_000);
+            return process is { ExitCode: 0 } &&
+                (process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd())
+                .Contains("Lua 5.4", StringComparison.Ordinal);
+        }
+        catch (Exception exception) when (
+            exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return false;
+        }
+    }
 }
