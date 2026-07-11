@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.5.0--alpha.1-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.1-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,9 +28,9 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.5.0-alpha.1`**. Compiler and runtime foundations are
-> functional and extensively tested, but the public API, standard library, official
-> Lua test-suite coverage, and optimizing execution backends are not yet complete.
+> Lunil is currently **`0.6.0-alpha.1`**. The compiler, managed runtime, and complete
+> Lua 5.4 standard library are functional and extensively tested, but the public API,
+> full official Lua test-suite coverage, and optimizing execution backends are not yet complete.
 > It is not a production-stable Lua replacement yet.
 
 ## Table of contents
@@ -73,7 +73,7 @@ collector.
 | Binary chunks | Implemented | Bounded Lua 5.4 reader/writer/verifier and PUC prototype conversion |
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
-| Standard library | In progress | Coroutine module is available; the complete Lua 5.4 library is not yet shipped |
+| Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
 | JIT / AOT backends | Planned | CoreCLR CIL JIT, persisted CIL and build-time NativeAOT |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
@@ -102,10 +102,24 @@ collector.
 - Shared type/object metatable dispatch, `pcall`/`xpcall`, and resumable `__close`
   unwinding.
 
+### Standard library
+
+- Complete managed Lua 5.4 basic, coroutine, table, string, math, utf8, package, io,
+  os, and debug libraries, installed together with `LuaStandardLibrary.InstallAll`.
+- Explicit Lua pattern VM, `string.format`, binary `pack`/`unpack`, and canonical
+  IR-to-Lua 5.4 chunk generation for `string.dump`.
+- Full/light userdata, registry, file userdata lifecycle, close/finalizer behavior,
+  debug hooks, nested resumable callbacks, and generic-for closing values.
+- Injectable filesystem, console, environment, operating-system, clock, process,
+  locale, timezone, and pipe providers for deterministic or sandboxed hosts.
+- Pure Lua `package` loaders are supported. Native Lua C modules remain unsupported
+  because Lunil does not expose the Lua C ABI.
+
 ### Verification and quality
 
 - Execution-grade chunk and IR verification.
-- PUC Lua 5.4.8 binary and runtime differential fixtures.
+- PUC Lua 5.4.8 binary/runtime differential fixtures and portable standard-library
+  suites for strings, patterns, packing, math, UTF-8, files, loading, and debug behavior.
 - Deterministic malformed-IR, table, GC, and coroutine fuzzing.
 - GC-stress and ownership tests plus a runtime benchmark harness.
 - CI on Windows, Linux, and macOS with release bundles for x64 and Arm64.
@@ -139,9 +153,9 @@ dotnet run --configuration Release \
 
 ## Using Lunil as a library
 
-Until the first tagged prerelease is published, reference the projects directly from
-a checkout. Tagged releases publish the corresponding `Lunil.*` NuGet packages and
-symbol packages to GitHub Packages.
+Tagged releases provide six RID bundles and publish the corresponding `Lunil.*`
+NuGet and symbol packages to GitHub Packages. Projects may also be referenced directly
+from a source checkout.
 
 The following example parses Lua source, binds and lowers it to canonical IR, verifies
 the IR, and executes it with the reference interpreter:
@@ -153,6 +167,7 @@ using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Semantics.Binding;
 using Lunil.Semantics.Lowering;
+using Lunil.StandardLibrary;
 using Lunil.Syntax.Parsing;
 
 const string lua = """
@@ -184,6 +199,7 @@ if (!verificationErrors.IsEmpty)
 }
 
 var state = new LuaState();
+LuaStandardLibrary.InstallAll(state);
 var closure = state.CreateMainClosure(lowering.Module);
 var result = new LuaInterpreter().Execute(state, closure);
 
@@ -195,6 +211,7 @@ To execute a validated PUC Lua 5.4 binary chunk:
 ```csharp
 var bytecode = File.ReadAllBytes("program.luac");
 var state = new LuaState();
+LuaStandardLibrary.InstallAll(state);
 var result = new LuaInterpreter().ExecuteBinaryChunk(state, bytecode);
 ```
 
@@ -267,7 +284,7 @@ known non-goals of the current milestone.
 Lunil follows [SemVer 2.0](https://semver.org/). The current promotion sequence is:
 
 ```text
-0.5.0-alpha.N -> 0.5.0-beta.N -> 0.5.0-rc.N -> 0.5.0
+0.6.0-alpha.N -> 0.6.0-beta.N -> 0.6.0-rc.N -> 0.6.0
 ```
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
