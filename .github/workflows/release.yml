@@ -104,7 +104,6 @@ jobs:
       - packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
@@ -126,9 +125,15 @@ jobs:
         if: contains(needs.validate.outputs.version, '-')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg --verify-tag --generate-notes --prerelease --title 'Lunil ${{ needs.validate.outputs.version }}'
+        run: |
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg \
+            --repo '${{ github.repository }}' --verify-tag --generate-notes --prerelease \
+            --title 'Lunil ${{ needs.validate.outputs.version }}'
       - name: Create stable GitHub release
         if: ${{ !contains(needs.validate.outputs.version, '-') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg --verify-tag --generate-notes --title 'Lunil ${{ needs.validate.outputs.version }}'
+        run: |
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg \
+            --repo '${{ github.repository }}' --verify-tag --generate-notes \
+            --title 'Lunil ${{ needs.validate.outputs.version }}'
