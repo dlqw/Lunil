@@ -5,17 +5,17 @@ Git tags, changelog names, binary bundle names, and GitHub releases all derive f
 one version declared in `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.5.0</VersionPrefix>
+<VersionPrefix>0.6.0</VersionPrefix>
 <VersionSuffix>alpha.1</VersionSuffix>
 ```
 
-The resulting version is `0.5.0-alpha.1` and its tag is `v0.5.0-alpha.1`.
+The resulting version is `0.6.0-alpha.1` and its tag is `v0.6.0-alpha.1`.
 `VersionSuffix` is removed for a stable release.
 
 ## Compatibility while below 1.0
 
-- Minor releases such as `0.5.0` may contain breaking public API changes.
-- Patch releases such as `0.5.1` are backward-compatible fixes and refinements.
+- Minor releases such as `0.6.0` may contain breaking public API changes.
+- Patch releases such as `0.6.1` are backward-compatible fixes and refinements.
 - Every intentional break must be identified in the matching changelog.
 - `1.0.0` will declare the first supported stable public API contract.
 
@@ -30,7 +30,7 @@ The resulting version is `0.5.0-alpha.1` and its tag is `v0.5.0-alpha.1`.
 Promotion for this milestone is therefore:
 
 ```text
-0.5.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.5.0
+0.6.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.6.0
 ```
 
 Numbers increase monotonically within a channel. Published versions and tags are
