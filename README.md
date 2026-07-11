@@ -1,0 +1,34 @@
+# Luac
+
+Luac is a pure C# Lua 5.4.8 compiler and runtime targeting .NET 10. The planned
+execution stack includes a reference interpreter, CoreCLR CIL JIT, persisted
+CIL AOT, and build-time .NET NativeAOT integration.
+
+The repository is in its compiler-foundation stage. The current implementation
+contains:
+
+- immutable byte-oriented Lua source text and byte/UTF-16 location mapping;
+- a lossless, bounded Lua 5.4 lexer with complete trivia and literal decoding;
+- a complete error-tolerant Lua 5.4 parser with immutable syntax trees;
+- lexical semantic binding for locals, captures, `_ENV`, attributes, labels, and gotos;
+- verified canonical register IR and syntax/semantic-model lowering;
+- a 16-byte value representation, binary strings, tables, explicit Lua stacks/frames,
+  closures, and identity-bearing open/closed upvalues;
+- a baseline canonical IR interpreter with Lua/native calls, multiple results,
+  varargs, control flow, and resource budgets;
+- all PUC Lua 5.4 opcodes and binary-compatible 32-bit instruction layouts;
+- bounded PUC Lua 5.4 binary chunk reading and writing;
+- immutable prototype, constant, upvalue, and debug-information models;
+- a structural chunk verifier;
+- round-trip and PUC Lua 5.4.8 interoperability fixtures.
+
+The approved architecture and compatibility contract are documented in
+[`docs/compiler-design.md`](docs/compiler-design.md).
+
+## Build and test
+
+```powershell
+dotnet restore Luac.sln
+dotnet test Luac.sln --configuration Release
+dotnet format Luac.sln --verify-no-changes --no-restore
+```
