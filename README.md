@@ -1,6 +1,8 @@
-# Luac
+# Lunil
 
-Luac is a pure C# Lua 5.4.8 compiler and runtime targeting .NET 10. The planned
+[![CI](https://github.com/dlqw/Lunil/actions/workflows/ci.yml/badge.svg)](https://github.com/dlqw/Lunil/actions/workflows/ci.yml)
+
+Lunil is a pure C# Lua 5.4.8 compiler and runtime targeting .NET 10. The planned
 execution stack includes a reference interpreter, CoreCLR CIL JIT, persisted
 CIL AOT, and build-time .NET NativeAOT integration.
 
@@ -42,8 +44,17 @@ The frozen 0.3.0 runtime ABI is documented in
 ## Build and test
 
 ```powershell
-dotnet restore Luac.sln
-dotnet test Luac.sln --configuration Release
-dotnet format Luac.sln --verify-no-changes --no-restore
-dotnet run --configuration Release --project benchmarks/Luac.Runtime.Benchmarks -- 1000000
+dotnet restore Lunil.sln
+dotnet test Lunil.sln --configuration Release
+dotnet format Lunil.sln --verify-no-changes --no-restore
+dotnet run --configuration Release --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
 ```
+
+## Packages and release artifacts
+
+Every tagged release publishes symbol-enabled NuGet packages and binary bundles for
+Windows, Linux, and macOS on x64 and Arm64. Release bundles contain the complete set
+of Lunil assemblies, symbols, the README, and the matching version changelog.
+
+Development and release branches are described in
+[`docs/branching.md`](docs/branching.md).

@@ -11,7 +11,7 @@ TestResults/
 *.suo
 
 # Compiler caches
-.luac-cache/
+.lunil-cache/
 
 # Local agent instructions and working material
 .codex/
