@@ -1,51 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
   <title id="title">Lunil</title>
-  <desc id="description">A crescent moon and orbital code mark for the Lunil Lua runtime</desc>
+  <desc id="description">A quiet crescent moon with a single blue point</desc>
   <defs>
-    <linearGradient id="background" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#111827"/>
-      <stop offset="0.55" stop-color="#312e81"/>
-      <stop offset="1" stop-color="#0f172a"/>
+    <linearGradient id="background" x1="84" y1="64" x2="430" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1c2031"/>
+      <stop offset="1" stop-color="#25263d"/>
     </linearGradient>
-    <linearGradient id="moon" x1="126" y1="116" x2="326" y2="350" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#c4b5fd"/>
-      <stop offset="0.52" stop-color="#8b5cf6"/>
-      <stop offset="1" stop-color="#38bdf8"/>
+    <linearGradient id="crescent" x1="140" y1="128" x2="330" y2="404" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#bbb6db"/>
+      <stop offset="1" stop-color="#829fb7"/>
     </linearGradient>
-    <linearGradient id="orbit" x1="76" y1="372" x2="454" y2="166" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.28"/>
-      <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.92"/>
-      <stop offset="1" stop-color="#e0e7ff" stop-opacity="0.34"/>
-    </linearGradient>
-    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="8" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
     <mask id="crescentMask">
       <rect width="512" height="512" fill="black"/>
-      <circle cx="232" cy="238" r="116" fill="white"/>
-      <circle cx="286" cy="194" r="112" fill="black"/>
+      <circle cx="238" cy="262" r="142" fill="white"/>
+      <circle cx="296" cy="214" r="128" fill="black"/>
     </mask>
   </defs>
 
-  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#background)"/>
-  <rect x="40" y="40" width="432" height="432" rx="104" fill="none" stroke="#a5b4fc" stroke-opacity="0.14" stroke-width="2"/>
-
-  <ellipse cx="256" cy="268" rx="178" ry="104" transform="rotate(-24 256 268)" fill="none" stroke="url(#orbit)" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="410" cy="187" r="13" fill="#7dd3fc" filter="url(#softGlow)"/>
-  <circle cx="410" cy="187" r="5" fill="#f8fafc"/>
-
-  <circle cx="232" cy="238" r="116" fill="url(#moon)" mask="url(#crescentMask)" filter="url(#softGlow)"/>
-
-  <g fill="none" stroke="#f8fafc" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M205 354l-34 26 34 26"/>
-    <path d="M307 354l34 26-34 26"/>
-  </g>
-  <path d="M275 344l-38 72" stroke="#7dd3fc" stroke-width="14" stroke-linecap="round"/>
-
-  <circle cx="113" cy="326" r="6" fill="#c4b5fd"/>
-  <circle cx="139" cy="373" r="4" fill="#7dd3fc"/>
+  <rect x="32" y="32" width="448" height="448" rx="108" fill="url(#background)"/>
+  <circle cx="238" cy="262" r="142" fill="url(#crescent)" mask="url(#crescentMask)"/>
+  <circle cx="362" cy="190" r="19" fill="#71a8c2"/>
 </svg>
