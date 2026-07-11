@@ -28,6 +28,21 @@ public sealed class LuaClosure : LuaGcObject
 
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
 
+    public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
+
+    public void JoinUpvalue(int index, LuaClosure source, int sourceIndex)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (!ReferenceEquals(Owner, source.Owner))
+        {
+            throw new LuaRuntimeException("cannot join upvalues from different Lua states");
+        }
+
+        var upvalue = source._upvalues[sourceIndex];
+        Owner.WriteBarrier(this, upvalue);
+        _upvalues[index] = upvalue;
+    }
+
     internal override void Traverse(LuaGcVisitor visitor)
     {
         foreach (var upvalue in _upvalues)
@@ -86,12 +101,16 @@ public readonly struct LuaNativeStep
         LuaNativeStepKind kind,
         LuaValue callable,
         LuaValue[] values,
-        int continuationId)
+        int continuationId,
+        LuaValue[] stateValues,
+        bool callIsYieldable)
     {
         Kind = kind;
         Callable = callable;
         Values = values;
         ContinuationId = continuationId;
+        StateValues = stateValues;
+        CallIsYieldable = callIsYieldable;
     }
 
     public LuaNativeStepKind Kind { get; }
@@ -102,17 +121,44 @@ public readonly struct LuaNativeStep
 
     public int ContinuationId { get; }
 
+    /// <summary>
+    /// GC-visible state owned by this native invocation while it is waiting for a Lua call
+    /// or a coroutine resume. It is distinct from callback/resume values and is never shared
+    /// through descriptor or closure state.
+    /// </summary>
+    public LuaValue[] StateValues { get; }
+
+    /// <summary>Whether a Lua callback may yield across this native call boundary.</summary>
+    public bool CallIsYieldable { get; }
+
     public static LuaNativeStep Completed(params LuaValue[] values) =>
-        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0);
+        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true);
 
     public static LuaNativeStep CallLua(
         LuaValue callable,
         LuaValue[] arguments,
-        int continuationId) =>
-        new(LuaNativeStepKind.CallLua, callable, arguments, continuationId);
+        int continuationId,
+        LuaValue[]? stateValues = null,
+        bool callIsYieldable = true) =>
+        new(
+            LuaNativeStepKind.CallLua,
+            callable,
+            arguments,
+            continuationId,
+            stateValues ?? [],
+            callIsYieldable);
 
-    public static LuaNativeStep Yielded(LuaValue[] values, int continuationId) =>
-        new(LuaNativeStepKind.Yielded, LuaValue.Nil, values, continuationId);
+    public static LuaNativeStep Yielded(
+        LuaValue[] values,
+        int continuationId,
+        LuaValue[]? stateValues = null) =>
+        new(
+            LuaNativeStepKind.Yielded,
+            LuaValue.Nil,
+            values,
+            continuationId,
+            stateValues ?? [],
+            true);
 }
 
 /// <summary>Owner-aware context supplied to a resumable native descriptor.</summary>
@@ -121,11 +167,13 @@ public readonly struct LuaNativeCallContext
     internal LuaNativeCallContext(
         LuaState state,
         LuaThread thread,
-        LuaNativeClosure? closure)
+        LuaNativeClosure? closure,
+        IReadOnlyList<LuaValue>? invocationState = null)
     {
         State = state;
         Thread = thread;
         Closure = closure;
+        InvocationState = invocationState ?? [];
     }
 
     public LuaState State { get; }
@@ -135,6 +183,17 @@ public readonly struct LuaNativeCallContext
     public LuaNativeClosure? Closure { get; }
 
     public IReadOnlyList<LuaValue> Captures => Closure?.Captures ?? [];
+
+    /// <summary>Per-invocation values preserved by the preceding resumable native step.</summary>
+    public IReadOnlyList<LuaValue> InvocationState { get; }
+
+    /// <summary>
+    /// Creates a context for an immediate continuation of the same native activation.
+    /// This keeps state-machine code identical whether a runtime operation completed
+    /// immediately or required a Lua callback.
+    /// </summary>
+    public LuaNativeCallContext WithInvocationState(IReadOnlyList<LuaValue> invocationState) =>
+        new(State, Thread, Closure, invocationState);
 }
 
 public sealed class LuaNativeFunction
@@ -206,6 +265,7 @@ public sealed class LuaNativeFunction
 public sealed class LuaNativeClosure : LuaGcObject
 {
     private readonly LuaValue[] _captures;
+    private readonly object[] _captureIdentities;
 
     internal LuaNativeClosure(
         LuaHeap owner,
@@ -217,6 +277,7 @@ public sealed class LuaNativeClosure : LuaGcObject
     {
         Descriptor = descriptor;
         _captures = captures.ToArray();
+        _captureIdentities = Enumerable.Range(0, captures.Length).Select(static _ => new object()).ToArray();
         foreach (var value in _captures)
         {
             owner.WriteBarrier(this, value);
@@ -237,6 +298,8 @@ public sealed class LuaNativeClosure : LuaGcObject
         Owner.WriteBarrier(this, value);
         _captures[index] = value;
     }
+
+    public object GetCaptureIdentity(int index) => _captureIdentities[index];
 
     internal override void Traverse(LuaGcVisitor visitor)
     {

@@ -46,6 +46,16 @@ internal sealed class LuaContinuation
 
     public bool IsCloseHandler { get; set; }
 
+    public bool IsYieldBarrier { get; set; }
+
+    public bool IsNativeProtectedBoundary { get; set; }
+
+    public int NativeProtectedReturnBase { get; set; }
+
+    public int NativeProtectedExpectedResults { get; set; }
+
+    public bool NativeProtectedTailCall { get; set; }
+
     public bool IsEmpty => Kind == LuaContinuationKind.None;
 
     public void Reset()
@@ -58,5 +68,6 @@ internal sealed class LuaContinuation
         Transform = LuaResultTransform.None;
         Value = LuaValue.Nil;
         Values = [];
+        IsYieldBarrier = false;
     }
 }

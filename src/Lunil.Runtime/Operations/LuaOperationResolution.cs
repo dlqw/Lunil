@@ -2,13 +2,13 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Operations;
 
-internal enum LuaResultTransform : byte
+public enum LuaResultTransform : byte
 {
     None,
     LogicalNot,
 }
 
-internal readonly record struct LuaOperationResolution
+public readonly record struct LuaOperationResolution
 {
     private LuaOperationResolution(
         bool requiresCall,

@@ -3,7 +3,7 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Operations;
 
-internal static class LuaRuntimeOperations
+public static class LuaRuntimeOperations
 {
     private const int MaximumMetamethodChainLength = 2_000;
 
@@ -149,6 +149,22 @@ internal static class LuaRuntimeOperations
                 LuaValueOperations.Binary(state, operation, numericLeft, numericRight));
         }
 
+        if (IsBitwise(operation) && IsNumber(left) && IsNumber(right))
+        {
+            if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
+            {
+                var positiveInfinity =
+                    left.Kind == LuaValueKind.Float && double.IsPositiveInfinity(left.AsFloat()) ||
+                    right.Kind == LuaValueKind.Float && double.IsPositiveInfinity(right.AsFloat());
+                throw new LuaRuntimeException(positiveInfinity
+                    ? "number (field 'huge') has no integer representation"
+                    : "number has no integer representation");
+            }
+
+            return LuaOperationResolution.Immediate(
+                LuaValueOperations.Binary(state, operation, left, right));
+        }
+
         if (CanExecutePrimitive(operation, left, right))
         {
             return LuaOperationResolution.Immediate(
@@ -218,9 +234,12 @@ internal static class LuaRuntimeOperations
         LuaValue value,
         LuaMetamethod metamethod)
     {
-        var metatable = value.Kind == LuaValueKind.Table
-            ? value.AsTable().Metatable
-            : state.GetTypeMetatable(value.Kind);
+        var metatable = value.Kind switch
+        {
+            LuaValueKind.Table => value.AsTable().Metatable,
+            LuaValueKind.Userdata => value.AsUserdata().Metatable,
+            _ => state.GetTypeMetatable(value.Kind),
+        };
         return metatable?.GetStringField(LuaMetamethodFacts.GetName(metamethod)) ?? LuaValue.Nil;
     }
 
@@ -230,7 +249,8 @@ internal static class LuaRuntimeOperations
         LuaValue right,
         bool negate)
     {
-        if (left == right || left.Kind != LuaValueKind.Table || right.Kind != LuaValueKind.Table)
+        if (left == right || left.Kind != right.Kind ||
+            left.Kind is not (LuaValueKind.Table or LuaValueKind.Userdata))
         {
             var equal = left == right;
             return LuaOperationResolution.Immediate(LuaValue.FromBoolean(negate ? !equal : equal));
@@ -319,4 +339,9 @@ internal static class LuaRuntimeOperations
         LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or LuaIrBinaryOperator.Multiply or
         LuaIrBinaryOperator.Divide or LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
         LuaIrBinaryOperator.Power;
+
+    private static bool IsBitwise(LuaIrBinaryOperator operation) => operation is
+        LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
+        LuaIrBinaryOperator.BitwiseXor or LuaIrBinaryOperator.ShiftLeft or
+        LuaIrBinaryOperator.ShiftRight;
 }

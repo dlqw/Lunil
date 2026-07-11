@@ -56,6 +56,16 @@ public sealed class LuaThread : LuaGcObject
 
     public IReadOnlyList<LuaFrame> Frames => _frames;
 
+    public LuaValue DebugHook { get; internal set; }
+
+    public LuaDebugHookMask DebugHookMask { get; internal set; }
+
+    public int DebugHookCount { get; internal set; }
+
+    internal int DebugHookCounter { get; set; }
+
+    internal bool IsRunningDebugHook { get; set; }
+
     internal LuaFrame CurrentFrame => _frames[^1];
 
     internal int FrameCount => _frames.Count;
@@ -127,6 +137,7 @@ public sealed class LuaThread : LuaGcObject
         _yieldedValues.Clear();
         _resumeValues.Clear();
         Status = LuaThreadStatus.New;
+        IsRunningDebugHook = false;
     }
 
     internal void Initialize(LuaValue entry)
@@ -198,6 +209,7 @@ public sealed class LuaThread : LuaGcObject
     {
         visitor.Visit(Entry);
         visitor.Visit(TerminalError);
+        visitor.Visit(DebugHook);
         if (Resumer is not null)
         {
             visitor.Visit(Resumer);

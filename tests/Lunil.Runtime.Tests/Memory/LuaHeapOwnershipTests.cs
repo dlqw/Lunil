@@ -68,12 +68,12 @@ public sealed class LuaHeapOwnershipTests
     {
         var options = new LuaStateOptions
         {
-            Heap = LuaHeapOptions.Default with { MaximumLogicalBytes = 2_300 },
+            Heap = LuaHeapOptions.Default with { MaximumLogicalBytes = 2_400 },
         };
         var state = new LuaState(options);
 
         Assert.Throws<LuaRuntimeException>(() =>
             state.Strings.GetOrCreate(new byte[100]));
-        Assert.Equal(2, state.Heap.ObjectCount);
+        Assert.Equal(3, state.Heap.ObjectCount);
     }
 }

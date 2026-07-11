@@ -18,8 +18,10 @@ public sealed class LuaState
         Heap = new LuaHeap(options.Heap);
         Strings = new LuaStringPool(Heap);
         Globals = new LuaTable(Heap);
+        Registry = new LuaTable(Heap);
         MainThread = new LuaThread(Heap, options.MainThreadInitialStackCapacity);
         Heap.AddPermanentRoot(Globals);
+        Heap.AddPermanentRoot(Registry);
         Heap.AddPermanentRoot(MainThread);
     }
 
@@ -29,11 +31,17 @@ public sealed class LuaState
 
     public LuaTable Globals { get; }
 
+    /// <summary>Per-state registry used by the standard library and embedding hosts.</summary>
+    public LuaTable Registry { get; }
+
     public LuaThread MainThread { get; }
 
     public LuaThread? RunningThread { get; internal set; }
 
+    public LuaValue RunningNativeFunction { get; internal set; }
+
     internal bool RunningThreadIsYieldable { get; set; }
+
 
     public event Action<LuaValue>? WarningRaised;
 
@@ -42,6 +50,12 @@ public sealed class LuaState
 
     public LuaThread CreateThread(int initialStackCapacity = 128) =>
         new(Heap, initialStackCapacity);
+
+    public LuaUserdata CreateUserdata(
+        object? payload = null,
+        int userValueCount = 1,
+        long payloadLogicalSize = 0) =>
+        new(Heap, payload, userValueCount, payloadLogicalSize);
 
     public LuaThread CreateThread(LuaValue entry, int initialStackCapacity = 128)
     {
@@ -81,6 +95,12 @@ public sealed class LuaState
     }
 
     internal void ReportWarning(LuaValue warning) => WarningRaised?.Invoke(warning);
+
+    public void RaiseWarning(LuaValue warning)
+    {
+        Heap.ValidateValue(warning);
+        ReportWarning(warning);
+    }
 
     public void SetGlobal(string name, LuaValue value)
     {

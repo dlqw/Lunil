@@ -1,6 +1,7 @@
 using System.Globalization;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Runtime.Values;
 
@@ -15,6 +16,8 @@ public enum LuaValueKind : byte
     Table,
     Function,
     Thread,
+    Userdata,
+    LightUserdata,
 }
 #pragma warning restore CA1720
 
@@ -46,6 +49,8 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         LuaTable => LuaValueKind.Table,
         LuaClosure or LuaNativeFunction or LuaNativeClosure => LuaValueKind.Function,
         LuaThread => LuaValueKind.Thread,
+        LuaUserdata => LuaValueKind.Userdata,
+        LuaLightUserdata => LuaValueKind.LightUserdata,
         _ => throw new InvalidOperationException("The Lua value contains an unknown reference kind."),
     };
 
@@ -98,6 +103,18 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         return new LuaValue(value, 0);
     }
 
+    public static LuaValue FromUserdata(LuaUserdata value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new LuaValue(value, 0);
+    }
+
+    public static LuaValue FromLightUserdata(LuaLightUserdata value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new LuaValue(value, 0);
+    }
+
     public bool AsBoolean() => Kind == LuaValueKind.Boolean
         ? _payload != 0
         : throw TypeError("boolean");
@@ -129,6 +146,12 @@ public readonly struct LuaValue : IEquatable<LuaValue>
     public LuaNativeClosure? TryGetNativeClosure() => _tagOrReference as LuaNativeClosure;
 
     public LuaThread AsThread() => _tagOrReference as LuaThread ?? throw TypeError("thread");
+
+    public LuaUserdata AsUserdata() =>
+        _tagOrReference as LuaUserdata ?? throw TypeError("userdata");
+
+    public LuaLightUserdata AsLightUserdata() =>
+        _tagOrReference as LuaLightUserdata ?? throw TypeError("light userdata");
 
     public LuaGcObject? TryGetGcObject() => _tagOrReference as LuaGcObject;
 
@@ -174,6 +197,9 @@ public readonly struct LuaValue : IEquatable<LuaValue>
             LuaValueKind.Boolean or LuaValueKind.Integer => _payload == other._payload,
             LuaValueKind.Float => AsFloat() == other.AsFloat(),
             LuaValueKind.String => AsString().Equals(other.AsString()),
+            LuaValueKind.LightUserdata => ReferenceEquals(
+                AsLightUserdata().Identity,
+                other.AsLightUserdata().Identity),
             _ => ReferenceEquals(_tagOrReference, other._tagOrReference),
         };
     }
@@ -197,6 +223,7 @@ public readonly struct LuaValue : IEquatable<LuaValue>
             LuaValueKind.Boolean => _payload.GetHashCode(),
             LuaValueKind.Float => AsFloat().GetHashCode(),
             LuaValueKind.String => AsString().GetHashCode(),
+            LuaValueKind.LightUserdata => RuntimeHelpers.GetHashCode(AsLightUserdata().Identity),
             _ => _tagOrReference?.GetHashCode() ?? 0,
         };
     }
@@ -206,11 +233,13 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         LuaValueKind.Nil => "nil",
         LuaValueKind.Boolean => _payload != 0 ? "true" : "false",
         LuaValueKind.Integer => _payload.ToString(CultureInfo.InvariantCulture),
-        LuaValueKind.Float => AsFloat().ToString("G14", CultureInfo.InvariantCulture),
+        LuaValueKind.Float => LuaValueOperations.FormatFloat(AsFloat()),
         LuaValueKind.String => AsString().ToString(),
         LuaValueKind.Table => $"table: 0x{_tagOrReference!.GetHashCode():x}",
         LuaValueKind.Function => $"function: 0x{_tagOrReference!.GetHashCode():x}",
         LuaValueKind.Thread => $"thread: 0x{_tagOrReference!.GetHashCode():x}",
+        LuaValueKind.Userdata => $"userdata: 0x{_tagOrReference!.GetHashCode():x}",
+        LuaValueKind.LightUserdata => $"userdata: 0x{RuntimeHelpers.GetHashCode(AsLightUserdata().Identity):x}",
         _ => throw new InvalidOperationException(),
     };
 

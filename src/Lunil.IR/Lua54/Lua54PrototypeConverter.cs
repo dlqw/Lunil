@@ -428,7 +428,7 @@ public static class Lua54PrototypeConverter
                     Emit(
                         LuaIrOpcode.SetList,
                         instruction.A,
-                        checked(GetExtendedC(instruction) + 1),
+                        checked(GetExtendedC(instruction) * 50 + 1),
                         instruction.A + 1,
                         instruction.B == 0 ? -1 : instruction.B);
                     break;
@@ -630,6 +630,7 @@ public static class Lua54PrototypeConverter
                         : LuaIrUpvalueSourceKind.Upvalue;
                 result.Add(new LuaIrUpvalue(name, index, sourceKind, descriptor.Index)
                 {
+                    Kind = descriptor.Kind,
                     DebugName = debugName,
                 });
             }

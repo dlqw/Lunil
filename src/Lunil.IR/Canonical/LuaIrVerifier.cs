@@ -153,6 +153,11 @@ public static class LuaIrVerifier
     {
         foreach (var upvalue in function.Upvalues)
         {
+            if (upvalue.Kind > 3)
+            {
+                errors.Add(new(function.Id, -1, $"Upvalue '{upvalue.Name}' has an invalid kind."));
+            }
+
             if (function.ParentFunctionId < 0)
             {
                 if (upvalue.SourceKind != LuaIrUpvalueSourceKind.Environment)
