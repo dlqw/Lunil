@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
   <title id="title">Lunil</title>
-  <desc id="description">A quiet crescent moon with a single blue point</desc>
+  <desc id="description">A quiet crescent moon with a single warm point</desc>
   <defs>
     <linearGradient id="background" x1="84" y1="64" x2="430" y2="448" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#1c2031"/>
@@ -19,5 +19,5 @@
 
   <rect x="32" y="32" width="448" height="448" rx="108" fill="url(#background)"/>
   <circle cx="238" cy="262" r="142" fill="url(#crescent)" mask="url(#crescentMask)"/>
-  <circle cx="362" cy="190" r="19" fill="#71a8c2"/>
+  <circle cx="362" cy="190" r="19" fill="#D6B56D"/>
 </svg>
