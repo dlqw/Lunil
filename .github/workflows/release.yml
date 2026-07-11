@@ -17,6 +17,9 @@ jobs:
       version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v7
+      - name: Verify public repository boundaries
+        shell: pwsh
+        run: ./scripts/Test-PublicRepository.ps1
       - name: Validate tag, project version, and changelog
         id: version
         shell: pwsh
