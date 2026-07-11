@@ -16,7 +16,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.value }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate tag, project version, and changelog
         id: version
         shell: pwsh
@@ -56,8 +56,8 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
           cache: true
@@ -65,7 +65,7 @@ jobs:
       - name: Build release bundle
         shell: pwsh
         run: ./scripts/New-ReleaseBundle.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Version '${{ needs.validate.outputs.version }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.rid }}
           path: artifacts/*.zip
@@ -76,8 +76,8 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
           cache: true
@@ -85,7 +85,7 @@ jobs:
       - name: Build packages
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ needs.validate.outputs.version }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-nuget
           path: |
@@ -101,7 +101,7 @@ jobs:
       - packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: artifacts

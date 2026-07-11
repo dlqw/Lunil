@@ -34,8 +34,8 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
           cache: true
@@ -55,7 +55,7 @@ jobs:
       - name: Build native-platform bundle
         shell: pwsh
         run: ./scripts/New-ReleaseBundle.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Version '${{ steps.version.outputs.value }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lunil-${{ matrix.rid }}
           path: artifacts/*.zip
@@ -65,8 +65,8 @@ jobs:
     name: Formatting and packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
           cache: true
@@ -84,7 +84,7 @@ jobs:
       - name: Build NuGet packages
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ steps.version.outputs.value }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lunil-nuget
           path: |
