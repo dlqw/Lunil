@@ -36,6 +36,23 @@ public sealed class LuaExecutionKernelTests
             engine.Execute(state, state.CreateMainClosure(Compile("return 1"))));
     }
 
+    [Fact]
+    public void ChargesReservedInstructionsWhenExecutionThrowsARecoverableLuaError()
+    {
+        var state = new LuaState();
+        state.InstallProtectedCallFunctions();
+        var executor = new ThrowOnceInsideProtectedCallExecutor();
+        var engine = new LuaExecutionEngine(instructionExecutor: executor);
+
+        var result = engine.Execute(
+            state,
+            state.CreateMainClosure(Compile("local ok = pcall(function() return 1 end); return ok")));
+
+        Assert.True(result.Values.SequenceEqual([LuaValue.FromBoolean(false)]));
+        Assert.NotNull(executor.RemainingBeforeThrow);
+        Assert.Equal(executor.RemainingBeforeThrow - 1, executor.RemainingAfterThrow);
+    }
+
     private static LuaIrModule Compile(string source)
     {
         var lowering = LuaLowerer.Lower(
@@ -72,6 +89,38 @@ public sealed class LuaExecutionKernelTests
         {
             _ = context.TryReserveInstructions(1);
             return LuaCompiledExit.Continue(frame.ProgramCounter, instructionsConsumed: 0);
+        }
+    }
+
+    private sealed class ThrowOnceInsideProtectedCallExecutor : ILuaInstructionExecutor
+    {
+        private readonly LuaInterpreterInstructionExecutor _reference = new();
+
+        public long? RemainingBeforeThrow { get; private set; }
+
+        public long? RemainingAfterThrow { get; private set; }
+
+        public LuaCompiledExit Execute(
+            LuaExecutionEngine engine,
+            LuaExecutionContext context,
+            LuaState state,
+            LuaThread thread,
+            LuaFrame frame,
+            LuaIrInstruction instruction)
+        {
+            if (RemainingBeforeThrow is null && thread.Frames.Count > 1)
+            {
+                RemainingBeforeThrow = context.RemainingInstructionCount;
+                Assert.True(context.TryReserveInstructions(1));
+                throw new LuaRuntimeException("injected protected failure");
+            }
+
+            if (RemainingBeforeThrow is not null && RemainingAfterThrow is null)
+            {
+                RemainingAfterThrow = context.RemainingInstructionCount;
+            }
+
+            return _reference.Execute(engine, context, state, thread, frame, instruction);
         }
     }
 }

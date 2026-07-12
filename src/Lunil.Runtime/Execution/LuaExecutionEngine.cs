@@ -256,6 +256,7 @@ internal sealed class LuaExecutionEngine
 
                 var frame = thread.CurrentFrame;
                 ImmutableArray<LuaValue>? result;
+                LuaExecutionContext? pendingInstructionContext = null;
                 try
                 {
                     if (frame.Continuation.Kind == LuaContinuationKind.ProtectedCall)
@@ -293,6 +294,7 @@ internal sealed class LuaExecutionEngine
                                 thread,
                                 _options.MaximumInstructionCount - activation.InstructionCount);
                         }
+                        pendingInstructionContext = executionContext;
                         var exit = _instructionExecutor.Execute(
                             this,
                             executionContext,
@@ -303,6 +305,7 @@ internal sealed class LuaExecutionEngine
                         ValidateInstructionAccounting(executionContext, exit);
                         activation.InstructionCount = checked(
                             activation.InstructionCount + exit.InstructionsConsumed);
+                        pendingInstructionContext = null;
                         LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
 
                         if (exit.Kind == LuaCompiledExitKind.Deopt)
@@ -312,6 +315,7 @@ internal sealed class LuaExecutionEngine
                                 state,
                                 thread,
                                 _options.MaximumInstructionCount - activation.InstructionCount);
+                            pendingInstructionContext = executionContext;
                             exit = _referenceInstructionExecutor.Execute(
                                 this,
                                 executionContext,
@@ -322,6 +326,7 @@ internal sealed class LuaExecutionEngine
                             ValidateInstructionAccounting(executionContext, exit);
                             activation.InstructionCount = checked(
                                 activation.InstructionCount + exit.InstructionsConsumed);
+                            pendingInstructionContext = null;
                             LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
                         }
 
@@ -376,6 +381,13 @@ internal sealed class LuaExecutionEngine
                 }
                 catch (LuaRuntimeException exception)
                 {
+                    if (pendingInstructionContext is not null)
+                    {
+                        activation.InstructionCount = checked(
+                            activation.InstructionCount +
+                            pendingInstructionContext.InstructionsConsumed);
+                    }
+
                     var error = MaterializeError(state, exception);
                     if (thread.UnwindState is not null)
                     {
