@@ -105,6 +105,25 @@ public static class LuaCodegenAbiV1
 
     public static bool IsTruthy(LuaValue value) => value.IsTruthy;
 
+    public static bool CanExecuteCompiled(LuaExecutionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return !context.HasExactDebugHooks && context.IsDebugModeCurrent();
+    }
+
+    public static LuaCompiledExit ExecuteCanonicalInstruction(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var executionEngine = context.ExecutionEngine ??
+            throw new InvalidOperationException(
+                "The execution context is not attached to an execution engine.");
+        return executionEngine.ExecuteCodegenSlowPath(context, thread, frame, programCounter);
+    }
+
     public static void CommitProgramCounter(LuaFrame frame, int programCounter)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);

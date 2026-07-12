@@ -27,6 +27,7 @@ public enum CilPlanOpCode : byte
     StoreLocal,
     LoadInt32,
     Add,
+    Subtract,
     Call,
     Branch,
     BranchTrue,
@@ -113,7 +114,8 @@ public sealed record CilGcMap(
 public sealed record CilSequencePoint(
     int PlanInstructionIndex,
     int CanonicalProgramCounter,
-    int SourceLine);
+    int SourceLine,
+    int LogicalProgramCounter = -1);
 
 public sealed record CilCanonicalBlock(
     int StartProgramCounter,
@@ -127,6 +129,8 @@ public sealed record CilMethodPlan
     public required int FunctionId { get; init; }
 
     public int CanonicalInstructionCount { get; init; }
+
+    public int StartProgramCounter { get; init; }
 
     public int RegisterCount { get; init; }
 
@@ -154,6 +158,10 @@ public sealed record CilPlanLimits
     public int MaximumLabels { get; init; } = 250_000;
 
     public int MaximumEvaluationStack { get; init; } = 1_024;
+
+    public int MaximumBranchInstructions { get; init; } = 250_000;
+
+    public int MaximumMetadataReferences { get; init; } = 100_000;
 }
 
 public sealed record CilPlanDiagnostic(

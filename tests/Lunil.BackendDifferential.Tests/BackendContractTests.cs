@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using Lunil.BackendDifferential.Tests.Infrastructure;
+using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -7,6 +9,84 @@ namespace Lunil.BackendDifferential.Tests;
 
 public sealed class BackendContractTests
 {
+    [Fact]
+    public void PersistedAotDifferentialCorpusCoversEveryCanonicalOpcode()
+    {
+        string[] sources =
+        [
+            """
+            local captured = 1
+            local function worker(a, ...)
+                captured = captured + 1
+                local missing
+                local values = { ... }
+                values[1] = a
+                local copy = values[1]
+                local negated = -copy
+                local inverted = ~copy
+                local truth = not missing
+                local length = #values
+                if truth then copy = negated + inverted end
+                return copy, length, captured
+            end
+            return worker(3, 4, 5)
+            """,
+            """
+            local mt = { __close = function() end }
+            local function run()
+                local value <close> = setmetatable({}, mt)
+                local total = 0
+                for i = 1, 3 do total = total + i end
+                return total
+            end
+            return run()
+            """,
+            """
+            local function sum(n, total)
+                while n > 0 do
+                    n = n - 1
+                    total = total + n
+                end
+                if total > 0 then return sum(0, total) end
+                return total
+            end
+            return sum(3, 0)
+            """,
+        ];
+        var modules = sources
+            .Select(LuaBackendSession.Compile)
+            .ToList();
+        var jumpIfTrue = RewriteFirstOpcode(
+            LuaBackendSession.Compile(
+                "local value = true; if value then return 1 else return 2 end"),
+            LuaIrOpcode.JumpIfFalse,
+            LuaIrOpcode.JumpIfTrue);
+        var tailCall = RewriteFirstOpcode(
+            LuaBackendSession.Compile(
+                "local function identity(value) return value end; return identity(7)"),
+            LuaIrOpcode.Call,
+            LuaIrOpcode.TailCall);
+        modules.Add(jumpIfTrue);
+        modules.Add(tailCall);
+        LuaBackendAssert.AllAgree(backend =>
+            LuaBackendSession.Create(backend, jumpIfTrue).Execute());
+        LuaBackendAssert.AllAgree(backend =>
+            LuaBackendSession.Create(backend, tailCall).Execute());
+
+        var covered = modules
+            .SelectMany(static module => module.Functions)
+            .SelectMany(static function => function.Instructions)
+            .Select(static instruction => instruction.Opcode)
+            .ToHashSet();
+        var missing = Enum.GetValues<LuaIrOpcode>()
+            .Where(opcode => !covered.Contains(opcode))
+            .ToArray();
+
+        Assert.True(
+            missing.Length == 0,
+            $"Differential corpus is missing canonical opcodes: {string.Join(", ", missing)}");
+    }
+
     [Fact]
     public void BackendsAgreeOnValuesClosuresVarargsAndTables()
     {
@@ -214,4 +294,37 @@ public sealed class BackendContractTests
             observation.Values.SequenceEqual(expected),
             $"Actual values [{string.Join(", ", observation.Values)}] did not match " +
             $"expected [{string.Join(", ", expected)}].");
+
+    private static LuaIrModule RewriteFirstOpcode(
+        LuaIrModule module,
+        LuaIrOpcode source,
+        LuaIrOpcode replacement)
+    {
+        var functions = module.Functions.ToArray();
+        for (var functionIndex = 0; functionIndex < functions.Length; functionIndex++)
+        {
+            var instructions = functions[functionIndex].Instructions.ToArray();
+            var instructionIndex = Array.FindIndex(
+                instructions,
+                instruction => instruction.Opcode == source);
+            if (instructionIndex < 0)
+            {
+                continue;
+            }
+
+            instructions[instructionIndex] = instructions[instructionIndex] with
+            {
+                Opcode = replacement,
+            };
+            var immutable = instructions.ToImmutableArray();
+            functions[functionIndex] = functions[functionIndex] with
+            {
+                Instructions = immutable,
+                BasicBlocks = LuaIrControlFlow.Build(immutable),
+            };
+            return module with { Functions = functions.ToImmutableArray() };
+        }
+
+        throw new InvalidOperationException($"Canonical opcode {source} was not found.");
+    }
 }

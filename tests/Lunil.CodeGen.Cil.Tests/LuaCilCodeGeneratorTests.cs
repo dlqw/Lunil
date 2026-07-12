@@ -1,7 +1,11 @@
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
+using Lunil.CodeGen.Cil.Loading;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.CodeGen.Cil.Verification;
 using Lunil.Core.Text;
@@ -40,7 +44,7 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
-    public void EmitsExplicitDeoptimizationForUnsupportedOpcodes()
+    public void LowersComplexOpcodesThroughTheVersionedRuntimeSlowPath()
     {
         var module = CreateModule(
             registerCount: 1,
@@ -52,7 +56,279 @@ public sealed class LuaCilCodeGeneratorTests
 
         Assert.True(result.Succeeded, string.Join("; ", result.Diagnostics.Select(static d => d.Message)));
         Assert.Contains(result.Plan!.Instructions, instruction =>
+            instruction.CallTarget?.Id == "LuaCodegenAbiV1.ExecuteCanonicalInstruction");
+        Assert.DoesNotContain(result.Plan.Instructions, instruction =>
+            instruction.CanonicalProgramCounter == 0 &&
             instruction.CallTarget?.Id == "LuaCompiledExit.Deopt");
+    }
+
+    [Fact]
+    public void EmitsDeterministicManagedPeAndPortablePdbArtifacts()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(7)],
+            new LuaIrInstruction(
+                LuaIrOpcode.LoadConstant,
+                a: 0,
+                b: 0,
+                sourceLine: 1,
+                logicalProgramCounter: 10),
+            new LuaIrInstruction(
+                LuaIrOpcode.Return,
+                a: 0,
+                b: 1,
+                sourceLine: 2,
+                logicalProgramCounter: 11));
+        var options = LuaAotCompilationOptions.Default with
+        {
+            SourceDocument = new LuaAotSourceDocument
+            {
+                LogicalName = "module.lua",
+                Content = "return 7\n"u8.ToArray().ToImmutableArray(),
+            },
+        };
+
+        var first = LuaAotCompiler.Compile(module, options);
+        var second = LuaAotCompiler.Compile(module, options);
+
+        Assert.True(first.Succeeded, string.Join("; ", first.Diagnostics.Select(static d => d.Message)));
+        Assert.True(first.Artifact!.PeImage.SequenceEqual(second.Artifact!.PeImage));
+        Assert.True(first.Artifact.PortablePdbImage.SequenceEqual(second.Artifact.PortablePdbImage));
+        Assert.Equal((byte)'M', first.Artifact.PeImage[0]);
+        Assert.Equal((byte)'Z', first.Artifact.PeImage[1]);
+
+        using var peStream = new MemoryStream(first.Artifact.PeImage.ToArray());
+        using var peReader = new PEReader(peStream);
+        var metadata = peReader.GetMetadataReader();
+        Assert.Contains(metadata.ManifestResources.Select(handle =>
+            metadata.GetString(metadata.GetManifestResource(handle).Name)),
+            name => name == "lunil.aot.manifest.json");
+
+        using var pdbStream = new MemoryStream(first.Artifact.PortablePdbImage.ToArray());
+        using var provider = MetadataReaderProvider.FromPortablePdbStream(pdbStream);
+        var pdb = provider.GetMetadataReader();
+        Assert.Single(pdb.Documents);
+        Assert.Contains(
+            pdb.MethodDebugInformation
+                .Select(handle => pdb.GetMethodDebugInformation(handle))
+                .SelectMany(static information => information.GetSequencePoints()),
+            point => point.StartLine == 1);
+        var custom = Assert.Single(pdb.CustomDebugInformation.Select(handle =>
+            pdb.GetCustomDebugInformation(handle)));
+        Assert.Equal(
+            LuaAotPortablePdbMetadata.ProgramCounterMapKind,
+            pdb.GetGuid(custom.Kind));
+        var programCounters = LuaAotPortablePdbMetadata.DecodeProgramCounterMap(
+            pdb.GetBlobBytes(custom.Value));
+        Assert.Contains(programCounters, entry =>
+            entry.CanonicalProgramCounter == 0 && entry.LogicalProgramCounter == 10);
+    }
+
+    [Fact]
+    public void LoadsAndInvokesPersistedCilFromACollectibleContext()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(7)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+
+        var loading = LuaAotArtifactLoader.Load(artifact);
+
+        Assert.True(loading.Succeeded, string.Join("; ", loading.Diagnostics.Select(static d => d.Message)));
+        using var loaded = loading.Module!;
+        var state = new LuaState();
+        var thread = state.MainThread;
+        var frame = new LuaFrame(
+            state.CreateMainClosure(module),
+            @base: 0,
+            top: 0,
+            returnBase: 0,
+            expectedResults: 0,
+            varArgs: []);
+        var context = new LuaExecutionContext(state, thread, remainingInstructionCount: 2);
+
+        var exit = loaded.GetFunction(0)(context, thread, frame);
+
+        Assert.Equal(LuaCompiledExitKind.Return, exit.Kind);
+        Assert.Equal(2, exit.InstructionsConsumed);
+        Assert.Equal(LuaValue.FromInteger(7), thread.Stack[0]);
+        Assert.True(loaded.LoadContextWeakReference.IsAlive);
+        Assert.False(loaded.IsDisposed);
+    }
+
+    [Fact]
+    public void RejectsCorruptedEmbeddedCanonicalModuleBeforeLoading()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var corrupted = artifact.PeImage.ToArray();
+        var moduleOffset = corrupted.AsSpan().IndexOf("LUNILIR\0"u8);
+        Assert.True(moduleOffset >= 0);
+        corrupted[moduleOffset + 8] ^= 0x01;
+
+        var loading = LuaAotArtifactLoader.Load(corrupted.ToImmutableArray());
+
+        Assert.False(loading.Succeeded);
+        Assert.Contains(loading.Diagnostics, diagnostic => diagnostic.Code == "AOT2005");
+    }
+
+    [Fact]
+    public void RejectsPeCorruptionCoveredByTheArtifactChecksumFooter()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var corrupted = artifact.PeImage.ToArray();
+        corrupted[2] ^= 0x01;
+
+        var loading = LuaAotArtifactLoader.Load(corrupted.ToImmutableArray());
+
+        Assert.False(loading.Succeeded);
+        Assert.Contains(loading.Diagnostics, diagnostic => diagnostic.Code == "AOT2009");
+    }
+
+    [Fact]
+    public void SplitsLargeFunctionsOnBlockBoundariesAndResumesAcrossShards()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants:
+            [
+                LuaIrConstant.FromBoolean(true),
+                LuaIrConstant.FromInteger(7),
+                LuaIrConstant.FromInteger(9),
+            ],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.JumpIfTrue, a: 0, b: 4),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 1),
+            new LuaIrInstruction(LuaIrOpcode.Jump, b: 5, c: -1),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 2),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(module, LuaAotCompilationOptions.Default with
+        {
+            MaximumCanonicalInstructionsPerMethod = 2,
+        }).Artifact!;
+
+        Assert.Equal(3, artifact.Manifest.Functions[0].Shards.Length);
+        Assert.All(
+            artifact.Manifest.Functions[0].Shards,
+            shard => Assert.InRange(shard.InstructionCount, 1, 2));
+
+        using var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var state = new LuaState();
+        var thread = state.MainThread;
+        var frame = new LuaFrame(
+            state.CreateMainClosure(module),
+            @base: 0,
+            top: 0,
+            returnBase: 0,
+            expectedResults: 0,
+            varArgs: []);
+        LuaCompiledExit exit;
+        do
+        {
+            var context = new LuaExecutionContext(state, thread, remainingInstructionCount: 100);
+            exit = loaded.GetFunction(0)(context, thread, frame);
+            LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
+        }
+        while (exit.Kind == LuaCompiledExitKind.Continue);
+
+        Assert.Equal(LuaCompiledExitKind.Return, exit.Kind);
+        Assert.Equal(LuaValue.FromInteger(9), thread.Stack[0]);
+    }
+
+    [Fact]
+    public void RejectsIncompatibleRuntimeAbiBeforeAssemblyLoad()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var incompatible = artifact.PeImage.ToArray();
+        var version = "\"runtimeAbiVersion\":1"u8;
+        var offset = incompatible.AsSpan().IndexOf(version);
+        Assert.True(offset >= 0);
+        incompatible[offset + version.Length - 1] = (byte)'9';
+
+        var loading = LuaAotArtifactLoader.Load(incompatible.ToImmutableArray());
+
+        Assert.False(loading.Succeeded);
+        Assert.Contains(loading.Diagnostics, diagnostic => diagnostic.Code == "AOT2004");
+    }
+
+    [Fact]
+    public void RejectsPortablePdbThatDoesNotMatchThePeDebugDirectory()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0, sourceLine: 1));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var corruptedPdb = artifact.PortablePdbImage.ToArray();
+        corruptedPdb[^1] ^= 0x01;
+
+        var loading = LuaAotArtifactLoader.Load(
+            artifact.PeImage,
+            corruptedPdb.ToImmutableArray());
+
+        Assert.False(loading.Succeeded);
+        Assert.Contains(loading.Diagnostics, diagnostic => diagnostic.Code == "AOT2008");
+    }
+
+    [Fact]
+    public void EnforcesPersistedMethodBodyAndMetadataLimits()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.LoadNil, a: 0, b: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+
+        var bodyLimited = LuaAotCompiler.Compile(module, LuaAotCompilationOptions.Default with
+        {
+            MaximumMethodBodyBytes = 1,
+        });
+        var metadataLimited = LuaAotCompiler.Compile(module, LuaAotCompilationOptions.Default with
+        {
+            MaximumMetadataTokens = 1,
+        });
+        var branchLimited = LuaAotCompiler.Compile(module, LuaAotCompilationOptions.Default with
+        {
+            MaximumBranchInstructionsPerMethod = 1,
+        });
+
+        Assert.Contains(bodyLimited.Diagnostics, diagnostic => diagnostic.Code == "CIL0028");
+        Assert.Contains(metadataLimited.Diagnostics, diagnostic => diagnostic.Code == "CIL0029");
+        Assert.Contains(branchLimited.Diagnostics, diagnostic => diagnostic.Code == "CIL0026");
+    }
+
+    [Fact]
+    public void CollectibleArtifactContextCanUnloadAfterRegistrationIsDisposed()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+
+        var weakReference = LoadAndRelease(artifact);
+        for (var attempt = 0; attempt < 10 && weakReference.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(weakReference.IsAlive);
     }
 
     [Fact]
@@ -404,6 +680,15 @@ public sealed class LuaCilCodeGeneratorTests
         ReturnKind = CilStackValueKind.CompiledExit,
         Instructions = instructions.ToImmutableArray(),
     };
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference LoadAndRelease(LuaAotArtifact artifact)
+    {
+        var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var weakReference = loaded.LoadContextWeakReference;
+        loaded.Dispose();
+        return weakReference;
+    }
 
     private sealed class RecordingSink : ICilInstructionSink
     {

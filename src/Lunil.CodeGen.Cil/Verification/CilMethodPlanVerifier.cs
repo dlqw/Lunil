@@ -27,6 +27,34 @@ public static class CilMethodPlanVerifier
             return new CilPlanVerificationResult(diagnostics.ToImmutable(), 0);
         }
 
+        var branchInstructionCount = plan.Instructions.Sum(static instruction =>
+            instruction.OpCode == CilPlanOpCode.Switch
+                ? instruction.Labels.Length
+                : instruction.OpCode is CilPlanOpCode.Branch or CilPlanOpCode.BranchTrue or
+                    CilPlanOpCode.BranchFalse ? 1 : 0);
+        if (branchInstructionCount > limits.MaximumBranchInstructions)
+        {
+            diagnostics.Add(new CilPlanDiagnostic(
+                "CIL0026",
+                $"Method plan contains {branchInstructionCount} branch targets; limit is " +
+                $"{limits.MaximumBranchInstructions}."));
+            return new CilPlanVerificationResult(diagnostics.ToImmutable(), 0);
+        }
+
+        var metadataReferenceCount = plan.Instructions
+            .Where(static instruction => instruction.CallTarget is not null)
+            .Select(static instruction => instruction.CallTarget!.Id)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        if (metadataReferenceCount > limits.MaximumMetadataReferences)
+        {
+            diagnostics.Add(new CilPlanDiagnostic(
+                "CIL0027",
+                $"Method plan references {metadataReferenceCount} metadata members; limit is " +
+                $"{limits.MaximumMetadataReferences}."));
+            return new CilPlanVerificationResult(diagnostics.ToImmutable(), 0);
+        }
+
         var labels = BuildLabelMap(plan, limits, diagnostics);
         ValidateMetadata(plan, diagnostics);
         var incoming = new ImmutableArray<CilStackValueKind>?[plan.Instructions.Length];
@@ -185,7 +213,7 @@ public static class CilMethodPlanVerifier
         }
 
         var starts = plan.Blocks.Select(static block => block.StartProgramCounter).ToHashSet();
-        var expectedStart = 0;
+        var expectedStart = plan.StartProgramCounter;
         foreach (var block in plan.Blocks.OrderBy(static block => block.StartProgramCounter))
         {
             if (block.StartProgramCounter != expectedStart || block.Length <= 0 ||
@@ -201,7 +229,8 @@ public static class CilMethodPlanVerifier
             expectedStart = checked(expectedStart + block.Length);
         }
 
-        if (expectedStart != plan.CanonicalInstructionCount)
+        if (expectedStart != checked(
+            plan.StartProgramCounter + plan.CanonicalInstructionCount))
         {
             diagnostics.Add(new CilPlanDiagnostic(
                 "CIL0022",
@@ -240,6 +269,7 @@ public static class CilMethodPlanVerifier
                 stack.Add(CilStackValueKind.Int32);
                 return true;
             case CilPlanOpCode.Add:
+            case CilPlanOpCode.Subtract:
                 return Pop(stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
                     Pop(stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
                     Push(stack, CilStackValueKind.Int32);

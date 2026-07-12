@@ -318,7 +318,9 @@ canonical 基本块；call、tail call、return、yield、close、unwind 与 hoo
 label、local、call signature、canonical PC、sequence point 与 GC live-register map，并在进入任何
 emitter 前验证 evaluation-stack depth/type、branch merge、ABI call、safe-point spill 和资源上限。
 Reflection.Emit 与 metadata encoder 消费同一 instruction-sink 契约；尚未 lowering 的 opcode 生成
-显式 deopt exit，不能落入不完整实现。
+显式 deopt exit，不能落入不完整实现。Persisted CIL v1 已覆盖全部 canonical opcode：寄存器与
+控制流基础操作直接 lowering，可能调用、yield、close 或执行复杂 Lua 语义的操作通过 versioned
+Runtime ABI slow path 返回共享 scheduler，不在生成方法中复制解释器状态机。
 
 ### 9.3 AOT
 
@@ -335,6 +337,14 @@ LuaCompiledExit Execute(
 tail-call、return 或 deopt 等 tagged exit；不在生成代码的 CLR 栈上保存 Lua continuation。
 
 大型 Lua 函数按基本块拆分，避免 CoreCLR JIT 与 NativeAOT 对超大方法退化。
+
+当前 persisted CIL AOT v1 生成 deterministic PE、deterministic Portable PDB、canonical module
+只读资源和 JSON manifest。manifest 固化 artifact schema、IR/Runtime ABI/codegen 版本、module
+content ID、options fingerprint、checksum 与 function/shard map。Portable PDB 同时保存 Lua source
+checksum、source-line sequence point，以及 IL offset 到 canonical/logical PC 的 Lunil custom debug
+record。普通 CoreCLR 通过显式 loader 先验证 manifest、版本与资源 checksum，再使用 collectible
+`AssemblyLoadContext` 注册 function delegate；PE 尾部的 deterministic SHA-256 footer 覆盖完整映像，
+损坏、错 ABI、错 module identity 或不匹配的 PDB 只返回稳定诊断。
 
 .NET NativeAOT 通过 MSBuild task 在 `CoreCompile` 前生成 Lua 程序集和静态 `.g.cs` 注册清单，使 trimming/AOT 能发现全部入口。NativeAOT 运行时不动态产生 CIL；未预编译源码使用解释器。
 

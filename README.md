@@ -58,9 +58,9 @@ collector.
   ownership, resource budgets, handles, protected errors, and host-facing APIs.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
-- **Designed for multiple execution tiers** — the current reference interpreter is
-  the semantic baseline for planned CoreCLR CIL JIT, persisted CIL, and NativeAOT
-  backends.
+- **Designed for multiple execution tiers** — the reference interpreter and persisted
+  CIL AOT backend share one verified execution contract; tiered CoreCLR JIT and
+  NativeAOT build integration follow the same ABI.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
 
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Planned | CoreCLR CIL JIT, persisted CIL and build-time NativeAOT |
+| JIT / AOT backends | In development | Deterministic persisted CIL AOT v1 is implemented; tiered JIT and build-time NativeAOT remain |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -241,7 +241,7 @@ flowchart LR
     Runtime --> Heap[Logical heap + GC]
 
     IR -. planned .-> JIT[CoreCLR CIL JIT]
-    IR -. planned .-> AOT[Persisted CIL / NativeAOT]
+    IR --> AOT[Persisted CIL AOT]
 ```
 
 The compiler is byte-oriented at its boundaries, uses immutable syntax and semantic
@@ -260,7 +260,7 @@ Lunil/
 │   ├── Lunil.Semantics/         # binding and canonical lowering
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
-│   ├── Lunil.CodeGen.Cil/       # typed CIL plans, analysis and verification
+│   ├── Lunil.CodeGen.Cil/       # typed CIL plans, deterministic PE/PDB and loading
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
 ├── benchmarks/                  # runtime benchmark harness

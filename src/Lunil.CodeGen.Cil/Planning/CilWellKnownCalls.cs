@@ -64,9 +64,29 @@ public static class CilWellKnownCalls
         [CilStackValueKind.LuaValue],
         CilStackValueKind.Int32);
 
+    public static CilCallTarget CanExecuteCompiled { get; } = Call(
+        "LuaCodegenAbiV1.CanExecuteCompiled",
+        [CilStackValueKind.ExecutionContext],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget ExecuteCanonicalInstruction { get; } = Call(
+        "LuaCodegenAbiV1.ExecuteCanonicalInstruction",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.CompiledExit);
+
     public static CilCallTarget ExitPoll { get; } = Call(
         "LuaCompiledExit.Poll",
         [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
+        CilStackValueKind.CompiledExit);
+
+    public static CilCallTarget ExitContinue { get; } = Call(
+        "LuaCompiledExit.Continue",
+        [CilStackValueKind.Int32, CilStackValueKind.Int32],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitReturn { get; } = Call(
@@ -79,9 +99,8 @@ public static class CilWellKnownCalls
         [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
         CilStackValueKind.CompiledExit);
 
-    private static readonly Lazy<IReadOnlyDictionary<string, CilCallTarget>> Calls = new(() =>
-        new[]
-        {
+    public static ImmutableArray<CilCallTarget> All { get; } =
+        [
             ContextTryReserveInstructions,
             FrameGetProgramCounter,
             CommitProgramCounter,
@@ -91,10 +110,17 @@ public static class CilWellKnownCalls
             ClearRegisters,
             SetFrameTop,
             LuaValueIsTruthy,
+            CanExecuteCompiled,
+            ExecuteCanonicalInstruction,
+            ExitContinue,
             ExitPoll,
             ExitReturn,
             ExitDeopt,
-        }.ToDictionary(static target => target.Id, StringComparer.Ordinal));
+        ];
+
+    private static readonly Lazy<IReadOnlyDictionary<string, CilCallTarget>> Calls = new(() =>
+        All
+            .ToDictionary(static target => target.Id, StringComparer.Ordinal));
 
     public static bool TryGet(string id, out CilCallTarget target) =>
         Calls.Value.TryGetValue(id, out target!);

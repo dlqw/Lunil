@@ -282,6 +282,7 @@ internal sealed class LuaExecutionEngine
                         if (executionContext is null)
                         {
                             executionContext = new LuaExecutionContext(
+                                this,
                                 state,
                                 thread,
                                 _options.MaximumInstructionCount - activation.InstructionCount);
@@ -290,6 +291,7 @@ internal sealed class LuaExecutionEngine
                         else
                         {
                             executionContext.Reset(
+                                this,
                                 state,
                                 thread,
                                 _options.MaximumInstructionCount - activation.InstructionCount);
@@ -312,6 +314,7 @@ internal sealed class LuaExecutionEngine
                         {
                             instruction = frame.Closure.Function.Instructions[frame.ProgramCounter];
                             executionContext.Reset(
+                                this,
                                 state,
                                 thread,
                                 _options.MaximumInstructionCount - activation.InstructionCount);
@@ -328,6 +331,12 @@ internal sealed class LuaExecutionEngine
                                 activation.InstructionCount + exit.InstructionsConsumed);
                             pendingInstructionContext = null;
                             LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
+                        }
+
+                        if (exit.Kind is LuaCompiledExitKind.Call or
+                            LuaCompiledExitKind.TailCall or LuaCompiledExitKind.Return)
+                        {
+                            instruction = frame.Closure.Function.Instructions[exit.ProgramCounter];
                         }
 
                         switch (exit.Kind)
@@ -461,6 +470,42 @@ internal sealed class LuaExecutionEngine
             state.RunningThreadIsYieldable = false;
             state.Heap.RemovePermanentRoot(root);
         }
+    }
+
+    internal LuaCompiledExit ExecuteCodegenSlowPath(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(frame);
+        if (!ReferenceEquals(context.ExecutionEngine, this) ||
+            !ReferenceEquals(context.Thread, thread))
+        {
+            throw new InvalidOperationException(
+                "The execution context does not belong to this execution engine and thread.");
+        }
+
+        var instructions = frame.Closure.Function.Instructions;
+        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+            programCounter,
+            instructions.Length);
+        if (frame.ProgramCounter != programCounter)
+        {
+            throw new InvalidOperationException(
+                "The compiled slow path must start at the committed canonical program counter.");
+        }
+
+        return _referenceInstructionExecutor.Execute(
+            this,
+            context,
+            context.State,
+            thread,
+            frame,
+            instructions[programCounter]);
     }
 
     private static void ValidateInstructionAccounting(

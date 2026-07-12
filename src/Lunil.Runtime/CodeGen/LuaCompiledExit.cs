@@ -100,7 +100,16 @@ public sealed class LuaExecutionContext
         LuaThread thread,
         long remainingInstructionCount)
     {
-        Reset(state, thread, remainingInstructionCount);
+        ResetCore(null, state, thread, remainingInstructionCount);
+    }
+
+    internal LuaExecutionContext(
+        LuaExecutionEngine executionEngine,
+        LuaState state,
+        LuaThread thread,
+        long remainingInstructionCount)
+    {
+        ResetCore(executionEngine, state, thread, remainingInstructionCount);
     }
 
     public LuaState State { get; private set; } = null!;
@@ -115,7 +124,27 @@ public sealed class LuaExecutionContext
 
     internal int InstructionsConsumed => _instructionsConsumed;
 
+    internal LuaExecutionEngine? ExecutionEngine { get; private set; }
+
     internal void Reset(
+        LuaState state,
+        LuaThread thread,
+        long remainingInstructionCount)
+    {
+        ResetCore(ExecutionEngine, state, thread, remainingInstructionCount);
+    }
+
+    internal void Reset(
+        LuaExecutionEngine executionEngine,
+        LuaState state,
+        LuaThread thread,
+        long remainingInstructionCount)
+    {
+        ResetCore(executionEngine, state, thread, remainingInstructionCount);
+    }
+
+    private void ResetCore(
+        LuaExecutionEngine? executionEngine,
         LuaState state,
         LuaThread thread,
         long remainingInstructionCount)
@@ -125,6 +154,7 @@ public sealed class LuaExecutionContext
         ArgumentOutOfRangeException.ThrowIfNegative(remainingInstructionCount);
         state.Heap.ValidateValue(Values.LuaValue.FromThread(thread));
         _instructionsConsumed = 0;
+        ExecutionEngine = executionEngine;
         State = state;
         Thread = thread;
         RemainingInstructionCount = remainingInstructionCount;

@@ -109,6 +109,9 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             case CilPlanOpCode.Add:
                 generator.Emit(OpCodes.Add);
                 break;
+            case CilPlanOpCode.Subtract:
+                generator.Emit(OpCodes.Sub);
+                break;
             case CilPlanOpCode.Call:
                 generator.Emit(OpCodes.Call, ResolveCall(instruction.CallTarget!));
                 break;
@@ -193,10 +196,27 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.IsTruthy),
             [typeof(LuaValue)]),
+        "LuaCodegenAbiV1.CanExecuteCompiled" => Method(
+            typeof(LuaCodegenAbiV1),
+            nameof(LuaCodegenAbiV1.CanExecuteCompiled),
+            [typeof(LuaExecutionContext)]),
+        "LuaCodegenAbiV1.ExecuteCanonicalInstruction" => Method(
+            typeof(LuaCodegenAbiV1),
+            nameof(LuaCodegenAbiV1.ExecuteCanonicalInstruction),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+            ]),
         "LuaCompiledExit.Poll" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Poll),
             [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]),
+        "LuaCompiledExit.Continue" => Method(
+            typeof(LuaCompiledExit),
+            nameof(LuaCompiledExit.Continue),
+            [typeof(int), typeof(int)]),
         "LuaCompiledExit.Return" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Return),
