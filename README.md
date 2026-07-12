@@ -260,6 +260,7 @@ Lunil/
 │   ├── Lunil.Semantics/         # binding and canonical lowering
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
+│   ├── Lunil.CodeGen.Cil/       # typed CIL plans, analysis and verification
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
 ├── benchmarks/                  # runtime benchmark harness

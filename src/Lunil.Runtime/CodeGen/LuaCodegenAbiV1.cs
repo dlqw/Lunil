@@ -103,6 +103,8 @@ public static class LuaCodegenAbiV1
         LuaValue right) =>
         LuaRuntimeOperations.Binary(context.State, operation, left, right);
 
+    public static bool IsTruthy(LuaValue value) => value.IsTruthy;
+
     public static void CommitProgramCounter(LuaFrame frame, int programCounter)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
