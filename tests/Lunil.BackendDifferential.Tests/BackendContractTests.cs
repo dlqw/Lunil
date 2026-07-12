@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Lunil.BackendDifferential.Tests.Infrastructure;
 using Lunil.IR.Canonical;
+using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -256,6 +257,76 @@ public sealed class BackendContractTests
         AssertValues(
             observation,
             [new LuaObservedValue(LuaValueKind.Integer, "20100")]);
+    }
+
+    [Fact]
+    public async Task BackendsSurviveConcurrentCoroutineAndGcSoak()
+    {
+        const string source = """
+            local total = 0
+            for i = 1, 64 do
+                local value = { number = i }
+                total = total + value.number
+                if i % 8 == 0 then
+                    total = total + coroutine.yield(total)
+                end
+            end
+            return total
+            """;
+        var options = new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                StressEveryAllocation = true,
+                HashSeed = 1,
+            },
+        };
+
+        foreach (var backend in LuaBackendCatalog.All)
+        {
+            var tasks = Enumerable.Range(0, 8).Select(worker => Task.Run(() =>
+            {
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    var session = LuaBackendSession.Create(
+                        backend,
+                        source,
+                        options,
+                        installStandardLibrary: true);
+                    var thread = session.CreateThread();
+                    var observation = session.Start(thread);
+                    long expectedTotal = 0;
+                    for (var checkpoint = 1; checkpoint <= 8; checkpoint++)
+                    {
+                        expectedTotal += Enumerable.Range(
+                            ((checkpoint - 1) * 8) + 1,
+                            8).Sum();
+                        Assert.Equal(LuaVmSignal.Yielded, observation.Signal);
+                        AssertValues(
+                            observation,
+                            new LuaObservedValue(
+                                LuaValueKind.Integer,
+                                expectedTotal.ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture)));
+                        var resumed = worker + pass + checkpoint;
+                        expectedTotal += resumed;
+                        observation = session.Resume(
+                            thread,
+                            [LuaValue.FromInteger(resumed)]);
+                    }
+
+                    Assert.Equal(LuaVmSignal.Completed, observation.Signal);
+                    AssertValues(
+                        observation,
+                        new LuaObservedValue(
+                            LuaValueKind.Integer,
+                            expectedTotal.ToString(
+                                System.Globalization.CultureInfo.InvariantCulture)));
+                }
+            }));
+
+            await Task.WhenAll(tasks);
+        }
     }
 
     [Fact]

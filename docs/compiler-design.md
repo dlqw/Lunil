@@ -346,6 +346,12 @@ Windows x64 的 20,000 次 integer while-loop 重复测量显示约 47.5% median
 分配从约 1.8 KiB 增至 9.7 KiB，且尚无充分跨平台统计证据。因此 M6 保留实现为 experimental opt-in，
 不改变默认 policy；详细证据见 [后端性能基线](backend-performance-baseline.md)。
 
+M8 将启动、稳态吞吐、分配、编译 p95、RSS、code bytes 和 persisted PE/PDB size 纳入同一 runner。
+Windows x64 三轮证据未达到 Tier 1 至少 2 倍、Tier 2 至少 4 倍以及 Tier 1 编译 p95 小于 5 ms
+的门槛；Loop OSR 虽仍有超过 10% 的吞吐收益，但分配约为解释器的 6.9 倍。因此
+`LuaJitExecutorOptions.Default.Policy` 为 `InterpreterOnly`；CoreCLR Tier 1/Tier 2 通过显式
+`Auto`/`PreferJit` opt-in，Loop OSR 继续独立 opt-in。
+
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结。编译代码只执行
 canonical 基本块；call、tail call、return、yield、close、unwind 与 hook 仍由共享 scheduler 负责。
@@ -418,7 +424,9 @@ Lunil intermediate root。
 
 ## 11. 编译缓存
 
-项目缓存默认位于 `obj/lunil/`，全局缓存位于用户缓存目录。缓存分为源码/CST 索引、绑定与类型结果、canonical IR、优化 IR/profile、持久化 CIL/PDB。
+项目 artifact 默认位于 `obj/lunil/`；用户级 backend cache 默认位于 local app-data 下的
+`Lunil/backend-cache`。当前持久化边界是 verified canonical IR、persisted CIL/PDB bundle 与
+owner-free versioned profile，动态机器码只存在于进程内 code-byte LRU。
 
 缓存键至少包含：
 
@@ -431,7 +439,12 @@ Lunil intermediate root。
 - 静态依赖 hash；
 - AOT、trimming 和 deterministic 配置。
 
-缓存写入采用同目录临时文件、flush、atomic rename 与跨进程锁。读取检查 magic、版本、长度、checksum 和 IR verifier；损坏项自动隔离或删除并重编译。不使用 `BinaryFormatter`。动态 `require` 不伪装成静态依赖。相同内容可以共享代码 artifact，但 source name、路径和 traceback binding 必须独立。
+缓存写入采用 durable flush、同卷临时目录、atomic directory rename 与跨进程独占锁。读取检查
+descriptor/path identity、schema/ABI/target 兼容、长度、checksum、IR verifier、PE manifest/resources
+和 PDB binding；损坏项进入独立 quota 的 quarantine 后重新编译。entry 使用 access marker LRU，
+lock/I/O/权限失败 fail-soft。不使用 `BinaryFormatter`。动态 `require` 不伪装成静态依赖。相同内容
+可以共享代码 artifact，但 source name、路径和 traceback binding 必须独立。完整格式见
+[backend cache contract](backend-cache-contract.md)。
 
 ## 12. Unsafe 审计政策
 
@@ -503,6 +516,11 @@ Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Run
 - 未通过全部语义测试的优化不得进入默认优化级别。
 
 0.2.0 的 Windows x64/.NET 10 Release 基线使用 `benchmarks/Lunil.Runtime.Benchmarks` 固化。1,000,000 次 table get/set 的代表值约为 199 ns/op，单次 10,000 轮空 numeric-for 约 5.2 ms，带加法约 9.9 ms，1,000 个 table 的 full logical GC 约 0.71 ms。空循环的稳态执行固定分配约 5 KiB（frame/结果对象），不再随 10,000 次循环迭代增长；单元门槛为每次热执行不超过 16 KiB。数值仅作为本机回归基线，不是跨硬件的绝对门槛。
+
+M8 可用 `scripts/Measure-BackendPerformance.ps1` 重复运行同进程内九次 cold sample 与跨进程
+多轮统计。2026-07-12 Windows x64 三轮中位数显示 interpreter/Tier1/Tier2/Loop OSR 稳态分别为
+5.796/11.656/12.135/3.500 ms/op；Tier 1 编译 p95 为 18.966 ms。结果只决定当前默认策略，
+不会作为不同硬件间的绝对门槛；原始结果继续由六 RID CI 保存。
 
 ## 15. 可观测性与失败模型
 

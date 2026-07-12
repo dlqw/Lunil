@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -17,6 +18,8 @@ var iterations = args.Length == 0
     ? 1_000_000
     : int.Parse(args[0], CultureInfo.InvariantCulture);
 ArgumentOutOfRangeException.ThrowIfNegativeOrZero(iterations);
+CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 Console.WriteLine(
     $"runtime={RuntimeInformation.FrameworkDescription}, os={RuntimeInformation.OSDescription}, " +
     $"arch={RuntimeInformation.ProcessArchitecture}, iterations={iterations}");
@@ -197,6 +200,70 @@ Run("full_gc_1000_tables", Scaled(iterations), static count =>
     }
 });
 
+const string BackendEvidenceSource = """
+    local total = 0
+    local first = 0
+    local second = 1
+    local index = 0
+    while index < 5000 do
+        local next = first + second
+        first = second
+        second = next
+        total = total + (next & 1023)
+        index = index + 1
+    end
+    return total
+    """;
+var backendEvidenceModule = Compile(BackendEvidenceSource);
+var backendEvidenceOperations = Math.Max(5, Scaled(iterations));
+var persistedArtifact = LuaAotCompiler.Compile(backendEvidenceModule).Artifact ??
+    throw new InvalidOperationException("Backend evidence AOT artifact did not compile.");
+Console.WriteLine(
+    $"backend_artifact persisted_pe_bytes={persistedArtifact.PeImage.Length}, " +
+    $"portable_pdb_bytes={persistedArtifact.PortablePdbImage.Length}, " +
+    $"total_bytes={persistedArtifact.PeImage.Length + persistedArtifact.PortablePdbImage.Length}");
+RunBackendEvidence(
+    "interpreter",
+    backendEvidenceModule,
+    backendEvidenceOperations,
+    BackendEvidenceRunner.CreateInterpreter);
+RunBackendEvidence(
+    "tier1",
+    backendEvidenceModule,
+    backendEvidenceOperations,
+    module => BackendEvidenceRunner.CreateJit(module, LuaJitExecutorOptions.Default with
+    {
+        Policy = LuaJitPolicy.PreferJit,
+        SynchronousCompilation = true,
+        EnableTier2 = false,
+    }));
+RunBackendEvidence(
+    "tier2",
+    backendEvidenceModule,
+    backendEvidenceOperations,
+    module => BackendEvidenceRunner.CreateJit(module, LuaJitExecutorOptions.Default with
+    {
+        Policy = LuaJitPolicy.PreferJit,
+        SynchronousCompilation = true,
+        EnableTier2 = true,
+        Tier2InvocationThreshold = 1,
+        Tier2BackedgeThreshold = 1,
+    }));
+RunBackendEvidence(
+    "loop_osr",
+    backendEvidenceModule,
+    backendEvidenceOperations,
+    module => BackendEvidenceRunner.CreateJit(module, LuaJitExecutorOptions.Default with
+    {
+        Policy = LuaJitPolicy.Auto,
+        FunctionEntryThreshold = int.MaxValue,
+        BackedgeThreshold = int.MaxValue,
+        SynchronousCompilation = true,
+        EnableTier2 = false,
+        EnableLoopOsr = true,
+        LoopOsrBackedgeThreshold = 1,
+    }));
+
 static int Scaled(int iterations) => Math.Max(1, iterations / 100_000);
 
 static Action<int> CreateWarmRunner(
@@ -279,6 +346,129 @@ static void Run(string name, int operationCount, Action<int> action)
         $"allocated={allocated}, allocated/op={allocatedPerOperation:F2}");
 }
 
+static void RunBackendEvidence(
+    string name,
+    LuaIrModule module,
+    int operationCount,
+    Func<LuaIrModule, BackendEvidenceRunner> factory)
+{
+    const int coldSamples = 9;
+    var startupMilliseconds = new List<double>(coldSamples);
+    var compilationMilliseconds = new List<double>();
+    var tier1CompilationMilliseconds = new List<double>();
+    var tier2CompilationMilliseconds = new List<double>();
+    var loopOsrCompilationMilliseconds = new List<double>();
+    long peakWorkingSetDelta = 0;
+    long estimatedCodeBytes = 0;
+    using var process = Process.GetCurrentProcess();
+
+    for (var sample = 0; sample < coldSamples; sample++)
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        process.Refresh();
+        var workingSetBefore = process.WorkingSet64;
+        var stopwatch = Stopwatch.StartNew();
+        using var runner = factory(module);
+        runner.ExecuteVerified();
+        stopwatch.Stop();
+        startupMilliseconds.Add(stopwatch.Elapsed.TotalMilliseconds);
+
+        // Drive Tier 2 promotion after measuring the first-use path. Loop OSR normally compiles
+        // during the first invocation, while Tier 1 remains unchanged by these extra executions.
+        runner.ExecuteVerified();
+        runner.ExecuteVerified();
+        CollectCompilationDurations(
+            runner.CompilationEvents,
+            compilationMilliseconds,
+            tier1CompilationMilliseconds,
+            tier2CompilationMilliseconds,
+            loopOsrCompilationMilliseconds);
+        estimatedCodeBytes = Math.Max(estimatedCodeBytes, runner.EstimatedCodeBytes);
+        process.Refresh();
+        peakWorkingSetDelta = Math.Max(
+            peakWorkingSetDelta,
+            Math.Max(0, process.WorkingSet64 - workingSetBefore));
+    }
+
+    using var warmed = factory(module);
+    for (var warmup = 0; warmup < 5; warmup++)
+    {
+        warmed.ExecuteVerified();
+    }
+
+    estimatedCodeBytes = Math.Max(estimatedCodeBytes, warmed.EstimatedCodeBytes);
+    var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+    var throughputStopwatch = Stopwatch.StartNew();
+    for (var operation = 0; operation < operationCount; operation++)
+    {
+        warmed.ExecuteVerified();
+    }
+
+    throughputStopwatch.Stop();
+    var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+    var nanosecondsPerOperation =
+        throughputStopwatch.Elapsed.TotalNanoseconds / operationCount;
+    var allocatedPerOperation = (double)allocated / operationCount;
+    Console.WriteLine(
+        $"backend_evidence name={name}, operations={operationCount}, " +
+        $"startup_median_ms={Percentile(startupMilliseconds, 0.50):F3}, " +
+        $"startup_p95_ms={Percentile(startupMilliseconds, 0.95):F3}, " +
+        $"warm_ns_op={nanosecondsPerOperation:F2}, " +
+        $"allocated_op={allocatedPerOperation:F2}, " +
+        $"compilation_p95_ms={Percentile(compilationMilliseconds, 0.95):F3}, " +
+        $"tier1_p95_ms={Percentile(tier1CompilationMilliseconds, 0.95):F3}, " +
+        $"tier2_p95_ms={Percentile(tier2CompilationMilliseconds, 0.95):F3}, " +
+        $"loop_osr_p95_ms={Percentile(loopOsrCompilationMilliseconds, 0.95):F3}, " +
+        $"rss_peak_delta_bytes={peakWorkingSetDelta}, " +
+        $"estimated_code_bytes={estimatedCodeBytes}");
+}
+
+static void CollectCompilationDurations(
+    IEnumerable<LuaJitEvent> events,
+    List<double> all,
+    List<double> tier1,
+    List<double> tier2,
+    List<double> loopOsr)
+{
+    foreach (var jitEvent in events.Where(static item => item.Kind is
+                 LuaJitEventKind.CompilationCompleted or
+                 LuaJitEventKind.Tier2CompilationCompleted or
+                 LuaJitEventKind.LoopOsrCompilationCompleted))
+    {
+        var milliseconds = jitEvent.Duration.TotalMilliseconds;
+        all.Add(milliseconds);
+        switch (jitEvent.Tier)
+        {
+            case LuaJitCompilationTier.Tier1:
+                tier1.Add(milliseconds);
+                break;
+            case LuaJitCompilationTier.Tier2:
+                tier2.Add(milliseconds);
+                break;
+            case LuaJitCompilationTier.LoopOsr:
+                loopOsr.Add(milliseconds);
+                break;
+        }
+    }
+}
+
+static double Percentile(IReadOnlyCollection<double> values, double percentile)
+{
+    if (values.Count == 0)
+    {
+        return 0;
+    }
+
+    var ordered = values.Order().ToArray();
+    var index = Math.Clamp(
+        (int)Math.Ceiling(percentile * ordered.Length) - 1,
+        0,
+        ordered.Length - 1);
+    return ordered[index];
+}
+
 static LuaIrModule Compile(string source)
 {
     var lowering = LuaLowerer.Lower(
@@ -289,4 +479,62 @@ static LuaIrModule Compile(string source)
     }
 
     return lowering.Module;
+}
+
+sealed class BackendEvidenceRunner : IDisposable
+{
+    private readonly LuaState _state;
+    private readonly LuaClosure _closure;
+    private readonly LuaInterpreter? _interpreter;
+    private readonly LuaJitExecutor? _executor;
+    private readonly List<LuaJitEvent> _compilationEvents = [];
+
+    private BackendEvidenceRunner(
+        LuaIrModule module,
+        LuaInterpreter? interpreter,
+        LuaJitExecutor? executor)
+    {
+        _state = new LuaState();
+        _closure = _state.CreateMainClosure(module);
+        _interpreter = interpreter;
+        _executor = executor;
+        if (_executor is not null)
+        {
+            _executor.EventOccurred += OnJitEvent;
+        }
+    }
+
+    public IReadOnlyList<LuaJitEvent> CompilationEvents => _compilationEvents;
+
+    public long EstimatedCodeBytes => _executor?.Statistics.EstimatedCodeBytes ?? 0;
+
+    public static BackendEvidenceRunner CreateInterpreter(LuaIrModule module) =>
+        new(module, new LuaInterpreter(), null);
+
+    public static BackendEvidenceRunner CreateJit(
+        LuaIrModule module,
+        LuaJitExecutorOptions options) => new(module, null, new LuaJitExecutor(options));
+
+    public void ExecuteVerified()
+    {
+        var result = _executor is null
+            ? _interpreter!.Execute(_state, _closure)
+            : _executor.Execute(_state, _closure);
+        if (result.Signal != LuaVmSignal.Completed || result.Values.Length != 1)
+        {
+            throw new InvalidOperationException("Backend evidence workload did not complete.");
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_executor is not null)
+        {
+            _executor.EventOccurred -= OnJitEvent;
+            _executor.Dispose();
+        }
+    }
+
+    private void OnJitEvent(object? sender, LuaJitEvent jitEvent) =>
+        _compilationEvents.Add(jitEvent);
 }

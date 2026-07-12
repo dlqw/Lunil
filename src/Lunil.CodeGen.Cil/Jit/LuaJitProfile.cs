@@ -121,6 +121,34 @@ internal sealed class LuaJitProfileAccumulator(
                 .Select(static site => site.Snapshot())]);
     }
 
+    public void Merge(LuaJitFunctionProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        if (profile.ArgumentKinds.Length != _argumentKinds.Length)
+        {
+            throw new ArgumentException(
+                "Imported profile parameter count does not match the function.",
+                nameof(profile));
+        }
+
+        AddSaturating(ref _samples, profile.Samples);
+        for (var argument = 0; argument < _argumentKinds.Length; argument++)
+        {
+            Interlocked.Or(ref _argumentKinds[argument], (long)profile.ArgumentKinds[argument]);
+        }
+
+        foreach (var importedSite in profile.Sites)
+        {
+            var site = _sites.GetOrAdd(
+                importedSite.ProgramCounter,
+                _ => new SiteAccumulator(
+                    importedSite.ProgramCounter,
+                    importedSite.Opcode,
+                    maximumPolymorphicShapes));
+            site.Merge(importedSite);
+        }
+    }
+
     private static void AddKind(ref long kinds, LuaValue value) =>
         Interlocked.Or(ref kinds, 1L << (int)value.Kind);
 
@@ -231,6 +259,52 @@ internal sealed class LuaJitProfileAccumulator(
             }
         }
 
+        public void Merge(LuaJitSiteProfile profile)
+        {
+            if (profile.ProgramCounter != ProgramCounter || profile.Opcode != opcode)
+            {
+                throw new ArgumentException(
+                    "Imported profile site does not match the accumulator.",
+                    nameof(profile));
+            }
+
+            AddSaturating(ref _samples, profile.Samples);
+            Interlocked.Or(ref _firstOperandKinds, (long)profile.FirstOperandKinds);
+            Interlocked.Or(ref _secondOperandKinds, (long)profile.SecondOperandKinds);
+            Interlocked.Or(ref _thirdOperandKinds, (long)profile.ThirdOperandKinds);
+            AddSaturating(ref _branchTaken, profile.BranchTaken);
+            AddSaturating(ref _branchNotTaken, profile.BranchNotTaken);
+            if (profile.IsMegamorphic)
+            {
+                Volatile.Write(ref _megamorphic, 1);
+            }
+
+            foreach (var shape in profile.TableShapes)
+            {
+                AddSignature(
+                    _tableShapes,
+                    new TableSignature(
+                        shape.KeyKinds,
+                        shape.ArrayCapacity,
+                        shape.ShapeVersion,
+                        shape.MetatableVersion,
+                        shape.HasMetatable),
+                    shape.Samples);
+            }
+
+            foreach (var target in profile.CallTargets)
+            {
+                AddSignature(
+                    _callTargets,
+                    new CallTargetSignature(
+                        target.Kind,
+                        target.ModuleContentId,
+                        target.FunctionId,
+                        target.NativeName),
+                    target.Samples);
+            }
+        }
+
         private void ObserveBranch(
             LuaThread thread,
             LuaFrame frame,
@@ -270,7 +344,7 @@ internal sealed class LuaJitProfileAccumulator(
                 table.ShapeVersion,
                 table.MetatableVersion,
                 table.Metatable is not null);
-            AddSignature(_tableShapes, signature);
+            AddSignature(_tableShapes, signature, 1);
         }
 
         private void ObserveCallTarget(
@@ -304,17 +378,20 @@ internal sealed class LuaJitProfileAccumulator(
                     string.Empty);
             }
 
-            AddSignature(_callTargets, signature);
+            AddSignature(_callTargets, signature, 1);
         }
 
-        private void AddSignature<T>(Dictionary<T, long> signatures, T signature)
+        private void AddSignature<T>(
+            Dictionary<T, long> signatures,
+            T signature,
+            long samples)
             where T : notnull
         {
             lock (_signaturesGate)
             {
-                if (signatures.TryGetValue(signature, out var samples))
+                if (signatures.TryGetValue(signature, out var existingSamples))
                 {
-                    signatures[signature] = checked(samples + 1);
+                    signatures[signature] = SaturatingAdd(existingSamples, samples);
                     return;
                 }
 
@@ -324,7 +401,7 @@ internal sealed class LuaJitProfileAccumulator(
                     return;
                 }
 
-                signatures.Add(signature, 1);
+                signatures.Add(signature, samples);
             }
         }
 
@@ -344,4 +421,20 @@ internal sealed class LuaJitProfileAccumulator(
             int FunctionId,
             string NativeName);
     }
+
+    private static void AddSaturating(ref long target, long value)
+    {
+        while (true)
+        {
+            var current = Interlocked.Read(ref target);
+            var updated = SaturatingAdd(current, value);
+            if (Interlocked.CompareExchange(ref target, updated, current) == current)
+            {
+                return;
+            }
+        }
+    }
+
+    private static long SaturatingAdd(long left, long right) =>
+        left >= long.MaxValue - right ? long.MaxValue : left + right;
 }

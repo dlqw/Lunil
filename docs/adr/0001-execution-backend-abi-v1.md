@@ -216,4 +216,6 @@ references. Source compiled dynamically inside a NativeAOT process uses the inte
 Every backend must run the same differential corpus for results, Lua errors, coroutine signals,
 hook traces, close order, logical-GC stress, and instruction-budget exhaustion. Tests must support
 forced exits at every canonical PC, forced guard failure, and forced GC at every safe point before
-Tier 2 is enabled by default.
+Tier 2 is enabled by default. M8 completed those semantic gates, but the release default remains
+`InterpreterOnly` because the same-machine Tier 1/Tier 2 throughput and compilation-latency gates
+did not pass; dynamic tiers remain explicit opt-in until new evidence supersedes that decision.

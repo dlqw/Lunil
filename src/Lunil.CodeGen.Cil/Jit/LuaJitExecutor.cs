@@ -112,6 +112,44 @@ public sealed class LuaJitExecutor : IDisposable
         return _registry.GetFunctionProfile(module, functionId);
     }
 
+    public byte[] ExportProfile(LuaIrModule module)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(module);
+        var profiles = module.Functions
+            .Select(function => _registry.GetFunctionProfile(module, function.Id))
+            .ToArray();
+        return LuaJitProfileCodec.Serialize(module, profiles);
+    }
+
+    public LuaJitProfileImportResult ImportProfile(
+        LuaIrModule module,
+        ReadOnlySpan<byte> payload)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(module);
+        if (!Options.EnableTier2)
+        {
+            return new LuaJitProfileImportResult(LuaJitProfileImportStatus.Disabled);
+        }
+
+        try
+        {
+            var profile = LuaJitProfileCodec.Deserialize(module, payload);
+            _registry.ImportProfile(module, profile);
+            return new LuaJitProfileImportResult(LuaJitProfileImportStatus.Imported);
+        }
+        catch (LuaJitProfileCodec.ProfileFormatException exception)
+        {
+            return new LuaJitProfileImportResult(
+                exception.DiagnosticCode == LuaJitProfileDiagnosticCodes.Incompatible
+                    ? LuaJitProfileImportStatus.Incompatible
+                    : LuaJitProfileImportStatus.Rejected,
+                exception.DiagnosticCode,
+                exception.Message);
+        }
+    }
+
     public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
     {
         ThrowIfDisposed();

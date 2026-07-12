@@ -17,7 +17,7 @@ internal sealed class LuaTieredJitRegistry :
     ILuaLoopOsrObserver,
     IDisposable
 {
-    private const int CodegenVersion = 1;
+    private const int CodegenVersion = LuaJitProfileCodec.CurrentCodegenVersion;
     private readonly LuaJitExecutorOptions _options;
     private readonly ILuaDynamicCodeCapabilities _capabilities;
     private readonly ILuaTier1Compiler _compiler;
@@ -356,6 +356,40 @@ internal sealed class LuaTieredJitRegistry :
                 0,
                 [.. Enumerable.Repeat(LuaJitValueKinds.None, function.ParameterCount)],
                 []);
+    }
+
+    public void ImportProfile(LuaIrModule module, LuaJitModuleProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(profile);
+        foreach (var imported in profile.Functions)
+        {
+            var function = module.Functions[imported.FunctionId];
+            var key = new FunctionKey(
+                profile.ModuleContentId,
+                imported.FunctionId,
+                LuaCodegenAbiV1.RuntimeAbiVersion,
+                CodegenVersion);
+            var entry = _entries.GetOrAdd(
+                key,
+                key => new FunctionEntry(
+                    key,
+                    function.ParameterCount,
+                    _options.MaximumPolymorphicShapes,
+                    _options.EnableTier2,
+                    IsLoopOsrEnabled));
+            entry.Profile.Merge(imported.Profile);
+            var entrySamples = imported.Profile.Sites
+                .FirstOrDefault(static site => site.ProgramCounter == 0)?
+                .Samples ?? 0;
+            if (entrySamples > 0)
+            {
+                SetMaximum(ref entry.FunctionEntries, _options.FunctionEntryThreshold);
+                SetMaximum(
+                    ref entry.CompletedTier1Invocations,
+                    Math.Min(entrySamples, _options.Tier2InvocationThreshold));
+            }
+        }
     }
 
     public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
@@ -1939,6 +1973,19 @@ internal sealed class LuaTieredJitRegistry :
             LuaCodegenAbiV1.RuntimeAbiVersion,
             CodegenVersion);
         return _entries.GetValueOrDefault(key);
+    }
+
+    private static void SetMaximum(ref long target, long value)
+    {
+        while (true)
+        {
+            var current = Interlocked.Read(ref target);
+            if (current >= value ||
+                Interlocked.CompareExchange(ref target, value, current) == current)
+            {
+                return;
+            }
+        }
     }
 
     private long CalculateRetryAfterTimestamp()

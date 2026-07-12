@@ -1,9 +1,12 @@
 using System.Collections.Immutable;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Artifacts;
+using Lunil.CodeGen.Cil.Caching;
+using Lunil.CodeGen.Cil.Loading;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -18,6 +21,9 @@ namespace Lunil.Build.Tasks;
 
 public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
 {
+    private LuaBackendDiskCache? _cache;
+    private bool _cacheInitialized;
+
     [Required]
     public ITaskItem[] Sources { get; set; } = [];
 
@@ -32,6 +38,22 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
     public string RuntimeIdentifier { get; set; } = string.Empty;
 
     public string DesignTimeBuild { get; set; } = string.Empty;
+
+    public bool CacheEnabled { get; set; } = true;
+
+    public string CacheDirectory { get; set; } = string.Empty;
+
+    public long CacheMaximumBytes { get; set; } = 1024L * 1024 * 1024;
+
+    public long CacheMaximumEntryBytes { get; set; } = 256L * 1024 * 1024;
+
+    public long CacheMaximumQuarantineBytes { get; set; } = 64L * 1024 * 1024;
+
+    public string PublishAot { get; set; } = string.Empty;
+
+    public string PublishReadyToRun { get; set; } = string.Empty;
+
+    public string PublishTrimmed { get; set; } = string.Empty;
 
     [Output]
     public ITaskItem[] GeneratedSources { get; private set; } = [];
@@ -240,8 +262,56 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
             canonicalModule = lowering.Module;
         }
 
+        var canonicalModuleBytes = LuaAotModuleIdentity.SerializeCanonicalModule(canonicalModule);
         var logicalName = options.ModuleName.Replace('.', '/') +
             (inputKind == LunilBuildInputKind.BinaryChunk ? ".luac" : ".lua");
+        var cacheKey = CreateCacheKey(
+            options,
+            inputKind,
+            sourceSha256,
+            canonicalModule,
+            logicalName);
+        var cache = GetCache();
+        if (cache is not null)
+        {
+            var read = cache.TryReadAsync(cacheKey).AsTask().GetAwaiter().GetResult();
+            if (read.IsHit)
+            {
+                try
+                {
+                    var cached = LunilBuildCachePayload.Deserialize(
+                        read.Payload.AsSpan(),
+                        cacheKey.CanonicalModuleHash);
+                    Log.LogMessage(
+                        MessageImportance.Low,
+                        $"Lunil module '{options.ModuleName}' restored from backend cache ({cacheKey.CacheId}).");
+                    return MaterializeModule(
+                        options,
+                        inputKind,
+                        sourceSha256,
+                        outputDirectory,
+                        cacheKey,
+                        cached);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or
+                    ArgumentException or BadImageFormatException)
+                {
+                    _ = cache.QuarantineAsync(
+                        cacheKey,
+                        $"semantic-validation: {exception.Message}").AsTask().GetAwaiter().GetResult();
+                    Log.LogMessage(
+                        MessageImportance.Low,
+                        $"Lunil backend cache entry '{cacheKey.CacheId}' was rejected and will be rebuilt: {exception.Message}");
+                }
+            }
+            else if (read.Status == LuaBackendCacheReadStatus.Unavailable)
+            {
+                Log.LogMessage(
+                    MessageImportance.Low,
+                    $"Lunil backend cache is unavailable ({read.DiagnosticCode}); compiling locally.");
+            }
+        }
+
         var compilation = LuaAotCompiler.Compile(
             canonicalModule,
             new LuaAotCompilationOptions
@@ -270,14 +340,50 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
         }
 
         var artifact = compilation.Artifact;
-        var stem = SanitizeFileName(options.ModuleName) + "." + artifact.Manifest.ModuleContentId[..16];
+        if (cache is not null)
+        {
+            var payload = LunilBuildCachePayload.Serialize(canonicalModuleBytes, artifact);
+            var write = cache.WriteAsync(cacheKey, payload).AsTask().GetAwaiter().GetResult();
+            if (write.Status is LuaBackendCacheWriteStatus.Unavailable or
+                LuaBackendCacheWriteStatus.RejectedTooLarge)
+            {
+                Log.LogMessage(
+                    MessageImportance.Low,
+                    $"Lunil backend cache write skipped ({write.DiagnosticCode}).");
+            }
+        }
+
+        return MaterializeModule(
+            options,
+            inputKind,
+            sourceSha256,
+            outputDirectory,
+            cacheKey,
+            new LunilBuildCachedArtifact(
+                canonicalModuleBytes.ToImmutableArray(),
+                artifact.Manifest,
+                artifact.PeImage,
+                artifact.PortablePdbImage));
+    }
+
+    private CompiledModule MaterializeModule(
+        LunilCompileItemOptions options,
+        LunilBuildInputKind inputKind,
+        string sourceSha256,
+        string outputDirectory,
+        LuaBackendCacheKey cacheKey,
+        LunilBuildCachedArtifact artifact)
+    {
+        var stem = SanitizeFileName(options.ModuleName) + "." +
+            artifact.Manifest.ModuleContentId[..16];
         var pePath = Path.Combine(outputDirectory, artifact.Manifest.AssemblyName + ".dll");
         var pdbPath = Path.Combine(outputDirectory, artifact.Manifest.AssemblyName + ".pdb");
-        var canonicalModulePath = Path.Combine(outputDirectory, artifact.Manifest.AssemblyName + ".lir");
+        var canonicalModulePath = Path.Combine(
+            outputDirectory,
+            artifact.Manifest.AssemblyName + ".lir");
         var manifestPath = Path.Combine(outputDirectory, stem + ".lunil.json");
         AtomicWriteBytes(pePath, artifact.PeImage.AsSpan());
-        var canonicalModuleBytes = LuaAotModuleIdentity.SerializeCanonicalModule(canonicalModule);
-        AtomicWriteBytes(canonicalModulePath, canonicalModuleBytes);
+        AtomicWriteBytes(canonicalModulePath, artifact.CanonicalModule.AsSpan());
         var artifactPaths = new List<string> { pePath, canonicalModulePath };
         if (!artifact.PortablePdbImage.IsDefaultOrEmpty)
         {
@@ -287,7 +393,8 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
 
         var buildManifest = new LunilBuildModuleManifest
         {
-            SchemaVersion = 1,
+            SchemaVersion = 2,
+            CacheId = cacheKey.CacheId,
             ModuleName = options.ModuleName,
             ModuleContentId = artifact.Manifest.ModuleContentId,
             SourcePath = Path.GetRelativePath(ProjectDirectory, options.SourcePath)
@@ -302,7 +409,9 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
             AssemblyName = artifact.Manifest.AssemblyName,
             TypeName = artifact.Manifest.TypeName,
             PeFile = Path.GetFileName(pePath),
-            PdbFile = artifact.PortablePdbImage.IsDefaultOrEmpty ? null : Path.GetFileName(pdbPath),
+            PdbFile = artifact.PortablePdbImage.IsDefaultOrEmpty
+                ? null
+                : Path.GetFileName(pdbPath),
             CanonicalModuleFile = Path.GetFileName(canonicalModulePath),
             Functions = artifact.Manifest.Functions,
         };
@@ -316,10 +425,123 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
             artifact.Manifest.ModuleContentId,
             artifact.Manifest.TypeName,
             artifact.Manifest.Functions,
-            Convert.ToBase64String(canonicalModuleBytes),
+            Convert.ToBase64String(artifact.CanonicalModule.AsSpan()),
             pePath,
             artifactPaths);
     }
+
+    private LuaBackendCacheKey CreateCacheKey(
+        LunilCompileItemOptions options,
+        LunilBuildInputKind inputKind,
+        string sourceSha256,
+        LuaIrModule canonicalModule,
+        string logicalName)
+    {
+        var runtimeIdentifier = string.IsNullOrWhiteSpace(RuntimeIdentifier)
+            ? "portable"
+            : RuntimeIdentifier;
+        var deploymentMode = IsTrue(PublishAot)
+            ? LuaBackendDeploymentMode.NativeAot
+            : IsTrue(PublishReadyToRun)
+                ? LuaBackendDeploymentMode.ReadyToRun
+                : string.IsNullOrWhiteSpace(RuntimeIdentifier)
+                    ? LuaBackendDeploymentMode.Portable
+                    : LuaBackendDeploymentMode.CoreClr;
+        return LuaBackendCacheKey.Create(new LuaBackendCacheKeyParameters
+        {
+            ArtifactKind = LuaBackendCacheArtifactKind.PersistedCil,
+            SourceContentHash = sourceSha256,
+            CanonicalModuleHash = LuaAotModuleIdentity.ComputeContentId(canonicalModule),
+            SourceBindingId = logicalName,
+            CompilerVersion = CompilerVersion,
+            Optimization = options.Optimization == LunilBuildOptimization.Release
+                ? LuaBackendOptimizationMode.Release
+                : LuaBackendOptimizationMode.Debug,
+            DebugSymbols = options.DebugSymbols,
+            HookMode = LuaBackendHookMode.Exact,
+            SandboxMode = options.Sandbox switch
+            {
+                LunilBuildSandbox.Trusted => LuaBackendSandboxMode.Trusted,
+                LunilBuildSandbox.Restricted => LuaBackendSandboxMode.Restricted,
+                _ => LuaBackendSandboxMode.Default,
+            },
+            TargetFramework = string.IsNullOrWhiteSpace(TargetFramework)
+                ? "unknown"
+                : TargetFramework,
+            RuntimeIdentifier = runtimeIdentifier,
+            DeploymentMode = deploymentMode,
+            TrimmingMode = IsTrue(PublishTrimmed)
+                ? LuaBackendTrimmingMode.Enabled
+                : LuaBackendTrimmingMode.Disabled,
+            FeatureSet =
+            [
+                "persisted-cil-v1",
+                inputKind == LunilBuildInputKind.BinaryChunk
+                    ? "input-binary-chunk"
+                    : "input-source",
+            ],
+        });
+    }
+
+    private LuaBackendDiskCache? GetCache()
+    {
+        if (_cacheInitialized)
+        {
+            return _cache;
+        }
+
+        _cacheInitialized = true;
+        if (!CacheEnabled)
+        {
+            return null;
+        }
+
+        try
+        {
+            var root = string.IsNullOrWhiteSpace(CacheDirectory)
+                ? GetDefaultCacheDirectory()
+                : Path.GetFullPath(CacheDirectory, ProjectDirectory);
+            _cache = new LuaBackendDiskCache(new LuaBackendDiskCacheOptions
+            {
+                RootDirectory = root,
+                MaximumBytes = CacheMaximumBytes,
+                MaximumEntryBytes = CacheMaximumEntryBytes,
+                MaximumQuarantineBytes = CacheMaximumQuarantineBytes,
+            });
+            return _cache;
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or
+            NotSupportedException or UnauthorizedAccessException)
+        {
+            Log.LogMessage(
+                MessageImportance.Low,
+                $"Lunil backend cache was disabled: {exception.Message}");
+            return null;
+        }
+    }
+
+    private static string GetDefaultCacheDirectory()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(local))
+        {
+            local = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(local))
+            {
+                local = Path.Combine(local, ".cache");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(local))
+        {
+            local = Path.GetTempPath();
+        }
+
+        return Path.Combine(local, "Lunil", "backend-cache");
+    }
+
+    private static bool IsTrue(string value) =>
+        bool.TryParse(value, out var enabled) && enabled;
 
     private CompiledModule? TryReuseModule(
         LunilCompileItemOptions options,
@@ -342,7 +564,8 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
                 continue;
             }
 
-            if (manifest is null || manifest.SchemaVersion != 1 ||
+            if (manifest is null || manifest.SchemaVersion != 2 ||
+                string.IsNullOrWhiteSpace(manifest.CacheId) ||
                 !string.Equals(manifest.ModuleName, options.ModuleName, StringComparison.Ordinal) ||
                 !string.Equals(manifest.SourceSha256, sourceSha256, StringComparison.Ordinal) ||
                 !string.Equals(manifest.InputKind, inputKind.ToString(), StringComparison.Ordinal) ||
@@ -367,20 +590,90 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
                 continue;
             }
 
-            var artifactPaths = new List<string> { pePath, canonicalModulePath, manifestPath };
-            if (pdbPath is not null)
+            try
             {
-                artifactPaths.Add(pdbPath);
-            }
+                var canonicalModuleBytes = File.ReadAllBytes(canonicalModulePath);
+                var canonicalModule = LuaAotModuleIdentity.DeserializeCanonicalModule(
+                    canonicalModuleBytes);
+                var logicalName = options.ModuleName.Replace('.', '/') +
+                    (inputKind == LunilBuildInputKind.BinaryChunk ? ".luac" : ".lua");
+                var cacheKey = CreateCacheKey(
+                    options,
+                    inputKind,
+                    sourceSha256,
+                    canonicalModule,
+                    logicalName);
+                if (!string.Equals(
+                    manifest.CacheId,
+                    cacheKey.CacheId,
+                    StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            return new CompiledModule(
-                manifest.ModuleName,
-                manifest.ModuleContentId,
-                manifest.TypeName,
-                manifest.Functions,
-                Convert.ToBase64String(File.ReadAllBytes(canonicalModulePath)),
-                pePath,
-                artifactPaths);
+                var peImage = File.ReadAllBytes(pePath).ToImmutableArray();
+                var pdbImage = pdbPath is null
+                    ? ImmutableArray<byte>.Empty
+                    : File.ReadAllBytes(pdbPath).ToImmutableArray();
+                var validation = LuaAotArtifactLoader.Validate(
+                    peImage,
+                    pdbImage,
+                    new LuaAotLoadOptions
+                    {
+                        ExpectedModuleContentId = cacheKey.CanonicalModuleHash,
+                    });
+                if (!validation.Succeeded || validation.Manifest is null ||
+                    !string.Equals(
+                        manifest.ModuleContentId,
+                        validation.Manifest.ModuleContentId,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        manifest.AssemblyName,
+                        validation.Manifest.AssemblyName,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        manifest.TypeName,
+                        validation.Manifest.TypeName,
+                        StringComparison.Ordinal) ||
+                    !string.Equals(
+                        manifest.PeFile,
+                        validation.Manifest.AssemblyName + ".dll",
+                        StringComparison.Ordinal) ||
+                    (manifest.PdbFile is not null && !string.Equals(
+                        manifest.PdbFile,
+                        validation.Manifest.PortablePdbName,
+                        StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                var artifactPaths = new List<string>
+                {
+                    pePath,
+                    canonicalModulePath,
+                    manifestPath,
+                };
+                if (pdbPath is not null)
+                {
+                    artifactPaths.Add(pdbPath);
+                }
+
+                return new CompiledModule(
+                    manifest.ModuleName,
+                    validation.Manifest.ModuleContentId,
+                    validation.Manifest.TypeName,
+                    validation.Manifest.Functions,
+                    Convert.ToBase64String(canonicalModuleBytes),
+                    pePath,
+                    artifactPaths);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidDataException or
+                UnauthorizedAccessException or ArgumentException or BadImageFormatException)
+            {
+                Log.LogMessage(
+                    MessageImportance.Low,
+                    $"Lunil local artifact manifest '{manifestPath}' was rejected: {exception.Message}");
+            }
         }
 
         return null;
@@ -588,6 +881,13 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
         WriteIndented = true,
     };
 
+    private static readonly string CompilerVersion =
+        typeof(LuaAotCompiler).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion ??
+        typeof(LuaAotCompiler).Assembly.GetName().Version?.ToString() ??
+        "unknown";
+
     private sealed record CompiledModule(
         string ModuleName,
         string ModuleContentId,
@@ -603,6 +903,8 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
     private sealed class LunilBuildModuleManifest
     {
         public required int SchemaVersion { get; init; }
+
+        public required string CacheId { get; init; }
 
         public required string ModuleName { get; init; }
 
