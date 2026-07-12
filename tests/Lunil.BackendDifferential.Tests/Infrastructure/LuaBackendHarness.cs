@@ -136,11 +136,52 @@ internal sealed class Tier1JitBackendHarness : ILuaBackendHarness, IDisposable
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = false,
             Interpreter = options,
         });
     }
 
     public string Name => "coreclr-tier1-jit";
+
+    public LuaExecutionResult Execute(
+        LuaState state,
+        LuaClosure closure,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Execute(state, closure, arguments);
+
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Start(state, thread, arguments);
+
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Resume(state, thread, arguments);
+
+    public void Dispose() => _executor.Dispose();
+}
+
+internal sealed class Tier2JitBackendHarness : ILuaBackendHarness, IDisposable
+{
+    private readonly LuaJitExecutor _executor;
+
+    public Tier2JitBackendHarness(LuaInterpreterOptions options)
+    {
+        _executor = new LuaJitExecutor(new LuaJitExecutorOptions
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+            Interpreter = options,
+        });
+    }
+
+    public string Name => "coreclr-tier2-jit";
 
     public LuaExecutionResult Execute(
         LuaState state,
@@ -244,6 +285,7 @@ internal static class LuaBackendCatalog
             new ExecutorBackendHarness(interpreterOptions),
             new PersistedAotBackendHarness(interpreterOptions),
             new Tier1JitBackendHarness(interpreterOptions),
+            new Tier2JitBackendHarness(interpreterOptions),
         ];
     }
 

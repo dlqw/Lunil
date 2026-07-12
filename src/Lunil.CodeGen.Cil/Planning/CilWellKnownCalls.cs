@@ -69,6 +69,16 @@ public static class CilWellKnownCalls
         [CilStackValueKind.ExecutionContext],
         CilStackValueKind.Int32);
 
+    public static CilCallTarget ObserveCanonicalInstruction { get; } = Call(
+        "LuaCodegenAbiV1.ObserveCanonicalInstruction",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
     public static CilCallTarget ExecuteCanonicalInstruction { get; } = Call(
         "LuaCodegenAbiV1.ExecuteCanonicalInstruction",
         [
@@ -111,6 +121,7 @@ public static class CilWellKnownCalls
             SetFrameTop,
             LuaValueIsTruthy,
             CanExecuteCompiled,
+            ObserveCanonicalInstruction,
             ExecuteCanonicalInstruction,
             ExitContinue,
             ExitPoll,

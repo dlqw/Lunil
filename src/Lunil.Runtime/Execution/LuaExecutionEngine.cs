@@ -13,6 +13,7 @@ internal sealed class LuaExecutionEngine
 {
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
+    private readonly ILuaInstructionObserver? _instructionObserver;
     private readonly LuaInterpreterInstructionExecutor _referenceInstructionExecutor = new();
 
     internal LuaExecutionEngine(
@@ -21,6 +22,7 @@ internal sealed class LuaExecutionEngine
     {
         _options = options ?? LuaInterpreterOptions.Default;
         _instructionExecutor = instructionExecutor ?? _referenceInstructionExecutor;
+        _instructionObserver = _instructionExecutor as ILuaInstructionObserver;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumInstructionCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumStackSlots);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumCallDepth);
@@ -505,6 +507,31 @@ internal sealed class LuaExecutionEngine
             context.State,
             thread,
             frame,
+            instructions[programCounter]);
+    }
+
+    internal void ObserveCodegenInstruction(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter)
+    {
+        if (_instructionObserver is null ||
+            !context.TryBeginInstructionObservation(programCounter))
+        {
+            return;
+        }
+
+        var instructions = frame.Closure.Function.Instructions;
+        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+            programCounter,
+            instructions.Length);
+        _instructionObserver.ObserveInstruction(
+            context,
+            thread,
+            frame,
+            programCounter,
             instructions[programCounter]);
     }
 

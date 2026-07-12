@@ -94,6 +94,8 @@ public readonly record struct LuaCompiledExit
 public sealed class LuaExecutionContext
 {
     private int _instructionsConsumed;
+    private int _lastObservedProgramCounter;
+    private int _lastObservedInstructionCount;
 
     internal LuaExecutionContext(
         LuaState state,
@@ -154,6 +156,8 @@ public sealed class LuaExecutionContext
         ArgumentOutOfRangeException.ThrowIfNegative(remainingInstructionCount);
         state.Heap.ValidateValue(Values.LuaValue.FromThread(thread));
         _instructionsConsumed = 0;
+        _lastObservedProgramCounter = -1;
+        _lastObservedInstructionCount = -1;
         ExecutionEngine = executionEngine;
         State = state;
         Thread = thread;
@@ -176,4 +180,17 @@ public sealed class LuaExecutionContext
     }
 
     public bool IsDebugModeCurrent() => DebugModeVersion == Thread.DebugModeVersion;
+
+    internal bool TryBeginInstructionObservation(int programCounter)
+    {
+        if (_lastObservedProgramCounter == programCounter &&
+            _lastObservedInstructionCount == _instructionsConsumed)
+        {
+            return false;
+        }
+
+        _lastObservedProgramCounter = programCounter;
+        _lastObservedInstructionCount = _instructionsConsumed;
+        return true;
+    }
 }

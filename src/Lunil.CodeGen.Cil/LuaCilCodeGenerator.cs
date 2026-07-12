@@ -128,6 +128,13 @@ internal static class LuaCilMethodPlanner
                 pc,
                 instruction.SourceLine,
                 instruction.LogicalProgramCounter));
+            LoadArgument(instructions, ContextArgument, pc);
+            LoadArgument(instructions, ThreadArgument, pc);
+            LoadArgument(instructions, FrameArgument, pc);
+            LoadInt32(instructions, pc, pc);
+            Emit(instructions, CilPlanInstruction.Call(
+                CilWellKnownCalls.ObserveCanonicalInstruction,
+                pc));
             if (!IsDirectlyLowered(instruction))
             {
                 EmitCommitProgramCounter(instructions, pc);

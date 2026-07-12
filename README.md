@@ -28,7 +28,7 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.6.0-alpha.1`**. The compiler, managed runtime, and complete
+> Lunil is currently **`0.6.0-alpha.2`**. The compiler, managed runtime, and complete
 > Lua 5.4 standard library are functional and extensively tested, but the public API,
 > full official Lua test-suite coverage, and optimizing execution backends are not yet complete.
 > It is not a production-stable Lua replacement yet.
@@ -59,8 +59,8 @@ collector.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
 - **Designed for multiple execution tiers** — the reference interpreter, persisted CIL
-  AOT, and CoreCLR Tier 1 JIT share one verified execution contract; Tier 2 and
-  NativeAOT build integration follow the same ABI.
+  AOT, and profile-guided CoreCLR Tier 1/Tier 2 JIT share one verified execution
+  contract; NativeAOT build integration follows the same ABI.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
 
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | In development | Persisted CIL AOT v1 and policy-driven CoreCLR Tier 1 JIT are implemented; Tier 2 and build-time NativeAOT remain |
+| JIT / AOT backends | In development | Persisted CIL AOT v1 and profile-guided CoreCLR Tier 1/Tier 2 JIT are implemented; OSR and build-time NativeAOT remain |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -240,7 +240,7 @@ flowchart LR
     Interpreter --> Runtime[Lua runtime model]
     Runtime --> Heap[Logical heap + GC]
 
-    IR --> JIT[CoreCLR Tier 1 JIT]
+    IR --> JIT[CoreCLR Tier 1 / Tier 2 JIT]
     IR --> AOT[Persisted CIL AOT]
 ```
 

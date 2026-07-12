@@ -84,7 +84,13 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
 
 internal static class LuaJitModuleIdentity
 {
-    public static string Create(LuaIrModule module) =>
-        LuaCanonicalModuleSerializer.Sha256Hex(
-            LuaCanonicalModuleSerializer.Serialize(module));
+    private static readonly ConditionalWeakTable<LuaIrModule, Identity> Identities = new();
+
+    public static string Create(LuaIrModule module) => Identities.GetValue(
+        module,
+        static module => new Identity(LuaCanonicalModuleSerializer.Sha256Hex(
+            LuaCanonicalModuleSerializer.Serialize(module))))
+        .ContentId;
+
+    private sealed record Identity(string ContentId);
 }

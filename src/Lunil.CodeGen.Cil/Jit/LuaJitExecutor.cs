@@ -8,7 +8,7 @@ namespace Lunil.CodeGen.Cil.Jit;
 
 public sealed class LuaJitExecutor : IDisposable
 {
-    private readonly LuaTier1JitRegistry _registry;
+    private readonly LuaTieredJitRegistry _registry;
     private readonly LuaExecutionEngine _engine;
     private int _disposed;
 
@@ -16,14 +16,16 @@ public sealed class LuaJitExecutor : IDisposable
         : this(
             options ?? LuaJitExecutorOptions.Default,
             RuntimeDynamicCodeCapabilities.Instance,
-            ReflectionEmitLuaTier1Compiler.Instance)
+            ReflectionEmitLuaTier1Compiler.Instance,
+            ProfileGuidedLuaTier2Compiler.Instance)
     {
     }
 
     internal LuaJitExecutor(
         LuaJitExecutorOptions options,
         ILuaDynamicCodeCapabilities capabilities,
-        ILuaTier1Compiler compiler)
+        ILuaTier1Compiler compiler,
+        ILuaTier2Compiler? tier2Compiler = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -32,7 +34,11 @@ public sealed class LuaJitExecutor : IDisposable
         Options = options;
         IsDynamicCodeAvailable = capabilities.IsDynamicCodeSupported &&
             capabilities.IsDynamicCodeCompiled;
-        _registry = new LuaTier1JitRegistry(options, capabilities, compiler);
+        _registry = new LuaTieredJitRegistry(
+            options,
+            capabilities,
+            compiler,
+            tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }
 
@@ -97,6 +103,30 @@ public sealed class LuaJitExecutor : IDisposable
         return _registry.GetFunctionState(module, functionId);
     }
 
+    public LuaJitFunctionProfile GetFunctionProfile(LuaIrModule module, int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetFunctionProfile(module, functionId);
+    }
+
+    public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetFunctionTier(module, functionId);
+    }
+
+    public LuaJitTier2State GetTier2State(LuaIrModule module, int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetTier2State(module, functionId);
+    }
+
+    public LuaJitTier2Plan? GetTier2Plan(LuaIrModule module, int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetTier2Plan(module, functionId);
+    }
+
     public void Invalidate(LuaIrModule module)
     {
         ThrowIfDisposed();
@@ -140,6 +170,10 @@ public sealed class LuaJitExecutor : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.CompilationQueueCapacity);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumConcurrentCompilations);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumCompilationAttempts);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumPolymorphicShapes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Tier2InvocationThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Tier2BackedgeThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumTier2GuardFailures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumCodeCacheBytes);
         ArgumentNullException.ThrowIfNull(options.Interpreter);
         if (options.CompilationRetryBackoff < TimeSpan.Zero)

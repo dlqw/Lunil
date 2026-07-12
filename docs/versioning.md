@@ -6,10 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.6.0</VersionPrefix>
-<VersionSuffix>alpha.1</VersionSuffix>
+<VersionSuffix>alpha.2</VersionSuffix>
 ```
 
-The resulting version is `0.6.0-alpha.1` and its tag is `v0.6.0-alpha.1`.
+The resulting version is `0.6.0-alpha.2` and its tag is `v0.6.0-alpha.2`.
 `VersionSuffix` is removed for a stable release.
 
 ## Compatibility while below 1.0

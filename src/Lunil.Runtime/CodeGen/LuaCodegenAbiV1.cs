@@ -111,6 +111,20 @@ public static class LuaCodegenAbiV1
         return !context.HasExactDebugHooks && context.IsDebugModeCurrent();
     }
 
+    public static void ObserveCanonicalInstruction(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.ExecutionEngine?.ObserveCodegenInstruction(
+            context,
+            thread,
+            frame,
+            programCounter);
+    }
+
     public static LuaCompiledExit ExecuteCanonicalInstruction(
         LuaExecutionContext context,
         LuaThread thread,

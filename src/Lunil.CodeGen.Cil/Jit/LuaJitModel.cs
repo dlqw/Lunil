@@ -20,6 +20,24 @@ public enum LuaJitFunctionState : byte
     Invalidated,
 }
 
+public enum LuaJitCompilationTier : byte
+{
+    Interpreter,
+    Tier1,
+    Tier2,
+}
+
+public enum LuaJitTier2State : byte
+{
+    Disabled,
+    Profiling,
+    Queued,
+    Compiling,
+    Ready,
+    Failed,
+    Invalidated,
+}
+
 public enum LuaJitEventKind : byte
 {
     Queued,
@@ -30,6 +48,12 @@ public enum LuaJitEventKind : byte
     Deoptimized,
     Evicted,
     Invalidated,
+    Tier2Queued,
+    Tier2CompilationStarted,
+    Tier2CompilationCompleted,
+    Tier2CompilationFailed,
+    Tier2GuardFailed,
+    Tier2Invalidated,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -49,6 +73,16 @@ public sealed record LuaJitExecutorOptions
     public int MaximumConcurrentCompilations { get; init; } = 1;
 
     public int MaximumCompilationAttempts { get; init; } = 1;
+
+    public int MaximumPolymorphicShapes { get; init; } = 4;
+
+    public bool EnableTier2 { get; init; } = true;
+
+    public int Tier2InvocationThreshold { get; init; } = 128;
+
+    public int Tier2BackedgeThreshold { get; init; } = 1_024;
+
+    public int MaximumTier2GuardFailures { get; init; } = 16;
 
     public TimeSpan CompilationRetryBackoff { get; init; } = TimeSpan.FromSeconds(1);
 
@@ -72,7 +106,14 @@ public sealed record LuaJitStatistics(
     long Invalidations,
     long EstimatedCodeBytes,
     long TotalQueueLatencyTicks,
-    long TotalCompilationTicks);
+    long TotalCompilationTicks,
+    long Tier2CompilationQueued,
+    long Tier2CompilationStarted,
+    long Tier2CompilationCompleted,
+    long Tier2CompilationFailed,
+    long Tier2Invocations,
+    long Tier2GuardFailures,
+    long Tier2Invalidations);
 
 public sealed record LuaJitEvent(
     LuaJitEventKind Kind,
@@ -81,7 +122,8 @@ public sealed record LuaJitEvent(
     LuaJitFunctionState State,
     long EstimatedCodeBytes = 0,
     TimeSpan Duration = default,
-    string? DiagnosticCode = null);
+    string? DiagnosticCode = null,
+    LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1);
 
 public sealed class LuaJitException : Exception
 {

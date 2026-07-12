@@ -320,6 +320,17 @@ LRU code-byte budget 与显式 module/cache invalidation。cache key 和 emitted
 Tier 1 可观测性公开 compile queue latency、compile time、compiled invocation、fallback、deopt、failure、
 eviction 与 estimated code bytes 计数和结构化事件。事件订阅者异常不得改变 Lua 执行语义。
 
+当前 Tier 2 通过 Runtime ABI instruction observer 采集 owner-safe profile：entry argument tag、unary/binary
+operand tag、branch/backedge、table array capacity/shape/metatable version，以及 Lua module-content/function 或
+native name call target。profile 不保存未追踪 Lua object；table/call signature 最多保留四路，超过后永久标记
+megamorphic。promotion 与 Tier 1 共用 bounded queue、并发去重、code-byte LRU 和取消生命周期。
+
+profile-guided pass 实施 primitive constant folding、dead move、numeric/unary specialization、stable boolean
+branch、mono/poly table PIC、known-closure call guard 与 fixed result-window reuse。每个假设均有显式 guard；
+所有 canonical register、frame top 和 pending transform 在 guard 边界保持 materialized，`DeoptMap` 记录
+canonical PC 与 live register。guard failure 在零重复副作用的 PC 恢复 reference executor；连续失败达到阈值
+会丢弃 Tier 2、保留 Tier 1、合并新 profile 后重新 promotion。debug/hook epoch 变化走同一精确 deopt 边界。
+
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结。编译代码只执行
 canonical 基本块；call、tail call、return、yield、close、unwind 与 hook 仍由共享 scheduler 负责。

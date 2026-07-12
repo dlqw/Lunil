@@ -10,14 +10,17 @@ using Lunil.Runtime.Execution;
 
 namespace Lunil.CodeGen.Cil.Jit;
 
-internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
+internal sealed class LuaTieredJitRegistry :
+    ILuaInstructionExecutor,
+    ILuaInstructionObserver,
+    IDisposable
 {
     private const int CodegenVersion = 1;
     private readonly LuaJitExecutorOptions _options;
     private readonly ILuaDynamicCodeCapabilities _capabilities;
     private readonly ILuaTier1Compiler _compiler;
+    private readonly ILuaTier2Compiler _tier2Compiler;
     private readonly ConcurrentDictionary<FunctionKey, FunctionEntry> _entries = [];
-    private readonly ConditionalWeakTable<LuaIrModule, ModuleIdentity> _moduleIdentities = new();
     private readonly ConditionalWeakTable<LuaFrame, FunctionEntryObservation> _observedFrames =
         new();
     private readonly Channel<CompilationRequest> _queue;
@@ -41,16 +44,25 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
     private long _invalidations;
     private long _totalQueueLatencyTicks;
     private long _totalCompilationTicks;
+    private long _tier2CompilationQueued;
+    private long _tier2CompilationStarted;
+    private long _tier2CompilationCompleted;
+    private long _tier2CompilationFailed;
+    private long _tier2Invocations;
+    private long _tier2GuardFailures;
+    private long _tier2Invalidations;
     private int _disposed;
 
-    public LuaTier1JitRegistry(
+    public LuaTieredJitRegistry(
         LuaJitExecutorOptions options,
         ILuaDynamicCodeCapabilities capabilities,
-        ILuaTier1Compiler compiler)
+        ILuaTier1Compiler compiler,
+        ILuaTier2Compiler tier2Compiler)
     {
         _options = options;
         _capabilities = capabilities;
         _compiler = compiler;
+        _tier2Compiler = tier2Compiler;
         _queue = Channel.CreateBounded<CompilationRequest>(new BoundedChannelOptions(
             options.CompilationQueueCapacity)
         {
@@ -77,6 +89,11 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         LuaIrInstruction instruction)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        engine.ObserveCodegenInstruction(
+            context,
+            thread,
+            frame,
+            frame.ProgramCounter);
         if (_options.Policy == LuaJitPolicy.InterpreterOnly)
         {
             return Fallback(
@@ -94,7 +111,13 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             frame.Closure.Function.Id,
             LuaCodegenAbiV1.RuntimeAbiVersion,
             CodegenVersion);
-        var entry = _entries.GetOrAdd(key, static key => new FunctionEntry(key));
+        var entry = _entries.GetOrAdd(
+            key,
+            key => new FunctionEntry(
+                key,
+                frame.Closure.Function.ParameterCount,
+                _options.MaximumPolymorphicShapes,
+                _options.EnableTier2));
         Interlocked.Exchange(
             ref entry.LastAccessStamp,
             Interlocked.Increment(ref _accessStamp));
@@ -109,13 +132,24 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                 LuaCompiledExitReason.DebugModeChanged);
         }
 
-        var method = ReadReadyMethod(entry);
-        if (method is not null)
+        var entryPoint = ReadReadyMethod(entry);
+        if (entryPoint is not null)
         {
-            return InvokeCompiled(entry, method, context, thread, frame);
+            if (ShouldPromoteToTier2(entry, frame.ProgramCounter))
+            {
+                _ = RequestTier2Compilation(
+                    entry,
+                    module,
+                    _options.SynchronousCompilation);
+                entryPoint = ReadReadyMethod(entry);
+            }
+
+            if (entryPoint is not null)
+            {
+                return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
+            }
         }
 
-        ObserveHotness(entry, frame, frame.ProgramCounter, instruction);
         if (ShouldCompile(entry))
         {
             var waitForCompilation = _options.SynchronousCompilation ||
@@ -126,10 +160,10 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                 _ = completion.GetAwaiter().GetResult();
             }
 
-            method = ReadReadyMethod(entry);
-            if (method is not null)
+            entryPoint = ReadReadyMethod(entry);
+            if (entryPoint is not null)
             {
-                return InvokeCompiled(entry, method, context, thread, frame);
+                return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
             }
         }
 
@@ -144,6 +178,54 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             frame.ProgramCounter,
             ReadState(entry),
             LuaCompiledExitReason.BackendInvalidated);
+    }
+
+    public void ObserveInstruction(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter,
+        LuaIrInstruction instruction)
+    {
+        if (_options.Policy == LuaJitPolicy.InterpreterOnly ||
+            Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(frame.Closure.Module),
+            frame.Closure.Function.Id,
+            LuaCodegenAbiV1.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = _entries.GetOrAdd(
+            key,
+            key => new FunctionEntry(
+                key,
+                frame.Closure.Function.ParameterCount,
+                _options.MaximumPolymorphicShapes,
+                _options.EnableTier2));
+        ObserveHotness(entry, frame, programCounter, instruction);
+        if (_options.EnableTier2)
+        {
+            entry.Profile.Observe(
+                context,
+                thread,
+                frame,
+                programCounter,
+                instruction,
+                GetModuleContentId);
+        }
+        if (instruction.Opcode is LuaIrOpcode.Return or LuaIrOpcode.TailCall)
+        {
+            lock (entry.Gate)
+            {
+                if (entry.ActiveTier == LuaJitCompilationTier.Tier1)
+                {
+                    Interlocked.Increment(ref entry.CompletedTier1Invocations);
+                }
+            }
+        }
     }
 
     public LuaJitStatistics GetStatistics() => new(
@@ -161,7 +243,14 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         Interlocked.Read(ref _invalidations),
         Interlocked.Read(ref _estimatedCodeBytes),
         Interlocked.Read(ref _totalQueueLatencyTicks),
-        Interlocked.Read(ref _totalCompilationTicks));
+        Interlocked.Read(ref _totalCompilationTicks),
+        Interlocked.Read(ref _tier2CompilationQueued),
+        Interlocked.Read(ref _tier2CompilationStarted),
+        Interlocked.Read(ref _tier2CompilationCompleted),
+        Interlocked.Read(ref _tier2CompilationFailed),
+        Interlocked.Read(ref _tier2Invocations),
+        Interlocked.Read(ref _tier2GuardFailures),
+        Interlocked.Read(ref _tier2Invalidations));
 
     public LuaJitFunctionState GetFunctionState(LuaIrModule module, int functionId)
     {
@@ -184,6 +273,72 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         lock (entry.Gate)
         {
             return entry.State;
+        }
+    }
+
+    public LuaJitFunctionProfile GetFunctionProfile(LuaIrModule module, int functionId)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if (functionId < 0 || functionId >= module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        var function = module.Functions[functionId];
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV1.RuntimeAbiVersion,
+            CodegenVersion);
+        return _entries.TryGetValue(key, out var entry)
+            ? entry.Profile.Snapshot()
+            : new LuaJitFunctionProfile(
+                0,
+                [.. Enumerable.Repeat(LuaJitValueKinds.None, function.ParameterCount)],
+                []);
+    }
+
+    public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
+    {
+        var entry = FindEntry(module, functionId);
+        if (entry is null)
+        {
+            return LuaJitCompilationTier.Interpreter;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.ActiveTier;
+        }
+    }
+
+    public LuaJitTier2State GetTier2State(LuaIrModule module, int functionId)
+    {
+        var entry = FindEntry(module, functionId);
+        if (entry is null)
+        {
+            return _options.EnableTier2
+                ? LuaJitTier2State.Profiling
+                : LuaJitTier2State.Disabled;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.Tier2State;
+        }
+    }
+
+    public LuaJitTier2Plan? GetTier2Plan(LuaIrModule module, int functionId)
+    {
+        var entry = FindEntry(module, functionId);
+        if (entry is null)
+        {
+            return null;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.Tier2Plan;
         }
     }
 
@@ -213,7 +368,9 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                 lock (entry.Gate)
                 {
                     return entry.State is not LuaJitFunctionState.Queued and
-                        not LuaJitFunctionState.Compiling;
+                        not LuaJitFunctionState.Compiling &&
+                        entry.Tier2State is not LuaJitTier2State.Queued and
+                        not LuaJitTier2State.Compiling;
                 }
             }))
             {
@@ -250,10 +407,19 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             lock (entry.Gate)
             {
                 entry.Method = null;
+                entry.Tier1Method = null;
+                entry.Tier2Method = null;
+                entry.Tier2Plan = null;
+                entry.Tier1EstimatedCodeBytes = 0;
+                entry.Tier2EstimatedCodeBytes = 0;
                 entry.EstimatedCodeBytes = 0;
+                entry.ActiveTier = LuaJitCompilationTier.Interpreter;
                 entry.State = LuaJitFunctionState.Invalidated;
+                entry.Tier2State = LuaJitTier2State.Invalidated;
                 entry.Completion?.TrySetCanceled();
                 entry.Completion = null;
+                entry.Tier2Completion?.TrySetCanceled();
+                entry.Tier2Completion = null;
             }
         }
 
@@ -269,11 +435,13 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         }
     }
 
-    private static LuaCompiledMethod? ReadReadyMethod(FunctionEntry entry)
+    private static CompiledEntryPoint? ReadReadyMethod(FunctionEntry entry)
     {
         lock (entry.Gate)
         {
-            return entry.State == LuaJitFunctionState.Ready ? entry.Method : null;
+            return entry.State == LuaJitFunctionState.Ready && entry.Method is not null
+                ? new CompiledEntryPoint(entry.Method, entry.ActiveTier)
+                : null;
         }
     }
 
@@ -287,25 +455,40 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
 
     private LuaCompiledExit InvokeCompiled(
         FunctionEntry entry,
-        LuaCompiledMethod method,
+        CompiledEntryPoint entryPoint,
         LuaExecutionContext context,
         LuaThread thread,
         LuaFrame frame)
     {
         Interlocked.Increment(ref _compiledInvocations);
+        if (entryPoint.Tier == LuaJitCompilationTier.Tier2)
+        {
+            Interlocked.Increment(ref _tier2Invocations);
+        }
+        else
+        {
+            Interlocked.Increment(ref entry.Tier1Invocations);
+        }
         Interlocked.Exchange(
             ref entry.LastAccessStamp,
             Interlocked.Increment(ref _accessStamp));
-        var exit = method(context, thread, frame);
+        var exit = entryPoint.Method(context, thread, frame);
         if (exit.Kind == LuaCompiledExitKind.Deopt)
         {
             Interlocked.Increment(ref _deoptimizations);
+            if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
+                exit.Reason == LuaCompiledExitReason.GuardFailure)
+            {
+                HandleTier2GuardFailure(entry);
+            }
+
             RaiseEvent(new LuaJitEvent(
                 LuaJitEventKind.Deoptimized,
                 entry.Key.ModuleContentId,
                 entry.Key.FunctionId,
                 LuaJitFunctionState.Ready,
-                DiagnosticCode: exit.Reason.ToString()));
+                DiagnosticCode: exit.Reason.ToString(),
+                Tier: entryPoint.Tier));
         }
 
         return exit;
@@ -344,6 +527,98 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             Interlocked.Read(ref entry.Backedges) >= _options.BackedgeThreshold,
         _ => false,
     };
+
+    private bool ShouldPromoteToTier2(FunctionEntry entry, int programCounter)
+    {
+        if (!_options.EnableTier2)
+        {
+            return false;
+        }
+
+        lock (entry.Gate)
+        {
+            return entry.ActiveTier == LuaJitCompilationTier.Tier1 &&
+                entry.Tier2State == LuaJitTier2State.Profiling &&
+                (programCounter == 0 &&
+                 Interlocked.Read(ref entry.CompletedTier1Invocations) >=
+                    _options.Tier2InvocationThreshold ||
+                 Interlocked.Read(ref entry.Backedges) >= _options.Tier2BackedgeThreshold);
+        }
+    }
+
+    private Task<bool>? RequestTier2Compilation(
+        FunctionEntry entry,
+        LuaIrModule module,
+        bool compileSynchronously)
+    {
+        CompilationRequest request;
+        lock (entry.Gate)
+        {
+            if (entry.ActiveTier == LuaJitCompilationTier.Tier2)
+            {
+                return Task.FromResult(true);
+            }
+
+            if (entry.State != LuaJitFunctionState.Ready || entry.Tier1Method is null ||
+                entry.Tier2State is LuaJitTier2State.Queued or LuaJitTier2State.Compiling)
+            {
+                return entry.Tier2Completion?.Task;
+            }
+
+            if (entry.Tier2State == LuaJitTier2State.Failed &&
+                (entry.Tier2CompilationAttempts >= _options.MaximumCompilationAttempts ||
+                 Stopwatch.GetTimestamp() < entry.Tier2RetryAfterTimestamp))
+            {
+                return entry.Tier2Completion?.Task;
+            }
+
+            entry.Tier2State = LuaJitTier2State.Queued;
+            entry.Tier2CompilationAttempts++;
+            entry.Tier2Completion = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            request = new CompilationRequest(
+                entry,
+                module,
+                Stopwatch.GetTimestamp(),
+                entry.Tier2Completion,
+                LuaJitCompilationTier.Tier2,
+                entry.Profile.Snapshot());
+        }
+
+        Interlocked.Increment(ref _tier2CompilationQueued);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Tier2Queued,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            Tier: LuaJitCompilationTier.Tier2));
+
+        if (compileSynchronously)
+        {
+            Compile(request);
+            return request.Completion.Task;
+        }
+
+        if (_queue.Writer.TryWrite(request))
+        {
+            return request.Completion.Task;
+        }
+
+        lock (entry.Gate)
+        {
+            if (ReferenceEquals(entry.Tier2Completion, request.Completion) &&
+                entry.Tier2State == LuaJitTier2State.Queued)
+            {
+                entry.Tier2State = LuaJitTier2State.Profiling;
+                entry.Tier2CompilationAttempts--;
+                entry.Tier2Completion = null;
+            }
+        }
+
+        Interlocked.Increment(ref _queueRejected);
+        request.Completion.TrySetResult(false);
+        return request.Completion.Task;
+    }
 
     private Task<bool>? RequestCompilation(
         FunctionEntry entry,
@@ -385,7 +660,9 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                 entry,
                 module,
                 Stopwatch.GetTimestamp(),
-                entry.Completion);
+                entry.Completion,
+                LuaJitCompilationTier.Tier1,
+                null);
         }
 
         Interlocked.Increment(ref _compilationQueued);
@@ -465,6 +742,12 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             return;
         }
 
+        if (request.Tier == LuaJitCompilationTier.Tier2)
+        {
+            CompileTier2(request);
+            return;
+        }
+
         lock (request.Entry.Gate)
         {
             if (request.Entry.State != LuaJitFunctionState.Queued ||
@@ -538,6 +821,183 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
             compileDuration);
     }
 
+    private void CompileTier2(CompilationRequest request)
+    {
+        lock (request.Entry.Gate)
+        {
+            if (request.Entry.Tier2State != LuaJitTier2State.Queued ||
+                !ReferenceEquals(request.Entry.Tier2Completion, request.Completion))
+            {
+                request.Completion.TrySetResult(false);
+                return;
+            }
+
+            request.Entry.Tier2State = LuaJitTier2State.Compiling;
+        }
+
+        var queueLatency = Stopwatch.GetElapsedTime(request.EnqueuedTimestamp);
+        Interlocked.Add(ref _totalQueueLatencyTicks, queueLatency.Ticks);
+        Interlocked.Increment(ref _tier2CompilationStarted);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Tier2CompilationStarted,
+            request.Entry.Key.ModuleContentId,
+            request.Entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            Duration: queueLatency,
+            Tier: LuaJitCompilationTier.Tier2));
+
+        var started = Stopwatch.GetTimestamp();
+        LuaTier2CompilationResult result;
+        try
+        {
+            result = _tier2Compiler.Compile(
+                request.Module,
+                request.Entry.Key.FunctionId,
+                request.Profile!,
+                _disposeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
+        {
+            lock (request.Entry.Gate)
+            {
+                request.Entry.Tier2State = LuaJitTier2State.Invalidated;
+                request.Entry.Tier2Completion?.TrySetCanceled(_disposeCancellation.Token);
+            }
+
+            return;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and not AccessViolationException)
+        {
+            result = new LuaTier2CompilationResult(
+                null,
+                null,
+                0,
+                [$"{exception.GetType().Name}: {exception.Message}"]);
+        }
+
+        var compileDuration = Stopwatch.GetElapsedTime(started);
+        Interlocked.Add(ref _totalCompilationTicks, compileDuration.Ticks);
+        if (result.Succeeded && TryInstallTier2Method(request, result))
+        {
+            Interlocked.Increment(ref _tier2CompilationCompleted);
+            RaiseEvent(new LuaJitEvent(
+                LuaJitEventKind.Tier2CompilationCompleted,
+                request.Entry.Key.ModuleContentId,
+                request.Entry.Key.FunctionId,
+                LuaJitFunctionState.Ready,
+                result.EstimatedCodeBytes,
+                compileDuration,
+                Tier: LuaJitCompilationTier.Tier2));
+            return;
+        }
+
+        FailTier2Compilation(
+            request,
+            result.Succeeded ? "JIT2002" : "JIT2001",
+            compileDuration);
+    }
+
+    private bool TryInstallTier2Method(
+        CompilationRequest request,
+        LuaTier2CompilationResult result)
+    {
+        if (result.EstimatedCodeBytes <= 0 ||
+            result.EstimatedCodeBytes > _options.MaximumCodeCacheBytes)
+        {
+            return false;
+        }
+
+        var evictionEvents = new List<LuaJitEvent>();
+        lock (_cacheGate)
+        {
+            lock (request.Entry.Gate)
+            {
+                if (request.Entry.Tier2State != LuaJitTier2State.Compiling ||
+                    !ReferenceEquals(request.Entry.Tier2Completion, request.Completion))
+                {
+                    request.Completion.TrySetResult(false);
+                    return false;
+                }
+            }
+
+            while (Interlocked.Read(ref _estimatedCodeBytes) >
+                _options.MaximumCodeCacheBytes - result.EstimatedCodeBytes)
+            {
+                var candidate = FindEvictionCandidate(request.Entry);
+                if (candidate is null)
+                {
+                    return false;
+                }
+
+                var eviction = EvictEntry(candidate);
+                if (eviction is not null)
+                {
+                    evictionEvents.Add(eviction);
+                }
+            }
+
+            lock (request.Entry.Gate)
+            {
+                if (request.Entry.Tier2State != LuaJitTier2State.Compiling ||
+                    !ReferenceEquals(request.Entry.Tier2Completion, request.Completion))
+                {
+                    request.Completion.TrySetResult(false);
+                    return false;
+                }
+
+                request.Entry.Tier2Method = result.Method;
+                request.Entry.Tier2Plan = result.Plan;
+                request.Entry.Tier2EstimatedCodeBytes = result.EstimatedCodeBytes;
+                request.Entry.Method = result.Method;
+                request.Entry.ActiveTier = LuaJitCompilationTier.Tier2;
+                request.Entry.Tier2State = LuaJitTier2State.Ready;
+                request.Entry.Tier2GuardFailures = 0;
+                request.Entry.EstimatedCodeBytes = checked(
+                    request.Entry.Tier1EstimatedCodeBytes + result.EstimatedCodeBytes);
+                Interlocked.Add(ref _estimatedCodeBytes, result.EstimatedCodeBytes);
+                request.Completion.TrySetResult(true);
+            }
+        }
+
+        foreach (var jitEvent in evictionEvents)
+        {
+            RaiseEvent(jitEvent);
+        }
+
+        return true;
+    }
+
+    private void FailTier2Compilation(
+        CompilationRequest request,
+        string diagnosticCode,
+        TimeSpan duration)
+    {
+        lock (request.Entry.Gate)
+        {
+            if (request.Entry.Tier2State != LuaJitTier2State.Compiling ||
+                !ReferenceEquals(request.Entry.Tier2Completion, request.Completion))
+            {
+                request.Completion.TrySetResult(false);
+                return;
+            }
+
+            request.Entry.Tier2State = LuaJitTier2State.Failed;
+            request.Entry.Tier2RetryAfterTimestamp = CalculateRetryAfterTimestamp();
+            request.Completion.TrySetResult(false);
+        }
+
+        Interlocked.Increment(ref _tier2CompilationFailed);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Tier2CompilationFailed,
+            request.Entry.Key.ModuleContentId,
+            request.Entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            Duration: duration,
+            DiagnosticCode: diagnosticCode,
+            Tier: LuaJitCompilationTier.Tier2));
+    }
+
     private bool TryInstallCompiledMethod(
         CompilationRequest request,
         LuaTier1CompilationResult result)
@@ -570,27 +1030,7 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                     return false;
                 }
 
-                LuaJitEvent? eviction = null;
-                lock (candidate.Gate)
-                {
-                    if (candidate.State == LuaJitFunctionState.Ready &&
-                        candidate.Method is not null)
-                    {
-                        var released = candidate.EstimatedCodeBytes;
-                        Interlocked.Add(ref _estimatedCodeBytes, -released);
-                        candidate.Method = null;
-                        candidate.EstimatedCodeBytes = 0;
-                        candidate.State = LuaJitFunctionState.Invalidated;
-                        Interlocked.Increment(ref _cacheEvictions);
-                        eviction = new LuaJitEvent(
-                            LuaJitEventKind.Evicted,
-                            candidate.Key.ModuleContentId,
-                            candidate.Key.FunctionId,
-                            LuaJitFunctionState.Invalidated,
-                            released);
-                    }
-                }
-
+                var eviction = EvictEntry(candidate);
                 if (eviction is not null)
                 {
                     evictionEvents.Add(eviction);
@@ -606,9 +1046,15 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                     return false;
                 }
 
+                request.Entry.Tier1Method = result.Method;
+                request.Entry.Tier1EstimatedCodeBytes = result.EstimatedCodeBytes;
                 request.Entry.Method = result.Method;
+                request.Entry.ActiveTier = LuaJitCompilationTier.Tier1;
                 request.Entry.EstimatedCodeBytes = result.EstimatedCodeBytes;
                 request.Entry.State = LuaJitFunctionState.Ready;
+                request.Entry.Tier2State = _options.EnableTier2
+                    ? LuaJitTier2State.Profiling
+                    : LuaJitTier2State.Disabled;
                 request.Entry.FailureCode = null;
                 Interlocked.Add(ref _estimatedCodeBytes, result.EstimatedCodeBytes);
                 request.Completion.TrySetResult(true);
@@ -707,6 +1153,93 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         return result;
     }
 
+    private LuaJitEvent? EvictEntry(FunctionEntry entry)
+    {
+        lock (entry.Gate)
+        {
+            if (entry.State != LuaJitFunctionState.Ready || entry.Method is null)
+            {
+                return null;
+            }
+
+            var released = entry.EstimatedCodeBytes;
+            Interlocked.Add(ref _estimatedCodeBytes, -released);
+            entry.Method = null;
+            entry.Tier1Method = null;
+            entry.Tier2Method = null;
+            entry.Tier2Plan = null;
+            entry.Tier1EstimatedCodeBytes = 0;
+            entry.Tier2EstimatedCodeBytes = 0;
+            entry.EstimatedCodeBytes = 0;
+            entry.ActiveTier = LuaJitCompilationTier.Interpreter;
+            entry.State = LuaJitFunctionState.Invalidated;
+            entry.Tier2State = LuaJitTier2State.Invalidated;
+            entry.Tier2Completion?.TrySetResult(false);
+            entry.Tier2Completion = null;
+            Interlocked.Increment(ref _cacheEvictions);
+            return new LuaJitEvent(
+                LuaJitEventKind.Evicted,
+                entry.Key.ModuleContentId,
+                entry.Key.FunctionId,
+                LuaJitFunctionState.Invalidated,
+                released,
+                Tier: LuaJitCompilationTier.Interpreter);
+        }
+    }
+
+    private void HandleTier2GuardFailure(FunctionEntry entry)
+    {
+        Interlocked.Increment(ref _tier2GuardFailures);
+        var failures = Interlocked.Increment(ref entry.Tier2GuardFailures);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Tier2GuardFailed,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            DiagnosticCode: LuaCompiledExitReason.GuardFailure.ToString(),
+            Tier: LuaJitCompilationTier.Tier2));
+        if (failures < _options.MaximumTier2GuardFailures)
+        {
+            return;
+        }
+
+        long released;
+        lock (_cacheGate)
+        {
+            lock (entry.Gate)
+            {
+                if (entry.ActiveTier != LuaJitCompilationTier.Tier2 ||
+                    entry.Tier1Method is null)
+                {
+                    return;
+                }
+
+                released = entry.Tier2EstimatedCodeBytes;
+                entry.Tier2Method = null;
+                entry.Tier2Plan = null;
+                entry.Tier2EstimatedCodeBytes = 0;
+                entry.EstimatedCodeBytes = entry.Tier1EstimatedCodeBytes;
+                entry.Method = entry.Tier1Method;
+                entry.ActiveTier = LuaJitCompilationTier.Tier1;
+                entry.Tier2State = LuaJitTier2State.Profiling;
+                entry.Tier2CompilationAttempts = 0;
+                entry.Tier2GuardFailures = 0;
+                entry.CompletedTier1Invocations = 0;
+                Interlocked.Add(ref _estimatedCodeBytes, -released);
+            }
+        }
+
+        Interlocked.Increment(ref _tier2Invalidations);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Tier2Invalidated,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            released,
+            DiagnosticCode: "JIT2003",
+            Tier: LuaJitCompilationTier.Tier2));
+    }
+
     private void InvalidateModule(string moduleContentId)
     {
         var events = new List<LuaJitEvent>();
@@ -725,11 +1258,20 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
                     }
 
                     entry.Method = null;
+                    entry.Tier1Method = null;
+                    entry.Tier2Method = null;
+                    entry.Tier2Plan = null;
+                    entry.Tier1EstimatedCodeBytes = 0;
+                    entry.Tier2EstimatedCodeBytes = 0;
                     entry.EstimatedCodeBytes = 0;
+                    entry.ActiveTier = LuaJitCompilationTier.Interpreter;
                     entry.State = LuaJitFunctionState.Invalidated;
+                    entry.Tier2State = LuaJitTier2State.Invalidated;
                     entry.FailureCode = null;
                     entry.Completion?.TrySetResult(false);
                     entry.Completion = null;
+                    entry.Tier2Completion?.TrySetResult(false);
+                    entry.Tier2Completion = null;
                     Interlocked.Increment(ref _invalidations);
                     events.Add(new LuaJitEvent(
                         LuaJitEventKind.Invalidated,
@@ -776,11 +1318,24 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         }
     }
 
-    private string GetModuleContentId(LuaIrModule module) =>
-        _moduleIdentities.GetValue(
-            module,
-            static module => new ModuleIdentity(LuaJitModuleIdentity.Create(module)))
-        .ContentId;
+    private static string GetModuleContentId(LuaIrModule module) =>
+        LuaJitModuleIdentity.Create(module);
+
+    private FunctionEntry? FindEntry(LuaIrModule module, int functionId)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if (functionId < 0 || functionId >= module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV1.RuntimeAbiVersion,
+            CodegenVersion);
+        return _entries.GetValueOrDefault(key);
+    }
 
     private long CalculateRetryAfterTimestamp()
     {
@@ -826,7 +1381,15 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         int RuntimeAbiVersion,
         int CodegenVersion);
 
-    private sealed class FunctionEntry(FunctionKey key)
+    private readonly record struct CompiledEntryPoint(
+        LuaCompiledMethod Method,
+        LuaJitCompilationTier Tier);
+
+    private sealed class FunctionEntry(
+        FunctionKey key,
+        int parameterCount,
+        int maximumPolymorphicShapes,
+        bool enableTier2)
     {
         public FunctionKey Key { get; } = key;
 
@@ -834,11 +1397,33 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
 
         public LuaJitFunctionState State { get; set; }
 
+        public LuaJitCompilationTier ActiveTier { get; set; }
+
+        public LuaJitTier2State Tier2State { get; set; } = enableTier2
+            ? LuaJitTier2State.Profiling
+            : LuaJitTier2State.Disabled;
+
+        public LuaJitProfileAccumulator Profile { get; } = new(
+            parameterCount,
+            maximumPolymorphicShapes);
+
         public LuaCompiledMethod? Method { get; set; }
+
+        public LuaCompiledMethod? Tier1Method { get; set; }
+
+        public LuaCompiledMethod? Tier2Method { get; set; }
+
+        public LuaJitTier2Plan? Tier2Plan { get; set; }
 
         public TaskCompletionSource<bool>? Completion { get; set; }
 
+        public TaskCompletionSource<bool>? Tier2Completion { get; set; }
+
         public long EstimatedCodeBytes { get; set; }
+
+        public long Tier1EstimatedCodeBytes { get; set; }
+
+        public long Tier2EstimatedCodeBytes { get; set; }
 
         public long LastAccessStamp;
 
@@ -846,9 +1431,19 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
 
         public long Backedges;
 
+        public long Tier1Invocations;
+
+        public long CompletedTier1Invocations;
+
+        public long Tier2GuardFailures;
+
         public int CompilationAttempts { get; set; }
 
         public long RetryAfterTimestamp { get; set; }
+
+        public int Tier2CompilationAttempts { get; set; }
+
+        public long Tier2RetryAfterTimestamp { get; set; }
 
         public string? FailureCode { get; set; }
     }
@@ -857,9 +1452,9 @@ internal sealed class LuaTier1JitRegistry : ILuaInstructionExecutor, IDisposable
         FunctionEntry Entry,
         LuaIrModule Module,
         long EnqueuedTimestamp,
-        TaskCompletionSource<bool> Completion);
-
-    private sealed record ModuleIdentity(string ContentId);
+        TaskCompletionSource<bool> Completion,
+        LuaJitCompilationTier Tier,
+        LuaJitFunctionProfile? Profile);
 
     private sealed class FunctionEntryObservation
     {

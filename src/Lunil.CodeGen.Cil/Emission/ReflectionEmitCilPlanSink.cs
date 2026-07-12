@@ -200,6 +200,15 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.CanExecuteCompiled),
             [typeof(LuaExecutionContext)]),
+        "LuaCodegenAbiV1.ObserveCanonicalInstruction" => Method(
+            typeof(LuaCodegenAbiV1),
+            nameof(LuaCodegenAbiV1.ObserveCanonicalInstruction),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+            ]),
         "LuaCodegenAbiV1.ExecuteCanonicalInstruction" => Method(
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.ExecuteCanonicalInstruction),
