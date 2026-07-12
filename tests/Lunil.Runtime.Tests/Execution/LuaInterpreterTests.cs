@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using Lunil.Core.Text;
+using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.Semantics.Binding;
@@ -166,6 +168,49 @@ public sealed class LuaInterpreterTests
         Assert.Throws<LuaRuntimeException>(() =>
             interpreter.Execute(state, state.CreateMainClosure(module)));
         Assert.Equal(LuaThreadStatus.Error, state.MainThread.Status);
+    }
+
+    [Fact]
+    public void ChargesExactlyOneBudgetUnitPerCanonicalInstruction()
+    {
+        var instructions = new[]
+        {
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1),
+        }.ToImmutableArray();
+        var module = new LuaIrModule
+        {
+            MainFunctionId = 0,
+            Functions =
+            [
+                new LuaIrFunction
+                {
+                    Id = 0,
+                    Span = new TextSpan(0, 0),
+                    RegisterCount = 1,
+                    Constants = [LuaIrConstant.FromInteger(42)],
+                    Instructions = instructions,
+                    BasicBlocks = LuaIrControlFlow.Build(instructions),
+                },
+            ],
+        };
+        const int instructionCount = 2;
+        var exactState = new LuaState();
+        var exact = new LuaInterpreter(LuaInterpreterOptions.Default with
+        {
+            MaximumInstructionCount = instructionCount,
+        });
+
+        var completed = exact.Execute(exactState, exactState.CreateMainClosure(module));
+
+        Assert.True(completed.Values.SequenceEqual([LuaValue.FromInteger(42)]));
+        var insufficientState = new LuaState();
+        var insufficient = new LuaInterpreter(LuaInterpreterOptions.Default with
+        {
+            MaximumInstructionCount = instructionCount - 1,
+        });
+        Assert.Throws<LuaRuntimeException>(() =>
+            insufficient.Execute(insufficientState, insufficientState.CreateMainClosure(module)));
     }
 
     [Fact]

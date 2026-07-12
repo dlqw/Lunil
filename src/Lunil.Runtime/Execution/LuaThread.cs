@@ -62,6 +62,8 @@ public sealed class LuaThread : LuaGcObject
 
     public int DebugHookCount { get; internal set; }
 
+    internal ulong DebugModeVersion { get; set; }
+
     internal int DebugHookCounter { get; set; }
 
     internal bool IsRunningDebugHook { get; set; }

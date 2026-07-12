@@ -61,10 +61,19 @@ jobs:
       - name: Build native-platform bundle
         shell: pwsh
         run: ./scripts/New-ReleaseBundle.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Version '${{ steps.version.outputs.value }}'
+      - name: Record execution backend benchmark trend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'artifacts/benchmarks' | Out-Null
+          dotnet run --project benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj `
+            --configuration Release --no-build -- 1000000 |
+            Tee-Object -FilePath 'artifacts/benchmarks/${{ matrix.rid }}.txt'
       - uses: actions/upload-artifact@v7
         with:
           name: lunil-${{ matrix.rid }}
-          path: artifacts/*.zip
+          path: |
+            artifacts/*.zip
+            artifacts/benchmarks/*.txt
           if-no-files-found: error
 
   formatting-and-packages:

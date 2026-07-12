@@ -40,7 +40,7 @@ public static class LuaRuntimeOperations
                 continue;
             }
 
-            return LuaOperationResolution.Call(metamethod, [target, key]);
+            return LuaOperationResolution.Call(metamethod, target, key);
         }
 
         throw new LuaRuntimeException("'__index' chain is too long; possible loop.");
@@ -82,7 +82,7 @@ public static class LuaRuntimeOperations
                 continue;
             }
 
-            return LuaOperationResolution.Call(metamethod, [target, key, value]);
+            return LuaOperationResolution.Call(metamethod, target, key, value);
         }
 
         throw new LuaRuntimeException("'__newindex' chain is too long; possible loop.");
@@ -117,7 +117,7 @@ public static class LuaRuntimeOperations
             throw new LuaRuntimeException($"Cannot apply {operation} to {operand.Kind}.");
         }
 
-        return LuaOperationResolution.Call(metamethod, [operand]);
+        return LuaOperationResolution.Call(metamethod, operand);
     }
 
     public static LuaOperationResolution Binary(
@@ -176,7 +176,7 @@ public static class LuaRuntimeOperations
             var lessOrEqual = GetBinaryMetamethod(state, left, right, LuaMetamethod.LessThanOrEqual);
             if (!lessOrEqual.IsNil)
             {
-                return LuaOperationResolution.Call(lessOrEqual, [left, right]);
+                return LuaOperationResolution.Call(lessOrEqual, left, right);
             }
 
             var lessThan = GetBinaryMetamethod(state, right, left, LuaMetamethod.LessThan);
@@ -184,7 +184,8 @@ public static class LuaRuntimeOperations
             {
                 return LuaOperationResolution.Call(
                     lessThan,
-                    [right, left],
+                    right,
+                    left,
                     LuaResultTransform.LogicalNot);
             }
         }
@@ -197,7 +198,7 @@ public static class LuaRuntimeOperations
                 $"Cannot apply {operation} to {left.Kind} and {right.Kind}.");
         }
 
-        return LuaOperationResolution.Call(metamethod, [left, right]);
+        return LuaOperationResolution.Call(metamethod, left, right);
     }
 
     public static LuaOperationResolution ResolveCall(
@@ -265,7 +266,8 @@ public static class LuaRuntimeOperations
 
         return LuaOperationResolution.Call(
             leftMetamethod,
-            [left, right],
+            left,
+            right,
             negate ? LuaResultTransform.LogicalNot : LuaResultTransform.None);
     }
 

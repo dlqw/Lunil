@@ -294,6 +294,11 @@ Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protect
 
 解释器是语义基准，并负责 NativeAOT 环境中的动态 `load`、JIT 失败回退、精确 hook/debug 模式及不可信 chunk 的验证执行。dispatch 实现需基准比较 switch、函数表和受审计的低级优化，默认选择在所有目标平台稳定的方案。
 
+宿主默认通过后端中立的 `LuaExecutor` 执行；`LuaInterpreter` 明确固定到 Tier 0。二者共用
+`LuaExecutionEngine` scheduler，reference opcode dispatch 位于独立的 interpreter instruction
+executor。Runtime code-generation ABI v1 以 `LuaExecutionContext`/`LuaCompiledExit` 交换
+canonical PC、精确指令计数与 tagged boundary，后端返回的计数必须与 context 中预留的区间一致。
+
 ### 9.2 CIL JIT
 
 - Tier 0：寄存器解释器；
@@ -303,17 +308,64 @@ Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protect
 
 优化包括数字快路径、字符串字段/数组索引 inline cache、metatable/version guard、已知闭包直接调用、多返回值栈区间复用及可证明 non-yieldable leaf 内联。guard 失败进入共享 slow path；已跨越逻辑边界的优化必须有 deopt map 恢复 Lua 帧。
 
-当 `RuntimeFeature.IsDynamicCodeSupported` 为 false 时 JIT 自动禁用。机器码不持久化，缓存仅保存 IR、CIL artifact 与版本化 profile。
+当 `RuntimeFeature.IsDynamicCodeSupported` 或 `IsDynamicCodeCompiled` 为 false 时 JIT 自动禁用。机器码不持久化，缓存仅保存 IR、CIL artifact 与版本化 profile。
+
+当前 CoreCLR Tier 1 已提供 `InterpreterOnly/Auto/PreferJit/RequireJit` public policy，按 function entry
+与 verified backedge 计数触发编译。默认使用 bounded asynchronous compile queue；测试与 deterministic
+场景可切换同步模式。每个 module-content/function/codegen key 只允许一个 Queued/Compiling request，
+状态按 `Cold/Queued/Compiling/Ready/Failed/Invalidated` 转换，并具有 retry backoff、失败熔断、取消、
+LRU code-byte budget 与显式 module/cache invalidation。cache key 和 emitted delegate 不持有
+`LuaState`、closure 或 upvalue owner；动态代码不可用时不会进入 Reflection.Emit。
+
+Tier 1 可观测性公开 compile queue latency、compile time、compiled invocation、fallback、deopt、failure、
+eviction 与 estimated code bytes 计数和结构化事件。事件订阅者异常不得改变 Lua 执行语义。
+
+当前 Tier 2 通过 Runtime ABI instruction observer 采集 owner-safe profile：entry argument tag、unary/binary
+operand tag、branch/backedge、table array capacity/shape/metatable version，以及 Lua module-content/function 或
+native name call target。profile 不保存未追踪 Lua object；table/call signature 最多保留四路，超过后永久标记
+megamorphic。promotion 与 Tier 1 共用 bounded queue、并发去重、code-byte LRU 和取消生命周期。
+
+profile-guided pass 实施 primitive constant folding、dead move、numeric/unary specialization、stable boolean
+branch、mono/poly table PIC、known-closure call guard 与 fixed result-window reuse。每个假设均有显式 guard；
+所有 canonical register、frame top 和 pending transform 在 guard 边界保持 materialized，`DeoptMap` 记录
+canonical PC 与 live register。guard failure 在零重复副作用的 PC 恢复 reference executor；连续失败达到阈值
+会丢弃 Tier 2、保留 Tier 1、合并新 profile 后重新 promotion。debug/hook epoch 变化走同一精确 deopt 边界。
+
+执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
+和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结。编译代码只执行
+canonical 基本块；call、tail call、return、yield、close、unwind 与 hook 仍由共享 scheduler 负责。
+
+`Lunil.CodeGen.Cil` 先把 verified canonical function lowering 为 typed method plan。plan 显式保存
+label、local、call signature、canonical PC、sequence point 与 GC live-register map，并在进入任何
+emitter 前验证 evaluation-stack depth/type、branch merge、ABI call、safe-point spill 和资源上限。
+Reflection.Emit 与 metadata encoder 消费同一 instruction-sink 契约；尚未 lowering 的 opcode 生成
+显式 deopt exit，不能落入不完整实现。Persisted CIL v1 已覆盖全部 canonical opcode：寄存器与
+控制流基础操作直接 lowering，可能调用、yield、close 或执行复杂 Lua 语义的操作通过 versioned
+Runtime ABI slow path 返回共享 scheduler，不在生成方法中复制解释器状态机。
 
 ### 9.3 AOT
 
-持久化 CIL 使用 `System.Reflection.Metadata`/`ManagedPEBuilder` 生成确定性 ECMA-335 PE 与 Portable PDB。稳定入口 ABI 为：
+持久化 CIL 使用 `System.Reflection.Metadata`/`ManagedPEBuilder` 生成确定性 ECMA-335 PE 与 Portable PDB。稳定入口 ABI 的概念形式为：
 
 ```csharp
-VmSignal Execute(LuaThread thread, ref LuaFrame frame);
+LuaCompiledExit Execute(
+    LuaExecutionContext context,
+    LuaThread thread,
+    LuaFrame frame);
 ```
 
+具体跨程序集调用通过版本化 Runtime code-generation facade 暴露。返回值携带 poll、call、
+tail-call、return 或 deopt 等 tagged exit；不在生成代码的 CLR 栈上保存 Lua continuation。
+
 大型 Lua 函数按基本块拆分，避免 CoreCLR JIT 与 NativeAOT 对超大方法退化。
+
+当前 persisted CIL AOT v1 生成 deterministic PE、deterministic Portable PDB、canonical module
+只读资源和 JSON manifest。manifest 固化 artifact schema、IR/Runtime ABI/codegen 版本、module
+content ID、options fingerprint、checksum 与 function/shard map。Portable PDB 同时保存 Lua source
+checksum、source-line sequence point，以及 IL offset 到 canonical/logical PC 的 Lunil custom debug
+record。普通 CoreCLR 通过显式 loader 先验证 manifest、版本与资源 checksum，再使用 collectible
+`AssemblyLoadContext` 注册 function delegate；PE 尾部的 deterministic SHA-256 footer 覆盖完整映像，
+损坏、错 ABI、错 module identity 或不匹配的 PDB 只返回稳定诊断。
 
 .NET NativeAOT 通过 MSBuild task 在 `CoreCompile` 前生成 Lua 程序集和静态 `.g.cs` 注册清单，使 trimming/AOT 能发现全部入口。NativeAOT 运行时不动态产生 CIL；未预编译源码使用解释器。
 

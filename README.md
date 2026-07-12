@@ -28,7 +28,7 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.6.0-alpha.1`**. The compiler, managed runtime, and complete
+> Lunil is currently **`0.6.0-alpha.2`**. The compiler, managed runtime, and complete
 > Lua 5.4 standard library are functional and extensively tested, but the public API,
 > full official Lua test-suite coverage, and optimizing execution backends are not yet complete.
 > It is not a production-stable Lua replacement yet.
@@ -58,9 +58,9 @@ collector.
   ownership, resource budgets, handles, protected errors, and host-facing APIs.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
-- **Designed for multiple execution tiers** — the current reference interpreter is
-  the semantic baseline for planned CoreCLR CIL JIT, persisted CIL, and NativeAOT
-  backends.
+- **Designed for multiple execution tiers** — the reference interpreter, persisted CIL
+  AOT, and profile-guided CoreCLR Tier 1/Tier 2 JIT share one verified execution
+  contract; NativeAOT build integration follows the same ABI.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
 
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Planned | CoreCLR CIL JIT, persisted CIL and build-time NativeAOT |
+| JIT / AOT backends | In development | Persisted CIL AOT v1 and profile-guided CoreCLR Tier 1/Tier 2 JIT are implemented; OSR and build-time NativeAOT remain |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -201,7 +201,7 @@ if (!verificationErrors.IsEmpty)
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
 var closure = state.CreateMainClosure(lowering.Module);
-var result = new LuaInterpreter().Execute(state, closure);
+var result = new LuaExecutor().Execute(state, closure);
 
 Console.WriteLine(result.Values[0].AsInteger()); // 55
 ```
@@ -212,8 +212,11 @@ To execute a validated PUC Lua 5.4 binary chunk:
 var bytecode = File.ReadAllBytes("program.luac");
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
-var result = new LuaInterpreter().ExecuteBinaryChunk(state, bytecode);
+var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
 ```
+
+`LuaExecutor` is the backend-neutral host facade. `LuaInterpreter` remains available when a host
+explicitly requires the Tier 0 reference backend.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.
@@ -237,8 +240,8 @@ flowchart LR
     Interpreter --> Runtime[Lua runtime model]
     Runtime --> Heap[Logical heap + GC]
 
-    IR -. planned .-> JIT[CoreCLR CIL JIT]
-    IR -. planned .-> AOT[Persisted CIL / NativeAOT]
+    IR --> JIT[CoreCLR Tier 1 / Tier 2 JIT]
+    IR --> AOT[Persisted CIL AOT]
 ```
 
 The compiler is byte-oriented at its boundaries, uses immutable syntax and semantic
@@ -257,6 +260,7 @@ Lunil/
 │   ├── Lunil.Semantics/         # binding and canonical lowering
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
+│   ├── Lunil.CodeGen.Cil/       # typed CIL plans, persisted AOT and tiered CoreCLR JIT
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
 ├── benchmarks/                  # runtime benchmark harness
@@ -297,6 +301,8 @@ suffix are automatically marked as prereleases. See the
 | Document | Description |
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
+| [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
+| [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
 | [Runtime continuation ABI](docs/runtime-continuation-abi.md) | Frozen continuation and yield boundary from `0.3.0` |
 | [PUC prototype import](docs/puc-prototype-import.md) | PUC Lua prototype-to-canonical-IR conversion |
 | [Versioning](docs/versioning.md) | SemVer, alpha/beta/RC promotion and release procedure |
