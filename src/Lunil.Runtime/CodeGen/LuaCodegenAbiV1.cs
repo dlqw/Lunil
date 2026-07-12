@@ -125,6 +125,15 @@ public static class LuaCodegenAbiV1
             programCounter);
     }
 
+    public static void ObserveLoopOsrBackedge(
+        LuaExecutionContext context,
+        LuaFrame frame,
+        int programCounter)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.ExecutionEngine?.ObserveLoopOsrBackedge(frame, programCounter);
+    }
+
     public static LuaCompiledExit ExecuteCanonicalInstruction(
         LuaExecutionContext context,
         LuaThread thread,

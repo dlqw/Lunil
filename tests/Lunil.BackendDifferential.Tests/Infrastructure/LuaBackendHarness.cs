@@ -204,6 +204,48 @@ internal sealed class Tier2JitBackendHarness : ILuaBackendHarness, IDisposable
     public void Dispose() => _executor.Dispose();
 }
 
+internal sealed class LoopOsrBackendHarness : ILuaBackendHarness, IDisposable
+{
+    private readonly LuaJitExecutor _executor;
+
+    public LoopOsrBackendHarness(LuaInterpreterOptions options)
+    {
+        _executor = new LuaJitExecutor(new LuaJitExecutorOptions
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            SynchronousCompilation = true,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1,
+            Interpreter = options,
+        });
+    }
+
+    public string Name => "experimental-loop-osr";
+
+    public LuaExecutionResult Execute(
+        LuaState state,
+        LuaClosure closure,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Execute(state, closure, arguments);
+
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Start(state, thread, arguments);
+
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Resume(state, thread, arguments);
+
+    public void Dispose() => _executor.Dispose();
+}
+
 internal sealed class PersistedAotInstructionExecutor : ILuaInstructionExecutor
 {
     private readonly Dictionary<LuaIrModule, LuaAotLoadedModule> _modules =
@@ -286,6 +328,7 @@ internal static class LuaBackendCatalog
             new PersistedAotBackendHarness(interpreterOptions),
             new Tier1JitBackendHarness(interpreterOptions),
             new Tier2JitBackendHarness(interpreterOptions),
+            new LoopOsrBackendHarness(interpreterOptions),
         ];
     }
 

@@ -59,8 +59,8 @@ collector.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
 - **Designed for multiple execution tiers** — the reference interpreter, persisted CIL
-  AOT, and profile-guided CoreCLR Tier 1/Tier 2 JIT share one verified execution
-  contract; NativeAOT build integration follows the same ABI.
+  AOT, profile-guided CoreCLR Tier 1/Tier 2 JIT, and experimental loop OSR share one
+  verified execution contract; NativeAOT build integration follows the same ABI.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
 
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | In development | Persisted CIL AOT v1 and profile-guided CoreCLR Tier 1/Tier 2 JIT are implemented; OSR and build-time NativeAOT remain |
+| JIT / AOT backends | In development | Persisted CIL AOT v1, profile-guided CoreCLR Tier 1/Tier 2 JIT, and opt-in experimental loop OSR are implemented; build-time NativeAOT remains |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features

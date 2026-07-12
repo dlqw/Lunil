@@ -25,9 +25,21 @@ public enum LuaJitCompilationTier : byte
     Interpreter,
     Tier1,
     Tier2,
+    LoopOsr,
 }
 
 public enum LuaJitTier2State : byte
+{
+    Disabled,
+    Profiling,
+    Queued,
+    Compiling,
+    Ready,
+    Failed,
+    Invalidated,
+}
+
+public enum LuaJitOsrState : byte
 {
     Disabled,
     Profiling,
@@ -54,6 +66,14 @@ public enum LuaJitEventKind : byte
     Tier2CompilationFailed,
     Tier2GuardFailed,
     Tier2Invalidated,
+    LoopOsrQueued,
+    LoopOsrCompilationStarted,
+    LoopOsrCompilationCompleted,
+    LoopOsrCompilationFailed,
+    LoopOsrEntered,
+    LoopOsrExited,
+    LoopOsrGuardFailed,
+    LoopOsrInvalidated,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -84,6 +104,16 @@ public sealed record LuaJitExecutorOptions
 
     public int MaximumTier2GuardFailures { get; init; } = 16;
 
+    /// <summary>
+    /// Enables experimental loop on-stack replacement. It remains disabled by default until
+    /// representative steady-state benchmarks show at least a ten percent improvement.
+    /// </summary>
+    public bool EnableLoopOsr { get; init; }
+
+    public int LoopOsrBackedgeThreshold { get; init; } = 1_024;
+
+    public int MaximumLoopOsrGuardFailures { get; init; } = 16;
+
     public TimeSpan CompilationRetryBackoff { get; init; } = TimeSpan.FromSeconds(1);
 
     public long MaximumCodeCacheBytes { get; init; } = 64 * 1024 * 1024;
@@ -113,7 +143,16 @@ public sealed record LuaJitStatistics(
     long Tier2CompilationFailed,
     long Tier2Invocations,
     long Tier2GuardFailures,
-    long Tier2Invalidations);
+    long Tier2Invalidations,
+    long LoopOsrRequests,
+    long LoopOsrCompilationQueued,
+    long LoopOsrCompilationStarted,
+    long LoopOsrCompilationCompleted,
+    long LoopOsrCompilationFailed,
+    long LoopOsrEntries,
+    long LoopOsrExits,
+    long LoopOsrGuardFailures,
+    long LoopOsrInvalidations);
 
 public sealed record LuaJitEvent(
     LuaJitEventKind Kind,

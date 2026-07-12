@@ -17,7 +17,8 @@ public sealed class LuaJitExecutor : IDisposable
             options ?? LuaJitExecutorOptions.Default,
             RuntimeDynamicCodeCapabilities.Instance,
             ReflectionEmitLuaTier1Compiler.Instance,
-            ProfileGuidedLuaTier2Compiler.Instance)
+            ProfileGuidedLuaTier2Compiler.Instance,
+            CanonicalLuaLoopOsrCompiler.Instance)
     {
     }
 
@@ -25,7 +26,8 @@ public sealed class LuaJitExecutor : IDisposable
         LuaJitExecutorOptions options,
         ILuaDynamicCodeCapabilities capabilities,
         ILuaTier1Compiler compiler,
-        ILuaTier2Compiler? tier2Compiler = null)
+        ILuaTier2Compiler? tier2Compiler = null,
+        ILuaLoopOsrCompiler? loopOsrCompiler = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -38,7 +40,8 @@ public sealed class LuaJitExecutor : IDisposable
             options,
             capabilities,
             compiler,
-            tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance);
+            tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance,
+            loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }
 
@@ -127,6 +130,28 @@ public sealed class LuaJitExecutor : IDisposable
         return _registry.GetTier2Plan(module, functionId);
     }
 
+    public IReadOnlyList<LuaJitLoopOsrPlan> GetLoopOsrPlans(
+        LuaIrModule module,
+        int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetLoopOsrPlans(module, functionId);
+    }
+
+    public LuaJitOsrState GetLoopOsrState(
+        LuaIrModule module,
+        int functionId,
+        int headerProgramCounter,
+        int backedgeProgramCounter)
+    {
+        ThrowIfDisposed();
+        return _registry.GetLoopOsrState(
+            module,
+            functionId,
+            headerProgramCounter,
+            backedgeProgramCounter);
+    }
+
     public void Invalidate(LuaIrModule module)
     {
         ThrowIfDisposed();
@@ -174,6 +199,8 @@ public sealed class LuaJitExecutor : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Tier2InvocationThreshold);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Tier2BackedgeThreshold);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumTier2GuardFailures);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.LoopOsrBackedgeThreshold);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumLoopOsrGuardFailures);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumCodeCacheBytes);
         ArgumentNullException.ThrowIfNull(options.Interpreter);
         if (options.CompilationRetryBackoff < TimeSpan.Zero)

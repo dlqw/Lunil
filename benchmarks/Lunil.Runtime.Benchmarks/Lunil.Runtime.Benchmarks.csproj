@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Semantics\Lunil.Semantics.csproj" />

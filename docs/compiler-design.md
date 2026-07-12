@@ -331,6 +331,21 @@ branch、mono/poly table PIC、known-closure call guard 与 fixed result-window 
 canonical PC 与 live register。guard failure 在零重复副作用的 PC 恢复 reference executor；连续失败达到阈值
 会丢弃 Tier 2、保留 Tier 1、合并新 profile 后重新 promotion。debug/hook epoch 变化走同一精确 deopt 边界。
 
+实验性 loop OSR 由 `EnableLoopOsr` 独立控制，默认关闭。CFG 分析只接受 target 为基本块 leader、
+header 支配 backedge source 的 natural loop；编译请求不会在分支执行前发出，而是在 backedge 已完成且
+同一 frame 的 canonical PC 已提交到 header 后发出。entry map 使用 liveness 将 interpreter canonical
+register 映射到同编号 materialized slot，并显式声明 frame top、open upvalue 与 to-be-closed state 已物化。
+
+OSR entry 在进入及每次 loop header 检查 instruction budget、hook/debug epoch、GC/finalizer 与 close/unwind
+状态。primitive register/control/numeric/close 操作可留在 loop entry 内；call、yielding metamethod 与其他
+复杂操作通过 Runtime ABI 返回 scheduler。guard failure 以当前 materialized canonical PC 恢复，不重放
+已完成操作。OSR 编译与 Tier 1/Tier 2 共用 bounded queue、去重、LRU code-byte budget、module invalidation、
+取消及 owner-safe 生命周期，并公开 request/compile/entry/exit/guard/invalidation 统计与事件。
+
+Windows x64 的 20,000 次 integer while-loop 重复测量显示约 47.5% median throughput 改善，但每次执行
+分配从约 1.8 KiB 增至 9.7 KiB，且尚无充分跨平台统计证据。因此 M6 保留实现为 experimental opt-in，
+不改变默认 policy；详细证据见 [后端性能基线](backend-performance-baseline.md)。
+
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结。编译代码只执行
 canonical 基本块；call、tail call、return、yield、close、unwind 与 hook 仍由共享 scheduler 负责。
