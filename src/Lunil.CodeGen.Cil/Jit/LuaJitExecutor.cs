@@ -36,6 +36,11 @@ public sealed class LuaJitExecutor : IDisposable
         Options = options;
         IsDynamicCodeAvailable = capabilities.IsDynamicCodeSupported &&
             capabilities.IsDynamicCodeCompiled;
+        if (IsDynamicCodeAvailable && compiler is ReflectionEmitLuaTier1Compiler)
+        {
+            ReflectionEmitLuaTier1Compiler.PrepareCompiler();
+        }
+
         _registry = new LuaTieredJitRegistry(
             options,
             capabilities,
@@ -48,6 +53,23 @@ public sealed class LuaJitExecutor : IDisposable
     public LuaJitExecutorOptions Options { get; }
 
     public bool IsDynamicCodeAvailable { get; }
+
+    public static LuaJitFunctionEligibility EvaluateFunctionEligibility(
+        LuaIrModule module,
+        int functionId,
+        bool includeInstructionObservation = false)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if ((uint)functionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        return LuaTier1EligibilityEvaluator.Evaluate(
+            module,
+            functionId,
+            includeInstructionObservation);
+    }
 
     public LuaJitStatistics Statistics => _registry.GetStatistics();
 
@@ -104,6 +126,14 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         return _registry.GetFunctionState(module, functionId);
+    }
+
+    public LuaJitFunctionEligibility GetFunctionEligibility(
+        LuaIrModule module,
+        int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetFunctionEligibility(module, functionId);
     }
 
     public LuaJitFunctionProfile GetFunctionProfile(LuaIrModule module, int functionId)

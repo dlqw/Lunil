@@ -63,6 +63,29 @@ internal sealed class LuaTieredJitRegistry :
     private long _loopOsrExits;
     private long _loopOsrGuardFailures;
     private long _loopOsrInvalidations;
+    private long _compiledCanonicalInstructions;
+    private long _schedulerExits;
+    private long _continueExits;
+    private long _pollExits;
+    private long _callExits;
+    private long _tailCallExits;
+    private long _returnExits;
+    private long _instructionBudgetPolls;
+    private long _garbageCollectionPolls;
+    private long _debugModeDeoptimizations;
+    private long _tier1CompileAllocatedBytes;
+    private long _tier1DirectCanonicalInstructions;
+    private long _tier1SlowPathCanonicalInstructions;
+    private long _tier1PlanInstructions;
+    private long _totalCanonicalVerificationTicks;
+    private long _totalControlFlowAnalysisTicks;
+    private long _totalMethodPlanBuildTicks;
+    private long _totalPlanVerificationTicks;
+    private long _totalReflectionEmitTicks;
+    private long _totalDelegateCreationTicks;
+    private long _eligibilityEvaluated;
+    private long _eligibilityAccepted;
+    private long _eligibilityRejected;
     private int _disposed;
 
     public LuaTieredJitRegistry(
@@ -105,7 +128,13 @@ internal sealed class LuaTieredJitRegistry :
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return LuaCompiledExit.Deopt(
+                frame.ProgramCounter,
+                instructionsConsumed: 0,
+                LuaCompiledExitReason.BackendInvalidated);
+        }
         engine.ObserveCodegenInstruction(
             context,
             thread,
@@ -126,16 +155,9 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             moduleContentId,
             frame.Closure.Function.Id,
-            LuaCodegenAbiV1.RuntimeAbiVersion,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion);
-        var entry = _entries.GetOrAdd(
-            key,
-            key => new FunctionEntry(
-                key,
-                frame.Closure.Function.ParameterCount,
-                _options.MaximumPolymorphicShapes,
-                _options.EnableTier2,
-                IsLoopOsrEnabled));
+        var entry = GetOrCreateEntry(key, frame.Closure.Function.ParameterCount);
         _observedFrames.GetValue(
             frame,
             static _ => new FunctionEntryObservation()).Entry = entry;
@@ -176,20 +198,38 @@ internal sealed class LuaTieredJitRegistry :
             }
         }
 
-        if (ShouldCompile(entry))
+        if (ShouldConsiderCompilation(entry))
         {
-            var waitForCompilation = _options.SynchronousCompilation ||
-                _options.Policy == LuaJitPolicy.RequireJit;
-            var completion = RequestCompilation(entry, module, waitForCompilation);
-            if (waitForCompilation && completion is not null)
+            if (!_capabilities.IsDynamicCodeSupported || !_capabilities.IsDynamicCodeCompiled)
             {
-                _ = completion.GetAwaiter().GetResult();
+                _ = RequestCompilation(entry, module, compileSynchronously: false);
             }
-
-            entryPoint = ReadReadyMethod(entry);
-            if (entryPoint is not null)
+            else
             {
-                return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
+                var policyAllowsCompilation = _options.Policy == LuaJitPolicy.PreferJit;
+                if (!policyAllowsCompilation)
+                {
+                    var eligibility = EnsureEligibility(entry, module);
+                    policyAllowsCompilation = eligibility.IsCompilable &&
+                        (_options.Policy != LuaJitPolicy.Auto || eligibility.IsAutoEligible);
+                }
+
+                if (policyAllowsCompilation)
+                {
+                    var waitForCompilation = _options.SynchronousCompilation ||
+                        _options.Policy == LuaJitPolicy.RequireJit;
+                    var completion = RequestCompilation(entry, module, waitForCompilation);
+                    if (waitForCompilation && completion is not null)
+                    {
+                        _ = completion.GetAwaiter().GetResult();
+                    }
+
+                    entryPoint = ReadReadyMethod(entry);
+                    if (entryPoint is not null)
+                    {
+                        return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
+                    }
+                }
             }
         }
 
@@ -226,16 +266,9 @@ internal sealed class LuaTieredJitRegistry :
             var key = new FunctionKey(
                 GetModuleContentId(frame.Closure.Module),
                 frame.Closure.Function.Id,
-                LuaCodegenAbiV1.RuntimeAbiVersion,
+                LuaCodegenAbiV2.RuntimeAbiVersion,
                 CodegenVersion);
-            entry = _entries.GetOrAdd(
-                key,
-                key => new FunctionEntry(
-                    key,
-                    frame.Closure.Function.ParameterCount,
-                    _options.MaximumPolymorphicShapes,
-                    _options.EnableTier2,
-                    IsLoopOsrEnabled));
+            entry = GetOrCreateEntry(key, frame.Closure.Function.ParameterCount);
             frameObservation = _observedFrames.GetValue(
                 frame,
                 static _ => new FunctionEntryObservation());
@@ -310,7 +343,30 @@ internal sealed class LuaTieredJitRegistry :
         Interlocked.Read(ref _loopOsrEntries),
         Interlocked.Read(ref _loopOsrExits),
         Interlocked.Read(ref _loopOsrGuardFailures),
-        Interlocked.Read(ref _loopOsrInvalidations));
+        Interlocked.Read(ref _loopOsrInvalidations),
+        Interlocked.Read(ref _compiledCanonicalInstructions),
+        Interlocked.Read(ref _schedulerExits),
+        Interlocked.Read(ref _continueExits),
+        Interlocked.Read(ref _pollExits),
+        Interlocked.Read(ref _callExits),
+        Interlocked.Read(ref _tailCallExits),
+        Interlocked.Read(ref _returnExits),
+        Interlocked.Read(ref _instructionBudgetPolls),
+        Interlocked.Read(ref _garbageCollectionPolls),
+        Interlocked.Read(ref _debugModeDeoptimizations),
+        Interlocked.Read(ref _tier1CompileAllocatedBytes),
+        Interlocked.Read(ref _tier1DirectCanonicalInstructions),
+        Interlocked.Read(ref _tier1SlowPathCanonicalInstructions),
+        Interlocked.Read(ref _tier1PlanInstructions),
+        Interlocked.Read(ref _totalCanonicalVerificationTicks),
+        Interlocked.Read(ref _totalControlFlowAnalysisTicks),
+        Interlocked.Read(ref _totalMethodPlanBuildTicks),
+        Interlocked.Read(ref _totalPlanVerificationTicks),
+        Interlocked.Read(ref _totalReflectionEmitTicks),
+        Interlocked.Read(ref _totalDelegateCreationTicks),
+        Interlocked.Read(ref _eligibilityEvaluated),
+        Interlocked.Read(ref _eligibilityAccepted),
+        Interlocked.Read(ref _eligibilityRejected));
 
     public LuaJitFunctionState GetFunctionState(LuaIrModule module, int functionId)
     {
@@ -323,7 +379,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV1.RuntimeAbiVersion,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion);
         if (!_entries.TryGetValue(key, out var entry))
         {
@@ -334,6 +390,25 @@ internal sealed class LuaTieredJitRegistry :
         {
             return entry.State;
         }
+    }
+
+    public LuaJitFunctionEligibility GetFunctionEligibility(
+        LuaIrModule module,
+        int functionId)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if ((uint)functionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
+        return EnsureEligibility(entry, module);
     }
 
     public LuaJitFunctionProfile GetFunctionProfile(LuaIrModule module, int functionId)
@@ -348,7 +423,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV1.RuntimeAbiVersion,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion);
         return _entries.TryGetValue(key, out var entry)
             ? entry.Profile.Snapshot()
@@ -368,16 +443,9 @@ internal sealed class LuaTieredJitRegistry :
             var key = new FunctionKey(
                 profile.ModuleContentId,
                 imported.FunctionId,
-                LuaCodegenAbiV1.RuntimeAbiVersion,
+                LuaCodegenAbiV2.RuntimeAbiVersion,
                 CodegenVersion);
-            var entry = _entries.GetOrAdd(
-                key,
-                key => new FunctionEntry(
-                    key,
-                    function.ParameterCount,
-                    _options.MaximumPolymorphicShapes,
-                    _options.EnableTier2,
-                    IsLoopOsrEnabled));
+            var entry = GetOrCreateEntry(key, function.ParameterCount);
             entry.Profile.Merge(imported.Profile);
             var entrySamples = imported.Profile.Sites
                 .FirstOrDefault(static site => site.ProgramCounter == 0)?
@@ -591,6 +659,17 @@ internal sealed class LuaTieredJitRegistry :
         }
     }
 
+    private FunctionEntry GetOrCreateEntry(FunctionKey key, int parameterCount) =>
+        _entries.GetOrAdd(
+            key,
+            static (entryKey, state) => new FunctionEntry(
+                entryKey,
+                state.ParameterCount,
+                state.Registry._options.MaximumPolymorphicShapes,
+                state.Registry._options.EnableTier2,
+                state.Registry.IsLoopOsrEnabled),
+            new FunctionEntryFactoryState(this, parameterCount));
+
     private static LuaJitFunctionState ReadState(FunctionEntry entry)
     {
         lock (entry.Gate)
@@ -619,6 +698,43 @@ internal sealed class LuaTieredJitRegistry :
             ref entry.LastAccessStamp,
             Interlocked.Increment(ref _accessStamp));
         var exit = entryPoint.Method(context, thread, frame);
+        Interlocked.Add(ref _compiledCanonicalInstructions, exit.InstructionsConsumed);
+        Interlocked.Increment(ref _schedulerExits);
+        switch (exit.Kind)
+        {
+            case LuaCompiledExitKind.Continue:
+                Interlocked.Increment(ref _continueExits);
+                break;
+            case LuaCompiledExitKind.Poll:
+                Interlocked.Increment(ref _pollExits);
+                if (exit.Reason == LuaCompiledExitReason.InstructionBudget)
+                {
+                    Interlocked.Increment(ref _instructionBudgetPolls);
+                }
+                else if (exit.Reason == LuaCompiledExitReason.GarbageCollection)
+                {
+                    Interlocked.Increment(ref _garbageCollectionPolls);
+                }
+
+                break;
+            case LuaCompiledExitKind.Call:
+                Interlocked.Increment(ref _callExits);
+                break;
+            case LuaCompiledExitKind.TailCall:
+                Interlocked.Increment(ref _tailCallExits);
+                break;
+            case LuaCompiledExitKind.Return:
+                Interlocked.Increment(ref _returnExits);
+                break;
+            case LuaCompiledExitKind.Deopt:
+                if (exit.Reason == LuaCompiledExitReason.DebugModeChanged)
+                {
+                    Interlocked.Increment(ref _debugModeDeoptimizations);
+                }
+
+                break;
+        }
+
         if (exit.Kind == LuaCompiledExitKind.Deopt)
         {
             Interlocked.Increment(ref _deoptimizations);
@@ -816,7 +932,7 @@ internal sealed class LuaTieredJitRegistry :
         }
     }
 
-    private bool ShouldCompile(FunctionEntry entry) => _options.Policy switch
+    private bool ShouldConsiderCompilation(FunctionEntry entry) => _options.Policy switch
     {
         LuaJitPolicy.PreferJit or LuaJitPolicy.RequireJit => true,
         LuaJitPolicy.Auto =>
@@ -824,6 +940,54 @@ internal sealed class LuaTieredJitRegistry :
             Interlocked.Read(ref entry.Backedges) >= _options.BackedgeThreshold,
         _ => false,
     };
+
+    private LuaJitFunctionEligibility EnsureEligibility(
+        FunctionEntry entry,
+        LuaIrModule module)
+    {
+        LuaJitFunctionEligibility eligibility;
+        var evaluated = false;
+        lock (entry.Gate)
+        {
+            if (entry.Eligibility is { } cached)
+            {
+                return cached;
+            }
+
+            eligibility = LuaTier1EligibilityEvaluator.Evaluate(
+                module,
+                entry.Key.FunctionId,
+                _options.EnableTier2 || IsLoopOsrEnabled);
+            entry.Eligibility = eligibility;
+            evaluated = true;
+        }
+
+        if (evaluated)
+        {
+            Interlocked.Increment(ref _eligibilityEvaluated);
+            if (eligibility.IsAutoEligible)
+            {
+                Interlocked.Increment(ref _eligibilityAccepted);
+            }
+            else
+            {
+                Interlocked.Increment(ref _eligibilityRejected);
+            }
+
+            RaiseEvent(new LuaJitEvent(
+                eligibility.IsAutoEligible
+                    ? LuaJitEventKind.EligibilityAccepted
+                    : LuaJitEventKind.EligibilityRejected,
+                entry.Key.ModuleContentId,
+                entry.Key.FunctionId,
+                ReadState(entry),
+                eligibility.EstimatedCodeBytes,
+                DiagnosticCode: eligibility.DiagnosticCode,
+                Eligibility: eligibility));
+        }
+
+        return eligibility;
+    }
 
     private bool ShouldPromoteToTier2(FunctionEntry entry, int programCounter)
     {
@@ -1160,7 +1324,9 @@ internal sealed class LuaTieredJitRegistry :
             result = _compiler.Compile(
                 request.Module,
                 request.Entry.Key.FunctionId,
+                _options.EnableTier2 || IsLoopOsrEnabled,
                 _disposeCancellation.Token);
+            _disposeCancellation.Token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -1185,6 +1351,7 @@ internal sealed class LuaTieredJitRegistry :
 
         var compileDuration = Stopwatch.GetElapsedTime(started);
         Interlocked.Add(ref _totalCompilationTicks, compileDuration.Ticks);
+        AccumulateTier1CompilationMetrics(result.Metrics);
         if (result.Succeeded && TryInstallCompiledMethod(request, result))
         {
             Interlocked.Increment(ref _compilationCompleted);
@@ -1194,14 +1361,16 @@ internal sealed class LuaTieredJitRegistry :
                 request.Entry.Key.FunctionId,
                 LuaJitFunctionState.Ready,
                 result.EstimatedCodeBytes,
-                compileDuration));
+                compileDuration,
+                CompilationMetrics: result.Metrics));
             return;
         }
 
         FailCompilation(
             request,
             result.Succeeded ? "JIT1004" : "JIT1003",
-            compileDuration);
+            compileDuration,
+            result.Metrics);
     }
 
     private void CompileTier2(CompilationRequest request)
@@ -1626,7 +1795,8 @@ internal sealed class LuaTieredJitRegistry :
     private void FailCompilation(
         CompilationRequest request,
         string diagnosticCode,
-        TimeSpan duration)
+        TimeSpan duration,
+        LuaJitCompilationMetrics? metrics)
     {
         lock (request.Entry.Gate)
         {
@@ -1652,7 +1822,43 @@ internal sealed class LuaTieredJitRegistry :
             request.Entry.Key.FunctionId,
             LuaJitFunctionState.Failed,
             Duration: duration,
-            DiagnosticCode: diagnosticCode));
+            DiagnosticCode: diagnosticCode,
+            CompilationMetrics: metrics));
+    }
+
+    private void AccumulateTier1CompilationMetrics(LuaJitCompilationMetrics? metrics)
+    {
+        if (metrics is not { } value)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _tier1CompileAllocatedBytes, value.AllocatedBytes);
+        Interlocked.Add(
+            ref _tier1DirectCanonicalInstructions,
+            value.DirectCanonicalInstructionCount);
+        Interlocked.Add(
+            ref _tier1SlowPathCanonicalInstructions,
+            value.SlowPathCanonicalInstructionCount);
+        Interlocked.Add(ref _tier1PlanInstructions, value.PlanInstructionCount);
+        Interlocked.Add(
+            ref _totalCanonicalVerificationTicks,
+            value.CanonicalVerificationDuration.Ticks);
+        Interlocked.Add(
+            ref _totalControlFlowAnalysisTicks,
+            value.ControlFlowAnalysisDuration.Ticks);
+        Interlocked.Add(
+            ref _totalMethodPlanBuildTicks,
+            value.MethodPlanBuildDuration.Ticks);
+        Interlocked.Add(
+            ref _totalPlanVerificationTicks,
+            value.PlanVerificationDuration.Ticks);
+        Interlocked.Add(
+            ref _totalReflectionEmitTicks,
+            value.ReflectionEmitDuration.Ticks);
+        Interlocked.Add(
+            ref _totalDelegateCreationTicks,
+            value.DelegateCreationDuration.Ticks);
     }
 
     private void MarkUnavailable(FunctionEntry entry)
@@ -1947,12 +2153,18 @@ internal sealed class LuaTieredJitRegistry :
     {
         lock (entry.Gate)
         {
-            var code = entry.FailureCode ?? "JIT1002";
+            var ineligible = entry.Eligibility is { IsCompilable: false }
+                ? entry.Eligibility
+                : null;
+            var code = ineligible?.DiagnosticCode ?? entry.FailureCode ?? "JIT1002";
             return new LuaJitException(
                 code,
                 code == "JIT1001"
                     ? "Tier 1 JIT is required, but dynamic code is unavailable."
-                    : "Tier 1 JIT is required, but the function could not be compiled.");
+                    : ineligible is not null
+                        ? $"Tier 1 JIT is required, but eligibility rejected the function: " +
+                            $"{ineligible.Reason}."
+                        : "Tier 1 JIT is required, but the function could not be compiled.");
         }
     }
 
@@ -1970,7 +2182,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV1.RuntimeAbiVersion,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion);
         return _entries.GetValueOrDefault(key);
     }
@@ -2036,6 +2248,10 @@ internal sealed class LuaTieredJitRegistry :
         LuaCompiledMethod Method,
         LuaJitCompilationTier Tier);
 
+    private readonly record struct FunctionEntryFactoryState(
+        LuaTieredJitRegistry Registry,
+        int ParameterCount);
+
     private readonly record struct LoopKey(
         int HeaderProgramCounter,
         int BackedgeProgramCounter);
@@ -2074,6 +2290,8 @@ internal sealed class LuaTieredJitRegistry :
         public LuaCompiledMethod? Tier2Method { get; set; }
 
         public LuaJitTier2Plan? Tier2Plan { get; set; }
+
+        public LuaJitFunctionEligibility? Eligibility { get; set; }
 
         public TaskCompletionSource<bool>? Completion { get; set; }
 

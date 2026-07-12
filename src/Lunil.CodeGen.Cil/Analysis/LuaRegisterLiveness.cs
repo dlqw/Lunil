@@ -11,19 +11,35 @@ public sealed record LuaRegisterLivenessResult(
 
 public static class LuaRegisterLiveness
 {
-    public static LuaRegisterLivenessResult Analyze(LuaIrModule module, LuaIrFunction function)
+    public static LuaRegisterLivenessResult Analyze(
+        LuaIrModule module,
+        LuaIrFunction function,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(function);
+        cancellationToken.ThrowIfCancellationRequested();
         var instructionCount = function.Instructions.Length;
-        var liveBefore = CreateMatrix(instructionCount, function.RegisterCount);
-        var liveAfter = CreateMatrix(instructionCount, function.RegisterCount);
+        var liveBefore = CreateMatrix(
+            instructionCount,
+            function.RegisterCount,
+            cancellationToken);
+        var liveAfter = CreateMatrix(
+            instructionCount,
+            function.RegisterCount,
+            cancellationToken);
         var changed = true;
         while (changed)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             changed = false;
             for (var pc = instructionCount - 1; pc >= 0; pc--)
             {
+                if ((pc & 63) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 var nextAfter = new bool[function.RegisterCount];
                 foreach (var successor in Successors(function, pc))
                 {
@@ -43,22 +59,46 @@ public static class LuaRegisterLiveness
             }
         }
 
-        var before = liveBefore.Select(ToRegisters).ToImmutableArray();
-        var after = liveAfter.Select(ToRegisters).ToImmutableArray();
-        var gcMaps = function.Instructions
-            .Select((instruction, pc) => (instruction, pc))
-            .Where(static item => item.instruction.Effects.HasFlag(
+        var before = ImmutableArray.CreateBuilder<ImmutableArray<int>>(instructionCount);
+        var after = ImmutableArray.CreateBuilder<ImmutableArray<int>>(instructionCount);
+        var gcMaps = ImmutableArray.CreateBuilder<CilGcMap>();
+        for (var pc = 0; pc < instructionCount; pc++)
+        {
+            if ((pc & 63) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            var liveBeforeRegisters = ToRegisters(liveBefore[pc]);
+            before.Add(liveBeforeRegisters);
+            after.Add(ToRegisters(liveAfter[pc]));
+            if (function.Instructions[pc].Effects.HasFlag(
                 LuaIrInstructionEffects.IsGcSafePoint))
-            .Select(item => new CilGcMap(item.pc, before[item.pc]))
-            .ToImmutableArray();
-        return new LuaRegisterLivenessResult(before, after, gcMaps);
+            {
+                gcMaps.Add(new CilGcMap(pc, liveBeforeRegisters));
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return new LuaRegisterLivenessResult(
+            before.MoveToImmutable(),
+            after.MoveToImmutable(),
+            gcMaps.ToImmutable());
     }
 
-    private static bool[][] CreateMatrix(int rows, int columns)
+    private static bool[][] CreateMatrix(
+        int rows,
+        int columns,
+        CancellationToken cancellationToken)
     {
         var matrix = new bool[rows][];
         for (var row = 0; row < rows; row++)
         {
+            if ((row & 63) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             matrix[row] = new bool[columns];
         }
 

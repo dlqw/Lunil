@@ -81,7 +81,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         }
 
         var function = module.Functions[functionId];
-        var liveness = LuaRegisterLiveness.Analyze(module, function);
+        var liveness = LuaRegisterLiveness.Analyze(module, function, cancellationToken);
         var optimized = BuildOptimizations(function, profile, liveness);
         var optimizationDescriptions = optimized.Values
             .OrderBy(static item => item.ProgramCounter)

@@ -6,15 +6,22 @@ namespace Lunil.CodeGen.Cil.Analysis;
 
 public sealed record CilBlockLayout(ImmutableArray<CilCanonicalBlock> Blocks)
 {
-    public static CilBlockLayout Build(LuaIrFunction function)
+    public static CilBlockLayout Build(
+        LuaIrFunction function,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(function);
+        cancellationToken.ThrowIfCancellationRequested();
         var blocks = function.BasicBlocks.IsDefaultOrEmpty
             ? LuaIrControlFlow.Build(function.Instructions)
             : function.BasicBlocks;
-        return new CilBlockLayout(blocks.Select(static block => new CilCanonicalBlock(
-            block.Start,
-            block.Length,
-            block.Successors)).ToImmutableArray());
+        var result = ImmutableArray.CreateBuilder<CilCanonicalBlock>(blocks.Length);
+        foreach (var block in blocks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            result.Add(new CilCanonicalBlock(block.Start, block.Length, block.Successors));
+        }
+
+        return new CilBlockLayout(result.MoveToImmutable());
     }
 }

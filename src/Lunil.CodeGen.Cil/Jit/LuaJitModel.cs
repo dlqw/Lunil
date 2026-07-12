@@ -74,6 +74,8 @@ public enum LuaJitEventKind : byte
     LoopOsrExited,
     LoopOsrGuardFailed,
     LoopOsrInvalidated,
+    EligibilityAccepted,
+    EligibilityRejected,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -156,7 +158,44 @@ public sealed record LuaJitStatistics(
     long LoopOsrEntries,
     long LoopOsrExits,
     long LoopOsrGuardFailures,
-    long LoopOsrInvalidations);
+    long LoopOsrInvalidations,
+    long CompiledCanonicalInstructions,
+    long SchedulerExits,
+    long ContinueExits,
+    long PollExits,
+    long CallExits,
+    long TailCallExits,
+    long ReturnExits,
+    long InstructionBudgetPolls,
+    long GarbageCollectionPolls,
+    long DebugModeDeoptimizations,
+    long Tier1CompileAllocatedBytes,
+    long Tier1DirectCanonicalInstructions,
+    long Tier1SlowPathCanonicalInstructions,
+    long Tier1PlanInstructions,
+    long TotalCanonicalVerificationTicks,
+    long TotalControlFlowAnalysisTicks,
+    long TotalMethodPlanBuildTicks,
+    long TotalPlanVerificationTicks,
+    long TotalReflectionEmitTicks,
+    long TotalDelegateCreationTicks,
+    long EligibilityEvaluated,
+    long EligibilityAccepted,
+    long EligibilityRejected);
+
+public readonly record struct LuaJitCompilationMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan ControlFlowAnalysisDuration,
+    TimeSpan MethodPlanBuildDuration,
+    TimeSpan PlanVerificationDuration,
+    TimeSpan ReflectionEmitDuration,
+    TimeSpan DelegateCreationDuration,
+    long AllocatedBytes,
+    int CanonicalInstructionCount,
+    int DirectCanonicalInstructionCount,
+    int SlowPathCanonicalInstructionCount,
+    int PlanInstructionCount,
+    long EstimatedCodeBytes);
 
 public sealed record LuaJitEvent(
     LuaJitEventKind Kind,
@@ -166,7 +205,9 @@ public sealed record LuaJitEvent(
     long EstimatedCodeBytes = 0,
     TimeSpan Duration = default,
     string? DiagnosticCode = null,
-    LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1);
+    LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1,
+    LuaJitCompilationMetrics? CompilationMetrics = null,
+    LuaJitFunctionEligibility? Eligibility = null);
 
 public sealed class LuaJitException : Exception
 {

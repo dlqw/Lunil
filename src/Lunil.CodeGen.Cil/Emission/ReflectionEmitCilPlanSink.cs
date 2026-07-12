@@ -1,9 +1,12 @@
 using System.Collections.Immutable;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Planning;
+using Lunil.CodeGen.Cil.Verification;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -21,24 +24,58 @@ public sealed record ReflectionEmitResult(
     int MaximumEvaluationStack)
 {
     public bool Succeeded => Method is not null && Diagnostics.IsEmpty;
+
+    public ReflectionEmitMetrics Metrics { get; init; }
 }
+
+public readonly record struct ReflectionEmitMetrics(
+    TimeSpan PlanVerificationDuration,
+    TimeSpan EmissionDuration,
+    TimeSpan DelegateCreationDuration);
 
 public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
 {
     private readonly Dictionary<int, Label> _labels = [];
+    private readonly CancellationToken _cancellationToken;
+    private static readonly ConcurrentDictionary<string, MethodInfo> ResolvedCalls =
+        new(StringComparer.Ordinal);
     private DynamicMethod? _method;
     private ILGenerator? _generator;
+    private long _emissionStarted;
+
+    public TimeSpan EmissionDuration { get; private set; }
+
+    public TimeSpan DelegateCreationDuration { get; private set; }
 
     public CilEmitterFlavor Flavor => CilEmitterFlavor.ReflectionEmit;
 
     public LuaCompiledMethod? CompiledMethod { get; private set; }
 
+    public ReflectionEmitCilPlanSink()
+    {
+    }
+
+    private ReflectionEmitCilPlanSink(CancellationToken cancellationToken)
+    {
+        _cancellationToken = cancellationToken;
+    }
+
+    internal static void PrepareRuntimeAbi()
+    {
+        foreach (var target in CilWellKnownCalls.All)
+        {
+            _ = ResolveCall(target);
+        }
+    }
+
     [RequiresDynamicCode("Reflection.Emit requires dynamic code support.")]
     public static ReflectionEmitResult Compile(
         CilMethodPlan plan,
-        CilPlanLimits? limits = null)
+        CilPlanLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        cancellationToken.ThrowIfCancellationRequested();
         if (!RuntimeFeature.IsDynamicCodeSupported)
         {
             return new ReflectionEmitResult(
@@ -47,12 +84,64 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
                 0);
         }
 
-        var sink = new ReflectionEmitCilPlanSink();
-        var verification = CilPlanEmitter.Emit(plan, sink, limits);
+        var sink = new ReflectionEmitCilPlanSink(cancellationToken);
+        var started = Stopwatch.GetTimestamp();
+        var verification = CilPlanEmitter.Emit(plan, sink, limits, cancellationToken);
+        var totalDuration = Stopwatch.GetElapsedTime(started);
+        var planVerificationDuration = totalDuration -
+            sink.EmissionDuration -
+            sink.DelegateCreationDuration;
         return new ReflectionEmitResult(
             verification.Succeeded ? sink.CompiledMethod : null,
             verification.Diagnostics,
-            verification.MaximumEvaluationStack);
+            verification.MaximumEvaluationStack)
+        {
+            Metrics = new ReflectionEmitMetrics(
+                planVerificationDuration < TimeSpan.Zero
+                    ? TimeSpan.Zero
+                    : planVerificationDuration,
+                sink.EmissionDuration,
+                sink.DelegateCreationDuration),
+        };
+    }
+
+    [RequiresDynamicCode("Reflection.Emit requires dynamic code support.")]
+    public static ReflectionEmitResult Compile(
+        CilMethodPlan plan,
+        CilPlanVerificationResult verification,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(verification);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!verification.Succeeded)
+        {
+            return new ReflectionEmitResult(
+                null,
+                verification.Diagnostics,
+                verification.MaximumEvaluationStack);
+        }
+
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return new ReflectionEmitResult(
+                null,
+                [new CilPlanDiagnostic("CIL2001", "Dynamic code is not supported by this runtime.")],
+                0);
+        }
+
+        var sink = new ReflectionEmitCilPlanSink(cancellationToken);
+        CilPlanEmitter.EmitVerified(plan, sink, verification, cancellationToken);
+        return new ReflectionEmitResult(
+            sink.CompiledMethod,
+            [],
+            verification.MaximumEvaluationStack)
+        {
+            Metrics = new ReflectionEmitMetrics(
+                TimeSpan.Zero,
+                sink.EmissionDuration,
+                sink.DelegateCreationDuration),
+        };
     }
 
     [UnconditionalSuppressMessage(
@@ -61,6 +150,7 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         Justification = "ReflectionEmitCilPlanSink is only reached after the dynamic-code capability check.")]
     public void BeginMethod(CilMethodPlan plan, int maximumEvaluationStack)
     {
+        _emissionStarted = Stopwatch.GetTimestamp();
         _method = new DynamicMethod(
             plan.Name,
             typeof(LuaCompiledExit),
@@ -68,8 +158,29 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(ReflectionEmitCilPlanSink).Module,
             skipVisibility: true);
         _generator = _method.GetILGenerator(maximumEvaluationStack);
+        var labelCount = 0;
+        for (var index = 0; index < plan.Instructions.Length; index++)
+        {
+            if ((index & 63) == 0)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            if (plan.Instructions[index].OpCode == CilPlanOpCode.MarkLabel)
+            {
+                labelCount++;
+            }
+        }
+
+        _labels.EnsureCapacity(labelCount);
+        var instructionIndex = 0;
         foreach (var instruction in plan.Instructions)
         {
+            if ((instructionIndex++ & 63) == 0)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (instruction.OpCode == CilPlanOpCode.MarkLabel)
             {
                 _labels.Add(instruction.Label.Id, _generator.DefineLabel());
@@ -142,9 +253,17 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
 
     public void EndMethod()
     {
+        var delegateStarted = Stopwatch.GetTimestamp();
         CompiledMethod = (LuaCompiledMethod)(_method ??
             throw new InvalidOperationException("CIL method was not initialized."))
             .CreateDelegate(typeof(LuaCompiledMethod));
+        DelegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
+        var totalEmissionDuration = Stopwatch.GetElapsedTime(_emissionStarted);
+        EmissionDuration = totalEmissionDuration - DelegateCreationDuration;
+        if (EmissionDuration < TimeSpan.Zero)
+        {
+            EmissionDuration = TimeSpan.Zero;
+        }
     }
 
     private ILGenerator Generator() => _generator ??
@@ -164,7 +283,12 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         _ => throw new InvalidOperationException($"No CLR type exists for {kind}."),
     };
 
-    private static MethodInfo ResolveCall(CilCallTarget target) => target.Id switch
+    private static MethodInfo ResolveCall(CilCallTarget target) => ResolvedCalls.GetOrAdd(
+        target.Id,
+        static (_, callTarget) => ResolveCallCore(callTarget),
+        target);
+
+    private static MethodInfo ResolveCallCore(CilCallTarget target) => target.Id switch
     {
         "LuaExecutionContext.TryReserveInstructions" => Method(
             typeof(LuaExecutionContext),
@@ -188,6 +312,14 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.WriteRegister),
             [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
+        "LuaCodegenAbiV1.ReadUpvalue" => Method(
+            typeof(LuaCodegenAbiV1),
+            nameof(LuaCodegenAbiV1.ReadUpvalue),
+            [typeof(LuaFrame), typeof(int)]),
+        "LuaCodegenAbiV1.WriteUpvalue" => Method(
+            typeof(LuaCodegenAbiV1),
+            nameof(LuaCodegenAbiV1.WriteUpvalue),
+            [typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
         "LuaCodegenAbiV1.ClearRegisters" => Method(
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.ClearRegisters),
@@ -204,6 +336,30 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.CanExecuteCompiled),
             [typeof(LuaExecutionContext)]),
+        "LuaCodegenAbiV2.CanExecuteCompiledFrame" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.CanExecuteCompiledFrame),
+            [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV2.ReadRegisterUnchecked" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
+        "LuaCodegenAbiV2.WriteRegisterUnchecked" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.WriteRegisterUnchecked),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
+        "LuaCodegenAbiV2.ClearRegistersUnchecked" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ClearRegistersUnchecked),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV2.SetFrameTopUnchecked" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
+        "LuaCodegenAbiV2.CanSkipClose" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.CanSkipClose),
+            [typeof(LuaFrame), typeof(int)]),
         "LuaCodegenAbiV1.ObserveCanonicalInstruction" => Method(
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.ObserveCanonicalInstruction),
@@ -222,6 +378,45 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
                 typeof(LuaFrame),
                 typeof(int),
             ]),
+        "LuaCodegenAbiV2.CanExecuteUnaryPrimitive" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.CanExecuteUnaryPrimitive),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV2.ExecuteUnaryPrimitive" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ExecuteUnaryPrimitive),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV2.CanExecuteBinaryPrimitive" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.CanExecuteBinaryPrimitive),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV2.ExecuteBinaryPrimitive" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ExecuteBinaryPrimitive),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV2.ExecuteNumericForPrepare" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ExecuteNumericForPrepare),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV2.ExecuteNumericForLoop" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
         "LuaCompiledExit.Poll" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Poll),

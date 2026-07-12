@@ -98,7 +98,7 @@ public sealed record LuaBackendCacheKeyParameters
 
     public int IrFormatVersion { get; init; } = LuaIrModule.CurrentFormatVersion;
 
-    public int RuntimeAbiVersion { get; init; } = LuaCodegenAbiV1.RuntimeAbiVersion;
+    public int RuntimeAbiVersion { get; init; } = LuaCodegenAbiV2.RuntimeAbiVersion;
 
     public int CodegenVersion { get; init; } = LuaAotArtifactManifest.CurrentCodegenVersion;
 

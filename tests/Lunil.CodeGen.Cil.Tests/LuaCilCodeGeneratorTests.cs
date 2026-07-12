@@ -338,10 +338,10 @@ public sealed class LuaCilCodeGeneratorTests
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
         var artifact = LuaAotCompiler.Compile(module).Artifact!;
         var incompatible = artifact.PeImage.ToArray();
-        var version = "\"runtimeAbiVersion\":1"u8;
+        var version = "\"runtimeAbiVersion\":2"u8;
         var offset = incompatible.AsSpan().IndexOf(version);
         Assert.True(offset >= 0);
-        incompatible[offset + version.Length - 1] = (byte)'9';
+        incompatible[offset + version.Length - 1] = (byte)'1';
 
         var loading = LuaAotArtifactLoader.Load(incompatible.ToImmutableArray());
 
@@ -431,6 +431,100 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.False(result.Succeeded);
         Assert.Null(result.Plan);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "CIL1001");
+    }
+
+    [Fact]
+    public void ReusesTheOwnerScopedPlanAndClearsCacheHitMetrics()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+
+        var first = LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false);
+        var cached = LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false);
+
+        Assert.True(first.Succeeded);
+        Assert.Same(first.Plan, cached.Plan);
+        Assert.Equal(default, cached.Metrics);
+    }
+
+    [Fact]
+    public void CanceledPlanningDoesNotPopulateTheOwnerScopedPlanCache()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false,
+            cancellationToken: cancellation.Token));
+
+        var first = LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false);
+        var cached = LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false);
+
+        Assert.True(first.Succeeded);
+        Assert.NotEqual(default, first.Metrics);
+        Assert.Same(first.Plan, cached.Plan);
+        Assert.Equal(default, cached.Metrics);
+    }
+
+    [Fact]
+    public async Task ConcurrentFirstUseBuildsTheOwnerScopedPlanOnlyOnce()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        using var start = new ManualResetEventSlim();
+        var tasks = Enumerable.Range(0, 32)
+            .Select(_ => Task.Run(() =>
+            {
+                start.Wait();
+                return LuaCilCodeGenerator.PlanFunction(
+                    module,
+                    0,
+                    includeInstructionObservation: false);
+            }))
+            .ToArray();
+
+        start.Set();
+        var results = await Task.WhenAll(tasks);
+
+        Assert.All(results, static result => Assert.True(result.Succeeded));
+        Assert.All(results, result => Assert.Same(results[0].Plan, result.Plan));
+    }
+
+    [Fact]
+    public void OwnerScopedPlanCacheDoesNotKeepTheModuleAlive()
+    {
+        var moduleReference = CreateCachedModuleWeakReference();
+
+        for (var attempt = 0; attempt < 10 && moduleReference.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(moduleReference.IsAlive);
     }
 
     [Fact]
@@ -614,6 +708,33 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void EmissionCancellationDoesNotFinalizeTheInstructionSink()
+    {
+        var canonicalInstructions = Enumerable.Repeat(
+                new LuaIrInstruction(LuaIrOpcode.Move, a: 0, b: 0),
+                16)
+            .Append(new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0))
+            .ToArray();
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            canonicalInstructions);
+        var planning = LuaCilCodeGenerator.PlanFunction(module, 0);
+        Assert.True(planning.Succeeded);
+        Assert.True(planning.Plan!.Instructions.Length > 64);
+        using var cancellation = new CancellationTokenSource();
+        var sink = new CancelingSink(cancellation);
+
+        Assert.Throws<OperationCanceledException>(() => CilPlanEmitter.EmitVerified(
+            planning.Plan,
+            sink,
+            planning.Verification!,
+            cancellation.Token));
+
+        Assert.False(sink.Finalized);
+    }
+
+    [Fact]
     public void ReflectionEmitterExecutesThePlannedSubsetAgainstRuntimeAbiV1()
     {
         if (!RuntimeFeature.IsDynamicCodeSupported)
@@ -649,6 +770,13 @@ public sealed class LuaCilCodeGeneratorTests
         var exit = emission.Method!(context, thread, frame);
 
         Assert.True(emission.Succeeded, string.Join("; ", emission.Diagnostics.Select(static d => d.Message)));
+        Assert.Equal(
+            plan.CanonicalInstructionCount,
+            plan.DirectCanonicalInstructionCount + plan.SlowPathCanonicalInstructionCount);
+        Assert.Equal(plan.CanonicalInstructionCount, plan.DirectCanonicalInstructionCount);
+        Assert.True(emission.Metrics.PlanVerificationDuration >= TimeSpan.Zero);
+        Assert.True(emission.Metrics.EmissionDuration >= TimeSpan.Zero);
+        Assert.True(emission.Metrics.DelegateCreationDuration >= TimeSpan.Zero);
         Assert.Equal(LuaCompiledExitKind.Return, exit.Kind);
         Assert.Equal(4, exit.ProgramCounter);
         Assert.Equal(5, exit.InstructionsConsumed);
@@ -714,6 +842,78 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void AbiV2DirectSegmentStopsAtEveryExactBudgetBoundary()
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return;
+        }
+
+        var module = CreateModule(
+            registerCount: 5,
+            constants:
+            [
+                LuaIrConstant.FromInteger(5),
+                LuaIrConstant.FromInteger(3),
+            ],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(
+                LuaIrOpcode.Unary,
+                a: 1,
+                b: 0,
+                c: (int)LuaIrUnaryOperator.Negate),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 2, b: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                a: 3,
+                b: 1,
+                c: 2,
+                d: (int)LuaIrBinaryOperator.Add),
+            new LuaIrInstruction(LuaIrOpcode.Move, a: 4, b: 3),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 4, b: 1));
+        var method = ReflectionEmitCilPlanSink.Compile(
+            LuaCilCodeGenerator.PlanFunction(
+                module,
+                0,
+                includeInstructionObservation: false).Plan!).Method!;
+
+        for (var remaining = 0; remaining <= 6; remaining++)
+        {
+            var state = new LuaState();
+            var thread = state.MainThread;
+            var frame = new LuaFrame(
+                state.CreateMainClosure(module),
+                @base: 0,
+                top: 0,
+                returnBase: 0,
+                expectedResults: 0,
+                varArgs: []);
+            var context = new LuaExecutionContext(
+                state,
+                thread,
+                remainingInstructionCount: remaining);
+
+            var exit = method(context, thread, frame);
+
+            if (remaining < 6)
+            {
+                Assert.Equal(LuaCompiledExitKind.Poll, exit.Kind);
+                Assert.Equal(LuaCompiledExitReason.InstructionBudget, exit.Reason);
+                Assert.Equal(remaining, exit.ProgramCounter);
+                Assert.Equal(remaining, exit.InstructionsConsumed);
+                Assert.Equal(remaining, frame.ProgramCounter);
+            }
+            else
+            {
+                Assert.Equal(LuaCompiledExitKind.Return, exit.Kind);
+                Assert.Equal(5, exit.ProgramCounter);
+                Assert.Equal(6, exit.InstructionsConsumed);
+                Assert.Equal(LuaValue.FromInteger(-2), thread.Stack[4]);
+            }
+        }
+    }
+
+    [Fact]
     public void MalformedPlanFuzzingNeverEscapesTheVerifier()
     {
         var random = new Random(1);
@@ -774,6 +974,21 @@ public sealed class LuaCilCodeGeneratorTests
         return weakReference;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference CreateCachedModuleWeakReference()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var result = LuaCilCodeGenerator.PlanFunction(
+            module,
+            0,
+            includeInstructionObservation: false);
+        Assert.True(result.Succeeded);
+        return new WeakReference(module);
+    }
+
     private sealed class RecordingSink : ICilInstructionSink
     {
         public RecordingSink(CilEmitterFlavor flavor)
@@ -801,5 +1016,33 @@ public sealed class LuaCilCodeGeneratorTests
         public void EndMethod()
         {
         }
+    }
+
+    private sealed class CancelingSink(CancellationTokenSource cancellation) :
+        ICilInstructionSink
+    {
+        private int _emitted;
+
+        public CilEmitterFlavor Flavor => CilEmitterFlavor.ReflectionEmit;
+
+        public bool Finalized { get; private set; }
+
+        public void BeginMethod(CilMethodPlan plan, int maximumEvaluationStack)
+        {
+        }
+
+        public void DeclareLocal(CilLocal local)
+        {
+        }
+
+        public void Emit(CilPlanInstruction instruction)
+        {
+            if (Interlocked.Increment(ref _emitted) == 1)
+            {
+                cancellation.Cancel();
+            }
+        }
+
+        public void EndMethod() => Finalized = true;
     }
 }

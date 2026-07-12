@@ -82,7 +82,7 @@ public static class LuaJitProfileCodec
             WriteString(writer, Magic);
             writer.Write(CurrentSchemaVersion);
             writer.Write(LuaIrModule.CurrentFormatVersion);
-            writer.Write(LuaCodegenAbiV1.RuntimeAbiVersion);
+            writer.Write(LuaCodegenAbiV2.RuntimeAbiVersion);
             writer.Write(CurrentCodegenVersion);
             WriteString(writer, profile.ModuleContentId);
             writer.Write(profile.Functions.Length);
@@ -132,7 +132,7 @@ public static class LuaJitProfileCodec
 
             if (reader.ReadInt32() != CurrentSchemaVersion ||
                 reader.ReadInt32() != LuaIrModule.CurrentFormatVersion ||
-                reader.ReadInt32() != LuaCodegenAbiV1.RuntimeAbiVersion ||
+                reader.ReadInt32() != LuaCodegenAbiV2.RuntimeAbiVersion ||
                 reader.ReadInt32() != CurrentCodegenVersion)
             {
                 throw Incompatible("Profile schema, IR, Runtime ABI, or codegen version is incompatible.");

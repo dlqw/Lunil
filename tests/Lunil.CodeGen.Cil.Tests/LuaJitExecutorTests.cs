@@ -75,9 +75,57 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
         Assert.True(executor.Statistics.CompiledInvocations > 0);
         Assert.True(executor.Statistics.EstimatedCodeBytes > 0);
+        Assert.True(executor.Statistics.CompiledCanonicalInstructions > 0);
+        Assert.Equal(
+            executor.Statistics.CompiledInvocations,
+            executor.Statistics.SchedulerExits);
+        Assert.True(executor.Statistics.Tier1CompileAllocatedBytes > 0);
+        Assert.True(executor.Statistics.Tier1PlanInstructions > 0);
         Assert.Contains(events, jitEvent => jitEvent.Kind == LuaJitEventKind.Queued);
-        Assert.Contains(events, jitEvent =>
-            jitEvent.Kind == LuaJitEventKind.CompilationCompleted);
+        var completed = Assert.Single(
+            events,
+            jitEvent => jitEvent.Kind == LuaJitEventKind.CompilationCompleted);
+        var metrics = Assert.IsType<LuaJitCompilationMetrics>(completed.CompilationMetrics);
+        Assert.True(metrics.AllocatedBytes > 0);
+        Assert.Equal(
+            metrics.CanonicalInstructionCount,
+            metrics.DirectCanonicalInstructionCount + metrics.SlowPathCanonicalInstructionCount);
+        Assert.True(metrics.PlanInstructionCount > metrics.CanonicalInstructionCount);
+        Assert.True(metrics.EstimatedCodeBytes > 0);
+    }
+
+    [Fact]
+    public void Tier1HotPathDoesNotAllocateAFactoryClosurePerSchedulerEntry()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = false,
+        });
+        var module = Compile("""
+            local values = {}
+            local total = 0
+            local index = 0
+            while index < 2000 do
+                index = index + 1
+                local key = (index & 127) + 1
+                values[key] = index
+                total = total + values[key]
+            end
+            return total
+            """);
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+        AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(2_001_000));
+        AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(2_001_000));
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(2_001_000));
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+        Assert.InRange(allocated, 0, 256 * 1024);
+        Assert.True(executor.Statistics.SchedulerExits > 1_000);
     }
 
     [Fact]
@@ -103,6 +151,155 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
         Assert.True(executor.Statistics.CompilationCompleted >= 1);
         Assert.True(executor.Statistics.CompiledInvocations >= 1);
+    }
+
+    [Fact]
+    public void AutoEligibilityRejectsSchedulerBoundaryDenseFunctionsBeforeQueueing()
+    {
+        var compiler = new CountingCompiler(ReflectionEmitLuaTier1Compiler.Instance);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = 1,
+                BackedgeThreshold = 1,
+                SynchronousCompilation = true,
+            },
+            compiler: compiler);
+        var events = new ConcurrentQueue<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Enqueue(jitEvent);
+        var module = Compile("""
+            local values = {}
+            local total = 0
+            for index = 1, 10 do
+                values[index] = index
+                total = total + values[index]
+            end
+            return total
+            """);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(55));
+        var eligibility = executor.GetFunctionEligibility(module, 0);
+
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.Equal(LuaJitEligibilityReason.SlowPathDensityTooHigh, eligibility.Reason);
+        Assert.Equal(0, compiler.CallCount);
+        Assert.Equal(0, executor.Statistics.CompilationQueued);
+        Assert.Equal(1, executor.Statistics.EligibilityEvaluated);
+        Assert.Equal(1, executor.Statistics.EligibilityRejected);
+        var rejected = Assert.Single(
+            events,
+            static jitEvent => jitEvent.Kind == LuaJitEventKind.EligibilityRejected);
+        Assert.Equal("JIT1103", rejected.DiagnosticCode);
+        Assert.Equal(eligibility, rejected.Eligibility);
+    }
+
+    [Fact]
+    public void HotArithmeticLoopHasDeterministicAutoEligibilityEvidence()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = 1,
+            SynchronousCompilation = true,
+            EnableTier2 = false,
+        });
+        var module = Compile(
+            "local total = 0; for index = 1, 20 do total = total + index end; return total");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(210));
+        var eligibility = executor.GetFunctionEligibility(module, 0);
+
+        Assert.True(eligibility.IsCompilable);
+        Assert.True(eligibility.IsAutoEligible);
+        Assert.Equal(LuaJitEligibilityReason.Eligible, eligibility.Reason);
+        Assert.Equal(LuaJitBreakEvenClass.WithinCurrentInvocation, eligibility.BreakEvenClass);
+        Assert.Equal(1, eligibility.BackedgeCount);
+        Assert.Equal(1, executor.Statistics.EligibilityAccepted);
+        Assert.Equal(1, executor.Statistics.CompilationCompleted);
+    }
+
+    [Fact]
+    public void PreferJitOverridesTheBenefitFilterButNotVerification()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = false,
+        });
+        var module = Compile("return 7");
+
+        var eligibility = executor.GetFunctionEligibility(module, 0);
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.True(eligibility.IsCompilable);
+        Assert.Equal(LuaJitEligibilityReason.NoRepeatedWork, eligibility.Reason);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(7));
+        Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
+        Assert.Equal(1, executor.Statistics.CompilationCompleted);
+    }
+
+    [Fact]
+    public void ImportedProfileCannotBypassTheAutoBenefitFilter()
+    {
+        var module = Compile("return 9");
+        byte[] profile;
+        using (var training = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+        }))
+        {
+            AssertValues(ExecuteFresh(training, module), LuaValue.FromInteger(9));
+            profile = training.ExportProfile(module);
+        }
+
+        var compiler = new CountingCompiler(ReflectionEmitLuaTier1Compiler.Instance);
+        using var warmed = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = 1_000,
+                BackedgeThreshold = int.MaxValue,
+                SynchronousCompilation = true,
+            },
+            compiler: compiler);
+        Assert.True(warmed.ImportProfile(module, profile).Succeeded);
+
+        AssertValues(ExecuteFresh(warmed, module), LuaValue.FromInteger(9));
+
+        Assert.Equal(0, compiler.CallCount);
+        Assert.Equal(0, warmed.Statistics.CompilationQueued);
+        Assert.Equal(LuaJitEligibilityReason.NoRepeatedWork,
+            warmed.GetFunctionEligibility(module, 0).Reason);
+    }
+
+    [Fact]
+    public void RequireJitReturnsAStableDiagnosticForAnUncompilableFunction()
+    {
+        var source = new System.Text.StringBuilder("local value = 0;");
+        for (var index = 0; index < 2_000; index++)
+        {
+            source.Append("value = value + 1;");
+        }
+
+        source.Append("return value");
+        var module = Compile(source.ToString());
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.RequireJit,
+            EnableTier2 = false,
+        });
+
+        var failure = Assert.Throws<LuaJitException>(() => ExecuteFresh(executor, module));
+
+        Assert.Equal("JIT1006", failure.DiagnosticCode);
+        var eligibility = executor.GetFunctionEligibility(module, 0);
+        Assert.False(eligibility.IsCompilable);
+        Assert.Equal(LuaJitEligibilityReason.EstimatedCodeSizeTooLarge, eligibility.Reason);
+        Assert.Equal(0, executor.Statistics.CompilationQueued);
     }
 
     [Fact]
@@ -384,6 +581,38 @@ public sealed class LuaJitExecutorTests
         executor.Dispose();
 
         Assert.True(canceled.IsSet);
+        Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
+    }
+
+    [Fact]
+    public void DisposeDoesNotPublishACompilerResultThatIgnoredCancellation()
+    {
+        using var started = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        var compiler = new CancellationIgnoringCompiler(started, returned);
+        var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+            },
+            compiler: compiler);
+        var completedEvents = 0;
+        executor.EventOccurred += (_, jitEvent) =>
+        {
+            if (jitEvent.Kind == LuaJitEventKind.CompilationCompleted)
+            {
+                Interlocked.Increment(ref completedEvents);
+            }
+        };
+        var module = Compile("return 5");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        executor.Dispose();
+
+        Assert.True(returned.IsSet);
+        Assert.Equal(0, Volatile.Read(ref completedEvents));
         Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
     }
 
@@ -1542,6 +1771,27 @@ public sealed class LuaJitExecutorTests
             canceled.Set();
             cancellationToken.ThrowIfCancellationRequested();
             throw new InvalidOperationException("Cancellation was not observed.");
+        }
+    }
+
+    private sealed class CancellationIgnoringCompiler(
+        ManualResetEventSlim started,
+        ManualResetEventSlim returned) : ILuaTier1Compiler
+    {
+        public LuaTier1CompilationResult Compile(
+            LuaIrModule module,
+            int functionId,
+            CancellationToken cancellationToken)
+        {
+            started.Set();
+            cancellationToken.WaitHandle.WaitOne();
+            returned.Set();
+            return new LuaTier1CompilationResult(
+                static (context, thread, frame) => LuaCompiledExit.Return(
+                    frame.ProgramCounter,
+                    context.InstructionsConsumed),
+                64,
+                []);
         }
     }
 

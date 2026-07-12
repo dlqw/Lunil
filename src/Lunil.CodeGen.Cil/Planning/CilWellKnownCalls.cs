@@ -44,6 +44,16 @@ public static class CilWellKnownCalls
         ],
         CilStackValueKind.Void);
 
+    public static CilCallTarget ReadUpvalue { get; } = Call(
+        "LuaCodegenAbiV1.ReadUpvalue",
+        [CilStackValueKind.Frame, CilStackValueKind.Int32],
+        CilStackValueKind.LuaValue);
+
+    public static CilCallTarget WriteUpvalue { get; } = Call(
+        "LuaCodegenAbiV1.WriteUpvalue",
+        [CilStackValueKind.Frame, CilStackValueKind.Int32, CilStackValueKind.LuaValue],
+        CilStackValueKind.Void);
+
     public static CilCallTarget ClearRegisters { get; } = Call(
         "LuaCodegenAbiV1.ClearRegisters",
         [
@@ -69,6 +79,51 @@ public static class CilWellKnownCalls
         [CilStackValueKind.ExecutionContext],
         CilStackValueKind.Int32);
 
+    public static CilCallTarget CanExecuteCompiledFrame { get; } = Call(
+        "LuaCodegenAbiV2.CanExecuteCompiledFrame",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget ReadRegisterUnchecked { get; } = Call(
+        "LuaCodegenAbiV2.ReadRegisterUnchecked",
+        [CilStackValueKind.Thread, CilStackValueKind.Frame, CilStackValueKind.Int32],
+        CilStackValueKind.LuaValue);
+
+    public static CilCallTarget WriteRegisterUnchecked { get; } = Call(
+        "LuaCodegenAbiV2.WriteRegisterUnchecked",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.LuaValue,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget ClearRegistersUnchecked { get; } = Call(
+        "LuaCodegenAbiV2.ClearRegistersUnchecked",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget SetFrameTopUnchecked { get; } = Call(
+        "LuaCodegenAbiV2.SetFrameTopUnchecked",
+        [CilStackValueKind.Thread, CilStackValueKind.Frame, CilStackValueKind.Int32],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget CanSkipClose { get; } = Call(
+        "LuaCodegenAbiV2.CanSkipClose",
+        [CilStackValueKind.Frame, CilStackValueKind.Int32],
+        CilStackValueKind.Int32);
+
     public static CilCallTarget ObserveCanonicalInstruction { get; } = Call(
         "LuaCodegenAbiV1.ObserveCanonicalInstruction",
         [
@@ -88,6 +143,72 @@ public static class CilWellKnownCalls
             CilStackValueKind.Int32,
         ],
         CilStackValueKind.CompiledExit);
+
+    public static CilCallTarget CanExecuteUnaryPrimitive { get; } = Call(
+        "LuaCodegenAbiV2.CanExecuteUnaryPrimitive",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget ExecuteUnaryPrimitive { get; } = Call(
+        "LuaCodegenAbiV2.ExecuteUnaryPrimitive",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget CanExecuteBinaryPrimitive { get; } = Call(
+        "LuaCodegenAbiV2.CanExecuteBinaryPrimitive",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget ExecuteBinaryPrimitive { get; } = Call(
+        "LuaCodegenAbiV2.ExecuteBinaryPrimitive",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget ExecuteNumericForPrepare { get; } = Call(
+        "LuaCodegenAbiV2.ExecuteNumericForPrepare",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget ExecuteNumericForLoop { get; } = Call(
+        "LuaCodegenAbiV2.ExecuteNumericForLoop",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
 
     public static CilCallTarget ExitPoll { get; } = Call(
         "LuaCompiledExit.Poll",
@@ -117,12 +238,26 @@ public static class CilWellKnownCalls
             MaterializeConstant,
             ReadRegister,
             WriteRegister,
+            ReadUpvalue,
+            WriteUpvalue,
             ClearRegisters,
             SetFrameTop,
             LuaValueIsTruthy,
             CanExecuteCompiled,
+            CanExecuteCompiledFrame,
+            ReadRegisterUnchecked,
+            WriteRegisterUnchecked,
+            ClearRegistersUnchecked,
+            SetFrameTopUnchecked,
+            CanSkipClose,
             ObserveCanonicalInstruction,
             ExecuteCanonicalInstruction,
+            CanExecuteUnaryPrimitive,
+            ExecuteUnaryPrimitive,
+            CanExecuteBinaryPrimitive,
+            ExecuteBinaryPrimitive,
+            ExecuteNumericForPrepare,
+            ExecuteNumericForLoop,
             ExitContinue,
             ExitPoll,
             ExitReturn,
