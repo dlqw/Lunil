@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using Lunil.CodeGen.Cil;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.CodeGen.Cil.Loading;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -125,6 +126,43 @@ internal sealed class PersistedAotBackendHarness : ILuaBackendHarness
         _engine.Resume(state, thread, arguments);
 }
 
+internal sealed class Tier1JitBackendHarness : ILuaBackendHarness, IDisposable
+{
+    private readonly LuaJitExecutor _executor;
+
+    public Tier1JitBackendHarness(LuaInterpreterOptions options)
+    {
+        _executor = new LuaJitExecutor(new LuaJitExecutorOptions
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            Interpreter = options,
+        });
+    }
+
+    public string Name => "coreclr-tier1-jit";
+
+    public LuaExecutionResult Execute(
+        LuaState state,
+        LuaClosure closure,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Execute(state, closure, arguments);
+
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Start(state, thread, arguments);
+
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Resume(state, thread, arguments);
+
+    public void Dispose() => _executor.Dispose();
+}
+
 internal sealed class PersistedAotInstructionExecutor : ILuaInstructionExecutor
 {
     private readonly Dictionary<LuaIrModule, LuaAotLoadedModule> _modules =
@@ -205,6 +243,7 @@ internal static class LuaBackendCatalog
             new InterpreterBackendHarness(interpreterOptions),
             new ExecutorBackendHarness(interpreterOptions),
             new PersistedAotBackendHarness(interpreterOptions),
+            new Tier1JitBackendHarness(interpreterOptions),
         ];
     }
 
