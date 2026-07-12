@@ -1,8 +1,6 @@
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
-using System.Reflection;
-using System.Runtime.CompilerServices;
 
 namespace Lunil.Runtime.Execution;
 
@@ -230,7 +228,7 @@ public sealed class LuaNativeFunction
         if (!IsCaptureFree(stepBody))
         {
             throw new ArgumentException(
-                "A resumable native descriptor must use a static delegate; store Lua captures in a LuaNativeClosure.",
+                "A resumable native descriptor must use a static method group; store Lua captures in a LuaNativeClosure.",
                 nameof(stepBody));
         }
 
@@ -248,17 +246,7 @@ public sealed class LuaNativeFunction
     internal LuaNativeFunctionKind Kind { get; }
 
     private static bool IsCaptureFree(LuaNativeFunctionStepBody stepBody)
-    {
-        if (stepBody.Target is null || stepBody.Method.IsStatic)
-        {
-            return true;
-        }
-
-        var targetType = stepBody.Target.GetType();
-        return targetType.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false) &&
-            targetType.GetFields(BindingFlags.Instance | BindingFlags.Public |
-                BindingFlags.NonPublic).Length == 0;
-    }
+        => stepBody.Target is null;
 }
 
 /// <summary>A logical-heap native closure with explicitly traced, owner-validated captures.</summary>

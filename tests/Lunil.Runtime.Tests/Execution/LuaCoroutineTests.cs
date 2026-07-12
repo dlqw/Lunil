@@ -374,17 +374,23 @@ public sealed class LuaCoroutineTests
     }
 
     [Fact]
-    public void ResumableNativeDescriptorsRejectClrCaptureClosures()
+    public void ResumableNativeDescriptorsRequireStaticMethodGroups()
     {
-        _ = new LuaNativeFunction(
-            "static",
-            static (_, _, _) => LuaNativeStep.Completed());
+        _ = new LuaNativeFunction("static", CaptureFreeStep);
         var captured = LuaValue.FromInteger(1);
 
+        Assert.Throws<ArgumentException>(() => new LuaNativeFunction(
+            "static-lambda",
+            static (_, _, _) => LuaNativeStep.Completed()));
         Assert.Throws<ArgumentException>(() => new LuaNativeFunction(
             "captured",
             (_, _, _) => LuaNativeStep.Completed(captured)));
     }
+
+    private static LuaNativeStep CaptureFreeStep(
+        LuaNativeCallContext _,
+        int __,
+        ReadOnlySpan<LuaValue> ___) => LuaNativeStep.Completed();
 
     private static ImmutableArray<LuaValue> Execute(
         string source,

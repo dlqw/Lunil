@@ -382,7 +382,19 @@ record。普通 CoreCLR 通过显式 loader 先验证 manifest、版本与资源
 `AssemblyLoadContext` 注册 function delegate；PE 尾部的 deterministic SHA-256 footer 覆盖完整映像，
 损坏、错 ABI、错 module identity 或不匹配的 PDB 只返回稳定诊断。
 
-.NET NativeAOT 通过 MSBuild task 在 `CoreCompile` 前生成 Lua 程序集和静态 `.g.cs` 注册清单，使 trimming/AOT 能发现全部入口。NativeAOT 运行时不动态产生 CIL；未预编译源码使用解释器。
+.NET NativeAOT 通过 `Lunil.Build` 的 MSBuild task 在 `ResolveAssemblyReferences`/
+`CoreCompile` 前完成 source/chunk 验证、canonical IR lowering 和 persisted CIL emission。
+generated PE 进入宿主编译引用；`.g.cs` registry 通过 `ModuleInitializer` 和直接 method group
+注册所有 function/shard，不使用 runtime reflection/discovery。registry 同时内嵌经过版本与 IR
+verifier 检查的 canonical module，使宿主按 module name 创建 main closure，而不必在启动时重新解析
+静态源码。NativeAOT 运行时不动态产生或加载 CIL；未预编译模块由 `LuaStaticAotExecutor` 精确
+deopt 到共享解释器。
+
+构建输出按 configuration/TFM/RID 隔离在 `obj/lunil/`。manifest 键包含 source hash、input kind、
+optimization/debug/sandbox metadata、TFM 与 RID；命中时复用 PE/PDB/canonical module，仍在每次
+MSBuild 中重建 `Compile`/`Reference` item graph。写入使用同目录临时文件、atomic replace 和
+跨进程 output lock；design-time build 写入隔离目录且不执行 persisted CIL 编译，`Clean` 删除整个
+Lunil intermediate root。
 
 ## 10. 标准库
 

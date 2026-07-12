@@ -9,24 +9,8 @@ public sealed class LuaNestedNativeCallbackTests
     public void ResumableNativeCallbackCrossesGeneratedLuaTrampolineAndCanYield()
     {
         var state = new LuaState();
-        var callback = new LuaNativeFunction(
-            "callback",
-            static (context, continuation, values) => continuation == 0
-                ? LuaNativeStep.Yielded(
-                    [values[0]],
-                    continuationId: 1,
-                    stateValues: [values[0]])
-                : LuaNativeStep.Completed(values.Length == 0
-                    ? context.InvocationState[0]
-                    : values[0]));
-        var outerDescriptor = new LuaNativeFunction(
-            "outer",
-            static (context, continuation, values) => continuation == 0
-                ? LuaNativeStep.CallLua(
-                    context.Captures[0],
-                    [LuaValue.FromInteger(41)],
-                    continuationId: 1)
-                : LuaNativeStep.Completed(values.Length == 0 ? LuaValue.Nil : values[0]));
+        var callback = new LuaNativeFunction("callback", CallbackStep);
+        var outerDescriptor = new LuaNativeFunction("outer", OuterStep);
         var outer = state.CreateNativeClosure(
             outerDescriptor,
             [LuaValue.FromFunction(callback)]);
@@ -41,4 +25,26 @@ public sealed class LuaNestedNativeCallbackTests
         Assert.Equal(LuaVmSignal.Completed, completed.Signal);
         Assert.Equal([LuaValue.FromInteger(42)], completed.Values.ToArray());
     }
+
+    private static LuaNativeStep CallbackStep(
+        LuaNativeCallContext context,
+        int continuation,
+        ReadOnlySpan<LuaValue> values) => continuation == 0
+            ? LuaNativeStep.Yielded(
+                [values[0]],
+                continuationId: 1,
+                stateValues: [values[0]])
+            : LuaNativeStep.Completed(values.Length == 0
+                ? context.InvocationState[0]
+                : values[0]);
+
+    private static LuaNativeStep OuterStep(
+        LuaNativeCallContext context,
+        int continuation,
+        ReadOnlySpan<LuaValue> values) => continuation == 0
+            ? LuaNativeStep.CallLua(
+                context.Captures[0],
+                [LuaValue.FromInteger(41)],
+                continuationId: 1)
+            : LuaNativeStep.Completed(values.Length == 0 ? LuaValue.Nil : values[0]);
 }
