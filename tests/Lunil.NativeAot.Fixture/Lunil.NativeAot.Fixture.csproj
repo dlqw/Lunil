@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\..\src\Lunil.Build\build\Lunil.Build.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimMode>full</TrimMode>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL3050</WarningsAsErrors>
+    <_LunilBuildTaskAssembly>$(MSBuildThisFileDirectory)..\..\src\Lunil.Build\bin\$(Configuration)\net10.0\Lunil.Build.dll</_LunilBuildTaskAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Lunil.Build\Lunil.Build.csproj"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all"
+                      AdditionalProperties="PublishAot=false;PublishTrimmed=false;EnableTrimAnalyzer=false;EnableAotAnalyzer=false" />
+    <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Core\Lunil.Core.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Semantics\Lunil.Semantics.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Syntax\Lunil.Syntax.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <LunilCompile Include="Modules\precompiled.lua"
+                  ModuleName="fixture.precompiled"
+                  Optimization="Release"
+                  DebugSymbols="false"
+                  Sandbox="Restricted" />
+    <LunilCompile Include="Modules\closures.lua" ModuleName="fixture.closures" Optimization="Release" DebugSymbols="false" Sandbox="Restricted" />
+    <LunilCompile Include="Modules\control.lua" ModuleName="fixture.control" Optimization="Release" DebugSymbols="false" Sandbox="Restricted" />
+    <LunilCompile Include="Modules\multireturn.lua" ModuleName="fixture.multireturn" Optimization="Release" DebugSymbols="false" Sandbox="Restricted" />
+    <LunilCompile Include="Modules\tables.lua" ModuleName="fixture.tables" Optimization="Release" DebugSymbols="false" Sandbox="Restricted" />
+    <None Update="Modules\*.lua" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Import Project="..\..\src\Lunil.Build\build\Lunil.Build.targets" />
+
+</Project>

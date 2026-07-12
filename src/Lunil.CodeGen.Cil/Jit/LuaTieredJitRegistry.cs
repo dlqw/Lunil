@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Lunil.CodeGen.Cil.Emission;
@@ -1072,6 +1073,10 @@ internal sealed class LuaTieredJitRegistry :
         }
     }
 
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Queue admission rejects tier compilation when dynamic code is unavailable.")]
     private void Compile(CompilationRequest request)
     {
         if (_disposeCancellation.IsCancellationRequested)

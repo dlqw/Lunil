@@ -52,6 +52,13 @@ jobs:
         run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Test
         run: dotnet test Lunil.sln --configuration Release --no-build --no-restore
+      - name: Publish and run NativeAOT fixture
+        shell: pwsh
+        run: ./scripts/Test-NativeAotFixture.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
+      - name: Verify single-file, trimming, and ReadyToRun modes
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: ./scripts/Test-LunilPublishModes.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
       - name: Read version
         id: version
         shell: pwsh
@@ -74,6 +81,7 @@ jobs:
           path: |
             artifacts/*.zip
             artifacts/benchmarks/*.txt
+            artifacts/nativeaot/${{ matrix.rid }}/**
           if-no-files-found: error
 
   formatting-and-packages:

@@ -20,6 +20,24 @@ namespace Lunil.CodeGen.Cil.Tests;
 public sealed class LuaCilCodeGeneratorTests
 {
     [Fact]
+    public void CanonicalModuleIdentityRoundTripsVerifiedIr()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(42)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var bytes = LuaAotModuleIdentity.SerializeCanonicalModule(module);
+
+        var roundTripped = LuaAotModuleIdentity.DeserializeCanonicalModule(bytes);
+
+        Assert.Equal(
+            LuaAotModuleIdentity.ComputeContentId(module),
+            LuaAotModuleIdentity.ComputeContentId(roundTripped));
+        Assert.Equal(bytes, LuaAotModuleIdentity.SerializeCanonicalModule(roundTripped));
+    }
+
+    [Fact]
     public void PlansAndVerifiesTheInitialCanonicalOpcodeSubset()
     {
         var module = CreateModule(

@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | In development | Persisted CIL AOT v1, profile-guided CoreCLR Tier 1/Tier 2 JIT, and opt-in experimental loop OSR are implemented; build-time NativeAOT remains |
+| JIT / AOT backends | In development | Persisted CIL AOT v1, profile-guided CoreCLR Tier 1/Tier 2 JIT, opt-in experimental loop OSR, and six-RID NativeAOT build integration are implemented; cache productization remains |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -221,6 +221,41 @@ explicitly requires the Tier 0 reference backend.
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.
 
+### Build-time AOT and NativeAOT
+
+Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` items:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.4" />
+  <LunilCompile Include="Modules/math.lua"
+                ModuleName="app.math"
+                InputKind="Source"
+                Optimization="Release"
+                DebugSymbols="false"
+                Sandbox="Restricted" />
+</ItemGroup>
+```
+
+The package verifies and compiles each module before `CoreCompile`, writes deterministic
+artifacts under `obj/lunil/`, and generates a direct-method registry without runtime
+reflection. A host can obtain the embedded canonical module and execute its static entry:
+
+```csharp
+if (!LuaStaticAotRegistry.TryGetModule("app.math", out var module) || module is null)
+{
+    throw new InvalidOperationException("The build-time module was not registered.");
+}
+
+var state = new LuaState();
+var result = new LuaStaticAotExecutor().Execute(state, module.CreateMainClosure(state));
+```
+
+Set `PublishAot=true` for NativeAOT. Dynamic modules still execute through the interpreter;
+JIT and dynamic PE loading are disabled when dynamic code is unavailable. See the
+[NativeAOT and MSBuild guide](docs/nativeaot-build-integration.md) for metadata,
+incremental-build behavior, diagnostics, and publish commands.
+
 ## Architecture
 
 ```mermaid
@@ -261,6 +296,7 @@ Lunil/
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
 │   ├── Lunil.CodeGen.Cil/       # typed CIL plans, persisted AOT and tiered CoreCLR JIT
+│   ├── Lunil.Build/             # MSBuild task, build assets and NativeAOT registry generation
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
 ├── benchmarks/                  # runtime benchmark harness
@@ -303,6 +339,7 @@ suffix are automatically marked as prereleases. See the
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
 | [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
+| [NativeAOT and MSBuild](docs/nativeaot-build-integration.md) | `Lunil.Build`, static registries, diagnostics and publish modes |
 | [Runtime continuation ABI](docs/runtime-continuation-abi.md) | Frozen continuation and yield boundary from `0.3.0` |
 | [PUC prototype import](docs/puc-prototype-import.md) | PUC Lua prototype-to-canonical-IR conversion |
 | [Versioning](docs/versioning.md) | SemVer, alpha/beta/RC promotion and release procedure |

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Lunil.IR.Canonical;
@@ -30,6 +31,51 @@ internal static class LuaCanonicalModuleSerializer
 
     public static string Sha256Hex(ReadOnlySpan<byte> content) =>
         Convert.ToHexStringLower(SHA256.HashData(content));
+
+    public static LuaIrModule Deserialize(ReadOnlySpan<byte> content)
+    {
+        var reader = new CanonicalModuleReader(content);
+        if (!reader.ReadBytes(Magic.Length).SequenceEqual(Magic))
+        {
+            throw new InvalidDataException("The canonical module magic is invalid.");
+        }
+
+        var formatVersion = reader.ReadInt32();
+        var mainFunctionId = reader.ReadInt32();
+        var functionCount = reader.ReadCount();
+        var functions = ImmutableArray.CreateBuilder<LuaIrFunction>(functionCount);
+        for (var functionIndex = 0; functionIndex < functionCount; functionIndex++)
+        {
+            functions.Add(ReadFunction(ref reader));
+        }
+
+        if (!reader.IsAtEnd)
+        {
+            throw new InvalidDataException("The canonical module has trailing data.");
+        }
+
+        var module = new LuaIrModule
+        {
+            FormatVersion = formatVersion,
+            MainFunctionId = mainFunctionId,
+            Functions = functions.MoveToImmutable(),
+        };
+        if (formatVersion != LuaIrModule.CurrentFormatVersion)
+        {
+            throw new InvalidDataException(
+                $"Canonical IR format {formatVersion} is not supported; expected {LuaIrModule.CurrentFormatVersion}.");
+        }
+
+        var errors = LuaIrVerifier.Verify(module);
+        if (!errors.IsEmpty)
+        {
+            throw new InvalidDataException(
+                $"Canonical module verification failed in function {errors[0].FunctionId} " +
+                $"at instruction {errors[0].ProgramCounter}: {errors[0].Message}");
+        }
+
+        return module;
+    }
 
     public static CanonicalModuleSummary ReadSummary(ReadOnlySpan<byte> content)
     {
@@ -169,6 +215,134 @@ internal static class LuaCanonicalModuleSerializer
         }
     }
 
+    private static LuaIrFunction ReadFunction(ref CanonicalModuleReader reader)
+    {
+        var id = reader.ReadInt32();
+        var parentFunctionId = reader.ReadInt32();
+        var span = new Lunil.Core.Text.TextSpan(reader.ReadInt32(), reader.ReadInt32());
+        var sourceName = reader.ReadLengthPrefixedBytes().ToArray().ToImmutableArray();
+        var lineDefined = reader.ReadInt32();
+        var lastLineDefined = reader.ReadInt32();
+        var parameterCount = reader.ReadInt32();
+        var isVarArg = reader.ReadBoolean();
+        var registerCount = reader.ReadInt32();
+
+        var constantCount = reader.ReadCount();
+        var constants = ImmutableArray.CreateBuilder<LuaIrConstant>(constantCount);
+        for (var index = 0; index < constantCount; index++)
+        {
+            var kindValue = reader.ReadByte();
+            if (!Enum.IsDefined((LuaIrConstantKind)kindValue))
+            {
+                throw new InvalidDataException($"Canonical constant kind {kindValue} is invalid.");
+            }
+
+            var integer = reader.ReadInt64();
+            var number = BitConverter.Int64BitsToDouble(reader.ReadInt64());
+            var bytes = reader.ReadLengthPrefixedBytes();
+            constants.Add((LuaIrConstantKind)kindValue switch
+            {
+                LuaIrConstantKind.Nil => LuaIrConstant.Nil,
+                LuaIrConstantKind.Boolean => LuaIrConstant.FromBoolean(integer != 0),
+                LuaIrConstantKind.Integer => LuaIrConstant.FromInteger(integer),
+                LuaIrConstantKind.Float => LuaIrConstant.FromFloat(number),
+                LuaIrConstantKind.String => LuaIrConstant.FromString(bytes),
+                _ => throw new UnreachableException(),
+            });
+        }
+
+        var upvalueCount = reader.ReadCount();
+        var upvalues = ImmutableArray.CreateBuilder<LuaIrUpvalue>(upvalueCount);
+        for (var index = 0; index < upvalueCount; index++)
+        {
+            var name = reader.ReadString();
+            var symbolId = reader.ReadInt32();
+            var sourceKindValue = reader.ReadByte();
+            if (!Enum.IsDefined((LuaIrUpvalueSourceKind)sourceKindValue))
+            {
+                throw new InvalidDataException($"Canonical upvalue source kind {sourceKindValue} is invalid.");
+            }
+
+            var sourceIndex = reader.ReadInt32();
+            var kind = reader.ReadByte();
+            var debugName = reader.ReadLengthPrefixedBytes().ToArray().ToImmutableArray();
+            upvalues.Add(new LuaIrUpvalue(
+                name,
+                symbolId,
+                (LuaIrUpvalueSourceKind)sourceKindValue,
+                sourceIndex)
+            {
+                Kind = kind,
+                DebugName = debugName,
+            });
+        }
+
+        var instructionCount = reader.ReadCount();
+        var instructions = ImmutableArray.CreateBuilder<LuaIrInstruction>(instructionCount);
+        for (var index = 0; index < instructionCount; index++)
+        {
+            var opcodeValue = reader.ReadByte();
+            if (!Enum.IsDefined((LuaIrOpcode)opcodeValue))
+            {
+                throw new InvalidDataException($"Canonical opcode {opcodeValue} is invalid.");
+            }
+
+            instructions.Add(new LuaIrInstruction(
+                (LuaIrOpcode)opcodeValue,
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                reader.ReadInt32(),
+                new Lunil.Core.Text.TextSpan(reader.ReadInt32(), reader.ReadInt32()),
+                reader.ReadInt32(),
+                reader.ReadInt32()));
+        }
+
+        var localCount = reader.ReadCount();
+        var locals = ImmutableArray.CreateBuilder<LuaIrLocalVariable>(localCount);
+        for (var index = 0; index < localCount; index++)
+        {
+            locals.Add(new LuaIrLocalVariable(
+                reader.ReadLengthPrefixedBytes().ToArray().ToImmutableArray(),
+                reader.ReadInt32(),
+                reader.ReadInt32()));
+        }
+
+        var blockCount = reader.ReadCount();
+        var blocks = ImmutableArray.CreateBuilder<LuaIrBasicBlock>(blockCount);
+        for (var index = 0; index < blockCount; index++)
+        {
+            var start = reader.ReadInt32();
+            var length = reader.ReadInt32();
+            var successorCount = reader.ReadCount();
+            var successors = ImmutableArray.CreateBuilder<int>(successorCount);
+            for (var successorIndex = 0; successorIndex < successorCount; successorIndex++)
+            {
+                successors.Add(reader.ReadInt32());
+            }
+
+            blocks.Add(new LuaIrBasicBlock(start, length, successors.MoveToImmutable()));
+        }
+
+        return new LuaIrFunction
+        {
+            Id = id,
+            ParentFunctionId = parentFunctionId,
+            Span = span,
+            SourceName = sourceName,
+            LineDefined = lineDefined,
+            LastLineDefined = lastLineDefined,
+            ParameterCount = parameterCount,
+            IsVarArg = isVarArg,
+            RegisterCount = registerCount,
+            Constants = constants.MoveToImmutable(),
+            Upvalues = upvalues.MoveToImmutable(),
+            Instructions = instructions.MoveToImmutable(),
+            LocalVariables = locals.MoveToImmutable(),
+            BasicBlocks = blocks.MoveToImmutable(),
+        };
+    }
+
     private static void WriteSpan(BinaryWriter writer, int start, int length)
     {
         writer.Write(start);
@@ -211,6 +385,26 @@ internal static class LuaCanonicalModuleSerializer
             var bytes = ReadBytes(sizeof(int));
             return BinaryPrimitives.ReadInt32LittleEndian(bytes);
         }
+
+        public long ReadInt64()
+        {
+            var bytes = ReadBytes(sizeof(long));
+            return BinaryPrimitives.ReadInt64LittleEndian(bytes);
+        }
+
+        public byte ReadByte() => ReadBytes(1)[0];
+
+        public bool ReadBoolean() => ReadByte() switch
+        {
+            0 => false,
+            1 => true,
+            var value => throw new InvalidDataException(
+                $"The canonical module contains invalid boolean byte {value}."),
+        };
+
+        public ReadOnlySpan<byte> ReadLengthPrefixedBytes() => ReadBytes(ReadCount());
+
+        public string ReadString() => Encoding.UTF8.GetString(ReadLengthPrefixedBytes());
 
         public int ReadCount()
         {

@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using Lunil.CodeGen.Cil.Artifacts;
@@ -79,6 +81,8 @@ public sealed class LuaAotLoadedModule : IDisposable
 
 public static class LuaAotArtifactLoader
 {
+    [RequiresDynamicCode("Loading a persisted CIL assembly requires dynamic code support.")]
+    [RequiresUnreferencedCode("Dynamically loaded persisted CIL methods cannot be statically analyzed.")]
     public static LuaAotLoadResult Load(
         LuaAotArtifact artifact,
         LuaAotLoadOptions? options = null)
@@ -87,12 +91,21 @@ public static class LuaAotArtifactLoader
         return Load(artifact.PeImage, artifact.PortablePdbImage, options);
     }
 
+    [RequiresDynamicCode("Loading a persisted CIL assembly requires dynamic code support.")]
+    [RequiresUnreferencedCode("Dynamically loaded persisted CIL methods cannot be statically analyzed.")]
     public static LuaAotLoadResult Load(
         ImmutableArray<byte> peImage,
         ImmutableArray<byte> portablePdbImage = default,
         LuaAotLoadOptions? options = null)
     {
         options ??= LuaAotLoadOptions.Default;
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return Failure(
+                "AOT2010",
+                "Dynamic PE loading is unavailable. Register build-time artifacts through LuaStaticAotRegistry.");
+        }
+
         if (peImage.IsDefaultOrEmpty)
         {
             return Failure("AOT2001", "The AOT PE image is empty.");
@@ -471,7 +484,7 @@ public static class LuaAotArtifactLoader
     }
 
     private static Dictionary<int, LuaCompiledMethod> BindFunctions(
-        Type generatedType,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type generatedType,
         LuaAotArtifactManifest manifest)
     {
         var result = new Dictionary<int, LuaCompiledMethod>();

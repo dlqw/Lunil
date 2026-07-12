@@ -55,6 +55,10 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             verification.MaximumEvaluationStack);
     }
 
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "ReflectionEmitCilPlanSink is only reached after the dynamic-code capability check.")]
     public void BeginMethod(CilMethodPlan plan, int maximumEvaluationStack)
     {
         _method = new DynamicMethod(
@@ -237,7 +241,10 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         _ => throw new InvalidOperationException($"Unknown Runtime ABI call target {target.Id}."),
     };
 
-    private static MethodInfo Method(Type type, string name, Type[] parameters) =>
+    private static MethodInfo Method(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type,
+        string name,
+        Type[] parameters) =>
         type.GetMethod(
             name,
             BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static,

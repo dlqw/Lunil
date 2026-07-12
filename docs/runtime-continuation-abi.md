@@ -19,7 +19,8 @@ return/`__close`、coroutine yield/resume 注入以及 native callback/native yi
 - 结果 transform、protected boundary 和 close-handler tag。
 
 VM 不把 CLR delegate closure 当作 continuation。resumable native descriptor 必须使用静态
-入口；Lua 捕获值必须放入 `LuaNativeClosure` 的 owner-aware slots。
+方法组入口（不能使用编译器生成 target 的 lambda）；Lua 捕获值必须放入 `LuaNativeClosure`
+的 owner-aware slots。
 
 ## Native step
 

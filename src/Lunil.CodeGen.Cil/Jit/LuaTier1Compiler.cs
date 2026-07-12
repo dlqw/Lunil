@@ -33,6 +33,7 @@ internal sealed record LuaTier1CompilationResult(
 
 internal interface ILuaTier1Compiler
 {
+    [RequiresDynamicCode("Tier 1 JIT compilation requires dynamic code support.")]
     LuaTier1CompilationResult Compile(
         LuaIrModule module,
         int functionId,

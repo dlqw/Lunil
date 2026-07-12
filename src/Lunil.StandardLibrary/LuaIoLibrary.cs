@@ -9,7 +9,12 @@ namespace Lunil.StandardLibrary;
 internal static class LuaIoLibrary
 {
     private static readonly LuaNativeFunction LinesIteratorDescriptor =
-        new("for iterator", static (context, _, _) => IterateLine(context));
+        new("for iterator", IterateLineStep);
+
+    private static LuaNativeStep IterateLineStep(
+        LuaNativeCallContext context,
+        int _,
+        ReadOnlySpan<LuaValue> __) => IterateLine(context);
 
     public static LuaTable Install(LuaState state, LuaStandardLibraryOptions? options)
     {
