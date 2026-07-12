@@ -57,3 +57,21 @@ longer creates a parameter array for each direct Lua-to-Lua call; the remaining 
 257 B/call is primarily the current logical frame, continuation, and close-list representation.
 Vararg frames retain a persistent vararg window by design. Later frame pooling is a separate
 optimization and is not required to preserve the Runtime ABI v1 contract.
+
+## M6 experimental loop OSR check
+
+The M6 corpus adds a 20,000-iteration integer Fibonacci/bitwise while-loop and runs both the
+reference interpreter and loop OSR after a short warmup. On the same Windows x64 machine, three
+Release runs with `iterations=1,000,000` produced the following median values:
+
+| Scenario | Operations | Median ns/op | Allocated/op |
+|---|---:|---:|---:|
+| `interpreter_warm_loop_osr_candidate` | 10 | 30,914,650 | 1,844 B |
+| `jit_experimental_loop_osr_candidate` | 10 | 16,235,000 | 9,702.40 B |
+
+The local steady-state throughput improvement is approximately 47.5%, above the 10% M6 benefit
+threshold. OSR nevertheless remains an explicit experimental switch and stays disabled by
+default: the compact runner is not cross-platform statistical evidence, one of the three process
+runs showed substantial startup variance, and the current OSR path allocates about 5.3 times as
+much per execution. CI records both scenarios on every native RID so a later milestone can decide
+whether broader throughput and allocation evidence justify enabling it in the default policy.

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -71,6 +72,29 @@ Run(
     "interpreter_warm_arithmetic_numeric_for",
     Scaled(iterations),
     CreateWarmRunner(ArithmeticLoop));
+
+const string LoopOsrCandidate = """
+    local total = 0
+    local first = 0
+    local second = 1
+    local index = 0
+    while index < 20000 do
+        local next = first + second
+        first = second
+        second = next
+        total = total + (next & 1023)
+        index = index + 1
+    end
+    return total
+    """;
+Run(
+    "interpreter_warm_loop_osr_candidate",
+    Scaled(iterations),
+    CreateWarmRunner(LoopOsrCandidate));
+Run(
+    "jit_experimental_loop_osr_candidate",
+    Scaled(iterations),
+    CreateLoopOsrRunner(LoopOsrCandidate));
 
 Run(
     "interpreter_warm_lua_fixed_call",
@@ -212,6 +236,30 @@ static Action<int> CreateCoroutineRunner(string source)
             var thread = state.CreateThread(closure);
             _ = interpreter.Start(state, thread);
             _ = interpreter.Resume(state, thread, [LuaValue.FromInteger(41)]);
+        }
+    };
+}
+
+static Action<int> CreateLoopOsrRunner(string source)
+{
+    var module = Compile(source);
+    var state = new LuaState();
+    var closure = state.CreateMainClosure(module);
+    var executor = new LuaJitExecutor(LuaJitExecutorOptions.Default with
+    {
+        Policy = LuaJitPolicy.Auto,
+        FunctionEntryThreshold = int.MaxValue,
+        BackedgeThreshold = int.MaxValue,
+        EnableTier2 = false,
+        EnableLoopOsr = true,
+        LoopOsrBackedgeThreshold = 1,
+        SynchronousCompilation = true,
+    });
+    return count =>
+    {
+        for (var index = 0; index < count; index++)
+        {
+            _ = executor.Execute(state, closure);
         }
     };
 }
