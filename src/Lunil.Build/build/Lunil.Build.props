@@ -7,6 +7,10 @@
     <LunilDebugSymbols Condition="'$(LunilDebugSymbols)' == '' and '$(DebugSymbols)' == 'true'">true</LunilDebugSymbols>
     <LunilDebugSymbols Condition="'$(LunilDebugSymbols)' == ''">false</LunilDebugSymbols>
     <LunilSandbox Condition="'$(LunilSandbox)' == ''">Default</LunilSandbox>
+    <LunilCacheEnabled Condition="'$(LunilCacheEnabled)' == ''">true</LunilCacheEnabled>
+    <LunilCacheMaximumBytes Condition="'$(LunilCacheMaximumBytes)' == ''">1073741824</LunilCacheMaximumBytes>
+    <LunilCacheMaximumEntryBytes Condition="'$(LunilCacheMaximumEntryBytes)' == ''">268435456</LunilCacheMaximumEntryBytes>
+    <LunilCacheMaximumQuarantineBytes Condition="'$(LunilCacheMaximumQuarantineBytes)' == ''">67108864</LunilCacheMaximumQuarantineBytes>
   </PropertyGroup>
 
   <ItemDefinitionGroup>

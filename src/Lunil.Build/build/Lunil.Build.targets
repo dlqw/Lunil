@@ -17,7 +17,15 @@
                       ProjectDirectory="$(MSBuildProjectDirectory)"
                       TargetFramework="$(TargetFramework)"
                       RuntimeIdentifier="$(RuntimeIdentifier)"
-                      DesignTimeBuild="$(DesignTimeBuild)">
+                      DesignTimeBuild="$(DesignTimeBuild)"
+                      CacheEnabled="$(LunilCacheEnabled)"
+                      CacheDirectory="$(LunilCacheDirectory)"
+                      CacheMaximumBytes="$(LunilCacheMaximumBytes)"
+                      CacheMaximumEntryBytes="$(LunilCacheMaximumEntryBytes)"
+                      CacheMaximumQuarantineBytes="$(LunilCacheMaximumQuarantineBytes)"
+                      PublishAot="$(PublishAot)"
+                      PublishReadyToRun="$(PublishReadyToRun)"
+                      PublishTrimmed="$(PublishTrimmed)">
       <Output TaskParameter="GeneratedSources" ItemName="Compile" />
       <Output TaskParameter="GeneratedReferences" ItemName="Reference" />
       <Output TaskParameter="GeneratedArtifacts" ItemName="FileWrites" />

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Core.Text;
@@ -17,6 +19,21 @@ namespace Lunil.CodeGen.Cil.Tests;
 
 public sealed class LuaJitExecutorTests
 {
+    [Fact]
+    public void ReleaseDefaultDoesNotEnableUnprovenDynamicTiers()
+    {
+        Assert.Equal(LuaJitPolicy.InterpreterOnly, LuaJitExecutorOptions.Default.Policy);
+        Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsr);
+
+        var compiler = new CountingCompiler(ReflectionEmitLuaTier1Compiler.Instance);
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default, compiler: compiler);
+        var module = Compile("return 42");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(42));
+        Assert.Equal(0, compiler.CallCount);
+        Assert.Equal(LuaJitCompilationTier.Interpreter, executor.GetFunctionTier(module, 0));
+    }
+
     [Fact]
     public void InterpreterOnlyNeverTouchesTheDynamicCompiler()
     {
@@ -502,6 +519,181 @@ public sealed class LuaJitExecutorTests
         Assert.True(tableSite.IsMegamorphic);
         Assert.Equal(2, tableSite.TableShapes.Length);
         Assert.All(tableSite.TableShapes, shape => Assert.False(shape.HasMetatable));
+    }
+
+    [Fact]
+    public void ProfileExportIsDeterministicAndChecksumProtected()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("local value = ...; return value + 1");
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(1)),
+            LuaValue.FromInteger(2));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+
+        var first = executor.ExportProfile(module);
+        var second = executor.ExportProfile(module);
+        var corrupted = first.ToArray();
+        corrupted[^1] ^= 0xff;
+        using var imported = CreateExecutor(LuaJitExecutorOptions.Default);
+
+        var result = imported.ImportProfile(module, first);
+        var rejected = imported.ImportProfile(module, corrupted);
+
+        Assert.Equal(first, second);
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(
+            executor.GetFunctionProfile(module, 0).Samples,
+            imported.GetFunctionProfile(module, 0).Samples);
+        Assert.Equal(LuaJitProfileImportStatus.Rejected, rejected.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Malformed, rejected.DiagnosticCode);
+    }
+
+    [Fact]
+    public void ProfileImportRejectsDifferentCanonicalModule()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+        });
+        var source = Compile("return 1");
+        var other = Compile("return 2");
+        AssertValues(ExecuteFresh(executor, source), LuaValue.FromInteger(1));
+        var payload = executor.ExportProfile(source);
+
+        var result = executor.ImportProfile(other, payload);
+
+        Assert.Equal(LuaJitProfileImportStatus.Incompatible, result.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Incompatible, result.DiagnosticCode);
+    }
+
+    [Fact]
+    public void ProfileImportRejectsVersionMismatchEvenWithValidChecksum()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+        var module = Compile("return 1");
+        var payload = executor.ExportProfile(module);
+        var magicLength = BinaryPrimitives.ReadInt32LittleEndian(payload);
+        var schemaOffset = sizeof(int) + magicLength;
+        BinaryPrimitives.WriteInt32LittleEndian(
+            payload.AsSpan(schemaOffset, sizeof(int)),
+            LuaJitProfileCodec.CurrentSchemaVersion + 1);
+        const int footerLength = 8 + 32;
+        SHA256.HashData(payload.AsSpan(0, payload.Length - footerLength)).CopyTo(
+            payload.AsSpan(payload.Length - 32));
+
+        var result = executor.ImportProfile(module, payload);
+
+        Assert.Equal(LuaJitProfileImportStatus.Incompatible, result.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Incompatible, result.DiagnosticCode);
+    }
+
+    [Fact]
+    public void ProfileFaultMatrixRejectsTruncationChecksumAndAbiMismatch()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+        var module = Compile("local value = ...; return value + 1");
+        var payload = executor.ExportProfile(module);
+        var truncationLengths = new[]
+        {
+            0,
+            1,
+            payload.Length / 2,
+            payload.Length - 1,
+        };
+
+        foreach (var length in truncationLengths)
+        {
+            var result = executor.ImportProfile(module, payload.AsSpan(0, length));
+            Assert.Equal(LuaJitProfileImportStatus.Rejected, result.Status);
+            Assert.Equal(LuaJitProfileDiagnosticCodes.Malformed, result.DiagnosticCode);
+        }
+
+        var checksumMismatch = payload.ToArray();
+        checksumMismatch[^1] ^= 0x80;
+        var checksumResult = executor.ImportProfile(module, checksumMismatch);
+        Assert.Equal(LuaJitProfileImportStatus.Rejected, checksumResult.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Malformed, checksumResult.DiagnosticCode);
+
+        var abiMismatch = payload.ToArray();
+        var magicLength = BinaryPrimitives.ReadInt32LittleEndian(abiMismatch);
+        var abiOffset = sizeof(int) + magicLength + (2 * sizeof(int));
+        BinaryPrimitives.WriteInt32LittleEndian(
+            abiMismatch.AsSpan(abiOffset, sizeof(int)),
+            int.MaxValue);
+        const int footerLength = 8 + 32;
+        SHA256.HashData(abiMismatch.AsSpan(0, abiMismatch.Length - footerLength)).CopyTo(
+            abiMismatch.AsSpan(abiMismatch.Length - 32));
+
+        var abiResult = executor.ImportProfile(module, abiMismatch);
+        Assert.Equal(LuaJitProfileImportStatus.Incompatible, abiResult.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Incompatible, abiResult.DiagnosticCode);
+    }
+
+    [Fact]
+    public void ImportedProfilePrewarmsTier1AndTier2WithoutPersistingCode()
+    {
+        var module = Compile(
+            "local total = 0; for i = 1, 5 do total = total + i end; return total");
+        byte[] payload;
+        using (var training = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+        }))
+        {
+            for (var iteration = 0; iteration < 3; iteration++)
+            {
+                AssertValues(ExecuteFresh(training, module), LuaValue.FromInteger(15));
+            }
+
+            payload = training.ExportProfile(module);
+        }
+
+        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = 1000,
+            BackedgeThreshold = int.MaxValue,
+            SynchronousCompilation = true,
+            Tier2InvocationThreshold = 2,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        Assert.True(warmed.ImportProfile(module, payload).Succeeded);
+
+        AssertValues(ExecuteFresh(warmed, module), LuaValue.FromInteger(15));
+        AssertValues(ExecuteFresh(warmed, module), LuaValue.FromInteger(15));
+
+        Assert.Equal(LuaJitCompilationTier.Tier2, warmed.GetFunctionTier(module, 0));
+        Assert.Equal(1, warmed.Statistics.CompilationCompleted);
+        Assert.Equal(1, warmed.Statistics.Tier2CompilationCompleted);
+    }
+
+    [Fact]
+    public void ImportedProfileDoesNotRetainModuleOrLuaOwners()
+    {
+        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default);
+
+        var references = ImportProfileAndReleaseOwners(warmed);
+        for (var attempt = 0; attempt < 10 && references.Any(static item => item.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.All(references, static reference => Assert.False(reference.IsAlive));
     }
 
     [Fact]
@@ -1190,6 +1382,29 @@ public sealed class LuaJitExecutorTests
 
         var state = new LuaState();
         var closure = state.CreateMainClosure(module);
+        return [new WeakReference(module), new WeakReference(state), new WeakReference(closure)];
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] ImportProfileAndReleaseOwners(LuaJitExecutor warmed)
+    {
+        var module = Compile("local value = ...; return value + 1");
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+        byte[] payload;
+        using (var training = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+        }))
+        {
+            AssertValues(
+                training.Execute(state, closure, [LuaValue.FromInteger(1)]),
+                LuaValue.FromInteger(2));
+            payload = training.ExportProfile(module);
+        }
+
+        Assert.True(warmed.ImportProfile(module, payload).Succeeded);
         return [new WeakReference(module), new WeakReference(state), new WeakReference(closure)];
     }
 

@@ -1,5 +1,6 @@
 using System.Collections;
 using Lunil.Build.Tasks;
+using Lunil.CodeGen.Cil.Caching;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 
@@ -136,6 +137,140 @@ public sealed class LunilCompileTaskTests
             static artifact => Assert.True(File.Exists(artifact.ItemSpec))));
     }
 
+    [Fact]
+    public void RestoresArtifactsFromBackendCacheAfterClean()
+    {
+        using var fixture = BuildFixture.Create();
+        var first = fixture.CreateTask(
+            new RecordingBuildEngine(),
+            new TaskItem(fixture.SourcePath));
+        Assert.True(first.Execute());
+        var expectedPe = File.ReadAllBytes(Assert.Single(first.GeneratedReferences).ItemSpec);
+        Directory.Delete(fixture.IntermediateOutputPath, recursive: true);
+        var engine = new RecordingBuildEngine();
+        var second = fixture.CreateTask(engine, new TaskItem(fixture.SourcePath));
+
+        Assert.True(second.Execute());
+
+        Assert.Equal(
+            expectedPe,
+            File.ReadAllBytes(Assert.Single(second.GeneratedReferences).ItemSpec));
+        Assert.Contains(engine.Messages, static message =>
+            message.Message?.Contains("restored from backend cache", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void CorruptBackendCacheIsQuarantinedAndRebuilt()
+    {
+        using var fixture = BuildFixture.Create();
+        var first = fixture.CreateTask(
+            new RecordingBuildEngine(),
+            new TaskItem(fixture.SourcePath));
+        Assert.True(first.Execute());
+        Directory.Delete(fixture.IntermediateOutputPath, recursive: true);
+        var payload = Assert.Single(Directory.EnumerateFiles(
+            fixture.CacheDirectory,
+            "payload.bin",
+            SearchOption.AllDirectories));
+        File.WriteAllBytes(payload, [0xff]);
+        var engine = new RecordingBuildEngine();
+        var second = fixture.CreateTask(engine, new TaskItem(fixture.SourcePath));
+
+        Assert.True(second.Execute());
+
+        Assert.Empty(engine.Errors);
+        Assert.Single(Directory.EnumerateDirectories(
+            Path.Combine(fixture.CacheDirectory, "quarantine")));
+        Assert.DoesNotContain(engine.Messages, static message =>
+            message.Message?.Contains("restored from backend cache", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void InvalidLocalPeIsReplacedFromValidatedBackendCache()
+    {
+        using var fixture = BuildFixture.Create();
+        var first = fixture.CreateTask(
+            new RecordingBuildEngine(),
+            new TaskItem(fixture.SourcePath));
+        Assert.True(first.Execute());
+        var pePath = Assert.Single(first.GeneratedReferences).ItemSpec;
+        var expectedPe = File.ReadAllBytes(pePath);
+        File.WriteAllBytes(pePath, [0]);
+        var engine = new RecordingBuildEngine();
+        var second = fixture.CreateTask(engine, new TaskItem(fixture.SourcePath));
+
+        Assert.True(second.Execute());
+
+        Assert.Equal(expectedPe, File.ReadAllBytes(pePath));
+        Assert.Contains(engine.Messages, static message =>
+            message.Message?.Contains("restored from backend cache", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
+    public void NativeAotAndPortableBuildsUseDifferentCacheKeys()
+    {
+        using var fixture = BuildFixture.Create();
+        var portable = fixture.CreateTask(
+            new RecordingBuildEngine(),
+            new TaskItem(fixture.SourcePath));
+        Assert.True(portable.Execute());
+        Directory.Delete(fixture.IntermediateOutputPath, recursive: true);
+        var engine = new RecordingBuildEngine();
+        var nativeAot = fixture.CreateTask(engine, new TaskItem(fixture.SourcePath));
+        nativeAot.PublishAot = "true";
+
+        Assert.True(nativeAot.Execute());
+
+        Assert.DoesNotContain(engine.Messages, static message =>
+            message.Message?.Contains("restored from backend cache", StringComparison.Ordinal) == true);
+        Assert.Equal(
+            2,
+            Directory.EnumerateFiles(
+                fixture.CacheDirectory,
+                "payload.bin",
+                SearchOption.AllDirectories).Count());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task SemanticallyInvalidCachePayloadIsIsolatedBeforeRecompile()
+    {
+        using var fixture = BuildFixture.Create();
+        var first = fixture.CreateTask(
+            new RecordingBuildEngine(),
+            new TaskItem(fixture.SourcePath));
+        Assert.True(first.Execute());
+        var descriptorPath = Assert.Single(Directory.EnumerateFiles(
+            fixture.CacheDirectory,
+            "descriptor.json",
+            SearchOption.AllDirectories));
+        var key = LuaBackendCacheKey.ParseCanonicalDescriptor(File.ReadAllBytes(descriptorPath));
+        var cache = new LuaBackendDiskCache(new LuaBackendDiskCacheOptions
+        {
+            RootDirectory = fixture.CacheDirectory,
+        });
+        var cached = await cache.TryReadAsync(key);
+        Assert.True(cached.IsHit);
+        Assert.True(await cache.QuarantineAsync(key, "test replacement"));
+        var invalidPayload = cached.Payload.ToArray();
+        invalidPayload[^1] ^= 0xff;
+        Assert.Equal(
+            LuaBackendCacheWriteStatus.Created,
+            (await cache.WriteAsync(key, invalidPayload)).Status);
+        Directory.Delete(fixture.IntermediateOutputPath, recursive: true);
+        var engine = new RecordingBuildEngine();
+        var second = fixture.CreateTask(engine, new TaskItem(fixture.SourcePath));
+
+        Assert.True(second.Execute());
+
+        Assert.Empty(engine.Errors);
+        Assert.Contains(engine.Messages, static message =>
+            message.Message?.Contains("was rejected and will be rebuilt", StringComparison.Ordinal) == true);
+        Assert.Equal(
+            2,
+            Directory.EnumerateDirectories(
+                Path.Combine(fixture.CacheDirectory, "quarantine")).Count());
+    }
+
     private sealed class BuildFixture : IDisposable
     {
         private BuildFixture(string root, string sourcePath)
@@ -147,6 +282,10 @@ public sealed class LunilCompileTaskTests
         public string Root { get; }
 
         public string SourcePath { get; }
+
+        public string IntermediateOutputPath => Path.Combine(Root, "obj", "lunil");
+
+        public string CacheDirectory => Path.Combine(Root, "cache");
 
         public static BuildFixture Create(string source = "return 1")
         {
@@ -170,8 +309,9 @@ public sealed class LunilCompileTaskTests
                 BuildEngine = engine,
                 Sources = sources,
                 ProjectDirectory = Root,
-                IntermediateOutputPath = Path.Combine(Root, "obj", "lunil"),
+                IntermediateOutputPath = IntermediateOutputPath,
                 TargetFramework = "net10.0",
+                CacheDirectory = CacheDirectory,
             };
 
         public void Dispose() => Directory.Delete(Root, recursive: true);
@@ -180,6 +320,8 @@ public sealed class LunilCompileTaskTests
     private sealed class RecordingBuildEngine : IBuildEngine
     {
         public List<BuildErrorEventArgs> Errors { get; } = [];
+
+        public List<BuildMessageEventArgs> Messages { get; } = [];
 
         public bool ContinueOnError => false;
 
@@ -195,9 +337,7 @@ public sealed class LunilCompileTaskTests
         {
         }
 
-        public void LogMessageEvent(BuildMessageEventArgs e)
-        {
-        }
+        public void LogMessageEvent(BuildMessageEventArgs e) => Messages.Add(e);
 
         public void LogCustomEvent(CustomBuildEventArgs e)
         {

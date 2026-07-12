@@ -178,6 +178,46 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void ValidatesPersistedArtifactWithoutLoadingDynamicCode()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+
+        var validation = LuaAotArtifactLoader.Validate(
+            artifact,
+            new LuaAotLoadOptions
+            {
+                ExpectedModuleContentId = artifact.Manifest.ModuleContentId,
+            });
+
+        Assert.True(
+            validation.Succeeded,
+            string.Join("; ", validation.Diagnostics.Select(static item => item.Message)));
+        Assert.Equal(artifact.Manifest.ModuleContentId, validation.Manifest!.ModuleContentId);
+        Assert.Equal(
+            artifact.Manifest.Functions.Select(static function => function.FunctionId),
+            validation.Manifest.Functions.Select(static function => function.FunctionId));
+    }
+
+    [Fact]
+    public void ValidationRequiresPortablePdbDeclaredByManifest()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+
+        var validation = LuaAotArtifactLoader.Validate(artifact.PeImage);
+
+        Assert.False(validation.Succeeded);
+        Assert.Contains(validation.Diagnostics, static item => item.Code == "AOT2008");
+    }
+
+    [Fact]
     public void RejectsCorruptedEmbeddedCanonicalModuleBeforeLoading()
     {
         var module = CreateModule(
@@ -211,6 +251,32 @@ public sealed class LuaCilCodeGeneratorTests
 
         Assert.False(loading.Succeeded);
         Assert.Contains(loading.Diagnostics, diagnostic => diagnostic.Code == "AOT2009");
+    }
+
+    [Fact]
+    public void PersistedArtifactFaultMatrixRejectsEveryTruncatedBoundary()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var lengths = new[]
+        {
+            0,
+            1,
+            artifact.PeImage.Length / 2,
+            artifact.PeImage.Length - 1,
+        };
+
+        foreach (var length in lengths)
+        {
+            var validation = LuaAotArtifactLoader.Validate(
+                artifact.PeImage.AsSpan(0, length).ToArray().ToImmutableArray(),
+                artifact.PortablePdbImage);
+            Assert.False(validation.Succeeded);
+            Assert.NotEmpty(validation.Diagnostics);
+        }
     }
 
     [Fact]

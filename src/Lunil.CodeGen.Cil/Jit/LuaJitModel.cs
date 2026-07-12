@@ -80,7 +80,11 @@ public sealed record LuaJitExecutorOptions
 {
     public static LuaJitExecutorOptions Default { get; } = new();
 
-    public LuaJitPolicy Policy { get; init; } = LuaJitPolicy.Auto;
+    /// <summary>
+    /// Selects the dynamic compilation policy. The release default remains interpreter-only
+    /// until the published same-machine throughput, allocation, and compile-latency gates pass.
+    /// </summary>
+    public LuaJitPolicy Policy { get; init; } = LuaJitPolicy.InterpreterOnly;
 
     public int FunctionEntryThreshold { get; init; } = 32;
 

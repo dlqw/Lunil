@@ -75,3 +75,40 @@ default: the compact runner is not cross-platform statistical evidence, one of t
 runs showed substantial startup variance, and the current OSR path allocates about 5.3 times as
 much per execution. CI records both scenarios on every native RID so a later milestone can decide
 whether broader throughput and allocation evidence justify enabling it in the default policy.
+
+## M8 backend productization evidence
+
+M8 adds a common arithmetic/bitwise loop matrix for interpreter, Tier 1, Tier 2, and Loop OSR.
+Each process records nine cold samples, compilation event p95, warm throughput/allocation,
+working-set delta, estimated dynamic-code bytes, and persisted PE/PDB size. The repeat script then
+uses the median of three or more independent processes.
+
+Windows x64 evidence from 2026-07-12, Release, `iterations=1,000,000`, three processes:
+
+| Backend | Startup median | Startup p95 | Warm ns/op | Allocated/op | Compile p95 | Estimated code |
+|---|---:|---:|---:|---:|---:|---:|
+| Interpreter | 6.094 ms | 6.645 ms | 5,795,700 | 1,844 B | n/a | 0 B |
+| Tier 1 | 25.449 ms | 46.595 ms | 11,656,120 | 5,602,561.60 B | 18.966 ms | 8,456 B |
+| Tier 2 | 30.986 ms | 54.332 ms | 12,134,690 | 14,846,433.60 B | 12.375 ms | 9,284 B |
+| Loop OSR | 3.689 ms | 4.223 ms | 3,499,960 | 12,744 B | 0.086 ms | 418 B |
+
+The same canonical workload emitted a 7,724-byte persisted PE and a 1,036-byte Portable PDB
+(8,760 bytes total). Working-set deltas are retained in raw evidence but are not used as a hard
+local gate because process-level RSS is noisy at this scale; the three-run medians were 815,104 B
+for the interpreter, 12,828,672 B for Tier 1, 724,992 B for Tier 2, and 4,096 B for Loop OSR.
+
+The approved gates require Tier 1 to be at least twice as fast as the interpreter with single-
+function compilation p95 below 5 ms, and Tier 2 arithmetic hotspots to be at least four times as
+fast. Neither tier passes. Loop OSR remains around 39.6% faster for this workload, but allocation
+is approximately 6.9 times the interpreter and cross-RID repeated evidence is still pending.
+Therefore the release default is `InterpreterOnly`; `Auto`/`PreferJit`, Tier 2, and Loop OSR remain
+explicit opt-ins. This decision is evidence-gated rather than a removal of the implemented tiers.
+
+Reproduce the multi-process evidence with:
+
+```powershell
+./scripts/Measure-BackendPerformance.ps1 -Rounds 3 -Iterations 1000000 -Configuration Release
+```
+
+The script writes raw process output, `runs.csv`, and `summary.json` under the ignored
+`artifacts/backend-performance/<UTC timestamp>/` directory.

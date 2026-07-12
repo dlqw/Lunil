@@ -28,6 +28,13 @@ public sealed record LuaAotLoadResult(
     public bool Succeeded => Module is not null && Diagnostics.IsEmpty;
 }
 
+public sealed record LuaAotValidationResult(
+    LuaAotArtifactManifest? Manifest,
+    ImmutableArray<LuaAotDiagnostic> Diagnostics)
+{
+    public bool Succeeded => Manifest is not null && Diagnostics.IsEmpty;
+}
+
 public sealed class LuaAotLoadedModule : IDisposable
 {
     private LuaAotLoadContext? _loadContext;
@@ -81,6 +88,81 @@ public sealed class LuaAotLoadedModule : IDisposable
 
 public static class LuaAotArtifactLoader
 {
+    public static LuaAotValidationResult Validate(
+        LuaAotArtifact artifact,
+        LuaAotLoadOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(artifact);
+        return Validate(artifact.PeImage, artifact.PortablePdbImage, options);
+    }
+
+    public static LuaAotValidationResult Validate(
+        ImmutableArray<byte> peImage,
+        ImmutableArray<byte> portablePdbImage = default,
+        LuaAotLoadOptions? options = null)
+    {
+        options ??= LuaAotLoadOptions.Default;
+        if (peImage.IsDefaultOrEmpty)
+        {
+            return ValidationFailure("AOT2001", "The AOT PE image is empty.");
+        }
+
+        var envelope = ReadArtifactEnvelope(peImage);
+        if (envelope is null)
+        {
+            return ValidationFailure(
+                "AOT2009",
+                "The AOT PE checksum footer is missing or malformed.");
+        }
+
+        try
+        {
+            var resources = ReadEmbeddedResources(envelope.CoreImage);
+            if (!resources.TryGetValue(
+                    ManagedPeCilEmitter.ManifestResourceName,
+                    out var manifestBytes) ||
+                !resources.TryGetValue(
+                    ManagedPeCilEmitter.ModuleResourceName,
+                    out var moduleBytes))
+            {
+                return ValidationFailure(
+                    "AOT2002",
+                    "The AOT artifact is missing required embedded resources.");
+            }
+
+            var manifest = LuaAotManifestCodec.Deserialize(manifestBytes.AsSpan());
+            var manifestValidation = ValidateManifest(manifest, moduleBytes, options);
+            if (manifestValidation is not null)
+            {
+                return ValidationFailure(
+                    manifestValidation.Code,
+                    manifestValidation.Message);
+            }
+
+            if (!envelope.ChecksumMatches)
+            {
+                return ValidationFailure(
+                    "AOT2009",
+                    "The AOT PE image checksum does not match its footer.");
+            }
+
+            var pdbValidation = ValidatePortablePdb(
+                envelope.CoreImage,
+                portablePdbImage,
+                manifest);
+            return pdbValidation is null
+                ? new LuaAotValidationResult(manifest, [])
+                : ValidationFailure(pdbValidation.Code, pdbValidation.Message);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and not AccessViolationException)
+        {
+            return ValidationFailure(
+                "AOT2003",
+                $"The AOT artifact was rejected: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     [RequiresDynamicCode("Loading a persisted CIL assembly requires dynamic code support.")]
     [RequiresUnreferencedCode("Dynamically loaded persisted CIL methods cannot be statically analyzed.")]
     public static LuaAotLoadResult Load(
@@ -106,48 +188,17 @@ public static class LuaAotArtifactLoader
                 "Dynamic PE loading is unavailable. Register build-time artifacts through LuaStaticAotRegistry.");
         }
 
-        if (peImage.IsDefaultOrEmpty)
+        var validation = Validate(peImage, portablePdbImage, options);
+        if (!validation.Succeeded)
         {
-            return Failure("AOT2001", "The AOT PE image is empty.");
+            return new LuaAotLoadResult(null, validation.Diagnostics);
         }
 
-        var envelope = ReadArtifactEnvelope(peImage);
-        if (envelope is null)
-        {
-            return Failure("AOT2009", "The AOT PE checksum footer is missing or malformed.");
-        }
-
+        var envelope = ReadArtifactEnvelope(peImage)!;
+        var manifest = validation.Manifest!;
         LuaAotLoadContext? loadContext = null;
         try
         {
-            var resources = ReadEmbeddedResources(envelope.CoreImage);
-            if (!resources.TryGetValue(ManagedPeCilEmitter.ManifestResourceName, out var manifestBytes) ||
-                !resources.TryGetValue(ManagedPeCilEmitter.ModuleResourceName, out var moduleBytes))
-            {
-                return Failure("AOT2002", "The AOT artifact is missing required embedded resources.");
-            }
-
-            var manifest = LuaAotManifestCodec.Deserialize(manifestBytes.AsSpan());
-            var validation = ValidateManifest(manifest, moduleBytes, options);
-            if (validation is not null)
-            {
-                return Failure(validation.Code, validation.Message);
-            }
-
-            if (!envelope.ChecksumMatches)
-            {
-                return Failure("AOT2009", "The AOT PE image checksum does not match its footer.");
-            }
-
-            var pdbValidation = ValidatePortablePdb(
-                envelope.CoreImage,
-                portablePdbImage,
-                manifest);
-            if (pdbValidation is not null)
-            {
-                return Failure(pdbValidation.Code, pdbValidation.Message);
-            }
-
             loadContext = new LuaAotLoadContext(manifest.AssemblyName);
             using var peStream = new MemoryStream(envelope.CoreImage.ToArray(), writable: false);
             Assembly assembly;
@@ -426,7 +477,18 @@ public static class LuaAotArtifactLoader
     {
         if (portablePdbImage.IsDefaultOrEmpty)
         {
-            return null;
+            return manifest.EmitPortablePdb
+                ? new LuaAotDiagnostic(
+                    "AOT2008",
+                    "The Portable PDB required by the AOT manifest is missing.")
+                : null;
+        }
+
+        if (!manifest.EmitPortablePdb)
+        {
+            return new LuaAotDiagnostic(
+                "AOT2008",
+                "The AOT artifact contains an unexpected Portable PDB.");
         }
 
         try
@@ -530,6 +592,9 @@ public static class LuaAotArtifactLoader
     }
 
     private static LuaAotLoadResult Failure(string code, string message) =>
+        new(null, [new LuaAotDiagnostic(code, message)]);
+
+    private static LuaAotValidationResult ValidationFailure(string code, string message) =>
         new(null, [new LuaAotDiagnostic(code, message)]);
 
     private sealed record LoadedShard(
