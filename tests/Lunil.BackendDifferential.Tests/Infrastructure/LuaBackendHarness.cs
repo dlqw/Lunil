@@ -62,6 +62,36 @@ internal sealed class InterpreterBackendHarness : ILuaBackendHarness
         _interpreter.Resume(state, thread, arguments);
 }
 
+internal sealed class ExecutorBackendHarness : ILuaBackendHarness
+{
+    private readonly LuaExecutor _executor;
+
+    public ExecutorBackendHarness(LuaInterpreterOptions options)
+    {
+        _executor = new LuaExecutor(new LuaExecutorOptions { Interpreter = options });
+    }
+
+    public string Name => "executor-auto";
+
+    public LuaExecutionResult Execute(
+        LuaState state,
+        LuaClosure closure,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Execute(state, closure, arguments);
+
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Start(state, thread, arguments);
+
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _executor.Resume(state, thread, arguments);
+}
+
 internal sealed record LuaBackendTestOptions
 {
     public static LuaBackendTestOptions Default { get; } = new();
@@ -81,14 +111,16 @@ internal static class LuaBackendCatalog
         LuaBackendTestOptions? options = null)
     {
         options ??= LuaBackendTestOptions.Default;
+        var interpreterOptions = new LuaInterpreterOptions
+        {
+            MaximumInstructionCount = options.MaximumInstructionCount,
+            MaximumStackSlots = options.MaximumStackSlots,
+            MaximumCallDepth = options.MaximumCallDepth,
+        };
         return
         [
-            new InterpreterBackendHarness(new LuaInterpreterOptions
-            {
-                MaximumInstructionCount = options.MaximumInstructionCount,
-                MaximumStackSlots = options.MaximumStackSlots,
-                MaximumCallDepth = options.MaximumCallDepth,
-            }),
+            new InterpreterBackendHarness(interpreterOptions),
+            new ExecutorBackendHarness(interpreterOptions),
         ];
     }
 

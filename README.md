@@ -201,7 +201,7 @@ if (!verificationErrors.IsEmpty)
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
 var closure = state.CreateMainClosure(lowering.Module);
-var result = new LuaInterpreter().Execute(state, closure);
+var result = new LuaExecutor().Execute(state, closure);
 
 Console.WriteLine(result.Values[0].AsInteger()); // 55
 ```
@@ -212,8 +212,11 @@ To execute a validated PUC Lua 5.4 binary chunk:
 var bytecode = File.ReadAllBytes("program.luac");
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
-var result = new LuaInterpreter().ExecuteBinaryChunk(state, bytecode);
+var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
 ```
+
+`LuaExecutor` is the backend-neutral host facade. `LuaInterpreter` remains available when a host
+explicitly requires the Tier 0 reference backend.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.

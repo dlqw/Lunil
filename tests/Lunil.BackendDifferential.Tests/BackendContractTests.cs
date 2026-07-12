@@ -81,6 +81,26 @@ public sealed class BackendContractTests
     }
 
     [Fact]
+    public void BackendsAgreeOnTailCallFrameReplacement()
+    {
+        const string source = """
+            local function sum(remaining, total)
+                if remaining == 0 then return total end
+                return sum(remaining - 1, total + remaining)
+            end
+            return sum(100, 0)
+            """;
+
+        LuaBackendAssert.AllAgree(backend =>
+            LuaBackendSession.Create(backend, source).Execute());
+
+        var observation = LuaBackendSession.Create(LuaBackendCatalog.All[0], source).Execute();
+        AssertValues(
+            observation,
+            new LuaObservedValue(LuaValueKind.Integer, "5050"));
+    }
+
+    [Fact]
     public void BackendsAgreeOnInstructionBudgetExhaustion()
     {
         var backends = LuaBackendCatalog.CreateAll(new LuaBackendTestOptions

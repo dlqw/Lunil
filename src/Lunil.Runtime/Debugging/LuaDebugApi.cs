@@ -38,6 +38,7 @@ public static class LuaDebugApi
         thread.DebugHook = hook;
         thread.DebugHookMask = hook.IsNil ? LuaDebugHookMask.None : mask;
         thread.DebugHookCount = Math.Max(count, 0);
+        thread.DebugModeVersion = unchecked(thread.DebugModeVersion + 1);
         thread.DebugHookCounter = thread.DebugHookCount;
         foreach (var frame in thread.Frames)
         {

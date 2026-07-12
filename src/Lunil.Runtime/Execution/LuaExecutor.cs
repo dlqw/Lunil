@@ -3,17 +3,18 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Execution;
 
-/// <summary>
-/// Executes canonical IR with the reference interpreter backend and the shared resumable kernel.
-/// </summary>
-public sealed class LuaInterpreter
+/// <summary>Selects an execution backend while preserving the shared Lua execution semantics.</summary>
+public sealed class LuaExecutor
 {
     private readonly LuaExecutionEngine _engine;
 
-    public LuaInterpreter(LuaInterpreterOptions? options = null)
+    public LuaExecutor(LuaExecutorOptions? options = null)
     {
-        _engine = new LuaExecutionEngine(options);
+        Options = options ?? LuaExecutorOptions.Default;
+        _engine = new LuaExecutionEngine(Options.Interpreter);
     }
+
+    public LuaExecutorOptions Options { get; }
 
     public LuaExecutionResult Execute(
         LuaState state,
@@ -42,4 +43,14 @@ public sealed class LuaInterpreter
 
     public LuaExecutionResult Close(LuaState state, LuaThread thread) =>
         _engine.Close(state, thread);
+}
+
+public sealed record LuaExecutorOptions
+{
+    public static LuaExecutorOptions Default { get; } = new();
+
+    /// <summary>
+    /// Reference-interpreter limits shared by fallback execution and exact debug/hook mode.
+    /// </summary>
+    public LuaInterpreterOptions Interpreter { get; init; } = LuaInterpreterOptions.Default;
 }

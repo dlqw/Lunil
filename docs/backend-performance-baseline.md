@@ -40,3 +40,20 @@ Run locally with:
 dotnet run --project benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj `
   --configuration Release -- 1000000
 ```
+
+## M1 execution-kernel allocation check
+
+The same machine and command were used after introducing the shared execution kernel, Runtime
+ABI v1, stack-window calls, and inline operation arguments. Representative allocation changes:
+
+| Scenario | M0 allocated/op | M1 allocated/op | Change |
+|---|---:|---:|---:|
+| Lua call + vararg + multiple return | 978,337.60 B | 690,376 B | -29.4% |
+| Metamethod loop | 740,572 B | 516,412 B | -30.3% |
+| Debug count-hook loop | 245,188 B | 178,588 B | -27.2% |
+
+The new fixed-argument Lua-call scenario measured 514,376 B per 2,000-call execution. It no
+longer creates a parameter array for each direct Lua-to-Lua call; the remaining approximately
+257 B/call is primarily the current logical frame, continuation, and close-list representation.
+Vararg frames retain a persistent vararg window by design. Later frame pooling is a separate
+optimization and is not required to preserve the Runtime ABI v1 contract.

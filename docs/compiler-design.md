@@ -294,6 +294,11 @@ Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protect
 
 解释器是语义基准，并负责 NativeAOT 环境中的动态 `load`、JIT 失败回退、精确 hook/debug 模式及不可信 chunk 的验证执行。dispatch 实现需基准比较 switch、函数表和受审计的低级优化，默认选择在所有目标平台稳定的方案。
 
+宿主默认通过后端中立的 `LuaExecutor` 执行；`LuaInterpreter` 明确固定到 Tier 0。二者共用
+`LuaExecutionEngine` scheduler，reference opcode dispatch 位于独立的 interpreter instruction
+executor。Runtime code-generation ABI v1 以 `LuaExecutionContext`/`LuaCompiledExit` 交换
+canonical PC、精确指令计数与 tagged boundary，后端返回的计数必须与 context 中预留的区间一致。
+
 ### 9.2 CIL JIT
 
 - Tier 0：寄存器解释器；

@@ -193,7 +193,7 @@ if (!verificationErrors.IsEmpty)
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
 var closure = state.CreateMainClosure(lowering.Module);
-var result = new LuaInterpreter().Execute(state, closure);
+var result = new LuaExecutor().Execute(state, closure);
 
 Console.WriteLine(result.Values[0].AsInteger()); // 55
 ```
@@ -204,8 +204,11 @@ Console.WriteLine(result.Values[0].AsInteger()); // 55
 var bytecode = File.ReadAllBytes("program.luac");
 var state = new LuaState();
 LuaStandardLibrary.InstallAll(state);
-var result = new LuaInterpreter().ExecuteBinaryChunk(state, bytecode);
+var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
 ```
+
+`LuaExecutor` 是后端中立的宿主入口；需要明确固定到 Tier 0 reference backend 时仍可直接使用
+`LuaInterpreter`。
 
 处理不可信源码或 bytecode 时，应根据宿主需求配置有界 parser/chunk option、解释器
 instruction/stack budget 和 heap quota。

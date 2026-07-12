@@ -73,6 +73,16 @@ Run(
     CreateWarmRunner(ArithmeticLoop));
 
 Run(
+    "interpreter_warm_lua_fixed_call",
+    Scaled(iterations),
+    CreateWarmRunner("""
+        local function add(a, b) return a + b end
+        local total = 0
+        for i = 1, 2000 do total = total + add(i, i + 1) end
+        return total
+        """));
+
+Run(
     "interpreter_warm_lua_call_vararg_multireturn",
     Scaled(iterations),
     CreateWarmRunner("""
