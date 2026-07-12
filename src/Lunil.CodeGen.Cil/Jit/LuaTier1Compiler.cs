@@ -51,6 +51,10 @@ internal interface ILuaTier1Compiler
 internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
 {
     public static ReflectionEmitLuaTier1Compiler Instance { get; } = new();
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
     private static readonly Lazy<bool> CompilerPrepared = new(
         PrepareCompilerCore,
         LazyThreadSafetyMode.ExecutionAndPublication);
@@ -151,7 +155,6 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
             metrics);
     }
 
-    [RequiresDynamicCode("Tier 1 JIT preparation requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
