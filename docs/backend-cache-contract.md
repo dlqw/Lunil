@@ -21,6 +21,9 @@ Lunil 的持久后端缓存使用 `LuaBackendCacheKey` 计算内容地址。cach
 任一维度变化都会产生不同的 `CacheId`。`GetCompatibility` 同时报告所有不匹配维度，调用方
 必须把任何非 `None` 结果视为 cache miss，不得尝试猜测迁移或加载 payload。
 
+当前 Runtime code-generation ABI 为 v2。ABI v1 descriptor、persisted CIL manifest 和 profile
+payload 均按不兼容处理；v1 Runtime facade 的保留不代表 loader 支持向下协商。
+
 ## 持久化边界
 
 v1 只允许以下数据持久化：
@@ -66,6 +69,20 @@ LuaJitProfileImportResult result = warmed.ImportProfile(module, payload);
 
 release 默认 policy 是 `InterpreterOnly`，因此 profile 预热不会自行把动态 tier 变成默认执行路径；
 宿主必须显式选择 `Auto` 或 `PreferJit`。
+
+profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
+slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该
+最低收益资格。
+
+## In-process verified plan cache
+
+Tier 1 planning 另有不落盘的 owner-scoped weak cache。key 是 canonical module 对象、function id
+和 instruction-observation mode；显式自定义 `CilPlanLimits` 的调用不进入共享缓存。cache value
+只保存 verified plan/diagnostic，不保存 `LuaState`、closure、table 或 delegate。module owner 被
+回收后，`ConditionalWeakTable` entry 及 plan 一并可回收。并发首次访问在 owner lock 下只构建一次；
+cache hit 的 planning durations 为零，避免把复用结果误计为新的编译工作。planning、liveness、
+method-plan verification 任一阶段收到 cancellation 时立即放弃当前 builder，取消结果和半成品不得
+写入 owner cache；后续未取消调用必须重新完成 verification 后才能发布 plan。
 
 ## 兼容与损坏策略
 

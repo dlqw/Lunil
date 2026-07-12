@@ -75,6 +75,14 @@ jobs:
           dotnet run --project benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj `
             --configuration Release --no-build -- 1000000 |
             Tee-Object -FilePath 'artifacts/benchmarks/${{ matrix.rid }}.txt'
+      - name: Record repeated Tier 1 qualification evidence
+        shell: pwsh
+        run: ./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 -Iterations 1000000 -Configuration Release -NoBuild
+      - uses: actions/upload-artifact@v7
+        with:
+          name: backend-performance-${{ matrix.rid }}
+          path: artifacts/backend-performance/**
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           name: lunil-${{ matrix.rid }}
@@ -82,6 +90,26 @@ jobs:
             artifacts/*.zip
             artifacts/benchmarks/*.txt
             artifacts/nativeaot/${{ matrix.rid }}/**
+          if-no-files-found: error
+
+  backend-performance-decision:
+    name: Aggregate Tier 1 six-RID evidence
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: backend-performance-*
+          path: artifacts/backend-performance
+          merge-multiple: true
+      - name: Aggregate evidence without enforcing timing on shared runners
+        shell: pwsh
+        run: ./scripts/Merge-BackendPerformanceEvidence.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: backend-performance-six-rid-decision
+          path: artifacts/backend-performance/tier1-six-rid-decision.json
           if-no-files-found: error
 
   formatting-and-packages:

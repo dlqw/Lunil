@@ -362,7 +362,9 @@ internal static class ManagedPeCilEmitter
                 "LuaExecutionContext.TryReserveInstructions" => types.ExecutionContext,
                 "LuaFrame.get_ProgramCounter" => types.Frame,
                 _ when target.Id.StartsWith("LuaCodegenAbiV1.", StringComparison.Ordinal) =>
-                    types.CodegenAbi,
+                    types.CodegenAbiV1,
+                _ when target.Id.StartsWith("LuaCodegenAbiV2.", StringComparison.Ordinal) =>
+                    types.CodegenAbiV2,
                 _ when target.Id.StartsWith("LuaCompiledExit.", StringComparison.Ordinal) =>
                     types.CompiledExit,
                 _ => throw new InvalidOperationException(
@@ -414,7 +416,11 @@ internal static class ManagedPeCilEmitter
         RuntimeTypes types)
     {
         if (target.Id is "LuaExecutionContext.TryReserveInstructions" or
-            "LuaCodegenAbiV1.IsTruthy" or "LuaCodegenAbiV1.CanExecuteCompiled")
+            "LuaCodegenAbiV1.IsTruthy" or "LuaCodegenAbiV1.CanExecuteCompiled" or
+            "LuaCodegenAbiV2.CanExecuteCompiledFrame" or
+            "LuaCodegenAbiV2.CanSkipClose" or
+            "LuaCodegenAbiV2.CanExecuteUnaryPrimitive" or
+            "LuaCodegenAbiV2.CanExecuteBinaryPrimitive")
         {
             encoder.Type().Boolean();
             return;
@@ -492,7 +498,8 @@ internal static class ManagedPeCilEmitter
             Add(typeof(LuaValue)),
             Add(typeof(LuaCompiledExit)),
             Add(typeof(LuaCompiledExitReason)),
-            Add(typeof(LuaCodegenAbiV1)));
+            Add(typeof(LuaCodegenAbiV1)),
+            Add(typeof(LuaCodegenAbiV2)));
     }
 
     private static AssemblyReferenceHandle AddAssemblyReference(
@@ -660,7 +667,8 @@ internal static class ManagedPeCilEmitter
         TypeReferenceHandle LuaValue,
         TypeReferenceHandle CompiledExit,
         TypeReferenceHandle CompiledExitReason,
-        TypeReferenceHandle CodegenAbi);
+        TypeReferenceHandle CodegenAbiV1,
+        TypeReferenceHandle CodegenAbiV2);
 
     private sealed record EmittedMethod(
         MethodDefinitionHandle Handle,

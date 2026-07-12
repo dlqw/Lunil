@@ -112,3 +112,118 @@ Reproduce the multi-process evidence with:
 
 The script writes raw process output, `runs.csv`, and `summary.json` under the ignored
 `artifacts/backend-performance/<UTC timestamp>/` directory.
+
+## M9-1 Tier 1 attribution baseline
+
+M9-1 separates Tier 1 compilation into canonical verification, CFG/liveness, method-plan build,
+plan verification, Reflection.Emit, and delegate creation. It also reports structural direct/
+slow-path coverage plus compiled instructions and scheduler exits. The benchmark corpus now has
+six backend workloads: arithmetic, control flow, Lua calls, table access, metamethods, and a
+coroutine/error/debug-hook stress case.
+
+The first instrumented Windows x64 arithmetic run exposed two independent problems:
+
+- 300,020 compiled invocations and scheduler exits for five executions, or approximately 60,004
+  exits per execution;
+- only 4.833 canonical instructions completed per compiled invocation;
+- 31 directly lowered canonical instructions versus six slow-path instructions in the static
+  function plan;
+- approximately 7,458,782 allocated bytes per execution.
+
+The linear allocation was traced to the capturing value-factory lambda passed to
+`ConcurrentDictionary.GetOrAdd` on every scheduler entry. The factory object was allocated even
+when the function entry already existed. Replacing the capturing factory with the state-taking
+static overload reduced the same workload to approximately 2,021 allocated bytes per execution.
+This removes the known allocation slope without changing the execution ABI or Lua semantics.
+
+The focused `gc-verbose` EventPipe trace also showed instruction observation as the largest hot
+managed stack in the current Tier 1 path. Compilation attribution on the compact run was dominated
+by repeated plan verification and Reflection.Emit; the coldest sample recorded approximately
+12.2 ms in plan verification, 5.6 ms in emission, and about 954 KiB of compilation-thread
+allocation. These numbers are diagnostic evidence rather than the M9 release gate; controlled
+multi-process p95 evidence is still required after the remaining work.
+
+Collect a focused ignored trace with:
+
+```powershell
+./scripts/Trace-Tier1Allocations.ps1 -Workload arithmetic -ColdSamples 1 -Iterations 100000
+```
+
+## M9-4 local compile-latency closure check
+
+The owner-scoped weak plan cache, cached Runtime ABI method resolution, verified-plan emitter
+entry, inline verifier stack, and executor-startup Reflection.Emit preparation reduced the local
+arithmetic Tier 1 compilation event substantially. A fresh Release process with one unprimed
+arithmetic function recorded:
+
+- total compilation event: 1.662 ms;
+- canonical verification: 0.061 ms;
+- CFG/liveness: 0.318 ms;
+- method-plan build: 0.267 ms;
+- plan verification: 0.646 ms;
+- Reflection.Emit: 0.247 ms;
+- delegate creation: 0.035 ms;
+- first plan/compile allocation: approximately 501.6 KiB.
+
+In a separate 21-sample process, the arithmetic compilation p95 was 1.242 ms; owner-plan cache
+hits allocated approximately 27.9 KiB and reported zero reused planning durations. One 6.1 ms
+Reflection.Emit/GC outlier remained above the p95 rank. The same run measured about 2.39 ms/op
+Tier 1 steady state and 2,021 B/op. These measurements pass the local `<5 ms` compile gate, but
+the required multi-process and six-RID evidence remains pending and is the release decision
+source of truth.
+
+Tier 1 benefit eligibility now rejects functions deterministically before queue admission when
+verified facts show no repeated work, insufficient direct coverage, excessive slow paths or
+semantic boundaries, or excessive estimated code size. Imported profiles can satisfy hotness but
+cannot bypass this filter. No production wall-clock feedback is used by the eligibility model.
+
+## M9-6/M9-7 local closure evidence
+
+The focused soak runs Runtime, CodeGen, and backend differential suites in each round. On
+2026-07-12, 20 Release rounds completed without failure:
+
+| Suite | Tests per round | Total across 20 rounds |
+|---|---:|---:|
+| Runtime | 136 | 2,720 |
+| CodeGen.Cil | 104 | 2,080 |
+| Backend differential | 15 | 300 |
+| **Total** | **255** | **5,100** |
+
+The soak includes exact instruction-budget boundaries, ABI mismatch, cancellation and disposal
+publication boundaries, weak-cache ownership, integer overflow, floor division/modulo/bitwise,
+NaN and negative zero, mixed coercion, numeric-for boundaries, upvalues, and metamethod fallback.
+TRX output is written under ignored `artifacts/tier1-soak/<UTC timestamp>/` directories.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced the following arithmetic result after cancellation closure:
+
+| Metric | Interpreter | Tier 1 |
+|---|---:|---:|
+| Warm median | 13,014,350 ns/op | 5,910,920 ns/op |
+| Allocated/op | 1,844 B | 1,974.4 B |
+| Allocation slope | 0 B/iteration | 0 B/iteration |
+| Tier 1 compilation p95 | n/a | 1.636 ms |
+| Plan verification p95 | n/a | 0.835 ms |
+| Reflection.Emit p95 | n/a | 0.377 ms |
+
+The same-machine Tier 1 speedup median was **2.407x**, with a deterministic bootstrap median 95%
+interval of `[2.065x, 3.858x]`. The per-RID decision therefore qualifies win-x64: the approved
+gate uses the same-machine median `>=2x`, compilation p95 `<5 ms`, zero linear allocation slope,
+and deterministic rejection of negative workloads. Arithmetic and control flow were eligible;
+Lua calls and table access were rejected for excessive slow-path density, while metamethod and
+coroutine/error/hook workloads were rejected for insufficient direct coverage.
+
+Reproduce and aggregate evidence with:
+
+```powershell
+./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 `
+  -Iterations 1000000 -Configuration Release
+./scripts/Merge-BackendPerformanceEvidence.ps1
+```
+
+The measurement script writes raw output, CSV, JSON, and `tier1-decision.json` under ignored
+`artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same five-process
+measurement on win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64, then publishes
+the aggregate without using shared-runner timing as a CI pass/fail condition. Until those six
+independent RID results are available and reviewed, the release default remains
+`InterpreterOnly`; Tier 2 and Loop OSR remain explicit opt-ins.

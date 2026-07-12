@@ -134,6 +134,21 @@ public sealed record CilMethodPlan
 
     public int RegisterCount { get; init; }
 
+    /// <summary>
+    /// Number of canonical instructions whose semantics are emitted directly into this plan.
+    /// This is structural coverage metadata and does not include runtime guard outcomes.
+    /// </summary>
+    public int DirectCanonicalInstructionCount { get; init; }
+
+    /// <summary>
+    /// Number of canonical instructions that return through the shared interpreter slow path.
+    /// </summary>
+    public int SlowPathCanonicalInstructionCount { get; init; }
+
+    public ImmutableArray<int> DirectCanonicalProgramCounters { get; init; } = [];
+
+    public ImmutableArray<int> SlowPathCanonicalProgramCounters { get; init; } = [];
+
     public ImmutableArray<CilStackValueKind> ParameterKinds { get; init; } = [];
 
     public CilStackValueKind ReturnKind { get; init; } = CilStackValueKind.Void;

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Planning;
 
 namespace Lunil.CodeGen.Cil.Verification;
@@ -7,9 +8,11 @@ public static class CilMethodPlanVerifier
 {
     public static CilPlanVerificationResult Verify(
         CilMethodPlan plan,
-        CilPlanLimits? limits = null)
+        CilPlanLimits? limits = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        cancellationToken.ThrowIfCancellationRequested();
         limits ??= CilPlanLimits.Default;
         var diagnostics = ImmutableArray.CreateBuilder<CilPlanDiagnostic>();
         if (plan.Instructions.Length > limits.MaximumInstructions)
@@ -32,6 +35,7 @@ public static class CilMethodPlanVerifier
                 ? instruction.Labels.Length
                 : instruction.OpCode is CilPlanOpCode.Branch or CilPlanOpCode.BranchTrue or
                     CilPlanOpCode.BranchFalse ? 1 : 0);
+        cancellationToken.ThrowIfCancellationRequested();
         if (branchInstructionCount > limits.MaximumBranchInstructions)
         {
             diagnostics.Add(new CilPlanDiagnostic(
@@ -46,6 +50,7 @@ public static class CilMethodPlanVerifier
             .Select(static instruction => instruction.CallTarget!.Id)
             .Distinct(StringComparer.Ordinal)
             .Count();
+        cancellationToken.ThrowIfCancellationRequested();
         if (metadataReferenceCount > limits.MaximumMetadataReferences)
         {
             diagnostics.Add(new CilPlanDiagnostic(
@@ -55,19 +60,24 @@ public static class CilMethodPlanVerifier
             return new CilPlanVerificationResult(diagnostics.ToImmutable(), 0);
         }
 
-        var labels = BuildLabelMap(plan, limits, diagnostics);
-        ValidateMetadata(plan, diagnostics);
-        var incoming = new ImmutableArray<CilStackValueKind>?[plan.Instructions.Length];
+        var labels = BuildLabelMap(plan, limits, diagnostics, cancellationToken);
+        ValidateMetadata(plan, diagnostics, cancellationToken);
+        var incoming = new EvaluationStack?[plan.Instructions.Length];
         var queue = new Queue<int>();
-        incoming[0] = [];
+        incoming[0] = default(EvaluationStack);
         queue.Enqueue(0);
         var maximumStack = 0;
         while (queue.TryDequeue(out var index))
         {
-            var stack = incoming[index]!.Value.ToBuilder();
+            if ((index & 63) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            var stack = incoming[index]!.Value.Clone();
             maximumStack = Math.Max(maximumStack, stack.Count);
             var instruction = plan.Instructions[index];
-            var valid = ApplyInstruction(plan, instruction, index, stack, diagnostics);
+            var valid = ApplyInstruction(plan, instruction, index, ref stack, diagnostics);
             maximumStack = Math.Max(maximumStack, stack.Count);
             if (stack.Count > limits.MaximumEvaluationStack)
             {
@@ -85,7 +95,7 @@ public static class CilMethodPlanVerifier
                 continue;
             }
 
-            var outgoing = stack.ToImmutable();
+            var outgoing = stack;
             foreach (var successor in Successors(plan, labels, index, instruction, diagnostics))
             {
                 if (successor < 0 || successor >= plan.Instructions.Length)
@@ -111,6 +121,11 @@ public static class CilMethodPlanVerifier
 
         for (var index = 0; index < incoming.Length; index++)
         {
+            if ((index & 255) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (incoming[index] is null)
             {
                 diagnostics.Add(Error(
@@ -127,11 +142,17 @@ public static class CilMethodPlanVerifier
     private static Dictionary<int, int> BuildLabelMap(
         CilMethodPlan plan,
         CilPlanLimits limits,
-        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
+        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics,
+        CancellationToken cancellationToken)
     {
         var labels = new Dictionary<int, int>();
         for (var index = 0; index < plan.Instructions.Length; index++)
         {
+            if ((index & 255) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var instruction = plan.Instructions[index];
             if (instruction.OpCode != CilPlanOpCode.MarkLabel)
             {
@@ -160,8 +181,10 @@ public static class CilMethodPlanVerifier
 
     private static void ValidateMetadata(
         CilMethodPlan plan,
-        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
+        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var localIndexes = new HashSet<int>();
         foreach (var local in plan.Locals)
         {
@@ -176,6 +199,7 @@ public static class CilMethodPlanVerifier
         var gcProgramCounters = new HashSet<int>();
         foreach (var map in plan.GcMaps)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (map.CanonicalProgramCounter < 0 || !gcProgramCounters.Add(map.CanonicalProgramCounter) ||
                 map.LiveRegisters.Any(register => register < 0 || register >= plan.RegisterCount) ||
                 !map.LiveRegisters.SequenceEqual(map.LiveRegisters.Distinct().Order()))
@@ -189,6 +213,7 @@ public static class CilMethodPlanVerifier
 
         foreach (var point in plan.SequencePoints)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (point.PlanInstructionIndex < 0 || point.PlanInstructionIndex >= plan.Instructions.Length ||
                 point.CanonicalProgramCounter < 0 || point.SourceLine < 0)
             {
@@ -200,6 +225,7 @@ public static class CilMethodPlanVerifier
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateBlocks(plan, diagnostics);
     }
 
@@ -242,7 +268,7 @@ public static class CilMethodPlanVerifier
         CilMethodPlan plan,
         CilPlanInstruction instruction,
         int index,
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
     {
         switch (instruction.OpCode)
@@ -259,28 +285,28 @@ public static class CilMethodPlanVerifier
                     return false;
                 }
 
-                stack.Add(plan.ParameterKinds[instruction.Int32Operand]);
+                stack.Push(plan.ParameterKinds[instruction.Int32Operand]);
                 return true;
             case CilPlanOpCode.LoadLocal:
-                return TryLoadLocal(plan, instruction, index, stack, diagnostics);
+                return TryLoadLocal(plan, instruction, index, ref stack, diagnostics);
             case CilPlanOpCode.StoreLocal:
-                return TryStoreLocal(plan, instruction, index, stack, diagnostics);
+                return TryStoreLocal(plan, instruction, index, ref stack, diagnostics);
             case CilPlanOpCode.LoadInt32:
-                stack.Add(CilStackValueKind.Int32);
+                stack.Push(CilStackValueKind.Int32);
                 return true;
             case CilPlanOpCode.Add:
             case CilPlanOpCode.Subtract:
-                return Pop(stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
-                    Pop(stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
-                    Push(stack, CilStackValueKind.Int32);
+                return Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
+                    Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
+                    Push(ref stack, CilStackValueKind.Int32);
             case CilPlanOpCode.Call:
-                return ApplyCall(plan, instruction, index, stack, diagnostics);
+                return ApplyCall(plan, instruction, index, ref stack, diagnostics);
             case CilPlanOpCode.BranchTrue:
             case CilPlanOpCode.BranchFalse:
             case CilPlanOpCode.Switch:
-                return Pop(stack, CilStackValueKind.Int32, index, instruction, diagnostics);
+                return Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics);
             case CilPlanOpCode.Return:
-                if (!Pop(stack, plan.ReturnKind, index, instruction, diagnostics))
+                if (!Pop(ref stack, plan.ReturnKind, index, instruction, diagnostics))
                 {
                     return false;
                 }
@@ -306,7 +332,7 @@ public static class CilMethodPlanVerifier
         CilMethodPlan plan,
         CilPlanInstruction instruction,
         int index,
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
     {
         if (instruction.CallTarget is not { } target)
@@ -342,7 +368,7 @@ public static class CilMethodPlanVerifier
 
         for (var parameter = target.ParameterKinds.Length - 1; parameter >= 0; parameter--)
         {
-            if (!Pop(stack, target.ParameterKinds[parameter], index, instruction, diagnostics))
+            if (!Pop(ref stack, target.ParameterKinds[parameter], index, instruction, diagnostics))
             {
                 return false;
             }
@@ -374,7 +400,7 @@ public static class CilMethodPlanVerifier
 
         if (target.ReturnKind != CilStackValueKind.Void)
         {
-            stack.Add(target.ReturnKind);
+            stack.Push(target.ReturnKind);
         }
 
         return true;
@@ -384,7 +410,7 @@ public static class CilMethodPlanVerifier
         CilMethodPlan plan,
         CilPlanInstruction instruction,
         int index,
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
     {
         var local = plan.Locals.FirstOrDefault(local => local.Index == instruction.Int32Operand);
@@ -394,7 +420,7 @@ public static class CilMethodPlanVerifier
             return false;
         }
 
-        stack.Add(local.Kind);
+        stack.Push(local.Kind);
         return true;
     }
 
@@ -402,12 +428,12 @@ public static class CilMethodPlanVerifier
         CilMethodPlan plan,
         CilPlanInstruction instruction,
         int index,
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
     {
         var local = plan.Locals.FirstOrDefault(local => local.Index == instruction.Int32Operand);
         return local is not null
-            ? Pop(stack, local.Kind, index, instruction, diagnostics)
+            ? Pop(ref stack, local.Kind, index, instruction, diagnostics)
             : AddMissingLocal(index, instruction, diagnostics);
     }
 
@@ -478,7 +504,7 @@ public static class CilMethodPlanVerifier
     }
 
     private static bool Pop(
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         CilStackValueKind expected,
         int index,
         CilPlanInstruction instruction,
@@ -490,8 +516,7 @@ public static class CilMethodPlanVerifier
             return false;
         }
 
-        var actual = stack[^1];
-        stack.RemoveAt(stack.Count - 1);
+        var actual = stack.Pop();
         if (actual == expected)
         {
             return true;
@@ -506,11 +531,98 @@ public static class CilMethodPlanVerifier
     }
 
     private static bool Push(
-        ImmutableArray<CilStackValueKind>.Builder stack,
+        ref EvaluationStack stack,
         CilStackValueKind value)
     {
-        stack.Add(value);
+        stack.Push(value);
         return true;
+    }
+
+    [InlineArray(16)]
+    private struct InlineStackStorage
+    {
+        private CilStackValueKind _element0;
+    }
+
+    private struct EvaluationStack
+    {
+        private InlineStackStorage _inline;
+        private CilStackValueKind[]? _overflow;
+
+        public int Count { get; private set; }
+
+        public void Push(CilStackValueKind value)
+        {
+            if (Count < 16)
+            {
+                _inline[Count++] = value;
+                return;
+            }
+
+            var overflowIndex = Count - 16;
+            if (_overflow is null)
+            {
+                _overflow = new CilStackValueKind[16];
+            }
+            else if (overflowIndex == _overflow.Length)
+            {
+                Array.Resize(ref _overflow, checked(_overflow.Length * 2));
+            }
+
+            _overflow[overflowIndex] = value;
+            Count++;
+        }
+
+        public CilStackValueKind Pop()
+        {
+            var index = --Count;
+            return index < 16 ? _inline[index] : _overflow![index - 16];
+        }
+
+        public bool Contains(CilStackValueKind value)
+        {
+            for (var index = 0; index < Count; index++)
+            {
+                if (Get(index) == value)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool SequenceEqual(EvaluationStack other)
+        {
+            if (Count != other.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < Count; index++)
+            {
+                if (Get(index) != other.Get(index))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public EvaluationStack Clone()
+        {
+            var clone = this;
+            if (_overflow is not null)
+            {
+                clone._overflow = (CilStackValueKind[])_overflow.Clone();
+            }
+
+            return clone;
+        }
+
+        private readonly CilStackValueKind Get(int index) =>
+            index < 16 ? _inline[index] : _overflow![index - 16];
     }
 
     private static CilPlanDiagnostic Error(

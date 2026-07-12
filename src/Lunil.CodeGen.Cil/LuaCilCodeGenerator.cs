@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.CodeGen.Cil.Verification;
@@ -14,23 +16,71 @@ public sealed record LuaCilPlanningResult(
 {
     public bool Succeeded => Plan is not null && Verification is { Succeeded: true } &&
         Diagnostics.IsEmpty;
+
+    public LuaCilPlanningMetrics Metrics { get; init; }
 }
+
+public readonly record struct LuaCilPlanningMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan ControlFlowAnalysisDuration,
+    TimeSpan MethodPlanBuildDuration,
+    TimeSpan PlanVerificationDuration);
 
 public static class LuaCilCodeGenerator
 {
+    private static readonly ConditionalWeakTable<LuaIrModule, ModulePlanCache> PlanCaches = new();
+
     public static LuaCilPlanningResult PlanFunction(
         LuaIrModule module,
         int functionId,
-        CilPlanLimits? limits = null)
+        CilPlanLimits? limits = null,
+        bool includeInstructionObservation = true,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(module);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (limits is not null)
+        {
+            return PlanFunctionCore(
+                module,
+                functionId,
+                limits,
+                includeInstructionObservation,
+                cancellationToken);
+        }
+
+        return PlanCaches.GetValue(module, static _ => new ModulePlanCache()).GetOrAdd(
+            module,
+            new PlanCacheKey(functionId, includeInstructionObservation),
+            cancellationToken);
+    }
+
+    private static LuaCilPlanningResult PlanFunctionCore(
+        LuaIrModule module,
+        int functionId,
+        CilPlanLimits? limits,
+        bool includeInstructionObservation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        cancellationToken.ThrowIfCancellationRequested();
+        var verificationStarted = Stopwatch.GetTimestamp();
         var irErrors = LuaIrVerifier.Verify(module);
+        cancellationToken.ThrowIfCancellationRequested();
+        var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!irErrors.IsEmpty)
         {
             return new LuaCilPlanningResult(
                 null,
                 null,
-                [.. irErrors.Select(error => new CilPlanDiagnostic("CIL1001", error.Message))]);
+                [.. irErrors.Select(error => new CilPlanDiagnostic("CIL1001", error.Message))])
+            {
+                Metrics = new LuaCilPlanningMetrics(
+                    canonicalVerificationDuration,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero),
+            };
         }
 
         if (functionId < 0 || functionId >= module.Functions.Length)
@@ -38,7 +88,14 @@ public static class LuaCilCodeGenerator
             return new LuaCilPlanningResult(
                 null,
                 null,
-                [new CilPlanDiagnostic("CIL1002", "Function id is outside the verified module.")]);
+                [new CilPlanDiagnostic("CIL1002", "Function id is outside the verified module.")])
+            {
+                Metrics = new LuaCilPlanningMetrics(
+                    canonicalVerificationDuration,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero),
+            };
         }
 
         limits ??= CilPlanLimits.Default;
@@ -51,18 +108,81 @@ public static class LuaCilCodeGenerator
                 [new CilPlanDiagnostic(
                     "CIL0001",
                     $"Canonical function contains {function.Instructions.Length} instructions; " +
-                    $"plan limit is {limits.MaximumInstructions}.")]);
+                    $"plan limit is {limits.MaximumInstructions}.")])
+            {
+                Metrics = new LuaCilPlanningMetrics(
+                    canonicalVerificationDuration,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero),
+            };
         }
 
+        var analysisStarted = Stopwatch.GetTimestamp();
+        var blockLayout = CilBlockLayout.Build(function, cancellationToken);
+        var liveness = LuaRegisterLiveness.Analyze(module, function, cancellationToken);
+        var controlFlowAnalysisDuration = Stopwatch.GetElapsedTime(analysisStarted);
+        var planningStarted = Stopwatch.GetTimestamp();
         var plan = LuaCilMethodPlanner.Build(
             function,
             startProgramCounter: 0,
             function.Instructions.Length,
             $"LuaFunction_{function.Id}",
-            CilBlockLayout.Build(function),
-            LuaRegisterLiveness.Analyze(module, function));
-        var verification = CilMethodPlanVerifier.Verify(plan, limits);
-        return new LuaCilPlanningResult(plan, verification, verification.Diagnostics);
+            blockLayout,
+            liveness,
+            includeInstructionObservation,
+            cancellationToken);
+        var methodPlanBuildDuration = Stopwatch.GetElapsedTime(planningStarted);
+        var planVerificationStarted = Stopwatch.GetTimestamp();
+        var verification = CilMethodPlanVerifier.Verify(plan, limits, cancellationToken);
+        var planVerificationDuration = Stopwatch.GetElapsedTime(planVerificationStarted);
+        return new LuaCilPlanningResult(plan, verification, verification.Diagnostics)
+        {
+            Metrics = new LuaCilPlanningMetrics(
+                canonicalVerificationDuration,
+                controlFlowAnalysisDuration,
+                methodPlanBuildDuration,
+                planVerificationDuration),
+        };
+    }
+
+    private readonly record struct PlanCacheKey(
+        int FunctionId,
+        bool IncludeInstructionObservation);
+
+    private sealed class ModulePlanCache
+    {
+        private readonly Lock _gate = new();
+        private readonly Dictionary<PlanCacheKey, LuaCilPlanningResult> _results = [];
+
+        public LuaCilPlanningResult GetOrAdd(
+            LuaIrModule module,
+            PlanCacheKey key,
+            CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_results.TryGetValue(key, out var cached))
+                {
+                    return cached with { Metrics = default };
+                }
+
+                var result = PlanFunctionCore(
+                    module,
+                    key.FunctionId,
+                    limits: null,
+                    includeInstructionObservation: key.IncludeInstructionObservation,
+                    cancellationToken: cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (result.Succeeded)
+                {
+                    _results.Add(key, result);
+                }
+
+                return result;
+            }
+        }
     }
 }
 
@@ -80,14 +200,30 @@ internal static class LuaCilMethodPlanner
         int instructionCount,
         string methodName,
         CilBlockLayout blockLayout,
-        LuaRegisterLivenessResult liveness)
+        LuaRegisterLivenessResult liveness,
+        bool includeInstructionObservation = true,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var endProgramCounter = checked(startProgramCounter + instructionCount);
         var instructions = ImmutableArray.CreateBuilder<CilPlanInstruction>();
         var sequencePoints = ImmutableArray.CreateBuilder<CilSequencePoint>();
-        var pcLabels = Enumerable.Range(0, instructionCount)
-            .Select(static index => new CilLabel(index + 1))
-            .ToImmutableArray();
+        var directCanonicalInstructionCount = 0;
+        var slowPathCanonicalInstructionCount = 0;
+        var directCanonicalProgramCounters = ImmutableArray.CreateBuilder<int>();
+        var slowPathCanonicalProgramCounters = ImmutableArray.CreateBuilder<int>();
+        var pcLabelBuilder = ImmutableArray.CreateBuilder<CilLabel>(instructionCount);
+        for (var index = 0; index < instructionCount; index++)
+        {
+            if ((index & 255) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            pcLabelBuilder.Add(new CilLabel(index + 1));
+        }
+
+        var pcLabels = pcLabelBuilder.MoveToImmutable();
         var nextLabel = instructionCount + 1;
 
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadInt32, 0));
@@ -97,7 +233,14 @@ internal static class LuaCilMethodPlanner
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.StoreLocal, ProgramCounterLocal));
         var backendReady = new CilLabel(nextLabel++);
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadArgument, ContextArgument));
-        Emit(instructions, CilPlanInstruction.Call(CilWellKnownCalls.CanExecuteCompiled));
+        Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadArgument, FrameArgument));
+        Emit(instructions, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadInt32,
+            function.Id));
+        Emit(instructions, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadInt32,
+            function.RegisterCount));
+        Emit(instructions, CilPlanInstruction.Call(CilWellKnownCalls.CanExecuteCompiledFrame));
         Emit(instructions, CilPlanInstruction.WithLabel(CilPlanOpCode.BranchTrue, backendReady));
         EmitDeoptFromLocal(
             instructions,
@@ -119,6 +262,11 @@ internal static class LuaCilMethodPlanner
 
         for (var pc = startProgramCounter; pc < endProgramCounter; pc++)
         {
+            if ((pc & 63) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var instruction = function.Instructions[pc];
             Emit(instructions, CilPlanInstruction.MarkLabel(
                 pcLabels[pc - startProgramCounter],
@@ -128,15 +276,21 @@ internal static class LuaCilMethodPlanner
                 pc,
                 instruction.SourceLine,
                 instruction.LogicalProgramCounter));
-            LoadArgument(instructions, ContextArgument, pc);
-            LoadArgument(instructions, ThreadArgument, pc);
-            LoadArgument(instructions, FrameArgument, pc);
-            LoadInt32(instructions, pc, pc);
-            Emit(instructions, CilPlanInstruction.Call(
-                CilWellKnownCalls.ObserveCanonicalInstruction,
-                pc));
-            if (!IsDirectlyLowered(instruction))
+            if (includeInstructionObservation)
             {
+                LoadArgument(instructions, ContextArgument, pc);
+                LoadArgument(instructions, ThreadArgument, pc);
+                LoadArgument(instructions, FrameArgument, pc);
+                LoadInt32(instructions, pc, pc);
+                Emit(instructions, CilPlanInstruction.Call(
+                    CilWellKnownCalls.ObserveCanonicalInstruction,
+                    pc));
+            }
+            var directlyLowered = IsDirectlyLowered(instruction);
+            if (!directlyLowered)
+            {
+                slowPathCanonicalInstructionCount++;
+                slowPathCanonicalProgramCounters.Add(pc);
                 EmitCommitProgramCounter(instructions, pc);
                 LoadArgument(instructions, ContextArgument, pc);
                 LoadArgument(instructions, ThreadArgument, pc);
@@ -147,6 +301,28 @@ internal static class LuaCilMethodPlanner
                     pc));
                 Emit(instructions, CilPlanInstruction.Simple(CilPlanOpCode.Return, pc));
                 continue;
+            }
+
+            directCanonicalInstructionCount++;
+            directCanonicalProgramCounters.Add(pc);
+            if (RequiresPrimitiveGuard(instruction))
+            {
+                var primitiveReady = new CilLabel(nextLabel++);
+                EmitPrimitiveGuard(instructions, instruction, pc);
+                Emit(instructions, CilPlanInstruction.WithLabel(
+                    CilPlanOpCode.BranchTrue,
+                    primitiveReady,
+                    pc));
+                EmitCommitProgramCounter(instructions, pc);
+                LoadArgument(instructions, ContextArgument, pc);
+                LoadArgument(instructions, ThreadArgument, pc);
+                LoadArgument(instructions, FrameArgument, pc);
+                LoadInt32(instructions, pc, pc);
+                Emit(instructions, CilPlanInstruction.Call(
+                    CilWellKnownCalls.ExecuteCanonicalInstruction,
+                    pc));
+                Emit(instructions, CilPlanInstruction.Simple(CilPlanOpCode.Return, pc));
+                Emit(instructions, CilPlanInstruction.MarkLabel(primitiveReady, pc));
             }
 
             EmitCommitProgramCounter(instructions, pc);
@@ -180,6 +356,23 @@ internal static class LuaCilMethodPlanner
                 ref nextLabel);
         }
 
+        var gcMaps = ImmutableArray.CreateBuilder<CilGcMap>();
+        foreach (var map in liveness.GcMaps)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (map.CanonicalProgramCounter >= startProgramCounter &&
+                map.CanonicalProgramCounter < endProgramCounter)
+            {
+                gcMaps.Add(map);
+            }
+        }
+
+        var slicedBlocks = SliceBlocks(
+            blockLayout.Blocks,
+            startProgramCounter,
+            endProgramCounter,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return new CilMethodPlan
         {
             Name = methodName,
@@ -187,6 +380,10 @@ internal static class LuaCilMethodPlanner
             StartProgramCounter = startProgramCounter,
             CanonicalInstructionCount = instructionCount,
             RegisterCount = function.RegisterCount,
+            DirectCanonicalInstructionCount = directCanonicalInstructionCount,
+            SlowPathCanonicalInstructionCount = slowPathCanonicalInstructionCount,
+            DirectCanonicalProgramCounters = directCanonicalProgramCounters.ToImmutable(),
+            SlowPathCanonicalProgramCounters = slowPathCanonicalProgramCounters.ToImmutable(),
             ParameterKinds =
             [
                 CilStackValueKind.ExecutionContext,
@@ -200,22 +397,19 @@ internal static class LuaCilMethodPlanner
                 new CilLocal(ProgramCounterLocal, CilStackValueKind.Int32, "pc"),
             ],
             Instructions = instructions.ToImmutable(),
-            GcMaps = [.. liveness.GcMaps.Where(map =>
-                map.CanonicalProgramCounter >= startProgramCounter &&
-                map.CanonicalProgramCounter < endProgramCounter)],
+            GcMaps = gcMaps.ToImmutable(),
             SequencePoints = sequencePoints.ToImmutable(),
-            Blocks = SliceBlocks(
-                blockLayout.Blocks,
-                startProgramCounter,
-                endProgramCounter),
+            Blocks = slicedBlocks,
         };
     }
 
     private static bool IsDirectlyLowered(LuaIrInstruction instruction) => instruction.Opcode switch
     {
         LuaIrOpcode.LoadConstant or LuaIrOpcode.LoadNil or LuaIrOpcode.Move or
-        LuaIrOpcode.SetTop or LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
-        LuaIrOpcode.Return => true,
+        LuaIrOpcode.SetTop or LuaIrOpcode.GetUpvalue or LuaIrOpcode.SetUpvalue or
+        LuaIrOpcode.Unary or LuaIrOpcode.Binary or LuaIrOpcode.JumpIfFalse or
+        LuaIrOpcode.JumpIfTrue or LuaIrOpcode.Return or LuaIrOpcode.NumericForPrepare or
+        LuaIrOpcode.NumericForLoop or LuaIrOpcode.Close => true,
         LuaIrOpcode.Jump => instruction.C < 0,
         _ => false,
     };
@@ -241,7 +435,7 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.B, pc);
                 Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.MaterializeConstant, pc));
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteRegister, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteRegisterUnchecked, pc));
                 BranchToNext(
                     plan,
                     pc,
@@ -256,7 +450,7 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.A, pc);
                 LoadInt32(plan, instruction.B, pc);
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ClearRegisters, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ClearRegistersUnchecked, pc));
                 BranchToNext(
                     plan,
                     pc,
@@ -273,8 +467,77 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, ThreadArgument, pc);
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.B, pc);
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegister, pc));
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteRegister, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteRegisterUnchecked, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.GetUpvalue:
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadUpvalue, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteRegisterUnchecked, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.SetUpvalue:
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteUpvalue, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.Unary:
+                LoadArgument(plan, ContextArgument, pc);
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.C, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteUnaryPrimitive, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.Binary:
+                LoadArgument(plan, ContextArgument, pc);
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.D, pc);
+                LoadInt32(plan, instruction.B, pc);
+                LoadInt32(plan, instruction.C, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteBinaryPrimitive, pc));
                 BranchToNext(
                     plan,
                     pc,
@@ -288,7 +551,7 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, ThreadArgument, pc);
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.A, pc);
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.SetFrameTop, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.SetFrameTopUnchecked, pc));
                 BranchToNext(
                     plan,
                     pc,
@@ -313,7 +576,7 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, ThreadArgument, pc);
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.A, pc);
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegister, pc));
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
                 Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.LuaValueIsTruthy, pc));
                 if (IsInRange(instruction.B, startProgramCounter, endProgramCounter))
                 {
@@ -362,10 +625,114 @@ internal static class LuaCilMethodPlanner
             case LuaIrOpcode.Return:
                 EmitExit(plan, CilWellKnownCalls.ExitReturn, pc, consumedLocal, reason: null);
                 break;
+            case LuaIrOpcode.Close:
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.NumericForPrepare:
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteNumericForPrepare, pc));
+                BranchToFrameProgramCounter(
+                    plan,
+                    pc,
+                    startProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.NumericForLoop:
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteNumericForLoop, pc));
+                BranchToFrameProgramCounter(
+                    plan,
+                    pc,
+                    startProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
             default:
                 throw new InvalidOperationException(
                     $"Canonical opcode {instruction.Opcode} has no CIL lowering.");
         }
+    }
+
+    private static bool RequiresPrimitiveGuard(LuaIrInstruction instruction) =>
+        instruction.Opcode is LuaIrOpcode.Unary or LuaIrOpcode.Binary or LuaIrOpcode.Close;
+
+    private static void EmitPrimitiveGuard(
+        ImmutableArray<CilPlanInstruction>.Builder plan,
+        LuaIrInstruction instruction,
+        int pc)
+    {
+        if (instruction.Opcode == LuaIrOpcode.Close)
+        {
+            LoadArgument(plan, FrameArgument, pc);
+            LoadInt32(plan, instruction.A, pc);
+            Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.CanSkipClose, pc));
+            return;
+        }
+
+        LoadArgument(plan, ThreadArgument, pc);
+        LoadArgument(plan, FrameArgument, pc);
+        if (instruction.Opcode == LuaIrOpcode.Unary)
+        {
+            LoadInt32(plan, instruction.C, pc);
+            LoadInt32(plan, instruction.B, pc);
+            Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.CanExecuteUnaryPrimitive, pc));
+            return;
+        }
+
+        LoadInt32(plan, instruction.D, pc);
+        LoadInt32(plan, instruction.B, pc);
+        LoadInt32(plan, instruction.C, pc);
+        Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.CanExecuteBinaryPrimitive, pc));
+    }
+
+    private static void BranchToFrameProgramCounter(
+        ImmutableArray<CilPlanInstruction>.Builder plan,
+        int sourceProgramCounter,
+        int startProgramCounter,
+        ImmutableArray<CilLabel> labels,
+        int consumedLocal)
+    {
+        LoadArgument(plan, FrameArgument, sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Call(
+            CilWellKnownCalls.FrameGetProgramCounter,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.StoreLocal,
+            ProgramCounterLocal,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            ProgramCounterLocal,
+            sourceProgramCounter));
+        LoadInt32(plan, startProgramCounter, sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Simple(CilPlanOpCode.Subtract, sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.Switch(labels, sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            ProgramCounterLocal,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            consumedLocal,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.Call(
+            CilWellKnownCalls.ExitContinue,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.Simple(CilPlanOpCode.Return, sourceProgramCounter));
     }
 
     private static void EmitCommitProgramCounter(
@@ -443,11 +810,13 @@ internal static class LuaCilMethodPlanner
     private static ImmutableArray<CilCanonicalBlock> SliceBlocks(
         ImmutableArray<CilCanonicalBlock> blocks,
         int startProgramCounter,
-        int endProgramCounter)
+        int endProgramCounter,
+        CancellationToken cancellationToken)
     {
         var result = ImmutableArray.CreateBuilder<CilCanonicalBlock>();
         foreach (var block in blocks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var blockEnd = checked(block.StartProgramCounter + block.Length);
             var start = Math.Max(block.StartProgramCounter, startProgramCounter);
             var end = Math.Min(blockEnd, endProgramCounter);

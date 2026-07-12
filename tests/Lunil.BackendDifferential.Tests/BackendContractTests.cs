@@ -116,6 +116,22 @@ public sealed class BackendContractTests
             ]);
     }
 
+    [Theory]
+    [InlineData("return 9223372036854775807 + 1, 5 // 2, 5 % 2, ~5, 1 << 63")]
+    [InlineData("local nan=0/0; local z=-0.0; return nan==nan, z==0.0, 1<1.5, '2'+3")]
+    [InlineData("local n=0; for i=9223372036854775806,9223372036854775807 do n=n+1 end; return n")]
+    [InlineData("local x=1; local function add() x=x+1 end; for i=1,4 do add() end; return x")]
+    [InlineData("local mt={__add=function(a,b) return a.value+b.value end}; local a=setmetatable({value=2},mt); return a+a")]
+    public void AbiV2PrimitiveNumericForUpvalueAndFallbackPathsAgree(string source)
+    {
+        LuaBackendAssert.AllAgree(backend =>
+            LuaBackendSession.Create(
+                backend,
+                source,
+                installStandardLibrary: source.Contains("setmetatable", StringComparison.Ordinal))
+            .Execute());
+    }
+
     [Fact]
     public void BackendsAgreeOnUnprotectedLuaErrors()
     {

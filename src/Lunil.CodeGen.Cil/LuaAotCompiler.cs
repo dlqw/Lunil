@@ -117,7 +117,7 @@ public static class LuaAotCompiler
             Magic = LuaAotArtifactManifest.CurrentMagic,
             ArtifactSchemaVersion = LuaAotArtifactManifest.CurrentArtifactSchemaVersion,
             IrFormatVersion = module.FormatVersion,
-            RuntimeAbiVersion = LuaCodegenAbiV1.RuntimeAbiVersion,
+            RuntimeAbiVersion = LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion = LuaAotArtifactManifest.CurrentCodegenVersion,
             ModuleContentId = moduleContentId,
             ModuleChecksum = moduleChecksum,
