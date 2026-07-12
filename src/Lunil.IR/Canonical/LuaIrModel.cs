@@ -126,7 +126,7 @@ public readonly record struct LuaIrInstruction
     /// <summary>The producer's logical instruction number, or -1 for source-lowered IR.</summary>
     public int LogicalProgramCounter { get; init; }
 
-    public LuaIrInstructionEffects Effects => LuaIrInstructionFacts.GetEffects(Opcode);
+    public LuaIrInstructionEffects Effects => LuaIrInstructionFacts.GetEffects(this);
 }
 
 public readonly record struct LuaIrBasicBlock(
@@ -181,19 +181,38 @@ public sealed record LuaIrModule
 
 public static class LuaIrInstructionFacts
 {
+    private const LuaIrInstructionEffects AllocationSafePoint =
+        LuaIrInstructionEffects.MayAllocate |
+        LuaIrInstructionEffects.MayThrow |
+        LuaIrInstructionEffects.IsGcSafePoint;
+
+    private const LuaIrInstructionEffects ResumableCallSafePoint =
+        LuaIrInstructionEffects.MayAllocate |
+        LuaIrInstructionEffects.MayCall |
+        LuaIrInstructionEffects.MayYield |
+        LuaIrInstructionEffects.MayThrow |
+        LuaIrInstructionEffects.IsGcSafePoint;
+
+    public static LuaIrInstructionEffects GetEffects(LuaIrInstruction instruction) =>
+        instruction.Opcode == LuaIrOpcode.Jump && instruction.C < 0
+            ? LuaIrInstructionEffects.None
+            : GetEffects(instruction.Opcode);
+
+    /// <summary>
+    /// Returns conservative opcode-level effects. Use the instruction overload when operands
+    /// are available so a jump without a close boundary can remain effect-free.
+    /// </summary>
     public static LuaIrInstructionEffects GetEffects(LuaIrOpcode opcode) => opcode switch
     {
-        LuaIrOpcode.NewTable or LuaIrOpcode.Closure =>
-            LuaIrInstructionEffects.MayAllocate | LuaIrInstructionEffects.IsGcSafePoint,
-        LuaIrOpcode.GetTable or LuaIrOpcode.SetTable or LuaIrOpcode.SetList or
-        LuaIrOpcode.Unary or LuaIrOpcode.Binary or LuaIrOpcode.MarkToBeClosed or
-        LuaIrOpcode.Close =>
-            LuaIrInstructionEffects.MayCall | LuaIrInstructionEffects.MayThrow |
-            LuaIrInstructionEffects.IsGcSafePoint,
+        LuaIrOpcode.LoadConstant or LuaIrOpcode.NewTable or LuaIrOpcode.Closure =>
+            AllocationSafePoint,
+        LuaIrOpcode.GetTable or LuaIrOpcode.Close or LuaIrOpcode.Jump or LuaIrOpcode.Return =>
+            ResumableCallSafePoint,
+        LuaIrOpcode.SetTable or LuaIrOpcode.Unary or LuaIrOpcode.Binary or
         LuaIrOpcode.Call or LuaIrOpcode.TailCall =>
-            LuaIrInstructionEffects.MayAllocate | LuaIrInstructionEffects.MayCall |
-            LuaIrInstructionEffects.MayYield | LuaIrInstructionEffects.MayThrow |
-            LuaIrInstructionEffects.IsGcSafePoint,
+            ResumableCallSafePoint,
+        LuaIrOpcode.SetList => AllocationSafePoint,
+        LuaIrOpcode.MarkToBeClosed or
         LuaIrOpcode.NumericForPrepare or LuaIrOpcode.NumericForLoop =>
             LuaIrInstructionEffects.MayThrow,
         _ => LuaIrInstructionEffects.None,

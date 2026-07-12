@@ -297,6 +297,8 @@ suffix are automatically marked as prereleases. See the
 | Document | Description |
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
+| [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
+| [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
 | [Runtime continuation ABI](docs/runtime-continuation-abi.md) | Frozen continuation and yield boundary from `0.3.0` |
 | [PUC prototype import](docs/puc-prototype-import.md) | PUC Lua prototype-to-canonical-IR conversion |
 | [Versioning](docs/versioning.md) | SemVer, alpha/beta/RC promotion and release procedure |

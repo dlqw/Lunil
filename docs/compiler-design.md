@@ -305,13 +305,23 @@ Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protect
 
 当 `RuntimeFeature.IsDynamicCodeSupported` 为 false 时 JIT 自动禁用。机器码不持久化，缓存仅保存 IR、CIL artifact 与版本化 profile。
 
+执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
+和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结。编译代码只执行
+canonical 基本块；call、tail call、return、yield、close、unwind 与 hook 仍由共享 scheduler 负责。
+
 ### 9.3 AOT
 
-持久化 CIL 使用 `System.Reflection.Metadata`/`ManagedPEBuilder` 生成确定性 ECMA-335 PE 与 Portable PDB。稳定入口 ABI 为：
+持久化 CIL 使用 `System.Reflection.Metadata`/`ManagedPEBuilder` 生成确定性 ECMA-335 PE 与 Portable PDB。稳定入口 ABI 的概念形式为：
 
 ```csharp
-VmSignal Execute(LuaThread thread, ref LuaFrame frame);
+LuaCompiledExit Execute(
+    LuaExecutionContext context,
+    LuaThread thread,
+    LuaFrame frame);
 ```
+
+具体跨程序集调用通过版本化 Runtime code-generation facade 暴露。返回值携带 poll、call、
+tail-call、return 或 deopt 等 tagged exit；不在生成代码的 CLR 栈上保存 Lua continuation。
 
 大型 Lua 函数按基本块拆分，避免 CoreCLR JIT 与 NativeAOT 对超大方法退化。
 
