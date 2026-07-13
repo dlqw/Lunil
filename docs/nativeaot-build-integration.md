@@ -9,7 +9,7 @@ reflection、assembly discovery 或动态 PE load。
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.13" />
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.14" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"
@@ -75,6 +75,12 @@ var result = new LuaStaticAotExecutor().Execute(state, closure);
 
 `LuaStaticAotExecutor` 按 canonical module content ID 查找静态函数。未注册模块返回
 `UnsupportedInstruction` deopt，由共享 scheduler 只解释执行当前 canonical PC，不重复副作用。
+普通 CoreCLR 进程可改用 `LuaAotArtifactLoader.Load` 和 `LuaPersistedAotExecutor` 执行动态加载的
+persisted bundle。loader 会先验证 footer、manifest、ABI、module identity 与 PDB binding，再进入
+collectible `AssemblyLoadContext`；`LuaAotLoadMetrics` 分别记录 validation、assembly load、delegate
+binding、总耗时与分配。调用方负责释放 `LuaAotLoadedModule`，释放后 executor 在当前 canonical PC
+精确回退，不继续持有可调用 delegate。
+
 NativeAOT 下 `LuaJitExecutor.IsDynamicCodeAvailable` 为 `false`；动态 persisted PE loader 返回
 `AOT2010`，不会调用 `AssemblyLoadContext`。release 默认同时设置 `EnableTier2=true` 与
 `EnableLoopOsr=true`，但 dynamic-code capability gate 会在 registry entry 创建前关闭对应路径：

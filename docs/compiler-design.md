@@ -491,6 +491,15 @@ record。普通 CoreCLR 通过显式 loader 先验证 manifest、版本与资源
 `AssemblyLoadContext` 注册 function delegate；PE 尾部的 deterministic SHA-256 footer 覆盖完整映像，
 损坏、错 ABI、错 module identity 或不匹配的 PDB 只返回稳定诊断。
 
+M17 的 `LuaPersistedAotExecutor` 将已验证的 `LuaAotLoadedModule` 接回同一个
+`LuaExecutionEngine`。compiled entry 先匹配 canonical module content ID，再按 function ID 查找
+delegate；module 不匹配、function 缺失或 collectible artifact 已释放时，从当前 canonical PC 返回
+`UnsupportedInstruction` deopt，由 reference executor 精确继续。调用方拥有 loaded module 的生命周期，
+executor 只记录 compiled invocation 与 fallback 统计。loader 同时分别记录 validation、assembly
+load、delegate binding、total duration 与 current-thread allocation。六 RID evidence 对同一 workload
+matrix 验证稳态吞吐、分配斜率、加载 p95、artifact 体积和零 fallback；完整决策见
+[ADR 0010](adr/0010-persisted-cil-aot-performance-productionization.md)。
+
 .NET NativeAOT 通过 `Lunil.Build` 的 MSBuild task 在 `ResolveAssemblyReferences`/
 `CoreCompile` 前完成 source/chunk 验证、canonical IR lowering 和 persisted CIL emission。
 generated PE 进入宿主编译引用；`.g.cs` registry 通过 `ModuleInitializer` 和直接 method group
