@@ -1,5 +1,6 @@
 using System.Text;
 using Lunil.Runtime.Execution;
+using Lunil.Workspace;
 
 namespace Lunil.Hosting.Tests;
 
@@ -112,5 +113,22 @@ public sealed class LuaHostTests
         Assert.Single(result.Compilation.Annotations.Annotations);
         Assert.Single(result.Compilation.Analysis.Functions);
         Assert.NotEmpty(result.Compilation.Analysis.Expressions);
+    }
+
+    [Fact]
+    public async Task HostPublishesReusableWorkspaceAnalysisBoundary()
+    {
+        using var host = new LuaHost();
+
+        var result = await host.AnalyzeWorkspaceAsync([
+            LuaWorkspaceDocument.FromUtf8(
+                "app",
+                "local dep = require('dep')\nreturn dep.value + 1"),
+            LuaWorkspaceDocument.FromUtf8("dep", "return { value = 41 }"),
+        ]);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("integer", result.GetModule("app")!.ExportedType.DisplayName);
+        Assert.Equal(2, result.Graph.Nodes.Length);
     }
 }

@@ -12,6 +12,7 @@ internal sealed partial class AnalysisEngine
 {
     private readonly LuaSemanticModel _semantics;
     private readonly LuaAnnotationDocument _annotations;
+    private readonly LuaAnalysisEnvironment _environment;
     private readonly AnnotationTypeEnvironment _types;
     private readonly LuaTypeRelations _relations;
     private readonly ImmutableArray<LuaControlFlowGraph> _graphs;
@@ -36,12 +37,14 @@ internal sealed partial class AnalysisEngine
     public AnalysisEngine(
         LuaSemanticModel semantics,
         LuaAnnotationDocument annotations,
+        LuaAnalysisEnvironment environment,
         AnnotationTypeEnvironment types,
         ImmutableArray<LuaControlFlowGraph> graphs,
         LuaAnalysisContext context)
     {
         _semantics = semantics;
         _annotations = annotations;
+        _environment = environment;
         _types = types;
         _relations = types.Relations;
         _graphs = graphs;

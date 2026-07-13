@@ -12,6 +12,7 @@ using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
+using Lunil.Workspace;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 
@@ -145,11 +146,18 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
             return true;
         }
 
+        var workspaceCompilations = AnalyzeWorkspace(optionsBySource);
+        if (Log.HasLoggedErrors)
+        {
+            return false;
+        }
+
         var compiledModules = new List<CompiledModule>(optionsBySource.Count);
         var artifacts = new List<ITaskItem>();
         foreach (var options in optionsBySource)
         {
-            var module = CompileModule(options, outputDirectory);
+            workspaceCompilations.TryGetValue(options.ModuleName, out var workspaceCompilation);
+            var module = CompileModule(options, outputDirectory, workspaceCompilation);
             if (module is not null)
             {
                 compiledModules.Add(module);
@@ -183,7 +191,8 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
 
     private CompiledModule? CompileModule(
         LunilCompileItemOptions options,
-        string outputDirectory)
+        string outputDirectory,
+        LuaCompilationResult? workspaceCompilation)
     {
         var sourceBytes = File.ReadAllBytes(options.SourcePath);
         var sourceSha256 = Convert.ToHexStringLower(SHA256.HashData(sourceBytes));
@@ -238,10 +247,14 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
         else
         {
             var source = new SourceText(sourceBytes);
-            var frontendCompilation = new LuaCompiler().Compile(source, "@" + logicalName);
-            foreach (var diagnostic in frontendCompilation.Diagnostics)
+            var frontendCompilation = workspaceCompilation ??
+                new LuaCompiler().Compile(source, "@" + logicalName);
+            if (workspaceCompilation is null)
             {
-                LogFrontendDiagnostic(options.SourcePath, source, diagnostic.Diagnostic);
+                foreach (var diagnostic in frontendCompilation.Diagnostics)
+                {
+                    LogFrontendDiagnostic(options.SourcePath, source, diagnostic.Diagnostic);
+                }
             }
 
             if (!frontendCompilation.Succeeded ||
@@ -354,6 +367,82 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
                 artifact.Manifest,
                 artifact.PeImage,
                 artifact.PortablePdbImage));
+    }
+
+    private Dictionary<string, LuaCompilationResult> AnalyzeWorkspace(
+        IReadOnlyCollection<LunilCompileItemOptions> optionsBySource)
+    {
+        var documents = new List<LuaWorkspaceDocument>();
+        var sources = new Dictionary<string, (LunilCompileItemOptions Options, SourceText Source)>(
+            StringComparer.Ordinal);
+        foreach (var options in optionsBySource.OrderBy(static options =>
+                     options.ModuleName,
+                     StringComparer.Ordinal))
+        {
+            var bytes = File.ReadAllBytes(options.SourcePath);
+            var inputKind = options.InputKind == LunilBuildInputKind.Auto
+                ? bytes.AsSpan().StartsWith(new byte[] { 0x1b, (byte)'L', (byte)'u', (byte)'a' })
+                    ? LunilBuildInputKind.BinaryChunk
+                    : LunilBuildInputKind.Source
+                : options.InputKind;
+            if (inputKind != LunilBuildInputKind.Source)
+            {
+                continue;
+            }
+
+            var source = new SourceText(bytes);
+            var logicalName = "@" + options.ModuleName.Replace('.', '/') + ".lua";
+            documents.Add(new LuaWorkspaceDocument(
+                new LuaModuleIdentity(options.ModuleName),
+                new LuaSourceDocument(source, logicalName)));
+            sources.Add(options.ModuleName, (options, source));
+        }
+
+        if (documents.Count == 0)
+        {
+            return new Dictionary<string, LuaCompilationResult>(StringComparer.Ordinal);
+        }
+
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            MaximumModuleCount = Math.Max(documents.Count, 1),
+            MaximumDependencyCount = Math.Max(documents.Count * 64, 64),
+            MaximumSourceBytes = Math.Max(
+                documents.Sum(static document => (long)document.Source.Text.Length),
+                1),
+            MaximumParallelism = Math.Max(1, Math.Min(Environment.ProcessorCount, documents.Count)),
+            UnresolvedModuleSeverity = DiagnosticSeverity.Warning,
+            DynamicRequireSeverity = DiagnosticSeverity.Warning,
+        });
+        var result = workspace.AnalyzeAsync(documents).GetAwaiter().GetResult();
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            if (diagnostic.Module is not null &&
+                sources.TryGetValue(diagnostic.Module.Name, out var source))
+            {
+                LogFrontendDiagnostic(
+                    source.Options.SourcePath,
+                    source.Source,
+                    new Diagnostic(
+                        diagnostic.Code,
+                        diagnostic.Severity,
+                        diagnostic.Span,
+                        diagnostic.Message));
+            }
+            else if (diagnostic.Severity == DiagnosticSeverity.Error)
+            {
+                LogBuildError(diagnostic.Code, null, 0, 0, diagnostic.Message);
+            }
+            else if (diagnostic.Severity == DiagnosticSeverity.Warning)
+            {
+                Log.LogWarning(diagnostic.Code, diagnostic.Message);
+            }
+        }
+
+        return result.Modules.ToDictionary(
+            static module => module.Identity.Name,
+            static module => module.Compilation,
+            StringComparer.Ordinal);
     }
 
     private CompiledModule MaterializeModule(

@@ -20,6 +20,7 @@
                       AdditionalProperties="PublishAot=false;PublishTrimmed=false;EnableTrimAnalyzer=false;EnableAotAnalyzer=false" />
     <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Compiler\Lunil.Compiler.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Workspace\Lunil.Workspace.csproj" />
   </ItemGroup>
 
   <ItemGroup>

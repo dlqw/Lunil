@@ -76,6 +76,26 @@ public sealed class LunilCompileTaskTests
     }
 
     [Fact]
+    public void SourceModulesArePreflightedThroughTheWorkspaceGraph()
+    {
+        using var fixture = BuildFixture.Create(
+            "local dep = require('dep')\nreturn dep.value + 1");
+        var dependencyPath = Path.Combine(fixture.Root, "dep.lua");
+        File.WriteAllText(dependencyPath, "return { value = 'text' }");
+        var app = new TaskItem(fixture.SourcePath);
+        app.SetMetadata("ModuleName", "app");
+        var dependency = new TaskItem(dependencyPath);
+        dependency.SetMetadata("ModuleName", "dep");
+        var engine = new RecordingBuildEngine();
+        var task = fixture.CreateTask(engine, app, dependency);
+
+        Assert.True(task.Execute());
+        Assert.Empty(engine.Errors);
+        Assert.Contains(engine.Warnings, static warning => warning.Code == "LUA6003");
+        Assert.Equal(2, task.GeneratedReferences.Length);
+    }
+
+    [Fact]
     public void RejectsMalformedBinaryChunksWithAStableCode()
     {
         using var fixture = BuildFixture.CreateBytes([0x1b, (byte)'L', (byte)'u', (byte)'a']);
@@ -356,6 +376,8 @@ public sealed class LunilCompileTaskTests
 
         public List<BuildMessageEventArgs> Messages { get; } = [];
 
+        public List<BuildWarningEventArgs> Warnings { get; } = [];
+
         public bool ContinueOnError => false;
 
         public int LineNumberOfTaskNode => 0;
@@ -366,9 +388,7 @@ public sealed class LunilCompileTaskTests
 
         public void LogErrorEvent(BuildErrorEventArgs e) => Errors.Add(e);
 
-        public void LogWarningEvent(BuildWarningEventArgs e)
-        {
-        }
+        public void LogWarningEvent(BuildWarningEventArgs e) => Warnings.Add(e);
 
         public void LogMessageEvent(BuildMessageEventArgs e) => Messages.Add(e);
 

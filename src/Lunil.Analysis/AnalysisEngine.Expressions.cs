@@ -423,7 +423,7 @@ internal sealed partial class AnalysisEngine
 
     private LuaTypePack InferCall(LuaSyntaxNode expression, FlowState state)
     {
-        if (TryGetCalledIdentifier(expression, out var calledName))
+        if (TryGetCalledGlobalIdentifier(expression, out var calledName))
         {
             var special = InferSpecialCall(expression, calledName, state);
             if (special is not null)
@@ -520,9 +520,15 @@ internal sealed partial class AnalysisEngine
 
                 return new LuaTypePack([LuaTypes.Never]);
             case "require":
-                foreach (var argument in arguments)
+                var argumentTypes = arguments
+                    .Select(argument => InferExpression(argument, state))
+                    .ToArray();
+                if (argumentTypes.FirstOrDefault() is LuaStringLiteralType moduleName &&
+                    _environment.ModuleTypes.TryGetValue(
+                        DecodeLiteral(moduleName),
+                        out var moduleType))
                 {
-                    _ = InferExpression(argument, state);
+                    return new LuaTypePack([moduleType]);
                 }
 
                 return new LuaTypePack([LuaTypes.Any]);

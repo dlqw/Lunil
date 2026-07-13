@@ -1,4 +1,5 @@
 using System.Text;
+using System.Collections.Immutable;
 using Lunil.Analysis;
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
@@ -156,5 +157,31 @@ public sealed class LuaCompilerTests
         Assert.Contains(result.Diagnostics, static diagnostic =>
             diagnostic.Phase == LuaCompilationPhase.Analysis &&
             diagnostic.Code == "LUA6003");
+    }
+
+    [Fact]
+    public void CompileAcceptsResolvedModuleTypesWithoutChangingRuntimeLowering()
+    {
+        var environment = new LuaAnalysisEnvironment
+        {
+            ModuleTypes = ImmutableDictionary<string, LuaType>.Empty
+                .WithComparers(StringComparer.Ordinal)
+                .Add(
+                    "dep",
+                    new LuaStructuralTableType([
+                        new LuaTableField("value", null, LuaTypes.Integer, false),
+                    ])),
+        };
+
+        var result = new LuaCompiler().Compile(
+            LuaSourceDocument.FromUtf8(
+                "local dep = require('dep')\nreturn dep.value + 1",
+                "=workspace-module"),
+            environment);
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic =>
+            diagnostic.Code is "LUA6003" or "LUA6007");
+        Assert.NotNull(result.Module);
     }
 }

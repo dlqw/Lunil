@@ -51,9 +51,16 @@ public sealed class LuaCompiler
 
     public LuaCompilationResult Compile(
         LuaSourceDocument source,
+        CancellationToken cancellationToken = default) =>
+        Compile(source, LuaAnalysisEnvironment.Empty, cancellationToken);
+
+    public LuaCompilationResult Compile(
+        LuaSourceDocument source,
+        LuaAnalysisEnvironment analysisEnvironment,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(analysisEnvironment);
         cancellationToken.ThrowIfCancellationRequested();
 
         var lexing = LuaLexer.Lex(source.Text, Options.Lexer);
@@ -71,6 +78,7 @@ public sealed class LuaCompiler
         var analysis = LuaTypeAnalyzer.Analyze(
             semantics,
             annotations,
+            analysisEnvironment,
             Options.Analysis,
             cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();

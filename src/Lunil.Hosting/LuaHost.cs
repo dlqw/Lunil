@@ -5,6 +5,7 @@ using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.StandardLibrary;
+using Lunil.Workspace;
 
 namespace Lunil.Hosting;
 
@@ -12,7 +13,7 @@ namespace Lunil.Hosting;
 /// Reusable embedding boundary that composes compilation, runtime ownership, capabilities, and
 /// reference execution without requiring consumers to assemble individual compiler layers.
 /// </summary>
-public sealed class LuaHost
+public sealed class LuaHost : IDisposable
 {
     private readonly LuaExecutor _executor;
 
@@ -22,12 +23,16 @@ public sealed class LuaHost
         ArgumentNullException.ThrowIfNull(Options.Compiler);
         ArgumentNullException.ThrowIfNull(Options.State);
         ArgumentNullException.ThrowIfNull(Options.Execution);
+        ArgumentNullException.ThrowIfNull(Options.Workspace);
         if (!Enum.IsDefined(Options.Profile))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The host profile is invalid.");
         }
 
         Compiler = new LuaCompiler(Options.Compiler);
+        Workspace = new LuaWorkspace(
+            Options.Workspace with { Compiler = Options.Compiler },
+            Options.ModuleResolver);
         StateOptions = ResolveStateOptions(Options);
         State = new LuaState(StateOptions);
         _executor = new LuaExecutor(new LuaExecutorOptions { Interpreter = Options.Execution });
@@ -43,6 +48,8 @@ public sealed class LuaHost
     public LuaHostOptions Options { get; }
 
     public LuaCompiler Compiler { get; }
+
+    public LuaWorkspace Workspace { get; }
 
     public LuaStateOptions StateOptions { get; }
 
@@ -113,6 +120,13 @@ public sealed class LuaHost
         ReadOnlySpan<LuaValue> arguments = default,
         Lua54ChunkReaderOptions? readerOptions = null) =>
         _executor.ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions);
+
+    public Task<LuaWorkspaceResult> AnalyzeWorkspaceAsync(
+        IEnumerable<LuaWorkspaceDocument> roots,
+        CancellationToken cancellationToken = default) =>
+        Workspace.AnalyzeAsync(roots, cancellationToken);
+
+    public void Dispose() => Workspace.Dispose();
 
     private static LuaStateOptions ResolveStateOptions(LuaHostOptions options)
     {
