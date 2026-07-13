@@ -149,8 +149,9 @@ diagnostic、阶段间 cancellation 检查和不可变 compilation result。`Lun
 同一 compilation result，不绕过该边界直接向宿主发布内部 mutable state。
 
 `0.7.0-alpha.2` 新增 `Lunil.EmmyLua` 公共注解前端并接入 `LuaCompiler`。注解结果与 Lua
-syntax/semantic result 一同发布，但 canonical IR 和 runtime 仍完全擦除注解。类型、流和模块分析
-属于后续 `0.7.0-alpha.N` 工作；`alpha.2` 不以语法 AST 冒充已完成的类型语义。
+syntax/semantic result 一同发布，但 canonical IR 和 runtime 仍完全擦除注解。`0.7.0-alpha.3`
+新增 `Lunil.Analysis`，在 binding 后、lowering 前发布独立 immutable type/flow result；静态诊断默认
+为 warning，分析宿主可提升为 error 以阻止 module 发布。分析结果同样不进入 canonical IR/runtime。
 
 默认方言为 LuaLS。旧 EmmyLua IDE 方言通过 `--enable-legacy-emmylua` 开启；也提供显式 `--emmy-dialect=luals` 配置项。组合模式中：
 
@@ -175,6 +176,15 @@ vararg/function/generic/structural-table type syntax。所有 token、annotation
 类型系统至少包含 `any`、`unknown`、`never`、nil、literal、union、intersection、class、alias、enum、结构化 table、数组、map、function、overload、generic、vararg、tuple/type pack、nullable、optional field、self/colon call、operator 和 callable 类型。
 
 分析流水线为 Lua binder、模块解析、约束生成、控制流图、类型收窄、跨模块固定点、诊断与 suppression。必须识别 `x ~= nil`、`type(x) == "string"`、`assert(x)`、短路表达式、判别字段与 `---@cast` 等收窄形式。循环递归类型、循环模块依赖和过深泛型实例化使用预算与稳定的 widening 规则收敛。
+
+当前 `Lunil.Analysis` 单文档阶段已实现 semantic type/type-pack、class/alias/enum declaration、
+structural table、array/map、function/overload/callable、generic substitution、operator lookup、structural
+assignability、expression/symbol inference、call/assignment/return constraint，以及每函数 CFG。流状态覆盖
+nil/type/assert/判别字段/短路收窄、definite assignment、unreachable、numeric/generic-for、return-pack
+inference 和 `---@cast`；diagnostic suppression 同时支持 options 与 source disable/enable/next-line。
+type/constraint/CFG/flow-iteration/generic-instantiation/diagnostic 均有全局预算，递归 alias 与不收敛 loop
+使用稳定 unknown/union widening。模块解析、循环 module fixed point 与内容寻址 invalidation 属于下一阶段
+workspace，不在单文档 analyzer 内维护隐藏全局状态。
 
 注解在运行时擦除。任何利用类型信息的专门化都必须在入口或使用点检查实际 Lua tag、metatable/version 与必要的 shape；失败后进入通用路径或 deopt。
 
@@ -602,6 +612,7 @@ src/
   Lunil.Core/
   Lunil.Syntax/
   Lunil.EmmyLua/
+  Lunil.Analysis/
   Lunil.Semantics/
   Lunil.IR/
   Lunil.Runtime.Abstractions/
@@ -616,6 +627,7 @@ src/
 tests/
   Lunil.Core.Tests/
   Lunil.Syntax.Tests/
+  Lunil.Analysis.Tests/
   Lunil.Semantics.Tests/
   Lunil.Runtime.Tests/
   Lunil.StandardLibrary.Tests/
@@ -629,7 +641,8 @@ tests/
 Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Runtime 不反向依赖 Compiler；标准库通过 Runtime Abstractions 获取宿主能力。跨层数据结构放在最窄的共同抽象项目，禁止形成循环引用。
 
 `0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`；`0.7.0-alpha.2` 已落地
-`Lunil.EmmyLua`。Compiler 依赖 Core/Syntax/EmmyLua/Semantics/IR；Hosting 依赖
+`Lunil.EmmyLua`；`0.7.0-alpha.3` 已落地 `Lunil.Analysis`。Analysis 依赖
+Core/Syntax/EmmyLua/Semantics；Compiler 依赖 Analysis/Core/Syntax/EmmyLua/Semantics/IR；Hosting 依赖
 Compiler/IR/Runtime/StandardLibrary；Build 复用 Compiler。
 `Lunil.Runtime.Abstractions` 与 `Lunil.Cli` 仍在后续 Alpha 中按路线图拆分，
 在拆分前不得制造循环依赖，也不得为满足目录名称而提交无行为的空项目。

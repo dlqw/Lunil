@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Analysis;
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
@@ -123,5 +124,37 @@ public sealed class LuaCompilerTests
         Assert.Contains(result.Diagnostics, static diagnostic =>
             diagnostic.Phase == LuaCompilationPhase.Annotation &&
             diagnostic.Code == "LUA5002");
+    }
+
+    [Fact]
+    public void CompilePublishesTypeAndControlFlowAnalysis()
+    {
+        var result = new LuaCompiler().CompileUtf8(
+            "---@type string|nil\nlocal value = nil\nif value then return value end");
+
+        Assert.True(result.Succeeded);
+        Assert.Contains(result.Analysis.Symbols, static item => item.Symbol.Name == "value");
+        Assert.Single(result.Analysis.Functions);
+        Assert.NotEmpty(result.Analysis.Functions[0].ControlFlowGraph.Blocks);
+    }
+
+    [Fact]
+    public void ConfiguredAnalysisErrorsPreventModulePublication()
+    {
+        var compiler = new LuaCompiler(new LuaCompilerOptions
+        {
+            Analysis = new LuaAnalysisOptions
+            {
+                DiagnosticSeverity = DiagnosticSeverity.Error,
+            },
+        });
+
+        var result = compiler.CompileUtf8("---@type string\nlocal value = 42\nreturn value");
+
+        Assert.False(result.Succeeded);
+        Assert.Null(result.Module);
+        Assert.Contains(result.Diagnostics, static diagnostic =>
+            diagnostic.Phase == LuaCompilationPhase.Analysis &&
+            diagnostic.Code == "LUA6003");
     }
 }

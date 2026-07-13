@@ -110,5 +110,7 @@ public sealed class LuaHostTests
         Assert.True(result.Succeeded);
         Assert.Equal(42, Assert.Single(result.Execution!.Values).AsInteger());
         Assert.Single(result.Compilation.Annotations.Annotations);
+        Assert.Single(result.Compilation.Analysis.Functions);
+        Assert.NotEmpty(result.Compilation.Analysis.Expressions);
     }
 }

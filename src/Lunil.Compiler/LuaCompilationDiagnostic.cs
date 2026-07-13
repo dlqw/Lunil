@@ -9,6 +9,7 @@ public enum LuaCompilationPhase : byte
     Annotation,
     Parsing,
     Binding,
+    Analysis,
     Lowering,
     Verification,
 }

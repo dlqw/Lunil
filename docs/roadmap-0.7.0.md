@@ -45,18 +45,28 @@ annotation, workspace, CLI, and compatibility work will refine during alpha.
 Annotation syntax remains an Alpha API. Semantic type/flow interpretation follows in later
 milestones and must not treat parsed annotations as unchecked runtime truth.
 
-### Later Alpha: type and flow analysis
+### Alpha 3: type and flow analysis
 
-- `any`, `unknown`, `never`, literal, union, intersection, class, alias, enum,
-  structural table, array, map, function, overload, generic, vararg, tuple and
-  type-pack models;
-- constraint generation, CFG construction, nil/type/assert/discriminant
-  narrowing, definite assignment, unreachable-code analysis, and return-pack
-  inference;
-- deterministic budgets and widening for recursive types, module cycles, and
-  deep generic instantiation.
+`0.7.0-alpha.3` delivers:
 
-### Workspace and incremental module analysis
+- the public `Lunil.Analysis` package with immutable `any`, `unknown`, `never`, literal,
+  union, intersection, class, alias, enum, structural table, array, map, function,
+  overload, callable, generic, vararg, tuple, and type-pack models;
+- annotation declaration resolution plus structural assignability, generic substitution,
+  operator/callable lookup, expression/symbol inference, call/assignment/return constraints,
+  and stable `LUA6xxx` diagnostics;
+- per-function CFGs, nil/type/assert/discriminant and short-circuit narrowing, definite
+  assignment, unreachable-code analysis, return-pack inference, and generic-for inference;
+- cancellation, source/global diagnostic suppression, deterministic type/constraint/CFG/
+  iteration/generic budgets, recursive-type and loop widening, and malformed annotation-byte
+  fuzz coverage;
+- immutable analysis results integrated into `LuaCompiler` before lowering while remaining
+  erased from canonical IR and runtime behavior.
+
+Module-cycle fixed points and content-addressed invalidation remain workspace responsibilities
+for the next Alpha rather than hidden global state inside the single-document analyzer.
+
+### Later Alpha: workspace and incremental module analysis
 
 - stable source and module identities;
 - module resolution and a dependency graph with cyclic fixed points;
