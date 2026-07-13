@@ -6,6 +6,7 @@ namespace Lunil.Compiler;
 public enum LuaCompilationPhase : byte
 {
     Lexing,
+    Annotation,
     Parsing,
     Binding,
     Lowering,

@@ -38,7 +38,7 @@ public static class Program
             }
         }
 
-        var dynamicValue = Execute(executor, Compile("return 21 * 2"));
+        var dynamicValue = Execute(executor, Compile("---@type integer\nreturn 21 * 2"));
         if (dynamicValue != 42)
         {
             Console.Error.WriteLine($"Unexpected dynamic fallback result: {dynamicValue}.");

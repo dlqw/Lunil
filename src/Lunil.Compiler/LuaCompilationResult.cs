@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Lunil.Core.Diagnostics;
+using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
 using Lunil.Semantics.Binding;
 using Lunil.Syntax.Parsing;
@@ -10,6 +11,7 @@ namespace Lunil.Compiler;
 public sealed record LuaCompilationResult(
     LuaSourceDocument Source,
     LuaParseResult Syntax,
+    LuaAnnotationDocument Annotations,
     LuaSemanticModel SemanticModel,
     LuaIrModule? Module,
     ImmutableArray<LuaCompilationDiagnostic> Diagnostics)

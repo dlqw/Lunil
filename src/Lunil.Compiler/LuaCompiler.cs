@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
+using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
 using Lunil.Semantics.Binding;
 using Lunil.Semantics.Lowering;
@@ -20,6 +21,7 @@ public sealed class LuaCompiler
     {
         Options = options ?? LuaCompilerOptions.Default;
         ArgumentNullException.ThrowIfNull(Options.Lexer);
+        ArgumentNullException.ThrowIfNull(Options.Annotations);
         ArgumentNullException.ThrowIfNull(Options.Parser);
         ArgumentNullException.ThrowIfNull(Options.Binder);
         ArgumentNullException.ThrowIfNull(Options.Verifier);
@@ -55,6 +57,9 @@ public sealed class LuaCompiler
         var lexing = LuaLexer.Lex(source.Text, Options.Lexer);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var annotations = LuaAnnotationParser.Parse(lexing, Options.Annotations);
+        cancellationToken.ThrowIfCancellationRequested();
+
         var syntax = LuaParser.Parse(lexing, Options.Parser);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -69,6 +74,11 @@ public sealed class LuaCompiler
         AddDiagnostics(
             lexing.Diagnostics,
             LuaCompilationPhase.Lexing,
+            observedDiagnostics,
+            diagnostics);
+        AddDiagnostics(
+            annotations.Diagnostics,
+            LuaCompilationPhase.Annotation,
             observedDiagnostics,
             diagnostics);
         AddDiagnostics(
@@ -124,6 +134,7 @@ public sealed class LuaCompiler
         return new LuaCompilationResult(
             source,
             syntax,
+            annotations,
             semantics,
             module,
             diagnostics.ToImmutable());

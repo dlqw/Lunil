@@ -1,3 +1,4 @@
+using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
 using Lunil.Semantics.Binding;
 using Lunil.Syntax.Lexing;
@@ -11,6 +12,8 @@ public sealed record LuaCompilerOptions
     public static LuaCompilerOptions Default { get; } = new();
 
     public LuaLexerOptions Lexer { get; init; } = LuaLexerOptions.Default;
+
+    public LuaAnnotationOptions Annotations { get; init; } = LuaAnnotationOptions.Default;
 
     public LuaParserOptions Parser { get; init; } = LuaParserOptions.Default;
 

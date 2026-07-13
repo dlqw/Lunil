@@ -148,8 +148,9 @@ diagnostic、阶段间 cancellation 检查和不可变 compilation result。`Lun
 复用该入口，不能继续维护第二套 parse/bind/lower 拼装逻辑。后续注解、类型、流与模块分析均接入
 同一 compilation result，不绕过该边界直接向宿主发布内部 mutable state。
 
-注解与类型分析仍属于后续 `0.7.0-alpha.N` 工作；`alpha.1` 不以空 annotation result
-或占位诊断宣称支持。
+`0.7.0-alpha.2` 新增 `Lunil.EmmyLua` 公共注解前端并接入 `LuaCompiler`。注解结果与 Lua
+syntax/semantic result 一同发布，但 canonical IR 和 runtime 仍完全擦除注解。类型、流和模块分析
+属于后续 `0.7.0-alpha.N` 工作；`alpha.2` 不以语法 AST 冒充已完成的类型语义。
 
 默认方言为 LuaLS。旧 EmmyLua IDE 方言通过 `--enable-legacy-emmylua` 开启；也提供显式 `--emmy-dialect=luals` 配置项。组合模式中：
 
@@ -164,6 +165,12 @@ diagnostic、阶段间 cancellation 检查和不可变 compilation result。`Lun
 - `LuaLsAnnotationParser`；
 - `LegacyEmmyAnnotationParser`；
 - `AnnotationCompatibilityResolver`。
+
+当前实现覆盖 class/field/alias/enum/type/param/return/generic/overload/vararg/cast/operator/
+diagnostic/marker/unknown directive，以及 named/literal/union/intersection/nullable/array/tuple/
+vararg/function/generic/structural-table type syntax。所有 token、annotation、type depth 与 diagnostic
+均有独立预算；未知标签及原始 payload 保留。默认 annotation syntax diagnostic 为 warning，分析宿主
+可显式提升为 error；source suppression 支持 disable/enable/disable-next-line。
 
 类型系统至少包含 `any`、`unknown`、`never`、nil、literal、union、intersection、class、alias、enum、结构化 table、数组、map、function、overload、generic、vararg、tuple/type pack、nullable、optional field、self/colon call、operator 和 callable 类型。
 
@@ -621,9 +628,10 @@ tests/
 
 Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Runtime 不反向依赖 Compiler；标准库通过 Runtime Abstractions 获取宿主能力。跨层数据结构放在最窄的共同抽象项目，禁止形成循环引用。
 
-`0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`：Compiler 依赖
-Core/Syntax/Semantics/IR；Hosting 依赖 Compiler/IR/Runtime/StandardLibrary；Build 复用 Compiler。
-`Lunil.EmmyLua`、`Lunil.Runtime.Abstractions` 与 `Lunil.Cli` 仍在后续 Alpha 中按路线图拆分，
+`0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`；`0.7.0-alpha.2` 已落地
+`Lunil.EmmyLua`。Compiler 依赖 Core/Syntax/EmmyLua/Semantics/IR；Hosting 依赖
+Compiler/IR/Runtime/StandardLibrary；Build 复用 Compiler。
+`Lunil.Runtime.Abstractions` 与 `Lunil.Cli` 仍在后续 Alpha 中按路线图拆分，
 在拆分前不得制造循环依赖，也不得为满足目录名称而提交无行为的空项目。
 
 ## 14. 验证策略
