@@ -482,3 +482,51 @@ slope, and 100% liveness-cache hits. Warm negative medians were 1.019x, 1.000x, 
 startup medians were 0.996x, 1.016x, 0.977x, and 0.988x. Automatic negative acceptance, guard
 failures, and managed installations remained zero. See
 [ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md).
+
+## M16 Loop OSR automatic default rollout
+
+The strengthened M15 contract was repeated by protected CI run `29244862401` on win-x64, win-arm64,
+linux-x64, linux-arm64, osx-x64, and osx-arm64. Every RID used six independent processes with an
+exact 3:3 Loop OSR on/off order balance, nine cold samples, and 30 warm operations per throughput row.
+The aggregate reported `AllRidsQualify=true`:
+
+| Six-RID aggregate metric | M16 authorization result |
+|---|---:|
+| Minimum arithmetic bootstrap 95% lower bound | **4.349x** |
+| Minimum OSR-on/disabled bootstrap 95% lower bound | **63.933x** |
+| Maximum specialized-emitter preparation p95 | **1.239 ms** |
+| Maximum Loop OSR compilation p95 | **6.399 ms** |
+| Maximum compilation allocation p95 | 44,824 B |
+| Maximum absolute allocation slope | **0 B/iteration** |
+| Minimum liveness-cache hit rate | **100%** |
+| Minimum warm operations per process | **30** |
+| All RIDs balanced pair order | **yes** |
+| All RIDs use `GuardedExactNumericCil` | **yes** |
+| All RIDs accept the automatic exact-numeric candidate | **yes** |
+| All RIDs reject negative automatic OSR | **yes** |
+| All RIDs avoid negative guard failures | **yes** |
+| All RIDs avoid managed installations | **yes** |
+| All RIDs pass negative startup and throughput gates | **yes** |
+
+This closes the prerequisite recorded by ADR 0008. M16 changes
+`LuaJitExecutorOptions.EnableLoopOsr` to `true` by default while retaining the same automatic
+eligibility, runtime qualification, code-kind validation, preparation, compilation, and negative
+workload gates. `EnableLoopOsrManagedFallback=false` remains unchanged, and
+`EnableLoopOsr=false` remains a complete opt-out.
+
+The `loop_osr` evidence row now uses the actual release default. Its paired control changes only
+`EnableLoopOsr=false`, while standalone Tier 1 and Tier 2 measurements explicitly disable Loop OSR
+so each tier keeps an independent performance baseline. NativeAOT and other dynamic-code-unavailable
+runtimes continue to close the capability gate before analysis, preparation, or registry entry
+creation. The decision is recorded in
+[ADR 0009](adr/0009-loop-osr-auto-default-rollout.md).
+
+The rollout branch repeated the same contract locally at
+`artifacts/backend-performance/win-x64/20260713-113245`. Six balanced Release processes produced a
+7.941x arithmetic median with bootstrap interval `[6.242x, 11.615x]`, and a 118.505x median over the
+explicit disabled pair with interval `[93.004x, 158.071x]`. Preparation p95 was 0.545 ms,
+compilation p95 was 3.099 ms, compilation allocation p95 was 45,092 bytes, allocation slope was zero,
+and liveness-cache hit rate was 100%. Negative warm medians were 0.984x, 1.021x, 0.981x, and 1.054x;
+startup medians were 0.966x, 1.029x, 0.983x, and 0.982x. All automatic negative acceptance, guard
+failure, and managed-installation counts remained zero. The compact benchmark now names this path
+`jit_default_loop_osr_candidate` and consumes the same release default.

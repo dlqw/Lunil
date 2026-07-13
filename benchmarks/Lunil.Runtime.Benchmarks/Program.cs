@@ -110,7 +110,7 @@ if (!backendOnly)
         Scaled(iterations),
         CreateWarmRunner(LoopOsrCandidate));
     Run(
-        "jit_experimental_loop_osr_candidate",
+        "jit_default_loop_osr_candidate",
         Scaled(iterations),
         CreateLoopOsrRunner(LoopOsrCandidate));
 
@@ -349,6 +349,7 @@ foreach (var workload in backendWorkloads.Where(item =>
                     BackedgeThreshold = 1,
                     SynchronousCompilation = true,
                     EnableTier2 = false,
+                    EnableLoopOsr = false,
                 },
                 workload.InstallStandardLibrary));
     }
@@ -371,6 +372,7 @@ foreach (var workload in backendWorkloads.Where(item =>
                     SynchronousCompilation = true,
                     Tier2InvocationThreshold = 1,
                     Tier2BackedgeThreshold = 1,
+                    EnableLoopOsr = false,
                 },
                 workload.InstallStandardLibrary));
     }
@@ -391,18 +393,26 @@ foreach (var workload in backendWorkloads.Where(item =>
             backendEvidenceModule,
             backendEvidenceOperations,
             coldSamples,
-            module => BackendEvidenceRunner.CreateJit(
-                module,
-                LuaJitExecutorOptions.Default with
+            module =>
+            {
+                var options = LuaJitExecutorOptions.Default with
                 {
                     Policy = LuaJitPolicy.Auto,
                     FunctionEntryThreshold = int.MaxValue,
                     BackedgeThreshold = int.MaxValue,
                     SynchronousCompilation = true,
                     EnableTier2 = false,
-                    EnableLoopOsr = loopOsr.Enabled,
-                },
-                workload.InstallStandardLibrary));
+                };
+                if (!loopOsr.Enabled)
+                {
+                    options = options with { EnableLoopOsr = false };
+                }
+
+                return BackendEvidenceRunner.CreateJit(
+                    module,
+                    options,
+                    workload.InstallStandardLibrary);
+            });
     }
 
     var eligibility = LuaJitExecutor.EvaluateFunctionEligibility(
@@ -475,7 +485,6 @@ static Action<int> CreateLoopOsrRunner(string source)
         FunctionEntryThreshold = int.MaxValue,
         BackedgeThreshold = int.MaxValue,
         EnableTier2 = false,
-        EnableLoopOsr = true,
         LoopOsrBackedgeThreshold = 1,
         SynchronousCompilation = true,
     });

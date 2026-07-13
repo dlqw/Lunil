@@ -171,10 +171,10 @@ public sealed record LuaJitExecutorOptions
     public int MaximumTier2GuardFailures { get; init; } = 16;
 
     /// <summary>
-    /// Enables loop on-stack replacement. It remains disabled by default until the strengthened
-    /// startup, negative-workload, and exact-numeric qualification gates pass on every release RID.
+    /// Enables qualified loop on-stack replacement. The release default admits only verified loops
+    /// that pass exact-numeric runtime qualification and produce guarded specialized CIL.
     /// </summary>
-    public bool EnableLoopOsr { get; init; }
+    public bool EnableLoopOsr { get; init; } = true;
 
     /// <summary>
     /// Allows natural loops that cannot produce guarded exact-numeric CIL to use the managed
