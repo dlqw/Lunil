@@ -219,6 +219,7 @@ internal sealed class LoopOsrBackendHarness : ILuaBackendHarness, IDisposable
             SynchronousCompilation = true,
             EnableTier2 = false,
             EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = true,
             LoopOsrBackedgeThreshold = 1,
             Interpreter = options,
         });

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.9-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.10-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,7 +28,7 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.6.0-alpha.9`**. The compiler, managed runtime, and complete
+> Lunil is currently **`0.6.0-alpha.10`**. The compiler, managed runtime, and complete
 > Lua 5.4 standard library are functional and extensively tested, but the public API,
 > full official Lua test-suite coverage, and optimizing-backend performance are not yet stable.
 > It is not a production-stable Lua replacement yet.
@@ -59,7 +59,7 @@ collector.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
 - **Designed for multiple execution tiers** — the reference interpreter, persisted CIL
-  AOT, profile-guided CoreCLR Tier 1/Tier 2 JIT, and experimental loop OSR share one
+  AOT, profile-guided CoreCLR Tier 1/Tier 2 JIT, and guarded exact-numeric loop OSR share one
   verified execution contract; NativeAOT build integration follows the same ABI.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Preview | Qualified Tier 1 and exact-numeric Tier 2 are enabled automatically; managed-profile Tier 2 and loop OSR remain explicit opt-ins pending broader gates |
+| JIT / AOT backends | Preview | Qualified Tier 1 and exact-numeric Tier 2 are enabled automatically; guarded exact-numeric loop OSR is productionized but remains an explicit opt-in, as do all managed fallback paths |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -227,7 +227,15 @@ to canonical execution and re-runs eligibility against the widened profile. Set
 `EnableTier2=false` to disable Tier 2 profiling and profile import completely, or explicitly set
 `EnableTier2ManagedFallback=true` to allow the still-experimental `ManagedProfileProgram` path.
 Dynamic-code-unavailable deployments, including NativeAOT, keep exact interpreter fallback and do
-not collect Tier 2 profiles. Loop OSR is independently enabled with `EnableLoopOsr=true`.
+not collect Tier 2 profiles.
+
+Loop OSR remains independently disabled by default. Setting `EnableLoopOsr=true` admits only
+verified natural loops whose eligibility analysis guarantees `GuardedExactNumericCil`; load/move,
+control flow, numeric-for, guarded close, and exact integer/float/mixed-numeric operations execute
+inside the generated loop method with canonical-PC, budget, hook/debug, GC, and deopt guards.
+Table, closure, upvalue, call, vararg, and to-be-closed semantic boundaries are rejected before
+compilation. `EnableLoopOsrManagedFallback=true` explicitly restores the experimental managed
+canonical-loop path. Dynamic-code-unavailable runtimes do not analyze, prewarm, or compile OSR.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.
@@ -238,7 +246,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.9" />
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.10" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -349,6 +357,7 @@ suffix are automatically marked as prereleases. See the
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
+| [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
 | [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
 | [Backend cache contract](docs/backend-cache-contract.md) | Cache keys, disk layout, profile format, quotas and corruption behavior |
 | [NativeAOT and MSBuild](docs/nativeaot-build-integration.md) | `Lunil.Build`, static registries, diagnostics and publish modes |

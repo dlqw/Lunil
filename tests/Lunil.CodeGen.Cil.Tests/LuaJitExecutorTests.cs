@@ -26,12 +26,14 @@ public sealed class LuaJitExecutorTests
         Assert.True(LuaJitExecutorOptions.Default.EnableTier2);
         Assert.False(LuaJitExecutorOptions.Default.EnableTier2ManagedFallback);
         Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsr);
+        Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsrManagedFallback);
 
         var constructed = new LuaJitExecutorOptions();
         Assert.Equal(LuaJitPolicy.Auto, constructed.Policy);
         Assert.True(constructed.EnableTier2);
         Assert.False(constructed.EnableTier2ManagedFallback);
         Assert.False(constructed.EnableLoopOsr);
+        Assert.False(constructed.EnableLoopOsrManagedFallback);
     }
 
     [Fact]
@@ -1535,7 +1537,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void LoopOsrIsExperimentalAndCompletelyDisabledByDefault()
+    public void LoopOsrRemainsCompletelyDisabledByDefault()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -1589,6 +1591,231 @@ public sealed class LuaJitExecutorTests
                 plan.HeaderProgramCounter,
                 plan.BackedgeProgramCounter));
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.Equal(0, executor.Statistics.LoopOsrEntries);
+    }
+
+    [Fact]
+    public void LoopOsrUsesGuardedExactNumericCilForQualifiedLoops()
+    {
+        using var executor = CreateLoopOsrExecutor();
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local total, first, second, index = 0, 0, 1, 0
+            while index < 200 do
+                local next = first + second
+                first = second
+                second = next
+                total = total + (next & 1023)
+                index = index + 1
+            end
+            return total
+            """);
+
+        _ = ExecuteFresh(executor, module);
+
+        var completed = Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        var metrics = Assert.IsType<LuaJitLoopOsrCompilationMetrics>(
+            completed.LoopOsrCompilationMetrics);
+        Assert.Equal(LuaJitLoopOsrCodeKind.GuardedExactNumericCil, metrics.CodeKind);
+        Assert.True(metrics.SpecializedInstructionCount >= 5);
+        Assert.True(metrics.GuardCount >= 5);
+        Assert.True(metrics.LivenessCacheHit);
+        Assert.True(metrics.EstimatedCodeBytes > 0);
+        Assert.True(metrics.AllocatedBytes > 0);
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        var eligibility = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.True(eligibility.IsAutoEligible);
+        Assert.Equal(
+            LuaJitLoopOsrCodeKind.GuardedExactNumericCil,
+            eligibility.ExpectedCodeKind);
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityAccepted);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityRejected);
+    }
+
+    [Fact]
+    public void LoopOsrRejectsManagedBoundaryWithoutExplicitFallback()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local values = {}
+            local index = 0
+            while index < 8 do
+                index = index + 1
+                values[index] = index
+            end
+            return values[8]
+            """);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(8));
+
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        var eligibility = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.Equal(
+            LuaJitLoopOsrEligibilityReason.ManagedSemanticBoundary,
+            eligibility.Reason);
+        Assert.Equal(
+            LuaJitLoopOsrDiagnosticCodes.ManagedSemanticBoundary,
+            eligibility.DiagnosticCode);
+        Assert.Equal(
+            LuaJitOsrState.Ineligible,
+            executor.GetLoopOsrState(
+                module,
+                0,
+                plan.HeaderProgramCounter,
+                plan.BackedgeProgramCounter));
+        Assert.Contains(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrEligibilityRejected);
+        Assert.DoesNotContain(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+    }
+
+    [Fact]
+    public void LoopOsrRetainsManagedFallbackForSemanticBoundaries()
+    {
+        using var executor = CreateLoopOsrExecutor();
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local values = {}
+            local index = 0
+            while index < 8 do
+                index = index + 1
+                values[index] = index
+            end
+            return values[8]
+            """);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(8));
+
+        var completed = Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(
+            LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
+            completed.LoopOsrCompilationMetrics?.CodeKind);
+        Assert.Equal(0, completed.LoopOsrCompilationMetrics?.SpecializedInstructionCount);
+    }
+
+    [Fact]
+    public void LoopOsrWidensToManagedFallbackAfterSpecializedGuardFailure()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = true,
+            LoopOsrBackedgeThreshold = 1,
+            MaximumLoopOsrGuardFailures = 1,
+            SynchronousCompilation = true,
+        });
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local value, limit = ...
+            local count = 0
+            while count < limit do
+                value = value + 1
+                count = count + 1
+            end
+            return count
+            """);
+        var numericState = new LuaState();
+        AssertValues(
+            executor.Execute(
+                numericState,
+                numericState.CreateMainClosure(module),
+                [LuaValue.FromInteger(0), LuaValue.FromInteger(4)]),
+            LuaValue.FromInteger(4));
+        var managedState = new LuaState();
+        var metamethodModule = Compile(
+            "return function(left, right) return left end");
+        var metamethod = Assert.Single(new LuaInterpreter().Execute(
+            managedState,
+            managedState.CreateMainClosure(metamethodModule)).Values);
+        var metatable = managedState.CreateTable();
+        metatable.Set(
+            LuaValue.FromString(managedState.Strings.GetOrCreate("__add"u8)),
+            metamethod);
+        var managedValue = managedState.CreateTable();
+        managedValue.SetMetatable(metatable);
+        AssertValues(
+            executor.Execute(
+                managedState,
+                managedState.CreateMainClosure(module),
+                [
+                    LuaValue.FromTable(managedValue),
+                    LuaValue.FromInteger(4),
+                ]),
+            LuaValue.FromInteger(4));
+
+        var codeKinds = events
+            .Where(static jitEvent =>
+                jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)
+            .Select(static jitEvent => jitEvent.LoopOsrCompilationMetrics?.CodeKind)
+            .ToArray();
+        Assert.Equal(
+            [
+                LuaJitLoopOsrCodeKind.GuardedExactNumericCil,
+                LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
+            ],
+            codeKinds);
+        Assert.True(executor.Statistics.LoopOsrGuardFailures >= 1);
+        Assert.True(executor.Statistics.LoopOsrInvalidations >= 1);
+    }
+
+    [Fact]
+    public void LoopOsrRejectsUnexpectedManagedCompilerResult()
+    {
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = int.MaxValue,
+                BackedgeThreshold = int.MaxValue,
+                EnableTier2 = false,
+                EnableLoopOsr = true,
+                LoopOsrBackedgeThreshold = 1,
+                SynchronousCompilation = true,
+            },
+            loopOsrCompiler: new ForcedManagedLoopOsrCompiler(
+                CanonicalLuaLoopOsrCompiler.Instance));
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile(
+            "local n=0; while n<8 do n=n+1 end; return n");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(8));
+
+        Assert.Contains(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationFailed &&
+            jitEvent.DiagnosticCode == LuaJitLoopOsrDiagnosticCodes.UnexpectedCodeKind);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationCompleted);
         Assert.Equal(0, executor.Statistics.LoopOsrEntries);
     }
 
@@ -1815,6 +2042,7 @@ public sealed class LuaJitExecutorTests
             BackedgeThreshold = int.MaxValue,
             EnableTier2 = false,
             EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = true,
             LoopOsrBackedgeThreshold = 1,
             SynchronousCompilation = true,
             Interpreter = LuaInterpreterOptions.Default with
@@ -1956,6 +2184,7 @@ public sealed class LuaJitExecutorTests
             BackedgeThreshold = int.MaxValue,
             EnableTier2 = false,
             EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = true,
             LoopOsrBackedgeThreshold = 1,
             SynchronousCompilation = true,
         });
@@ -2337,12 +2566,13 @@ public sealed class LuaJitExecutorTests
         public LuaLoopOsrCompilationResult Compile(
             LuaIrModule module,
             LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _callCount);
             started.Set();
             Assert.True(release.Wait(TimeSpan.FromSeconds(10), cancellationToken));
-            return inner.Compile(module, plan, cancellationToken);
+            return inner.Compile(module, plan, allowSpecializedCil, cancellationToken);
         }
     }
 
@@ -2353,9 +2583,14 @@ public sealed class LuaJitExecutorTests
         public LuaLoopOsrCompilationResult Compile(
             LuaIrModule module,
             LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
             CancellationToken cancellationToken)
         {
-            var result = inner.Compile(module, plan, cancellationToken);
+            var result = inner.Compile(
+                module,
+                plan,
+                allowSpecializedCil,
+                cancellationToken);
             return result.Succeeded
                 ? result with { EstimatedCodeBytes = estimatedCodeBytes }
                 : result;
@@ -2372,9 +2607,14 @@ public sealed class LuaJitExecutorTests
         public LuaLoopOsrCompilationResult Compile(
             LuaIrModule module,
             LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
             CancellationToken cancellationToken)
         {
-            var result = inner.Compile(module, plan, cancellationToken);
+            var result = inner.Compile(
+                module,
+                plan,
+                allowSpecializedCil,
+                cancellationToken);
             if (!result.Succeeded)
             {
                 return result;
@@ -2397,5 +2637,19 @@ public sealed class LuaJitExecutorTests
                 },
             };
         }
+    }
+
+    private sealed class ForcedManagedLoopOsrCompiler(ILuaLoopOsrCompiler inner)
+        : ILuaLoopOsrCompiler
+    {
+        public LuaLoopOsrCompilationResult Compile(
+            LuaIrModule module,
+            LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
+            CancellationToken cancellationToken) => inner.Compile(
+                module,
+                plan,
+                allowSpecializedCil: false,
+                cancellationToken);
     }
 }

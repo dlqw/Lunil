@@ -369,6 +369,28 @@ foreach (var workload in backendWorkloads.Where(item =>
                 workload.InstallStandardLibrary));
     }
 
+    if (ShouldRunBackend(backendFilter, "loop_osr_off"))
+    {
+        RunBackendEvidence(
+            workload.Name,
+            "loop_osr_off",
+            backendEvidenceModule,
+            backendEvidenceOperations,
+            coldSamples,
+            module => BackendEvidenceRunner.CreateJit(
+                module,
+                LuaJitExecutorOptions.Default with
+                {
+                    Policy = LuaJitPolicy.Auto,
+                    FunctionEntryThreshold = int.MaxValue,
+                    BackedgeThreshold = int.MaxValue,
+                    SynchronousCompilation = true,
+                    EnableTier2 = false,
+                    EnableLoopOsr = false,
+                },
+                workload.InstallStandardLibrary));
+    }
+
     if (ShouldRunBackend(backendFilter, "loop_osr"))
     {
         RunBackendEvidence(
@@ -517,6 +539,13 @@ static void RunBackendEvidence(
     var tier2CilEmissionMilliseconds = new List<double>();
     var tier2DelegateCreationMilliseconds = new List<double>();
     var tier2CompileAllocatedBytes = new List<double>();
+    var loopOsrIrVerificationMilliseconds = new List<double>();
+    var loopOsrAnalysisMilliseconds = new List<double>();
+    var loopOsrLivenessCacheHits = new List<double>();
+    var loopOsrSpecializationPlanningMilliseconds = new List<double>();
+    var loopOsrCilEmissionMilliseconds = new List<double>();
+    var loopOsrDelegateCreationMilliseconds = new List<double>();
+    var loopOsrCompileAllocatedBytes = new List<double>();
     long peakWorkingSetDelta = 0;
     long estimatedCodeBytes = 0;
     using var process = Process.GetCurrentProcess();
@@ -557,7 +586,14 @@ static void RunBackendEvidence(
             tier2OptimizationPlanningMilliseconds,
             tier2CilEmissionMilliseconds,
             tier2DelegateCreationMilliseconds,
-            tier2CompileAllocatedBytes);
+            tier2CompileAllocatedBytes,
+            loopOsrIrVerificationMilliseconds,
+            loopOsrAnalysisMilliseconds,
+            loopOsrLivenessCacheHits,
+            loopOsrSpecializationPlanningMilliseconds,
+            loopOsrCilEmissionMilliseconds,
+            loopOsrDelegateCreationMilliseconds,
+            loopOsrCompileAllocatedBytes);
         estimatedCodeBytes = Math.Max(estimatedCodeBytes, runner.EstimatedCodeBytes);
         process.Refresh();
         peakWorkingSetDelta = Math.Max(
@@ -611,7 +647,13 @@ static void RunBackendEvidence(
         $"tier2_optimization_plan_ms={JoinSamples(tier2OptimizationPlanningMilliseconds)}, " +
         $"tier2_cil_emit_ms={JoinSamples(tier2CilEmissionMilliseconds)}, " +
         $"tier2_delegate_create_ms={JoinSamples(tier2DelegateCreationMilliseconds)}, " +
-        $"tier2_allocated_bytes={JoinSamples(tier2CompileAllocatedBytes)}");
+        $"tier2_allocated_bytes={JoinSamples(tier2CompileAllocatedBytes)}, " +
+        $"loop_osr_ir_verify_ms={JoinSamples(loopOsrIrVerificationMilliseconds)}, " +
+        $"loop_osr_analysis_ms={JoinSamples(loopOsrAnalysisMilliseconds)}, " +
+        $"loop_osr_specialization_plan_ms={JoinSamples(loopOsrSpecializationPlanningMilliseconds)}, " +
+        $"loop_osr_cil_emit_ms={JoinSamples(loopOsrCilEmissionMilliseconds)}, " +
+        $"loop_osr_delegate_create_ms={JoinSamples(loopOsrDelegateCreationMilliseconds)}, " +
+        $"loop_osr_allocated_bytes={JoinSamples(loopOsrCompileAllocatedBytes)}");
     Console.WriteLine(
         $"backend_evidence workload={workload}, name={name}, operations={operationCount}, " +
         $"startup_median_ms={Percentile(startupMilliseconds, 0.50):F3}, " +
@@ -637,6 +679,13 @@ static void RunBackendEvidence(
         $"tier2_cil_emit_p95_ms={Percentile(tier2CilEmissionMilliseconds, 0.95):F3}, " +
         $"tier2_delegate_create_p95_ms={Percentile(tier2DelegateCreationMilliseconds, 0.95):F3}, " +
         $"tier2_compile_allocated_p95_bytes={Percentile(tier2CompileAllocatedBytes, 0.95):F0}, " +
+        $"loop_osr_ir_verify_p95_ms={Percentile(loopOsrIrVerificationMilliseconds, 0.95):F3}, " +
+        $"loop_osr_analysis_p95_ms={Percentile(loopOsrAnalysisMilliseconds, 0.95):F3}, " +
+        $"loop_osr_liveness_cache_hit_rate={Average(loopOsrLivenessCacheHits):F6}, " +
+        $"loop_osr_specialization_plan_p95_ms={Percentile(loopOsrSpecializationPlanningMilliseconds, 0.95):F3}, " +
+        $"loop_osr_cil_emit_p95_ms={Percentile(loopOsrCilEmissionMilliseconds, 0.95):F3}, " +
+        $"loop_osr_delegate_create_p95_ms={Percentile(loopOsrDelegateCreationMilliseconds, 0.95):F3}, " +
+        $"loop_osr_compile_allocated_p95_bytes={Percentile(loopOsrCompileAllocatedBytes, 0.95):F0}, " +
         $"tier2_code_kind={warmed.Tier2CodeKind}, " +
         $"tier2_optimization_count={warmed.Tier2OptimizationCount}, " +
         $"tier2_specialized_optimization_count={warmed.Tier2SpecializedOptimizationCount}, " +
@@ -646,6 +695,13 @@ static void RunBackendEvidence(
         $"tier2_eligibility_evaluated={statistics?.Tier2EligibilityEvaluated ?? 0}, " +
         $"tier2_eligibility_accepted={statistics?.Tier2EligibilityAccepted ?? 0}, " +
         $"tier2_eligibility_rejected={statistics?.Tier2EligibilityRejected ?? 0}, " +
+        $"loop_osr_code_kind={warmed.LoopOsrCodeKind}, " +
+        $"loop_osr_specialized_instruction_count={warmed.LoopOsrSpecializedInstructionCount}, " +
+        $"loop_osr_guard_count={warmed.LoopOsrGuardCount}, " +
+        $"loop_osr_managed_compilation_count={warmed.LoopOsrManagedCompilationCount}, " +
+        $"loop_osr_eligibility_evaluated={statistics?.LoopOsrEligibilityEvaluated ?? 0}, " +
+        $"loop_osr_eligibility_accepted={statistics?.LoopOsrEligibilityAccepted ?? 0}, " +
+        $"loop_osr_eligibility_rejected={statistics?.LoopOsrEligibilityRejected ?? 0}, " +
         $"compiled_invocations={statistics?.CompiledInvocations ?? 0}, " +
         $"compiled_instructions={compiledCanonicalInstructions}, " +
         $"scheduler_exits={schedulerExits}, " +
@@ -702,7 +758,14 @@ static void CollectCompilationDurations(
     List<double> tier2OptimizationPlanning,
     List<double> tier2CilEmission,
     List<double> tier2DelegateCreation,
-    List<double> tier2CompileAllocatedBytes)
+    List<double> tier2CompileAllocatedBytes,
+    List<double> loopOsrIrVerification,
+    List<double> loopOsrAnalysis,
+    List<double> loopOsrLivenessCacheHits,
+    List<double> loopOsrSpecializationPlanning,
+    List<double> loopOsrCilEmission,
+    List<double> loopOsrDelegateCreation,
+    List<double> loopOsrCompileAllocatedBytes)
 {
     foreach (var jitEvent in events.Where(static item => item.Kind is
                  LuaJitEventKind.CompilationCompleted or
@@ -747,6 +810,20 @@ static void CollectCompilationDurations(
             tier2DelegateCreation.Add(
                 tier2Metrics.DelegateCreationDuration.TotalMilliseconds);
             tier2CompileAllocatedBytes.Add(tier2Metrics.AllocatedBytes);
+        }
+
+        if (jitEvent.LoopOsrCompilationMetrics is { } loopOsrMetrics)
+        {
+            loopOsrIrVerification.Add(
+                loopOsrMetrics.CanonicalVerificationDuration.TotalMilliseconds);
+            loopOsrAnalysis.Add(loopOsrMetrics.LoopAnalysisDuration.TotalMilliseconds);
+            loopOsrLivenessCacheHits.Add(loopOsrMetrics.LivenessCacheHit ? 1.0 : 0.0);
+            loopOsrSpecializationPlanning.Add(
+                loopOsrMetrics.SpecializationPlanningDuration.TotalMilliseconds);
+            loopOsrCilEmission.Add(loopOsrMetrics.CilEmissionDuration.TotalMilliseconds);
+            loopOsrDelegateCreation.Add(
+                loopOsrMetrics.DelegateCreationDuration.TotalMilliseconds);
+            loopOsrCompileAllocatedBytes.Add(loopOsrMetrics.AllocatedBytes);
         }
     }
 }
@@ -866,6 +943,26 @@ sealed class BackendEvidenceRunner : IDisposable
         jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted &&
         jitEvent.Tier2CompilationMetrics?.CodeKind ==
             LuaJitTier2CodeKind.ManagedProfileProgram);
+
+    public LuaJitLoopOsrCodeKind? LoopOsrCodeKind => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)?
+        .LoopOsrCompilationMetrics?.CodeKind;
+
+    public int LoopOsrSpecializedInstructionCount => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)?
+        .LoopOsrCompilationMetrics?.SpecializedInstructionCount ?? 0;
+
+    public int LoopOsrGuardCount => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)?
+        .LoopOsrCompilationMetrics?.GuardCount ?? 0;
+
+    public int LoopOsrManagedCompilationCount => _compilationEvents.Count(static jitEvent =>
+        jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted &&
+        jitEvent.LoopOsrCompilationMetrics?.CodeKind ==
+            LuaJitLoopOsrCodeKind.ManagedCanonicalProgram);
 
     public static BackendEvidenceRunner CreateInterpreter(
         LuaIrModule module,

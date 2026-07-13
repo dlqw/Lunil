@@ -49,12 +49,20 @@ public sealed class LuaJitExecutor : IDisposable
             ProfileGuidedLuaTier2Compiler.PrepareCompiler();
         }
 
+        var selectedLoopOsrCompiler = loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance;
+        if (IsDynamicCodeAvailable &&
+            options.EnableLoopOsr &&
+            selectedLoopOsrCompiler is CanonicalLuaLoopOsrCompiler)
+        {
+            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+        }
+
         _registry = new LuaTieredJitRegistry(
             options,
             capabilities,
             compiler,
             selectedTier2Compiler,
-            loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance);
+            selectedLoopOsrCompiler);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }
 
@@ -91,6 +99,22 @@ public sealed class LuaJitExecutor : IDisposable
             functionId,
             profile,
             CancellationToken.None);
+    }
+
+    public static LuaJitLoopOsrEligibility EvaluateLoopOsrEligibility(
+        LuaIrModule module,
+        LuaJitLoopOsrPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(plan);
+        if ((uint)plan.FunctionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(plan));
+        }
+
+        return LuaLoopOsrEligibilityEvaluator.Evaluate(
+            module.Functions[plan.FunctionId],
+            plan);
     }
 
     public LuaJitStatistics Statistics => _registry.GetStatistics();
@@ -244,6 +268,20 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         return _registry.GetLoopOsrState(
+            module,
+            functionId,
+            headerProgramCounter,
+            backedgeProgramCounter);
+    }
+
+    public LuaJitLoopOsrEligibility GetLoopOsrEligibility(
+        LuaIrModule module,
+        int functionId,
+        int headerProgramCounter,
+        int backedgeProgramCounter)
+    {
+        ThrowIfDisposed();
+        return _registry.GetLoopOsrEligibility(
             module,
             functionId,
             headerProgramCounter,

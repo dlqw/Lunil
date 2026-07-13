@@ -60,12 +60,35 @@ public static class LuaJitTier2DiagnosticCodes
 public enum LuaJitOsrState : byte
 {
     Disabled,
+    Ineligible,
     Profiling,
     Queued,
     Compiling,
     Ready,
     Failed,
     Invalidated,
+}
+
+public enum LuaJitLoopOsrCodeKind : byte
+{
+    ManagedCanonicalProgram,
+    GuardedExactNumericCil,
+}
+
+public enum LuaJitLoopOsrEligibilityReason : byte
+{
+    Eligible,
+    NoNumericHotspot,
+    ManagedSemanticBoundary,
+    UnsupportedInstruction,
+}
+
+public static class LuaJitLoopOsrDiagnosticCodes
+{
+    public const string NoNumericHotspot = "JIT3101";
+    public const string ManagedSemanticBoundary = "JIT3102";
+    public const string UnsupportedInstruction = "JIT3103";
+    public const string UnexpectedCodeKind = "JIT3104";
 }
 
 public enum LuaJitEventKind : byte
@@ -96,6 +119,8 @@ public enum LuaJitEventKind : byte
     EligibilityRejected,
     Tier2EligibilityAccepted,
     Tier2EligibilityRejected,
+    LoopOsrEligibilityAccepted,
+    LoopOsrEligibilityRejected,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -146,6 +171,12 @@ public sealed record LuaJitExecutorOptions
     /// representative steady-state benchmarks show at least a ten percent improvement.
     /// </summary>
     public bool EnableLoopOsr { get; init; }
+
+    /// <summary>
+    /// Allows natural loops that cannot produce guarded exact-numeric CIL to use the managed
+    /// canonical loop program. This experimental path remains an explicit opt-in.
+    /// </summary>
+    public bool EnableLoopOsrManagedFallback { get; init; }
 
     public int LoopOsrBackedgeThreshold { get; init; } = 1_024;
 
@@ -215,7 +246,10 @@ public sealed record LuaJitStatistics(
     long EligibilityRejected,
     long Tier2EligibilityEvaluated,
     long Tier2EligibilityAccepted,
-    long Tier2EligibilityRejected);
+    long Tier2EligibilityRejected,
+    long LoopOsrEligibilityEvaluated,
+    long LoopOsrEligibilityAccepted,
+    long LoopOsrEligibilityRejected);
 
 public sealed record LuaJitTier2Eligibility(
     bool IsAutoEligible,
@@ -225,6 +259,15 @@ public sealed record LuaJitTier2Eligibility(
     int OptimizationCount,
     int NumericOptimizationCount,
     LuaJitTier2CodeKind ExpectedCodeKind);
+
+public sealed record LuaJitLoopOsrEligibility(
+    bool IsAutoEligible,
+    LuaJitLoopOsrEligibilityReason Reason,
+    string? DiagnosticCode,
+    int LoopInstructionCount,
+    int SpecializedInstructionCount,
+    int GuardCount,
+    LuaJitLoopOsrCodeKind ExpectedCodeKind);
 
 public readonly record struct LuaJitCompilationMetrics(
     TimeSpan CanonicalVerificationDuration,
@@ -238,6 +281,20 @@ public readonly record struct LuaJitCompilationMetrics(
     int DirectCanonicalInstructionCount,
     int SlowPathCanonicalInstructionCount,
     int PlanInstructionCount,
+    long EstimatedCodeBytes);
+
+public readonly record struct LuaJitLoopOsrCompilationMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan LoopAnalysisDuration,
+    bool LivenessCacheHit,
+    TimeSpan SpecializationPlanningDuration,
+    TimeSpan CilEmissionDuration,
+    TimeSpan DelegateCreationDuration,
+    long AllocatedBytes,
+    LuaJitLoopOsrCodeKind CodeKind,
+    int LoopInstructionCount,
+    int SpecializedInstructionCount,
+    int GuardCount,
     long EstimatedCodeBytes);
 
 public readonly record struct LuaJitTier2CompilationMetrics(
@@ -266,7 +323,9 @@ public sealed record LuaJitEvent(
     LuaJitCompilationMetrics? CompilationMetrics = null,
     LuaJitFunctionEligibility? Eligibility = null,
     LuaJitTier2CompilationMetrics? Tier2CompilationMetrics = null,
-    LuaJitTier2Eligibility? Tier2Eligibility = null);
+    LuaJitTier2Eligibility? Tier2Eligibility = null,
+    LuaJitLoopOsrCompilationMetrics? LoopOsrCompilationMetrics = null,
+    LuaJitLoopOsrEligibility? LoopOsrEligibility = null);
 
 public sealed class LuaJitException : Exception
 {
