@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
@@ -22,13 +24,18 @@ public sealed record LuaJitLoopOsrPlan(
     int HeaderProgramCounter,
     int BackedgeProgramCounter,
     ImmutableArray<int> ProgramCounters,
-    LuaJitOsrEntryMap EntryMap);
+    LuaJitOsrEntryMap EntryMap)
+{
+    public LuaJitLoopOsrCodeKind CodeKind { get; init; } =
+        LuaJitLoopOsrCodeKind.ManagedCanonicalProgram;
+}
 
 internal sealed record LuaLoopOsrCompilationResult(
     LuaCompiledMethod? Method,
     LuaJitLoopOsrPlan? Plan,
     long EstimatedCodeBytes,
-    ImmutableArray<string> Diagnostics)
+    ImmutableArray<string> Diagnostics,
+    LuaJitLoopOsrCompilationMetrics? Metrics = null)
 {
     public bool Succeeded => Method is not null && Plan is not null && Diagnostics.IsEmpty;
 }
@@ -38,6 +45,7 @@ internal interface ILuaLoopOsrCompiler
     LuaLoopOsrCompilationResult Compile(
         LuaIrModule module,
         LuaJitLoopOsrPlan plan,
+        bool allowSpecializedCil,
         CancellationToken cancellationToken);
 }
 
@@ -45,7 +53,17 @@ internal static class LuaLoopOsrAnalyzer
 {
     public static ImmutableArray<LuaJitLoopOsrPlan> Analyze(
         LuaIrModule module,
-        int functionId)
+        int functionId) => Analyze(
+            module,
+            functionId,
+            out _,
+            CancellationToken.None);
+
+    internal static ImmutableArray<LuaJitLoopOsrPlan> Analyze(
+        LuaIrModule module,
+        int functionId,
+        out bool livenessCacheHit,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(module);
         if ((uint)functionId >= (uint)module.Functions.Length)
@@ -53,12 +71,14 @@ internal static class LuaLoopOsrAnalyzer
             throw new ArgumentOutOfRangeException(nameof(functionId));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var function = module.Functions[functionId];
         var blocks = function.BasicBlocks.IsDefaultOrEmpty
             ? LuaIrControlFlow.Build(function.Instructions)
             : function.BasicBlocks;
         if (blocks.IsEmpty)
         {
+            livenessCacheHit = false;
             return [];
         }
 
@@ -78,10 +98,15 @@ internal static class LuaLoopOsrAnalyzer
         }
 
         var dominators = ComputeDominators(blocks, predecessors);
-        var liveness = LuaRegisterLiveness.AnalyzeCached(module, function, out _);
+        var liveness = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            function,
+            out livenessCacheHit,
+            cancellationToken);
         var plans = ImmutableArray.CreateBuilder<LuaJitLoopOsrPlan>();
         foreach (var block in blocks)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var backedgePc = block.End - 1;
             var instruction = function.Instructions[backedgePc];
             if (!IsOsrBackedgeInstruction(instruction, backedgePc) ||
@@ -208,17 +233,141 @@ internal static class LuaLoopOsrAnalyzer
     }
 }
 
+internal static class LuaLoopOsrEligibilityEvaluator
+{
+    public static LuaJitLoopOsrEligibility Evaluate(
+        LuaIrFunction function,
+        LuaJitLoopOsrPlan plan)
+    {
+        var specializedInstructionCount = 0;
+        var guardCount = 2;
+        LuaJitLoopOsrEligibilityReason? rejection = null;
+        foreach (var pc in plan.ProgramCounters)
+        {
+            if ((uint)pc >= (uint)function.Instructions.Length)
+            {
+                rejection = LuaJitLoopOsrEligibilityReason.UnsupportedInstruction;
+                break;
+            }
+
+            var instruction = function.Instructions[pc];
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.LoadConstant when
+                    function.Constants[instruction.B].Kind != LuaIrConstantKind.String:
+                case LuaIrOpcode.LoadNil:
+                case LuaIrOpcode.Move:
+                case LuaIrOpcode.SetTop:
+                case LuaIrOpcode.JumpIfFalse:
+                case LuaIrOpcode.JumpIfTrue:
+                    break;
+                case LuaIrOpcode.Jump:
+                    if (instruction.C >= 0)
+                    {
+                        guardCount++;
+                    }
+
+                    break;
+                case LuaIrOpcode.Close:
+                    guardCount++;
+                    break;
+                case LuaIrOpcode.Unary when (LuaIrUnaryOperator)instruction.C is
+                    LuaIrUnaryOperator.Negate or
+                    LuaIrUnaryOperator.BitwiseNot or
+                    LuaIrUnaryOperator.LogicalNot:
+                    if ((LuaIrUnaryOperator)instruction.C != LuaIrUnaryOperator.LogicalNot)
+                    {
+                        specializedInstructionCount++;
+                        guardCount++;
+                    }
+
+                    break;
+                case LuaIrOpcode.Binary when
+                    (LuaIrBinaryOperator)instruction.D != LuaIrBinaryOperator.Concatenate:
+                    specializedInstructionCount++;
+                    guardCount += 2;
+                    break;
+                case LuaIrOpcode.NumericForPrepare:
+                case LuaIrOpcode.NumericForLoop:
+                    specializedInstructionCount++;
+                    break;
+                case LuaIrOpcode.GetUpvalue:
+                case LuaIrOpcode.SetUpvalue:
+                case LuaIrOpcode.NewTable:
+                case LuaIrOpcode.GetTable:
+                case LuaIrOpcode.SetTable:
+                case LuaIrOpcode.SetList:
+                case LuaIrOpcode.Closure:
+                case LuaIrOpcode.VarArg:
+                case LuaIrOpcode.Call:
+                case LuaIrOpcode.TailCall:
+                case LuaIrOpcode.MarkToBeClosed:
+                    rejection = LuaJitLoopOsrEligibilityReason.ManagedSemanticBoundary;
+                    break;
+                default:
+                    rejection = LuaJitLoopOsrEligibilityReason.UnsupportedInstruction;
+                    break;
+            }
+
+            if (rejection is not null)
+            {
+                break;
+            }
+        }
+
+        var reason = rejection ?? (specializedInstructionCount > 0
+            ? LuaJitLoopOsrEligibilityReason.Eligible
+            : LuaJitLoopOsrEligibilityReason.NoNumericHotspot);
+        var diagnosticCode = reason switch
+        {
+            LuaJitLoopOsrEligibilityReason.Eligible => null,
+            LuaJitLoopOsrEligibilityReason.NoNumericHotspot =>
+                LuaJitLoopOsrDiagnosticCodes.NoNumericHotspot,
+            LuaJitLoopOsrEligibilityReason.ManagedSemanticBoundary =>
+                LuaJitLoopOsrDiagnosticCodes.ManagedSemanticBoundary,
+            LuaJitLoopOsrEligibilityReason.UnsupportedInstruction =>
+                LuaJitLoopOsrDiagnosticCodes.UnsupportedInstruction,
+            _ => throw new InvalidOperationException(
+                $"Unknown Loop OSR eligibility reason {reason}."),
+        };
+        var eligible = reason == LuaJitLoopOsrEligibilityReason.Eligible;
+        return new LuaJitLoopOsrEligibility(
+            eligible,
+            reason,
+            diagnosticCode,
+            plan.ProgramCounters.Length,
+            specializedInstructionCount,
+            guardCount,
+            eligible
+                ? LuaJitLoopOsrCodeKind.GuardedExactNumericCil
+                : LuaJitLoopOsrCodeKind.ManagedCanonicalProgram);
+    }
+}
+
 internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
 {
     public static CanonicalLuaLoopOsrCompiler Instance { get; } = new();
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
+    private static readonly Lazy<bool> CompilerPrepared = new(
+        PrepareCompilerCore,
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
 
     public LuaLoopOsrCompilationResult Compile(
         LuaIrModule module,
         LuaJitLoopOsrPlan plan,
+        bool allowSpecializedCil,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var verificationStarted = Stopwatch.GetTimestamp();
         var errors = LuaIrVerifier.Verify(module);
+        var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || (uint)plan.FunctionId >= (uint)module.Functions.Length)
         {
             return new LuaLoopOsrCompilationResult(
@@ -227,31 +376,145 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                 0,
                 !errors.IsEmpty
                     ? [.. errors.Select(static error => error.Message)]
-                    : ["Function id is outside the verified module."]);
+                    : ["Function id is outside the verified module."],
+                new LuaJitLoopOsrCompilationMetrics(
+                    canonicalVerificationDuration,
+                    TimeSpan.Zero,
+                    LivenessCacheHit: false,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore),
+                    LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
+                    LoopInstructionCount: 0,
+                    SpecializedInstructionCount: 0,
+                    GuardCount: 0,
+                    EstimatedCodeBytes: 0));
         }
 
-        var verifiedPlan = LuaLoopOsrAnalyzer.Analyze(module, plan.FunctionId)
+        var analysisStarted = Stopwatch.GetTimestamp();
+        var verifiedPlan = LuaLoopOsrAnalyzer.Analyze(
+                module,
+                plan.FunctionId,
+                out var livenessCacheHit,
+                cancellationToken)
             .FirstOrDefault(candidate =>
                 candidate.HeaderProgramCounter == plan.HeaderProgramCounter &&
                 candidate.BackedgeProgramCounter == plan.BackedgeProgramCounter);
+        var loopAnalysisDuration = Stopwatch.GetElapsedTime(analysisStarted);
         if (verifiedPlan is null)
         {
             return new LuaLoopOsrCompilationResult(
                 null,
                 null,
                 0,
-                ["The requested edge is not a verified natural-loop backedge."]);
+                ["The requested edge is not a verified natural-loop backedge."],
+                new LuaJitLoopOsrCompilationMetrics(
+                    canonicalVerificationDuration,
+                    loopAnalysisDuration,
+                    livenessCacheHit,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore),
+                    LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
+                    LoopInstructionCount: 0,
+                    SpecializedInstructionCount: 0,
+                    GuardCount: 0,
+                    EstimatedCodeBytes: 0));
         }
 
-        var program = new LoopOsrProgram(
-            module.Functions[plan.FunctionId],
-            verifiedPlan);
+        var function = module.Functions[plan.FunctionId];
+        var specializationStarted = Stopwatch.GetTimestamp();
+        var specializedInstructionCount = 0;
+        var guardCount = 0;
+        var specializedEligible = allowSpecializedCil &&
+            ReflectionEmitLuaLoopOsrCompiler.IsEligible(
+                function,
+                verifiedPlan,
+                out specializedInstructionCount,
+                out guardCount);
+        var specializationPlanningDuration = Stopwatch.GetElapsedTime(specializationStarted);
+        var codeKind = LuaJitLoopOsrCodeKind.ManagedCanonicalProgram;
+        LuaCompiledMethod method;
+        long estimatedCodeBytes;
+        var emissionMetrics = default(LuaLoopOsrEmissionMetrics);
+        if (specializedEligible && TryCompileSpecializedCil(
+                function,
+                verifiedPlan,
+                cancellationToken,
+                out var specializedMethod,
+                out var specializedCodeBytes,
+                out specializedInstructionCount,
+                out guardCount,
+                out emissionMetrics))
+        {
+            method = specializedMethod;
+            estimatedCodeBytes = specializedCodeBytes;
+            codeKind = LuaJitLoopOsrCodeKind.GuardedExactNumericCil;
+            verifiedPlan = verifiedPlan with { CodeKind = codeKind };
+        }
+        else
+        {
+            var program = new LoopOsrProgram(function, verifiedPlan);
+            method = program.Execute;
+            estimatedCodeBytes = checked(verifiedPlan.ProgramCounters.Length * 10L +
+                verifiedPlan.EntryMap.Registers.Length * 8L + 96L);
+            specializedInstructionCount = 0;
+            guardCount = 0;
+        }
+
+        var metrics = new LuaJitLoopOsrCompilationMetrics(
+            canonicalVerificationDuration,
+            loopAnalysisDuration,
+            livenessCacheHit,
+            specializationPlanningDuration,
+            emissionMetrics.CilEmissionDuration,
+            emissionMetrics.DelegateCreationDuration,
+            Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore),
+            codeKind,
+            verifiedPlan.ProgramCounters.Length,
+            specializedInstructionCount,
+            guardCount,
+            estimatedCodeBytes);
         return new LuaLoopOsrCompilationResult(
-            program.Execute,
+            method,
             verifiedPlan,
-            checked(verifiedPlan.ProgramCounters.Length * 10L +
-                verifiedPlan.EntryMap.Registers.Length * 8L + 96L),
-            []);
+            estimatedCodeBytes,
+            [],
+            metrics);
+    }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Loop OSR compilation is reached only after the dynamic-code capability check.")]
+    private static bool TryCompileSpecializedCil(
+        LuaIrFunction function,
+        LuaJitLoopOsrPlan plan,
+        CancellationToken cancellationToken,
+        [NotNullWhen(true)] out LuaCompiledMethod? method,
+        out long estimatedCodeBytes,
+        out int specializedInstructionCount,
+        out int guardCount,
+        out LuaLoopOsrEmissionMetrics metrics) => ReflectionEmitLuaLoopOsrCompiler.TryCompile(
+            function,
+            plan,
+            cancellationToken,
+            out method,
+            out estimatedCodeBytes,
+            out specializedInstructionCount,
+            out guardCount,
+            out metrics);
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
+    private static bool PrepareCompilerCore()
+    {
+        ReflectionEmitLuaLoopOsrCompiler.PrepareRuntimeAbi();
+        return true;
     }
 
     private sealed class LoopOsrProgram

@@ -75,6 +75,13 @@ semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Di
 进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义
 compiler 或陈旧 profile 绕过。
 
+Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `false`；显式开启后，每个
+verified natural loop 仍在当前进程重新执行静态 eligibility，只有可保证生成
+`GuardedExactNumericCil` 的 exact-numeric loop 才自动进入队列。`EnableLoopOsrManagedFallback`
+默认是 `false`，managed canonical loop 必须由宿主再次显式开启。eligibility、guard-failure widening、
+backedge counters、生成 delegate 与 code-kind 安装状态均不持久化，因此不能由导入 profile 或磁盘
+cache 绕过。
+
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该
 最低收益资格。
@@ -82,7 +89,9 @@ slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；
 ## In-process verified plan cache
 
 Tier 1 planning 另有不落盘的 owner-scoped weak cache。key 是 canonical module 对象、function id
-和 instruction-observation mode；显式自定义 `CilPlanLimits` 的调用不进入共享缓存。cache value
+和 instruction-observation mode；显式自定义 `CilPlanLimits` 的调用不进入共享缓存。register liveness
+也按 module owner/function 使用 weak cache，在 Tier 1、Tier 2、Loop OSR 与 persisted AOT planning
+之间复用；Loop OSR 的 natural-loop plan、eligibility 和生成方法仍只保存在 registry entry 中。cache value
 只保存 verified plan/diagnostic，不保存 `LuaState`、closure、table 或 delegate。module owner 被
 回收后，`ConditionalWeakTable` entry 及 plan 一并可回收。并发首次访问在 owner lock 下只构建一次；
 cache hit 的 planning durations 为零，避免把复用结果误计为新的编译工作。planning、liveness、

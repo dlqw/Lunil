@@ -4,7 +4,9 @@ param(
 
     [string] $Output = 'artifacts/backend-performance/tier1-six-rid-decision.json',
 
-    [string] $Tier2Output = 'artifacts/backend-performance/tier2-six-rid-decision.json'
+    [string] $Tier2Output = 'artifacts/backend-performance/tier2-six-rid-decision.json',
+
+    [string] $LoopOsrOutput = 'artifacts/backend-performance/loop-osr-six-rid-decision.json'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +28,12 @@ $tier2OutputPath = if ([System.IO.Path]::IsPathRooted($Tier2Output)) {
 }
 else {
     Join-Path $repositoryRoot $Tier2Output
+}
+$loopOsrOutputPath = if ([System.IO.Path]::IsPathRooted($LoopOsrOutput)) {
+    $LoopOsrOutput
+}
+else {
+    Join-Path $repositoryRoot $LoopOsrOutput
 }
 $requiredRids = @(
     'win-x64',
@@ -135,3 +143,67 @@ $tier2Result | ConvertTo-Json -Depth 8 |
     Set-Content -LiteralPath $tier2OutputPath -Encoding utf8
 $tier2Result | Format-List
 Write-Host "Six-RID Tier 2 decision written to $tier2OutputPath"
+
+$loopOsrDecisions = Get-ChildItem -LiteralPath $inputPath -Recurse `
+    -Filter 'loop-osr-decision.json' | ForEach-Object {
+        $decision = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+        [pscustomobject]@{
+            Path = $_.FullName
+            LastWriteTimeUtc = $_.LastWriteTimeUtc
+            Decision = $decision
+        }
+    }
+$loopOsrSelected = [Collections.Generic.List[object]]::new()
+foreach ($rid in $requiredRids) {
+    $match = $loopOsrDecisions | Where-Object { $_.Decision.Rid -eq $rid } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if ($null -eq $match) {
+        throw "Missing Loop OSR performance decision for RID $rid under $inputPath."
+    }
+
+    $loopOsrSelected.Add($match.Decision)
+}
+
+$loopOsrResult = [pscustomobject]@{
+    GeneratedAtUtc = [DateTime]::UtcNow.ToString('O')
+    RequiredRids = $requiredRids
+    Decisions = $loopOsrSelected.ToArray()
+    MinimumArithmeticSpeedupCi95Lower = (
+        $loopOsrSelected | Measure-Object ArithmeticSpeedupCi95Lower -Minimum).Minimum
+    MinimumArithmeticSpeedupVsDisabledCi95Lower = (
+        $loopOsrSelected |
+            Measure-Object ArithmeticSpeedupVsDisabledCi95Lower -Minimum).Minimum
+    MaximumLoopOsrCompilationP95Ms = (
+        $loopOsrSelected | Measure-Object LoopOsrCompilationP95Ms -Maximum).Maximum
+    MinimumLoopOsrLivenessCacheHitRate = (
+        $loopOsrSelected | Measure-Object LoopOsrLivenessCacheHitRate -Minimum).Minimum
+    MaximumLoopOsrCompileAllocatedP95Bytes = (
+        $loopOsrSelected | Measure-Object LoopOsrCompileAllocatedP95Bytes -Maximum).Maximum
+    MaximumAbsoluteAllocationSlopeBytesIteration = (
+        $loopOsrSelected | ForEach-Object {
+            [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
+        } | Measure-Object -Maximum).Maximum
+    AllRidsUseGuardedExactNumericCil = @($loopOsrSelected | Where-Object {
+        $_.LoopOsrCodeKind -ne 'GuardedExactNumericCil'
+    }).Count -eq 0
+    AllRidsAvoidManagedArithmeticOsr = @($loopOsrSelected | Where-Object {
+        $_.LoopOsrManagedCompilationCount -ne 0
+    }).Count -eq 0
+    AllRidsAcceptAutomaticExactNumericOsr = @($loopOsrSelected | Where-Object {
+        $_.LoopOsrEligibilityAccepted -le 0
+    }).Count -eq 0
+    AllRidsPassNegativeWorkloadGate = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadGateFailures).Count -ne 0
+    }).Count -eq 0
+    AllRidsQualify = @($loopOsrSelected | Where-Object {
+        -not $_.QualifiesThisRid
+    }).Count -eq 0
+}
+
+New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName(
+        $loopOsrOutputPath)) -Force | Out-Null
+$loopOsrResult | ConvertTo-Json -Depth 8 |
+    Set-Content -LiteralPath $loopOsrOutputPath -Encoding utf8
+$loopOsrResult | Format-List
+Write-Host "Six-RID Loop OSR decision written to $loopOsrOutputPath"
