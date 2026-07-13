@@ -318,7 +318,8 @@ LRU code-byte budget 与显式 module/cache invalidation。cache key 和 emitted
 `LuaState`、closure 或 upvalue owner；动态代码不可用时不会进入 Reflection.Emit。
 取消令牌贯穿 CFG/liveness、method-plan build/verification 与 CIL emission；取消的 plan 不进入 weak
 cache，未执行 `EndMethod` 的 emitter 不创建 delegate，registry 在安装方法前再次检查 dispose token，
-因此忽略取消后迟到的 compiler result 也不会发布为 `Ready`。
+因此忽略取消后迟到的 compiler result 也不会发布为 `Ready`。release 默认 policy 为 `Auto`；
+`EnableTier2` 与 `EnableLoopOsr` 默认均为 `false`，所以默认迁移只启用资格检查保护的 Tier 1。
 
 Tier 1 可观测性公开 compile queue latency、compile time、compiled invocation、fallback、deopt、failure、
 eviction 与 estimated code bytes 计数和结构化事件。事件订阅者异常不得改变 Lua 执行语义。
@@ -358,10 +359,11 @@ Windows x64 的 20,000 次 integer while-loop 重复测量显示约 47.5% median
 不改变默认 policy；详细证据见 [后端性能基线](backend-performance-baseline.md)。
 
 M8 将启动、稳态吞吐、分配、编译 p95、RSS、code bytes 和 persisted PE/PDB size 纳入同一 runner。
-Windows x64 三轮证据未达到 Tier 1 至少 2 倍、Tier 2 至少 4 倍以及 Tier 1 编译 p95 小于 5 ms
-的门槛；Loop OSR 虽仍有超过 10% 的吞吐收益，但分配约为解释器的 6.9 倍。因此
-`LuaJitExecutorOptions.Default.Policy` 为 `InterpreterOnly`；CoreCLR Tier 1/Tier 2 通过显式
-`Auto`/`PreferJit` opt-in，Loop OSR 继续独立 opt-in。
+当时 Windows x64 三轮证据未达到 Tier 1 至少 2 倍、Tier 2 至少 4 倍以及 Tier 1 编译 p95 小于
+5 ms 的门槛，因此默认曾回退为 `InterpreterOnly`。M9 完成 Runtime ABI v2、直接 lowering、缓存和
+编译延迟收口后，六 RID 的 Tier 1 arithmetic bootstrap 95% 下界均超过 2 倍、编译 p95 均低于
+5 ms、allocation slope 均为 0，且 negative workload gate 无失败。M10 据此只将 Tier 1 默认迁移为
+`Auto`；Tier 2 与 Loop OSR 继续独立 opt-in。
 
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结；当前 unchecked

@@ -99,10 +99,11 @@ for the interpreter, 12,828,672 B for Tier 1, 724,992 B for Tier 2, and 4,096 B 
 
 The approved gates require Tier 1 to be at least twice as fast as the interpreter with single-
 function compilation p95 below 5 ms, and Tier 2 arithmetic hotspots to be at least four times as
-fast. Neither tier passes. Loop OSR remains around 39.6% faster for this workload, but allocation
-is approximately 6.9 times the interpreter and cross-RID repeated evidence is still pending.
-Therefore the release default is `InterpreterOnly`; `Auto`/`PreferJit`, Tier 2, and Loop OSR remain
-explicit opt-ins. This decision is evidence-gated rather than a removal of the implemented tiers.
+fast. Neither tier passed this M8 snapshot. Loop OSR was around 39.6% faster for this workload,
+but allocation was approximately 6.9 times the interpreter and cross-RID repeated evidence was
+still pending. The M8 release default therefore became `InterpreterOnly`; the later M9/M10
+qualification and rollout supersede that historical Tier 1 decision without qualifying Tier 2
+or Loop OSR.
 
 Reproduce the multi-process evidence with:
 
@@ -224,6 +225,30 @@ Reproduce and aggregate evidence with:
 The measurement script writes raw output, CSV, JSON, and `tier1-decision.json` under ignored
 `artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same five-process
 measurement on win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64, then publishes
-the aggregate without using shared-runner timing as a CI pass/fail condition. Until those six
-independent RID results are available and reviewed, the release default remains
-`InterpreterOnly`; Tier 2 and Loop OSR remain explicit opt-ins.
+the aggregate without using shared-runner timing as a CI pass/fail condition.
+
+## M10 Tier 1 default-rollout decision
+
+The post-merge `0.6.0-alpha.6` main CI run `29199988756` repeated the five-process measurement on
+all six supported RIDs. Every RID passed the approved Tier 1 qualification contract:
+
+| RID | Arithmetic median speedup | Bootstrap median 95% interval | Compile p95 | Allocation slope | Negative gate | Qualified |
+|---|---:|---:|---:|---:|---|---|
+| win-x64 | 2.753x | [2.398x, 2.976x] | 1.340 ms | 0 B/iteration | pass | yes |
+| win-arm64 | 2.772x | [2.761x, 2.796x] | 1.324 ms | 0 B/iteration | pass | yes |
+| linux-x64 | 2.729x | [2.417x, 2.748x] | 1.586 ms | 0 B/iteration | pass | yes |
+| linux-arm64 | 2.428x | [2.419x, 2.479x] | 1.534 ms | 0 B/iteration | pass | yes |
+| osx-x64 | 2.920x | [2.425x, 2.953x] | 1.259 ms | 0 B/iteration | pass | yes |
+| osx-arm64 | 2.753x | [2.650x, 3.179x] | 0.748 ms | 0 B/iteration | pass | yes |
+
+The minimum lower confidence bound was 2.398x and the maximum compile p95 was 1.586 ms. This
+evidence authorizes `LuaJitExecutorOptions.Default.Policy = Auto` for Tier 1. The rollout keeps
+`EnableTier2=false` and `EnableLoopOsr=false`; neither experimental tier inherits the Tier 1
+qualification decision.
+
+The M10 rollout branch repeated the focused soak after the default-contract tests were added:
+20 Release rounds completed 5,120 Runtime/CodeGen/backend-differential cases without failure.
+The local five-process win-x64 qualification rerun reported a 2.392x median speedup, bootstrap
+95% interval `[2.306x, 2.634x]`, 1.312 ms compile p95, zero allocation slope, and no negative
+workload failure. The rollout commit still requires the independent six-RID CI aggregate before
+merge.

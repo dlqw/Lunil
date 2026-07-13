@@ -83,10 +83,10 @@ public sealed record LuaJitExecutorOptions
     public static LuaJitExecutorOptions Default { get; } = new();
 
     /// <summary>
-    /// Selects the dynamic compilation policy. The release default remains interpreter-only
-    /// until the published same-machine throughput, allocation, and compile-latency gates pass.
+    /// Selects the dynamic compilation policy. The release default enables qualified Tier 1
+    /// compilation while retaining deterministic eligibility checks and interpreter fallback.
     /// </summary>
-    public LuaJitPolicy Policy { get; init; } = LuaJitPolicy.InterpreterOnly;
+    public LuaJitPolicy Policy { get; init; } = LuaJitPolicy.Auto;
 
     public int FunctionEntryThreshold { get; init; } = 32;
 
@@ -102,7 +102,11 @@ public sealed record LuaJitExecutorOptions
 
     public int MaximumPolymorphicShapes { get; init; } = 4;
 
-    public bool EnableTier2 { get; init; } = true;
+    /// <summary>
+    /// Enables experimental profile-guided Tier 2 promotion. Tier 2 remains opt-in until its
+    /// cross-platform throughput and allocation gates pass independently from Tier 1.
+    /// </summary>
+    public bool EnableTier2 { get; init; }
 
     public int Tier2InvocationThreshold { get; init; } = 128;
 

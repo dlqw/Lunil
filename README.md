@@ -218,10 +218,11 @@ var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
 `LuaExecutor` is the backend-neutral host facade. `LuaInterpreter` remains available when a host
 explicitly requires the Tier 0 reference backend.
 
-`LuaJitExecutor` is an explicit CoreCLR-only opt-in. Its release default is
-`InterpreterOnly`; select `Auto` or `PreferJit` only when the host accepts the current startup,
-allocation, and throughput tradeoffs. Tier 2 profile data can be exported and imported without
-persisting generated code; Loop OSR remains separately disabled unless `EnableLoopOsr=true`.
+`LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
+in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
+for Tier 1 compilation. Dynamic-code-unavailable deployments, including NativeAOT, keep exact
+interpreter fallback. Tier 2 and Loop OSR remain separate experimental opt-ins through
+`EnableTier2=true` and `EnableLoopOsr=true`.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.

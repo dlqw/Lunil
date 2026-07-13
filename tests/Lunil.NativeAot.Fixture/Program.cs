@@ -48,6 +48,15 @@ public static class Program
             return 2;
         }
 
+        using var defaultJit = new LuaJitExecutor();
+        if (defaultJit.Options.Policy != LuaJitPolicy.Auto ||
+            defaultJit.Options.EnableTier2 ||
+            defaultJit.Options.EnableLoopOsr)
+        {
+            Console.Error.WriteLine("The default JIT rollout policy is invalid.");
+            return 3;
+        }
+
         using var jit = new LuaJitExecutor(new LuaJitExecutorOptions
         {
             Policy = LuaJitPolicy.PreferJit,
@@ -58,15 +67,18 @@ public static class Program
             if (!jit.IsDynamicCodeAvailable)
             {
                 Console.Error.WriteLine("CoreCLR JIT capability was not detected.");
-                return 3;
+                return 4;
             }
         }
         else
         {
-            if (jit.IsDynamicCodeAvailable || Execute(jit, Compile("return 6 * 7")) != 42)
+            if (defaultJit.IsDynamicCodeAvailable ||
+                Execute(defaultJit, Compile("return 6 * 7")) != 42 ||
+                jit.IsDynamicCodeAvailable ||
+                Execute(jit, Compile("return 6 * 7")) != 42)
             {
                 Console.Error.WriteLine("NativeAOT JIT fallback policy is invalid.");
-                return 4;
+                return 5;
             }
         }
 

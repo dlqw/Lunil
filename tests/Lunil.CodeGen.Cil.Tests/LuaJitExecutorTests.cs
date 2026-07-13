@@ -20,18 +20,33 @@ namespace Lunil.CodeGen.Cil.Tests;
 public sealed class LuaJitExecutorTests
 {
     [Fact]
-    public void ReleaseDefaultDoesNotEnableUnprovenDynamicTiers()
+    public void ReleaseDefaultEnablesOnlyQualifiedTier1AutoPolicy()
     {
-        Assert.Equal(LuaJitPolicy.InterpreterOnly, LuaJitExecutorOptions.Default.Policy);
+        Assert.Equal(LuaJitPolicy.Auto, LuaJitExecutorOptions.Default.Policy);
+        Assert.False(LuaJitExecutorOptions.Default.EnableTier2);
         Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsr);
 
-        var compiler = new CountingCompiler(ReflectionEmitLuaTier1Compiler.Instance);
-        using var executor = CreateExecutor(LuaJitExecutorOptions.Default, compiler: compiler);
-        var module = Compile("return 42");
+        var constructed = new LuaJitExecutorOptions();
+        Assert.Equal(LuaJitPolicy.Auto, constructed.Policy);
+        Assert.False(constructed.EnableTier2);
+        Assert.False(constructed.EnableLoopOsr);
+    }
 
-        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(42));
-        Assert.Equal(0, compiler.CallCount);
-        Assert.Equal(LuaJitCompilationTier.Interpreter, executor.GetFunctionTier(module, 0));
+    [Fact]
+    public void DefaultTier2ProfileImportRequiresExplicitOptIn()
+    {
+        var module = Compile("local value = ...; return value + 1");
+        using var training = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            EnableTier2 = true,
+        });
+        var payload = training.ExportProfile(module);
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+
+        var result = executor.ImportProfile(module, payload);
+
+        Assert.Equal(LuaJitProfileImportStatus.Disabled, result.Status);
+        Assert.Equal(LuaJitTier2State.Disabled, executor.GetTier2State(module, 0));
     }
 
     [Fact]
@@ -133,7 +148,6 @@ public sealed class LuaJitExecutorTests
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
-            Policy = LuaJitPolicy.Auto,
             FunctionEntryThreshold = 1,
             BackedgeThreshold = 1,
         });
@@ -151,6 +165,8 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
         Assert.True(executor.Statistics.CompilationCompleted >= 1);
         Assert.True(executor.Statistics.CompiledInvocations >= 1);
+        Assert.Equal(LuaJitTier2State.Disabled, executor.GetTier2State(module, 0));
+        Assert.Equal(0, executor.Statistics.Tier2CompilationQueued);
     }
 
     [Fact]
@@ -160,7 +176,6 @@ public sealed class LuaJitExecutorTests
         using var executor = CreateExecutor(
             LuaJitExecutorOptions.Default with
             {
-                Policy = LuaJitPolicy.Auto,
                 FunctionEntryThreshold = 1,
                 BackedgeThreshold = 1,
                 SynchronousCompilation = true,
@@ -250,6 +265,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
         }))
         {
             AssertValues(ExecuteFresh(training, module), LuaValue.FromInteger(9));
@@ -264,6 +280,7 @@ public sealed class LuaJitExecutorTests
                 FunctionEntryThreshold = 1_000,
                 BackedgeThreshold = int.MaxValue,
                 SynchronousCompilation = true,
+                EnableTier2 = true,
             },
             compiler: compiler);
         Assert.True(warmed.ImportProfile(module, profile).Succeeded);
@@ -397,7 +414,6 @@ public sealed class LuaJitExecutorTests
         var capabilities = new TestDynamicCodeCapabilities(false, false);
         var options = LuaJitExecutorOptions.Default with
         {
-            Policy = LuaJitPolicy.Auto,
             FunctionEntryThreshold = 1,
             SynchronousCompilation = true,
         };
@@ -650,6 +666,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -686,6 +703,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = int.MaxValue,
             MaximumTier2GuardFailures = 1,
@@ -757,6 +775,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = int.MaxValue,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -772,7 +791,10 @@ public sealed class LuaJitExecutorTests
         var second = executor.ExportProfile(module);
         var corrupted = first.ToArray();
         corrupted[^1] ^= 0xff;
-        using var imported = CreateExecutor(LuaJitExecutorOptions.Default);
+        using var imported = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            EnableTier2 = true,
+        });
 
         var result = imported.ImportProfile(module, first);
         var rejected = imported.ImportProfile(module, corrupted);
@@ -793,6 +815,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
         });
         var source = Compile("return 1");
         var other = Compile("return 2");
@@ -808,7 +831,10 @@ public sealed class LuaJitExecutorTests
     [Fact]
     public void ProfileImportRejectsVersionMismatchEvenWithValidChecksum()
     {
-        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            EnableTier2 = true,
+        });
         var module = Compile("return 1");
         var payload = executor.ExportProfile(module);
         var magicLength = BinaryPrimitives.ReadInt32LittleEndian(payload);
@@ -829,7 +855,10 @@ public sealed class LuaJitExecutorTests
     [Fact]
     public void ProfileFaultMatrixRejectsTruncationChecksumAndAbiMismatch()
     {
-        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            EnableTier2 = true,
+        });
         var module = Compile("local value = ...; return value + 1");
         var payload = executor.ExportProfile(module);
         var truncationLengths = new[]
@@ -878,6 +907,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = int.MaxValue,
             Tier2BackedgeThreshold = int.MaxValue,
         }))
@@ -896,6 +926,7 @@ public sealed class LuaJitExecutorTests
             FunctionEntryThreshold = 1000,
             BackedgeThreshold = int.MaxValue,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 2,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -912,7 +943,10 @@ public sealed class LuaJitExecutorTests
     [Fact]
     public void ImportedProfileDoesNotRetainModuleOrLuaOwners()
     {
-        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default);
+        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            EnableTier2 = true,
+        });
 
         var references = ImportProfileAndReleaseOwners(warmed);
         for (var attempt = 0; attempt < 10 && references.Any(static item => item.IsAlive); attempt++)
@@ -932,6 +966,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -967,6 +1002,7 @@ public sealed class LuaJitExecutorTests
             {
                 Policy = LuaJitPolicy.PreferJit,
                 SynchronousCompilation = true,
+                EnableTier2 = true,
                 Tier2InvocationThreshold = 1,
                 Tier2BackedgeThreshold = int.MaxValue,
             },
@@ -999,6 +1035,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -1031,6 +1068,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = int.MaxValue,
         });
@@ -1057,6 +1095,7 @@ public sealed class LuaJitExecutorTests
             {
                 Policy = LuaJitPolicy.PreferJit,
                 SynchronousCompilation = true,
+                EnableTier2 = true,
                 Tier2InvocationThreshold = 1,
                 Tier2BackedgeThreshold = int.MaxValue,
                 MaximumTier2GuardFailures = int.MaxValue,
@@ -1081,6 +1120,7 @@ public sealed class LuaJitExecutorTests
             {
                 Policy = LuaJitPolicy.PreferJit,
                 SynchronousCompilation = true,
+                EnableTier2 = true,
                 Tier2InvocationThreshold = 1,
                 Tier2BackedgeThreshold = int.MaxValue,
                 MaximumCodeCacheBytes = 200,
@@ -1625,6 +1665,7 @@ public sealed class LuaJitExecutorTests
         {
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
+            EnableTier2 = true,
         }))
         {
             AssertValues(
