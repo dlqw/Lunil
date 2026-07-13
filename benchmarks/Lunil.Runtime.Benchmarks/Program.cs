@@ -753,6 +753,9 @@ static void RunBackendEvidence(
         $"aot_pdb_bytes={warmed.AotPdbBytes}, " +
         $"aot_compiled_invocations={warmed.AotStatistics?.CompiledInvocations ?? 0}, " +
         $"aot_interpreter_fallbacks={warmed.AotStatistics?.InterpreterFallbacks ?? 0}, " +
+        $"aot_deoptimizations={warmed.AotStatistics?.Deoptimizations ?? 0}, " +
+        $"aot_debug_mode_deoptimizations={warmed.AotStatistics?.DebugModeDeoptimizations ?? 0}, " +
+        $"aot_unexpected_deoptimizations={warmed.AotStatistics?.UnexpectedDeoptimizations ?? 0}, " +
         $"tier2_code_kind={warmed.Tier2CodeKind}, " +
         $"tier2_optimization_count={warmed.Tier2OptimizationCount}, " +
         $"tier2_specialized_optimization_count={warmed.Tier2SpecializedOptimizationCount}, " +

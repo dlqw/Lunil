@@ -544,35 +544,47 @@ The repeated runner now measures `persisted_aot` for arithmetic, control flow, L
 access, metamethods, and coroutine/error/hook behavior. Cold startup contains validation, collectible
 load, binding, and first execution. Steady-state measurement performs 256 warm persisted calls first
 so CoreCLR tiering of the loaded methods is not mistaken for persisted-code throughput. Every row
-records PE/PDB size, minimum compiled invocation count, maximum fallback count, and at least 30 warm
-operations.
+records PE/PDB size, minimum compiled invocation count, maximum artifact fallback/deoptimization
+counts, and at least 30 warm operations. Exact debug-hook execution is expected to deopt with
+`DebugModeChanged`; only artifact lookup fallback or any non-debug compiled deoptimization fails the
+gate.
 
 Six independent win-x64 Release processes with nine cold samples produced:
 
 | Metric | M17 persisted CIL AOT |
 |---|---:|
-| Arithmetic median speedup vs interpreter | **3.003x** |
-| Arithmetic bootstrap median 95% interval | **[2.874x, 3.244x]** |
-| Control-flow median speedup vs interpreter | **2.428x** |
-| Control-flow bootstrap median 95% interval | **[2.381x, 2.503x]** |
-| Maximum validation p95 | 12.045 ms |
-| Maximum assembly-load p95 | 0.441 ms |
-| Maximum delegate-binding p95 | 15.667 ms |
-| Maximum total-load p95 | **29.567 ms** |
+| Arithmetic median speedup vs interpreter | **3.053x** |
+| Arithmetic bootstrap median 95% interval | **[3.026x, 3.151x]** |
+| Control-flow median speedup vs interpreter | **2.578x** |
+| Control-flow bootstrap median 95% interval | **[2.383x, 2.631x]** |
+| Maximum validation p95 | 12.061 ms |
+| Maximum assembly-load p95 | 0.424 ms |
+| Maximum delegate-binding p95 | 15.814 ms |
+| Maximum total-load p95 | **29.741 ms** |
 | Maximum load allocation p95 | **153,368 B** |
 | Largest PE + PDB in the fixed workload matrix | **19,168 B** |
 | Minimum compiled invocations | **286** |
-| Interpreter fallbacks | **0** |
+| Artifact lookup fallbacks / unexpected deoptimizations | **0 / 0** |
+| Expected debug-mode deoptimizations | **1,550,120** |
 | Arithmetic allocation slope | **0 B/iteration** |
 
-Semantic medians were 1.998x for `lua_calls`, 1.505x for `table_access`, 1.315x for
-`metamethod`, and 0.970x for `coroutine_error_hook`; allocation ratios remained between 0.9997x and
+Semantic medians were 2.032x for `lua_calls`, 1.529x for `table_access`, 1.394x for
+`metamethod`, and 0.965x for `coroutine_error_hook`; allocation ratios remained between 0.9997x and
 1.0001x. The local decision at
-`artifacts/backend-performance/win-x64/20260713-124741` qualifies.
+`artifacts/backend-performance/win-x64/20260713-133602` qualifies.
 
 Per-RID qualification requires arithmetic and control-flow medians of at least 2.0x with bootstrap
-95% lower bounds of at least 1.5x, zero fallback in every process, total-load p95 below 50 ms, load
-allocation p95 below 192 KiB, fixed-corpus artifact size below 32 KiB, arithmetic allocation ratio
+95% lower bounds of at least 1.5x, zero artifact fallback and unexpected deoptimization in every
+process, validation/assembly-load/delegate-binding p95 below 40/25/30 ms, total-load p95 below 75 ms,
+load allocation p95 below 192 KiB, fixed-corpus artifact size below 32 KiB, arithmetic allocation ratio
 at most 1.10x, and semantic throughput/allocation floors of 0.90x/1.10x. The six-RID aggregator emits
 `persisted-aot-six-rid-decision.json` alongside the existing tier decisions. See
 [ADR 0010](adr/0010-persisted-cil-aot-performance-productionization.md).
+
+The first protected six-RID run, `29251784825`, confirmed strong throughput and bounded individual
+load phases but exposed two evidence-model errors. Exact debug hooks produced only
+`DebugModeChanged` deoptimizations and were incorrectly counted as artifact fallback, while the
+single 50 ms combined-load bound conflated first CoreCLR loader initialization on shared Windows
+runners with an artifact-specific phase regression. M17 therefore keeps expected debug deopt as a
+separate positive attribution, fails any other deopt, and replaces the single bound with the phase
+and 75 ms end-to-end limits above rather than removing cold-load controls.

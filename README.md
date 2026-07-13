@@ -263,9 +263,10 @@ var result = executor.Execute(state, state.CreateMainClosure(lowering.Module));
 ```
 
 `loading.Metrics` attributes validation, assembly loading, delegate binding, total latency, and
-allocated bytes. `executor.Statistics` reports persisted-method invocations and exact interpreter
-fallbacks. The caller owns `loaded`; disposing it unloads the collectible context and subsequent
-execution falls back at the current canonical PC.
+allocated bytes. `executor.Statistics` separates persisted-method invocations, artifact lookup
+fallbacks, expected debug-mode deoptimization, and unexpected compiled deoptimization. The caller
+owns `loaded`; disposing it unloads the collectible context and subsequent execution falls back at
+the current canonical PC.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.

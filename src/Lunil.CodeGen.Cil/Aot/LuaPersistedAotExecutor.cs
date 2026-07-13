@@ -80,7 +80,15 @@ public sealed class LuaPersistedAotExecutor
                 var exit = function(context, thread, frame);
                 if (exit.Kind == LuaCompiledExitKind.Deopt)
                 {
-                    Interlocked.Increment(ref _interpreterFallbacks);
+                    Interlocked.Increment(ref _deoptimizations);
+                    if (exit.Reason == LuaCompiledExitReason.DebugModeChanged)
+                    {
+                        Interlocked.Increment(ref _debugModeDeoptimizations);
+                    }
+                    else
+                    {
+                        Interlocked.Increment(ref _unexpectedDeoptimizations);
+                    }
                 }
 
                 return exit;
@@ -117,10 +125,16 @@ public sealed class LuaPersistedAotExecutor
 
         private long _compiledInvocations;
         private long _interpreterFallbacks;
+        private long _deoptimizations;
+        private long _debugModeDeoptimizations;
+        private long _unexpectedDeoptimizations;
 
         public LuaPersistedAotStatistics GetStatistics() => new(
             Interlocked.Read(ref _compiledInvocations),
-            Interlocked.Read(ref _interpreterFallbacks));
+            Interlocked.Read(ref _interpreterFallbacks),
+            Interlocked.Read(ref _deoptimizations),
+            Interlocked.Read(ref _debugModeDeoptimizations),
+            Interlocked.Read(ref _unexpectedDeoptimizations));
 
         private sealed record ModuleIdentityMatch(bool Matches);
     }
@@ -128,4 +142,7 @@ public sealed class LuaPersistedAotExecutor
 
 public sealed record LuaPersistedAotStatistics(
     long CompiledInvocations,
-    long InterpreterFallbacks);
+    long InterpreterFallbacks,
+    long Deoptimizations,
+    long DebugModeDeoptimizations,
+    long UnexpectedDeoptimizations);

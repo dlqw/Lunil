@@ -250,8 +250,9 @@ var result = executor.Execute(state, state.CreateMainClosure(lowering.Module));
 ```
 
 `loading.Metrics` 分别归因验证、assembly load、delegate binding、总耗时与分配字节；
-`executor.Statistics` 记录 persisted method 调用和精确解释器回退。`loaded` 生命周期由调用方负责；
-释放后 collectible context 会卸载，后续执行从当前 canonical PC 精确回退。
+`executor.Statistics` 区分 persisted method 调用、artifact lookup fallback、预期 debug-mode deopt
+与非预期 compiled deopt。`loaded` 生命周期由调用方负责；释放后 collectible context 会卸载，后续
+执行从当前 canonical PC 精确回退。
 
 处理不可信源码或 bytecode 时，应根据宿主需求配置有界 parser/chunk option、解释器
 instruction/stack budget 和 heap quota。

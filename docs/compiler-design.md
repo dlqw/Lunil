@@ -495,7 +495,8 @@ M17 的 `LuaPersistedAotExecutor` 将已验证的 `LuaAotLoadedModule` 接回同
 `LuaExecutionEngine`。compiled entry 先匹配 canonical module content ID，再按 function ID 查找
 delegate；module 不匹配、function 缺失或 collectible artifact 已释放时，从当前 canonical PC 返回
 `UnsupportedInstruction` deopt，由 reference executor 精确继续。调用方拥有 loaded module 的生命周期，
-executor 只记录 compiled invocation 与 fallback 统计。loader 同时分别记录 validation、assembly
+executor 分别记录 compiled invocation、artifact lookup fallback、全部 deopt、预期 debug-mode deopt
+与非预期 deopt。loader 同时分别记录 validation、assembly
 load、delegate binding、total duration 与 current-thread allocation。六 RID evidence 对同一 workload
 matrix 验证稳态吞吐、分配斜率、加载 p95、artifact 体积和零 fallback；完整决策见
 [ADR 0010](adr/0010-persisted-cil-aot-performance-productionization.md)。

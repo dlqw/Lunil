@@ -34,8 +34,10 @@ module. At every compiled entry it:
    lifetime checks fail.
 
 The caller controls the collectible `AssemblyLoadContext` lifetime by disposing
-`LuaAotLoadedModule`. `LuaPersistedAotStatistics` reports compiled delegate invocations and
-interpreter fallback attempts without retaining Lua state, closures, frames, or tables.
+`LuaAotLoadedModule`. `LuaPersistedAotStatistics` reports compiled delegate invocations, artifact
+lookup fallbacks, all compiled deoptimizations, expected debug-mode deoptimizations, and unexpected
+deoptimizations without retaining Lua state, closures, frames, or tables. Exact debug hooks
+intentionally deopt to the shared scheduler and are not an artifact failure.
 
 `LuaAotArtifactLoader.Load` now returns `LuaAotLoadMetrics` for validation, assembly loading,
 delegate binding, total load duration, and current-thread allocated bytes. Failed validation and
@@ -51,41 +53,43 @@ Each RID qualifies only when all of the following hold:
 
 - arithmetic and control-flow median speedups are at least 2.0x and their bootstrap 95% lower bounds
   are at least 1.5x versus the interpreter;
-- every row measures at least 30 warm operations, executes persisted code, and records zero
-  interpreter fallbacks in every process;
+- every row measures at least 30 warm operations, executes persisted code, and records zero artifact
+  lookup fallbacks and zero unexpected compiled deoptimizations in every process;
 - arithmetic allocation slope is within 0.01 B/iteration and allocation is at most 1.10x the
   interpreter;
-- every artifact has total-load p95 below 50 ms, load allocation p95 below 192 KiB, and combined
-  PE/PDB size below 32 KiB for the fixed evidence corpus; and
+- every artifact has validation p95 below 40 ms, assembly-load p95 below 25 ms, delegate-binding p95
+  below 30 ms, total-load p95 below 75 ms, load allocation p95 below 192 KiB, and combined PE/PDB
+  size below 32 KiB for the fixed evidence corpus; and
 - Lua-call, table, metamethod, and coroutine/error/hook median throughput remains at least 0.90x the
   interpreter with allocation at most 1.10x.
 
 `Measure-BackendPerformance.ps1` writes `persisted-aot-decision.json`. Per-process invocation counts
-use the minimum and fallback counts use the maximum, so one failed process cannot be hidden by a
-median. `Merge-BackendPerformanceEvidence.ps1` selects the newest decision for every release RID and
+use the minimum while fallback and deoptimization counts use the maximum, so one failed process
+cannot be hidden by a median. `Merge-BackendPerformanceEvidence.ps1` selects the newest decision for every release RID and
 writes `persisted-aot-six-rid-decision.json` alongside the existing Tier 1, Tier 2, and Loop OSR
 aggregates.
 
 ## Evidence
 
 The six-process win-x64 Release record at
-`artifacts/backend-performance/win-x64/20260713-124741` used nine cold samples and 30 warm operations
+`artifacts/backend-performance/win-x64/20260713-133602` used nine cold samples and 30 warm operations
 per row. It reported:
 
 | Metric | Result |
 |---|---:|
-| Arithmetic median / bootstrap 95% interval | **3.003x / [2.874x, 3.244x]** |
-| Control-flow median / bootstrap 95% interval | **2.428x / [2.381x, 2.503x]** |
-| Maximum validation / assembly load / delegate bind p95 | 12.045 / 0.441 / 15.667 ms |
-| Maximum total load p95 | **29.567 ms** |
+| Arithmetic median / bootstrap 95% interval | **3.053x / [3.026x, 3.151x]** |
+| Control-flow median / bootstrap 95% interval | **2.578x / [2.383x, 2.631x]** |
+| Maximum validation / assembly load / delegate bind p95 | 12.061 / 0.424 / 15.814 ms |
+| Maximum total load p95 | **29.741 ms** |
 | Maximum load allocation p95 | **153,368 B** |
 | Maximum PE + PDB size | **19,168 B** |
 | Minimum compiled invocations | **286** |
-| Total interpreter fallbacks | **0** |
+| Artifact lookup fallbacks / unexpected deoptimizations | **0 / 0** |
+| Expected debug-mode deoptimizations | **1,550,120** |
 | Arithmetic allocation slope | **0 B/iteration** |
 
-Semantic-workload medians were 1.998x for Lua calls, 1.505x for table access, 1.315x for
-metamethods, and 0.970x for coroutine/error/hook execution. Their allocation ratios ranged from
+Semantic-workload medians were 2.032x for Lua calls, 1.529x for table access, 1.394x for
+metamethods, and 0.965x for coroutine/error/hook execution. Their allocation ratios ranged from
 0.9997x to 1.0001x, every row executed persisted delegates, and no process fell back.
 
 Focused tests cover scheduler execution, metrics, artifact/module mismatch, disposed artifact

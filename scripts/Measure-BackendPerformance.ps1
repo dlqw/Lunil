@@ -153,6 +153,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         AotPdbBytes = [long]$values.aot_pdb_bytes
         AotCompiledInvocations = [long]$values.aot_compiled_invocations
         AotInterpreterFallbacks = [long]$values.aot_interpreter_fallbacks
+        AotDeoptimizations = [long]$values.aot_deoptimizations
+        AotDebugModeDeoptimizations = [long]$values.aot_debug_mode_deoptimizations
+        AotUnexpectedDeoptimizations = [long]$values.aot_unexpected_deoptimizations
         Tier2CodeKind = $values.tier2_code_kind
         Tier2OptimizationCount = [int]$values.tier2_optimization_count
         Tier2SpecializedOptimizationCount = [int]$values.tier2_specialized_optimization_count
@@ -344,6 +347,12 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
             $group.Group.AotCompiledInvocations | Measure-Object -Minimum).Minimum
         AotInterpreterFallbacks = (
             $group.Group.AotInterpreterFallbacks | Measure-Object -Maximum).Maximum
+        AotDeoptimizations = (
+            $group.Group.AotDeoptimizations | Measure-Object -Maximum).Maximum
+        AotDebugModeDeoptimizations = (
+            $group.Group.AotDebugModeDeoptimizations | Measure-Object -Maximum).Maximum
+        AotUnexpectedDeoptimizations = (
+            $group.Group.AotUnexpectedDeoptimizations | Measure-Object -Maximum).Maximum
         InstructionsPerSchedulerExit = Get-Median @($group.Group.InstructionsPerSchedulerExit)
         RssPeakDeltaBytes = Get-Median @($group.Group.RssPeakDeltaBytes)
         EstimatedCodeBytes = Get-Median @($group.Group.EstimatedCodeBytes)
@@ -656,6 +665,10 @@ $aotWorkloadComparisons = foreach ($workload in @(
         $aotNegativeGateFailures.Add(
             "$workload observed $($record.AotInterpreterFallbacks) persisted AOT interpreter fallbacks.")
     }
+    if ($record.AotUnexpectedDeoptimizations -ne 0) {
+        $aotNegativeGateFailures.Add(
+            "$workload observed $($record.AotUnexpectedDeoptimizations) unexpected persisted AOT deoptimizations.")
+    }
     if ($record.AotCompiledInvocations -le 0) {
         $aotNegativeGateFailures.Add(
             "$workload did not execute a persisted AOT method.")
@@ -669,6 +682,9 @@ $aotWorkloadComparisons = foreach ($workload in @(
         AllocationRatioVsInterpreterMedian = $record.AllocationRatioVsInterpreterMedian
         CompiledInvocations = $record.AotCompiledInvocations
         InterpreterFallbacks = $record.AotInterpreterFallbacks
+        Deoptimizations = $record.AotDeoptimizations
+        DebugModeDeoptimizations = $record.AotDebugModeDeoptimizations
+        UnexpectedDeoptimizations = $record.AotUnexpectedDeoptimizations
     }
 }
 $aotExecutionGateFailures = [Collections.Generic.List[string]]::new()
@@ -677,7 +693,19 @@ foreach ($record in $aotRows) {
         $aotExecutionGateFailures.Add(
             "$($record.Workload) measured only $($record.Operations) warm operations.")
     }
-    if ($record.AotTotalLoadP95Ms -ge 50.0) {
+    if ($record.AotValidationP95Ms -ge 40.0) {
+        $aotExecutionGateFailures.Add(
+            "$($record.Workload) persisted AOT validation p95 is $($record.AotValidationP95Ms) ms.")
+    }
+    if ($record.AotAssemblyLoadP95Ms -ge 25.0) {
+        $aotExecutionGateFailures.Add(
+            "$($record.Workload) persisted AOT assembly load p95 is $($record.AotAssemblyLoadP95Ms) ms.")
+    }
+    if ($record.AotDelegateBindP95Ms -ge 30.0) {
+        $aotExecutionGateFailures.Add(
+            "$($record.Workload) persisted AOT delegate binding p95 is $($record.AotDelegateBindP95Ms) ms.")
+    }
+    if ($record.AotTotalLoadP95Ms -ge 75.0) {
         $aotExecutionGateFailures.Add(
             "$($record.Workload) persisted AOT total load p95 is $($record.AotTotalLoadP95Ms) ms.")
     }
@@ -697,6 +725,10 @@ foreach ($record in $aotRows) {
         $aotExecutionGateFailures.Add(
             "$($record.Workload) observed $($record.AotInterpreterFallbacks) persisted AOT interpreter fallbacks.")
     }
+    if ($record.AotUnexpectedDeoptimizations -ne 0) {
+        $aotExecutionGateFailures.Add(
+            "$($record.Workload) observed $($record.AotUnexpectedDeoptimizations) unexpected persisted AOT deoptimizations.")
+    }
 }
 $aotWorkloadEvidence = foreach ($record in $aotRows) {
     [pscustomobject]@{
@@ -712,6 +744,9 @@ $aotWorkloadEvidence = foreach ($record in $aotRows) {
         AotTotalArtifactBytes = $record.AotPeBytes + $record.AotPdbBytes
         CompiledInvocations = $record.AotCompiledInvocations
         InterpreterFallbacks = $record.AotInterpreterFallbacks
+        Deoptimizations = $record.AotDeoptimizations
+        DebugModeDeoptimizations = $record.AotDebugModeDeoptimizations
+        UnexpectedDeoptimizations = $record.AotUnexpectedDeoptimizations
     }
 }
 $aotDecision = [pscustomobject]@{
@@ -747,6 +782,12 @@ $aotDecision = [pscustomobject]@{
         $aotRows | Measure-Object AotCompiledInvocations -Minimum).Minimum
     TotalAotInterpreterFallbacks = (
         $aotRows | Measure-Object AotInterpreterFallbacks -Sum).Sum
+    MaximumAotDeoptimizations = (
+        $aotRows | Measure-Object AotDeoptimizations -Maximum).Maximum
+    MaximumAotDebugModeDeoptimizations = (
+        $aotRows | Measure-Object AotDebugModeDeoptimizations -Maximum).Maximum
+    TotalUnexpectedAotDeoptimizations = (
+        $aotRows | Measure-Object AotUnexpectedDeoptimizations -Sum).Sum
     WorkloadEvidence = @($aotWorkloadEvidence)
     NegativeWorkloadComparisons = @($aotWorkloadComparisons)
     ExecutionGateFailures = $aotExecutionGateFailures.ToArray()

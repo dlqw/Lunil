@@ -293,8 +293,21 @@ $persistedAotResult = [pscustomobject]@{
         $persistedAotSelected | ForEach-Object {
             [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
         } | Measure-Object -Maximum).Maximum
+    MaximumAotDeoptimizations = (
+        $persistedAotSelected | Measure-Object MaximumAotDeoptimizations -Maximum).Maximum
+    MaximumAotDebugModeDeoptimizations = (
+        $persistedAotSelected |
+            Measure-Object MaximumAotDebugModeDeoptimizations -Maximum).Maximum
+    TotalUnexpectedAotDeoptimizations = (
+        $persistedAotSelected |
+            Measure-Object TotalUnexpectedAotDeoptimizations -Sum).Sum
     AllRidsExecutePersistedAot = @($persistedAotSelected | Where-Object {
-        $_.MinimumAotCompiledInvocations -le 0 -or $_.TotalAotInterpreterFallbacks -ne 0
+        $_.MinimumAotCompiledInvocations -le 0 -or
+            $_.TotalAotInterpreterFallbacks -ne 0 -or
+            $_.TotalUnexpectedAotDeoptimizations -ne 0
+    }).Count -eq 0
+    AllRidsAttributeExpectedDebugDeoptimization = @($persistedAotSelected | Where-Object {
+        $_.MaximumAotDeoptimizations -ne $_.MaximumAotDebugModeDeoptimizations
     }).Count -eq 0
     AllRidsPassExecutionGate = @($persistedAotSelected | Where-Object {
         @($_.ExecutionGateFailures).Count -ne 0

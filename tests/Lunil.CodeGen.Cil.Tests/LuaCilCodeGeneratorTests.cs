@@ -206,6 +206,40 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.Equal(LuaValue.FromInteger(11), Assert.Single(result.Values));
         Assert.True(executor.Statistics.CompiledInvocations > 0);
         Assert.Equal(0, executor.Statistics.InterpreterFallbacks);
+        Assert.Equal(0, executor.Statistics.Deoptimizations);
+        Assert.Equal(0, executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
+    public void PersistedExecutorAttributesExpectedDebugDeoptimizationSeparately()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(13)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        using var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+        LuaDebugApi.SetHook(
+            state,
+            state.MainThread,
+            LuaValue.FromFunction(new LuaNativeFunction("hook", static (_, _) => [])),
+            LuaDebugHookMask.Count,
+            count: 1);
+
+        var result = executor.Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(LuaValue.FromInteger(13), Assert.Single(result.Values));
+        Assert.True(executor.Statistics.CompiledInvocations > 0);
+        Assert.Equal(0, executor.Statistics.InterpreterFallbacks);
+        Assert.True(executor.Statistics.Deoptimizations > 0);
+        Assert.Equal(
+            executor.Statistics.Deoptimizations,
+            executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
     }
 
     [Fact]
@@ -234,6 +268,9 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.Equal(LuaValue.FromInteger(7), Assert.Single(disposed.Values));
         Assert.Equal(0, executor.Statistics.CompiledInvocations);
         Assert.Equal(4, executor.Statistics.InterpreterFallbacks);
+        Assert.Equal(0, executor.Statistics.Deoptimizations);
+        Assert.Equal(0, executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
     }
 
     [Fact]
