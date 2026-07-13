@@ -35,7 +35,9 @@ counts.
 
 Register liveness is cached in an owner-scoped `ConditionalWeakTable<LuaIrModule, ...>` and is
 shared by Tier 1, Tier 2, loop OSR, and persisted AOT planning. Cache values do not retain the
-module owner after the module becomes unreachable.
+module owner after the module becomes unreachable. A Tier 2-enabled executor prewarms the full
+profile-planning and specialized-emission pipeline once per process so first promotion does not
+pay generic/JIT initialization inside the compilation event.
 
 The Tier 2 qualification record requires, for the arithmetic workload on each RID:
 
@@ -54,13 +56,14 @@ Loop OSR remains independently disabled by default.
 Five independent win-x64 Release processes with nine cold samples each and
 `iterations=1,000,000` reported:
 
-- 9.492x arithmetic median speedup with bootstrap 95% interval `[9.124x, 10.018x]`;
+- 9.177x arithmetic median speedup with bootstrap 95% interval `[6.557x, 10.272x]`;
 - zero arithmetic allocation slope;
-- 6.442 ms Tier 2 compilation p95;
+- 1.395 ms Tier 2 compilation p95;
 - 100% liveness-cache hit rate during promotion;
-- 5.436 ms optimization-planning p95, 0.100 ms CIL-emission p95, and 0.029 ms
+- 1.199 ms optimization-planning p95, 0.087 ms CIL-emission p95, and 0.022 ms
   delegate-creation p95;
-- `ExactNumericSpecializedCil`, five specialized optimizations, and five deopt sites.
+- 57,344 bytes compilation allocation, `ExactNumericSpecializedCil`, five specialized
+  optimizations, and five deopt sites.
 
 The focused backend soak completed five rounds of differential, tier/cache/profile/OSR,
 AOT-fault, and MSBuild-cache groups without failure. The full Release solution, win-x64

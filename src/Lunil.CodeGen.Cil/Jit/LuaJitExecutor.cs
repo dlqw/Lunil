@@ -46,7 +46,7 @@ public sealed class LuaJitExecutor : IDisposable
             options.EnableTier2 &&
             selectedTier2Compiler is ProfileGuidedLuaTier2Compiler)
         {
-            ReflectionEmitLuaTier2Compiler.PrepareCompiler();
+            ProfileGuidedLuaTier2Compiler.PrepareCompiler();
         }
 
         _registry = new LuaTieredJitRegistry(

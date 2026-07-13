@@ -18,9 +18,6 @@ internal readonly record struct LuaTier2EmissionMetrics(
 
 internal static class ReflectionEmitLuaTier2Compiler
 {
-    private static readonly Lazy<bool> CompilerPrepared = new(
-        PrepareCompilerCore,
-        LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Type[] CompiledMethodParameters =
     [
         typeof(LuaExecutionContext),
@@ -122,8 +119,6 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
         [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
-
-    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
 
     [RequiresDynamicCode("Tier 2 CIL specialization requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
@@ -295,51 +290,6 @@ internal static class ReflectionEmitLuaTier2Compiler
 
     private static bool IsExactNumericKind(LuaJitValueKinds kinds) =>
         kinds is LuaJitValueKinds.Integer or LuaJitValueKinds.Float;
-
-    [UnconditionalSuppressMessage(
-        "AOT",
-        "IL3050",
-        Justification = "The JIT executor checks dynamic-code support before preparation.")]
-    private static bool PrepareCompilerCore()
-    {
-        var instructions = ImmutableArray.Create(
-            new LuaIrInstruction(
-                LuaIrOpcode.Binary,
-                a: 2,
-                b: 0,
-                c: 1,
-                d: (int)LuaIrBinaryOperator.Add),
-            new LuaIrInstruction(LuaIrOpcode.Return, a: 2, b: 1));
-        var function = new LuaIrFunction
-        {
-            Id = 0,
-            Span = default,
-            ParameterCount = 2,
-            RegisterCount = 3,
-            Constants = [],
-            Instructions = instructions,
-            BasicBlocks = LuaIrControlFlow.Build(instructions),
-        };
-        var optimized = ImmutableDictionary<int,
-            ProfileGuidedLuaTier2Compiler.OptimizedInstruction>.Empty.Add(
-                0,
-                ProfileGuidedLuaTier2Compiler.OptimizedInstruction.Binary(
-                    0,
-                    LuaJitValueKinds.Integer,
-                    LuaJitValueKinds.Integer));
-        if (!TryCompile(
-                function,
-                optimized,
-                CancellationToken.None,
-                out _,
-                out _,
-                out _))
-        {
-            throw new InvalidOperationException("Tier 2 compiler preparation failed.");
-        }
-
-        return true;
-    }
 
     private static void EmitEntryGuard(
         ILGenerator generator,

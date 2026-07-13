@@ -398,7 +398,9 @@ upvalue access 和 guarded empty-range `Close`。primitive guard 在 reservation
 失败从同一 canonical PC 进入 generic path，只计费一次。Tier 2 与 Loop OSR 均关闭时，method plan
 省略逐指令 observation helper。canonical module/function/observation-mode 的 verified plan 使用
 owner-scoped `ConditionalWeakTable` 缓存；显式 plan limit 不共享缓存，module 回收不会被 plan 反向
-阻止。Reflection.Emit ABI method lookup 和首次 DynamicMethod 基础设施在 executor startup 预热。
+阻止。Reflection.Emit ABI method lookup 和首次 DynamicMethod 基础设施在 executor startup 预热；
+显式启用 Tier 2 时还会按进程预热完整 profile planning、deopt-map build 与 specialized emission
+pipeline，避免首次 promotion 的 compilation event 承担通用代码 JIT 初始化。
 
 ### 9.3 AOT
 

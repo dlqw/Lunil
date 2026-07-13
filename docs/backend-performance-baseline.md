@@ -266,30 +266,30 @@ Five independent win-x64 Release processes, each with nine cold samples and
 
 | Metric | Interpreter | Tier 1 | Exact-numeric Tier 2 |
 |---|---:|---:|---:|
-| Warm median | 7,769,730 ns/op | 2,281,930 ns/op | 802,630 ns/op |
-| Paired median speedup | 1.000x | 3.239x | **9.492x** |
-| Bootstrap median 95% interval | n/a | [3.023x, 3.593x] | **[9.124x, 10.018x]** |
+| Warm median | 7,453,430 ns/op | 2,405,760 ns/op | 801,230 ns/op |
+| Paired median speedup | 1.000x | 3.187x | **9.177x** |
+| Bootstrap median 95% interval | n/a | [2.579x, 3.433x] | **[6.557x, 10.272x]** |
 | Allocated/op | 1,844 B | 1,974.4 B | 2,102.4 B |
 | Allocation slope | 0 B/iteration | 0 B/iteration | 0 B/iteration |
-| Tier 2 compilation p95 | n/a | n/a | **6.442 ms** |
+| Tier 2 compilation p95 | n/a | n/a | **1.395 ms** |
 
 The Tier 2 compilation attribution was:
 
 | Phase/shape | p95 or value |
 |---|---:|
-| Canonical IR verification | 0.013 ms |
-| Register liveness | 0.006 ms |
+| Canonical IR verification | 0.006 ms |
+| Register liveness | 0.007 ms |
 | Liveness cache hit rate | 100% |
-| Optimization planning | 5.436 ms |
-| Specialized CIL emission | 0.100 ms |
-| Delegate creation | 0.029 ms |
-| Compilation allocation | 57,776 B |
+| Optimization planning | 1.199 ms |
+| Specialized CIL emission | 0.087 ms |
+| Delegate creation | 0.022 ms |
+| Compilation allocation | 57,344 B |
 | Code kind | `ExactNumericSpecializedCil` |
 | Specialized optimizations / deopt sites | 5 / 5 |
 
 This passes the local exact-numeric Tier 2 gate: paired median and bootstrap lower bound are both
 at least 4x, compilation p95 is below 10 ms, and the linear allocation slope is zero. The same
-run also measured 10.327x on the numeric control-flow workload.
+run also measured 10.732x on the numeric control-flow workload.
 
 This decision does **not** enable Tier 2 by default. The current table, call, metamethod, and
 coroutine/error/hook shapes still select `ManagedProfileProgram` for all or part of their hot
