@@ -1440,14 +1440,16 @@ internal sealed class LuaTieredJitRegistry :
                 LuaJitFunctionState.Ready,
                 result.EstimatedCodeBytes,
                 compileDuration,
-                Tier: LuaJitCompilationTier.Tier2));
+                Tier: LuaJitCompilationTier.Tier2,
+                Tier2CompilationMetrics: result.Metrics));
             return;
         }
 
         FailTier2Compilation(
             request,
             result.Succeeded ? "JIT2002" : "JIT2001",
-            compileDuration);
+            compileDuration,
+            result.Metrics);
     }
 
     private void CompileLoopOsr(CompilationRequest request)
@@ -1693,7 +1695,8 @@ internal sealed class LuaTieredJitRegistry :
     private void FailTier2Compilation(
         CompilationRequest request,
         string diagnosticCode,
-        TimeSpan duration)
+        TimeSpan duration,
+        LuaJitTier2CompilationMetrics? metrics)
     {
         lock (request.Entry.Gate)
         {
@@ -1717,7 +1720,8 @@ internal sealed class LuaTieredJitRegistry :
             LuaJitFunctionState.Ready,
             Duration: duration,
             DiagnosticCode: diagnosticCode,
-            Tier: LuaJitCompilationTier.Tier2));
+            Tier: LuaJitCompilationTier.Tier2,
+            Tier2CompilationMetrics: metrics));
     }
 
     private bool TryInstallCompiledMethod(

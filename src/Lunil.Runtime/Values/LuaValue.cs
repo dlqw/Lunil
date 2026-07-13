@@ -58,6 +58,10 @@ public readonly struct LuaValue : IEquatable<LuaValue>
 
     public bool IsTruthy => !IsNil && (Kind != LuaValueKind.Boolean || _payload != 0);
 
+    internal bool IsInteger => ReferenceEquals(_tagOrReference, IntegerTag);
+
+    internal bool IsFloat => ReferenceEquals(_tagOrReference, FloatTag);
+
     public static LuaValue Nil => default;
 
     public static LuaValue FromBoolean(bool value) => new(BooleanTag, value ? 1 : 0);
@@ -123,12 +127,18 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         ? _payload
         : throw TypeError("integer");
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal long AsIntegerUnchecked() => _payload;
+
     public double AsFloat() => Kind switch
     {
         LuaValueKind.Float => BitConverter.Int64BitsToDouble(_payload),
         LuaValueKind.Integer => _payload,
         _ => throw TypeError("number"),
     };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal double AsFloatUnchecked() => BitConverter.Int64BitsToDouble(_payload);
 
     public LuaString AsString() => _tagOrReference as LuaString ?? throw TypeError("string");
 

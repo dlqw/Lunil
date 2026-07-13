@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
@@ -37,13 +39,24 @@ public sealed record LuaJitDeoptMapEntry(
 public sealed record LuaJitTier2Plan(
     int FunctionId,
     ImmutableArray<LuaJitOptimization> Optimizations,
-    ImmutableArray<LuaJitDeoptMapEntry> DeoptMap);
+    ImmutableArray<LuaJitDeoptMapEntry> DeoptMap)
+{
+    public LuaJitTier2CodeKind CodeKind { get; init; } =
+        LuaJitTier2CodeKind.ManagedProfileProgram;
+}
+
+public enum LuaJitTier2CodeKind : byte
+{
+    ManagedProfileProgram,
+    ExactNumericSpecializedCil,
+}
 
 internal sealed record LuaTier2CompilationResult(
     LuaCompiledMethod? Method,
     LuaJitTier2Plan? Plan,
     long EstimatedCodeBytes,
-    ImmutableArray<string> Diagnostics)
+    ImmutableArray<string> Diagnostics,
+    LuaJitTier2CompilationMetrics? Metrics = null)
 {
     public bool Succeeded => Method is not null && Plan is not null && Diagnostics.IsEmpty;
 }
@@ -68,7 +81,10 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var verificationStarted = Stopwatch.GetTimestamp();
         var errors = LuaIrVerifier.Verify(module);
+        var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || functionId < 0 || functionId >= module.Functions.Length)
         {
             return new LuaTier2CompilationResult(
@@ -77,11 +93,31 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 0,
                 !errors.IsEmpty
                     ? [.. errors.Select(static error => error.Message)]
-                    : ["Function id is outside the verified module."]);
+                    : ["Function id is outside the verified module."],
+                new LuaJitTier2CompilationMetrics(
+                    canonicalVerificationDuration,
+                    TimeSpan.Zero,
+                    LivenessCacheHit: false,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    TimeSpan.Zero,
+                    Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore),
+                    LuaJitTier2CodeKind.ManagedProfileProgram,
+                    OptimizationCount: 0,
+                    SpecializedOptimizationCount: 0,
+                    DeoptSiteCount: 0,
+                    EstimatedCodeBytes: 0));
         }
 
         var function = module.Functions[functionId];
-        var liveness = LuaRegisterLiveness.Analyze(module, function, cancellationToken);
+        var livenessStarted = Stopwatch.GetTimestamp();
+        var liveness = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            function,
+            out var livenessCacheHit,
+            cancellationToken);
+        var livenessAnalysisDuration = Stopwatch.GetElapsedTime(livenessStarted);
+        var optimizationStarted = Stopwatch.GetTimestamp();
         var optimized = BuildOptimizations(function, profile, liveness);
         var optimizationDescriptions = optimized.Values
             .OrderBy(static item => item.ProgramCounter)
@@ -108,12 +144,68 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             .ToImmutableArray();
         var plan = new LuaJitTier2Plan(functionId, optimizationDescriptions, deoptMap);
         var program = new Tier2Program(function, optimized);
+        var optimizationPlanningDuration = Stopwatch.GetElapsedTime(optimizationStarted);
+        LuaCompiledMethod method = program.Execute;
+        var estimatedCodeBytes = checked(
+            function.Instructions.Length * 12L + optimized.Count * 64L);
+        var emissionMetrics = default(LuaTier2EmissionMetrics);
+        if (TryCompileNumericSpecializedCil(
+                function,
+                optimized,
+                cancellationToken,
+                out var specializedMethod,
+                out var specializedCodeBytes,
+                out emissionMetrics))
+        {
+            method = specializedMethod;
+            estimatedCodeBytes = specializedCodeBytes;
+            plan = plan with { CodeKind = LuaJitTier2CodeKind.ExactNumericSpecializedCil };
+        }
+
+        var specializedOptimizationCount = plan.CodeKind ==
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil
+            ? optimized.Values.Count(static item => item.Kind is
+                LuaJitOptimizationKind.NumericUnary or LuaJitOptimizationKind.NumericBinary)
+            : 0;
+        var metrics = new LuaJitTier2CompilationMetrics(
+            canonicalVerificationDuration,
+            livenessAnalysisDuration,
+            livenessCacheHit,
+            optimizationPlanningDuration,
+            emissionMetrics.CilEmissionDuration,
+            emissionMetrics.DelegateCreationDuration,
+            Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore),
+            plan.CodeKind,
+            plan.Optimizations.Length,
+            specializedOptimizationCount,
+            plan.DeoptMap.Length,
+            estimatedCodeBytes);
+
         return new LuaTier2CompilationResult(
-            program.Execute,
+            method,
             plan,
-            checked(function.Instructions.Length * 12L + optimized.Count * 64L),
-            []);
+            estimatedCodeBytes,
+            [],
+            metrics);
     }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Tier 2 compilation is reached only after the dynamic-code capability check.")]
+    private static bool TryCompileNumericSpecializedCil(
+        LuaIrFunction function,
+        ImmutableDictionary<int, OptimizedInstruction> optimized,
+        CancellationToken cancellationToken,
+        [NotNullWhen(true)] out LuaCompiledMethod? method,
+        out long estimatedCodeBytes,
+        out LuaTier2EmissionMetrics metrics) => ReflectionEmitLuaTier2Compiler.TryCompile(
+            function,
+            optimized,
+            cancellationToken,
+            out method,
+            out estimatedCodeBytes,
+            out metrics);
 
     private static ImmutableDictionary<int, OptimizedInstruction> BuildOptimizations(
         LuaIrFunction function,
@@ -322,7 +414,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaThread thread,
             LuaFrame frame)
         {
-            if (!LuaCodegenAbiV1.CanExecuteCompiled(context))
+            if (!LuaCodegenAbiV2.CanExecuteCompiledFrame(
+                    context,
+                    frame,
+                    _function.Id,
+                    _function.RegisterCount))
             {
                 return LuaCompiledExit.Deopt(
                     frame.ProgramCounter,
@@ -333,7 +429,6 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             while ((uint)frame.ProgramCounter < (uint)_function.Instructions.Length)
             {
                 var pc = frame.ProgramCounter;
-                LuaCodegenAbiV1.ObserveCanonicalInstruction(context, thread, frame, pc);
                 var instruction = _function.Instructions[pc];
                 if (_optimized[pc] is { } optimization)
                 {
@@ -380,7 +475,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     }
 
                     _ = context.TryReserveInstructions(optimization.InstructionCount);
-                    LuaCodegenAbiV1.WriteRegister(
+                    LuaCodegenAbiV2.WriteRegisterUnchecked(
                         thread,
                         frame,
                         optimization.DestinationRegister,
@@ -397,7 +492,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     return null;
                 case LuaJitOptimizationKind.NumericUnary:
                     {
-                        var operand = LuaCodegenAbiV1.ReadRegister(
+                        var operand = LuaCodegenAbiV2.ReadRegisterUnchecked(
                             thread,
                             frame,
                             instruction.B);
@@ -411,17 +506,30 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                             return BudgetPoll(context, frame.ProgramCounter);
                         }
 
-                        var value = LuaValueOperations.Unary(
-                            (LuaIrUnaryOperator)instruction.C,
-                            operand);
-                        LuaCodegenAbiV1.WriteRegister(thread, frame, instruction.A, value);
+                        var operation = (LuaIrUnaryOperator)instruction.C;
+                        var value = optimization.FirstKinds == LuaJitValueKinds.Integer &&
+                            operation is LuaIrUnaryOperator.Negate or
+                                LuaIrUnaryOperator.BitwiseNot
+                            ? LuaValueOperations.UnaryIntegerSpecialized(operation, operand)
+                            : LuaValueOperations.Unary(operation, operand);
+                        LuaCodegenAbiV2.WriteRegisterUnchecked(
+                            thread,
+                            frame,
+                            instruction.A,
+                            value);
                         frame.ProgramCounter++;
                         return null;
                     }
                 case LuaJitOptimizationKind.NumericBinary:
                     {
-                        var left = LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.B);
-                        var right = LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.C);
+                        var left = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                            thread,
+                            frame,
+                            instruction.B);
+                        var right = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                            thread,
+                            frame,
+                            instruction.C);
                         if (!optimization.MatchesFirst(left) ||
                             !optimization.MatchesSecond(right))
                         {
@@ -433,18 +541,22 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                             return BudgetPoll(context, frame.ProgramCounter);
                         }
 
-                        var value = LuaValueOperations.Binary(
-                            context.State,
-                            (LuaIrBinaryOperator)instruction.D,
-                            left,
-                            right);
-                        LuaCodegenAbiV1.WriteRegister(thread, frame, instruction.A, value);
+                        var operation = (LuaIrBinaryOperator)instruction.D;
+                        var value = optimization.FirstKinds == LuaJitValueKinds.Integer &&
+                            optimization.SecondKinds == LuaJitValueKinds.Integer
+                            ? LuaValueOperations.BinaryIntegerSpecialized(operation, left, right)
+                            : LuaValueOperations.Binary(context.State, operation, left, right);
+                        LuaCodegenAbiV2.WriteRegisterUnchecked(
+                            thread,
+                            frame,
+                            instruction.A,
+                            value);
                         frame.ProgramCounter++;
                         return null;
                     }
                 case LuaJitOptimizationKind.BooleanBranch:
                     {
-                        var truthy = LuaCodegenAbiV1.ReadRegister(
+                        var truthy = LuaCodegenAbiV2.ReadRegisterUnchecked(
                             thread,
                             frame,
                             instruction.A).IsTruthy;
@@ -473,8 +585,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         var keyRegister = optimization.Kind == LuaJitOptimizationKind.TableGetPic
                             ? instruction.C
                             : instruction.B;
-                        var target = LuaCodegenAbiV1.ReadRegister(thread, frame, tableRegister);
-                        var key = LuaCodegenAbiV1.ReadRegister(thread, frame, keyRegister);
+                        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                            thread,
+                            frame,
+                            tableRegister);
+                        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                            thread,
+                            frame,
+                            keyRegister);
                         if (target.Kind != LuaValueKind.Table ||
                             !optimization.MatchesTable(target.AsTable(), key))
                         {
@@ -489,7 +607,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         var table = target.AsTable();
                         if (optimization.Kind == LuaJitOptimizationKind.TableGetPic)
                         {
-                            LuaCodegenAbiV1.WriteRegister(
+                            LuaCodegenAbiV2.WriteRegisterUnchecked(
                                 thread,
                                 frame,
                                 instruction.A,
@@ -499,7 +617,10 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         {
                             table.Set(
                                 key,
-                                LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.C));
+                                LuaCodegenAbiV2.ReadRegisterUnchecked(
+                                    thread,
+                                    frame,
+                                    instruction.C));
                         }
 
                         frame.ProgramCounter++;
@@ -509,7 +630,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     }
                 case LuaJitOptimizationKind.KnownClosureCall:
                     {
-                        var functionValue = LuaCodegenAbiV1.ReadRegister(
+                        var functionValue = LuaCodegenAbiV2.ReadRegisterUnchecked(
                             thread,
                             frame,
                             instruction.A);
@@ -545,7 +666,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    LuaCodegenAbiV1.WriteRegister(
+                    LuaCodegenAbiV2.WriteRegisterUnchecked(
                         thread,
                         frame,
                         instruction.A,
@@ -561,7 +682,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    LuaCodegenAbiV1.ClearRegisters(
+                    LuaCodegenAbiV2.ClearRegistersUnchecked(
                         thread,
                         frame,
                         instruction.A,
@@ -574,11 +695,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    LuaCodegenAbiV1.WriteRegister(
+                    LuaCodegenAbiV2.WriteRegisterUnchecked(
                         thread,
                         frame,
                         instruction.A,
-                        LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.B));
+                        LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.B));
                     frame.ProgramCounter++;
                     return null;
                 case LuaIrOpcode.SetTop:
@@ -587,7 +708,15 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    LuaCodegenAbiV1.SetFrameTop(thread, frame, instruction.A);
+                    LuaCodegenAbiV2.SetFrameTopUnchecked(thread, frame, instruction.A);
+                    frame.ProgramCounter++;
+                    return null;
+                case LuaIrOpcode.Close when LuaCodegenAbiV2.CanSkipClose(frame, instruction.A):
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
                     frame.ProgramCounter++;
                     return null;
                 case LuaIrOpcode.Jump when instruction.C < 0:
@@ -605,7 +734,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    var truthy = LuaCodegenAbiV1.ReadRegister(
+                    var truthy = LuaCodegenAbiV2.ReadRegisterUnchecked(
                         thread,
                         frame,
                         instruction.A).IsTruthy;
@@ -664,7 +793,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 LuaCompiledExitReason.GuardFailure);
     }
 
-    private sealed record OptimizedInstruction
+    internal sealed record OptimizedInstruction
     {
         public required int ProgramCounter { get; init; }
 
@@ -780,8 +909,12 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 ReusesFixedResultWindow = reusesFixedResultWindow,
             };
 
-        private static bool Matches(LuaJitValueKinds kinds, LuaValue value) =>
-            (kinds & ToKinds(value)) != 0;
+        private static bool Matches(LuaJitValueKinds kinds, LuaValue value) => kinds switch
+        {
+            LuaJitValueKinds.Integer => value.IsInteger,
+            LuaJitValueKinds.Float => value.IsFloat,
+            _ => (kinds & ToKinds(value)) != 0,
+        };
 
         private static LuaJitValueKinds ToKinds(LuaValue value) =>
             (LuaJitValueKinds)(1 << (int)value.Kind);

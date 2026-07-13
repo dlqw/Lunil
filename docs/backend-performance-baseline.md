@@ -252,3 +252,58 @@ The local five-process win-x64 qualification rerun reported a 2.392x median spee
 95% interval `[2.306x, 2.634x]`, 1.312 ms compile p95, zero allocation slope, and no negative
 workload failure. The rollout commit still requires the independent six-RID CI aggregate before
 merge.
+
+## M11 Tier 2 exact-numeric productionization
+
+M11 replaces the arithmetic hot path of the managed Tier 2 profile program with guarded,
+profile-specialized CIL. Exact integer, float, and mixed-numeric sites execute in a generated
+`DynamicMethod`; other optimization combinations retain the managed fallback. The benchmark now
+records the actual Tier 2 code kind, specialized/deopt counts, IR verification, liveness/cache
+hit, optimization planning, CIL emission, delegate creation, and compilation allocation.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced:
+
+| Metric | Interpreter | Tier 1 | Exact-numeric Tier 2 |
+|---|---:|---:|---:|
+| Warm median | 7,769,730 ns/op | 2,281,930 ns/op | 802,630 ns/op |
+| Paired median speedup | 1.000x | 3.239x | **9.492x** |
+| Bootstrap median 95% interval | n/a | [3.023x, 3.593x] | **[9.124x, 10.018x]** |
+| Allocated/op | 1,844 B | 1,974.4 B | 2,102.4 B |
+| Allocation slope | 0 B/iteration | 0 B/iteration | 0 B/iteration |
+| Tier 2 compilation p95 | n/a | n/a | **6.442 ms** |
+
+The Tier 2 compilation attribution was:
+
+| Phase/shape | p95 or value |
+|---|---:|
+| Canonical IR verification | 0.013 ms |
+| Register liveness | 0.006 ms |
+| Liveness cache hit rate | 100% |
+| Optimization planning | 5.436 ms |
+| Specialized CIL emission | 0.100 ms |
+| Delegate creation | 0.029 ms |
+| Compilation allocation | 57,776 B |
+| Code kind | `ExactNumericSpecializedCil` |
+| Specialized optimizations / deopt sites | 5 / 5 |
+
+This passes the local exact-numeric Tier 2 gate: paired median and bootstrap lower bound are both
+at least 4x, compilation p95 is below 10 ms, and the linear allocation slope is zero. The same
+run also measured 10.327x on the numeric control-flow workload.
+
+This decision does **not** enable Tier 2 by default. The current table, call, metamethod, and
+coroutine/error/hook shapes still select `ManagedProfileProgram` for all or part of their hot
+paths and do not have a non-regressing default policy. `EnableTier2` therefore remains explicit,
+while CI records and aggregates the exact-numeric decision independently on all six native RIDs.
+
+Reproduce the qualification record with:
+
+```powershell
+./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 `
+  -Iterations 1000000 -Configuration Release
+./scripts/Merge-BackendPerformanceEvidence.ps1
+```
+
+The measurement directory contains `tier1-decision.json`, `tier2-decision.json`, raw process
+output, CSV, and summary JSON. The six-RID aggregator writes both
+`tier1-six-rid-decision.json` and `tier2-six-rid-decision.json`.

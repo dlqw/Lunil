@@ -9,7 +9,7 @@ reflection、assembly discovery 或动态 PE load。
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.5" />
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.8" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"

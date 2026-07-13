@@ -697,6 +697,171 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void StableIntegerHotspotsUseProfileSpecializedTier2Cil()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var events = new ConcurrentQueue<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Enqueue(jitEvent);
+        var module = Compile("""
+            local total = 0
+            local first = 0
+            local second = 1
+            local index = 0
+            while index < 128 do
+                local next = first + second
+                first = second
+                second = next
+                total = total + (next & 1023)
+                index = index + 1
+            end
+            return total
+            """);
+
+        var expected = ExecuteFresh(executor, module);
+        AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2CodeKind.ExactNumericSpecializedCil, plan.CodeKind);
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization => optimization.Kind == LuaJitOptimizationKind.NumericBinary);
+        Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, 0));
+        var completed = Assert.Single(
+            events,
+            static jitEvent => jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted);
+        var metrics = Assert.IsType<LuaJitTier2CompilationMetrics>(
+            completed.Tier2CompilationMetrics);
+        Assert.True(metrics.LivenessCacheHit);
+        Assert.Equal(LuaJitTier2CodeKind.ExactNumericSpecializedCil, metrics.CodeKind);
+        Assert.True(metrics.OptimizationCount > 0);
+        Assert.True(metrics.SpecializedOptimizationCount > 0);
+        Assert.True(metrics.DeoptSiteCount > 0);
+        Assert.True(metrics.AllocatedBytes > 0);
+        Assert.True(metrics.CilEmissionDuration > TimeSpan.Zero);
+        Assert.True(metrics.DelegateCreationDuration > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void IntegerSpecializedTier2PreservesLuaNumericEdgeSemantics()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("""
+            local left, right = ...
+            local quotient = left // right
+            local remainder = left % right
+            local bits = (left & 255) ~ (right | 3)
+            local shifted = (left << -1) + (right >> 65)
+            return quotient, remainder, bits, shifted,
+                left + right, left - right, left * right,
+                left < right, left <= right, left == right
+            """);
+        var warmArguments = new[]
+        {
+            LuaValue.FromInteger(-17),
+            LuaValue.FromInteger(5),
+        };
+
+        _ = ExecuteFresh(executor, module, warmArguments);
+        _ = ExecuteFresh(executor, module, warmArguments);
+        Assert.Equal(
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+            Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0)).CodeKind);
+
+        AssertValues(
+            ExecuteFresh(
+                executor,
+                module,
+                LuaValue.FromInteger(long.MinValue),
+                LuaValue.FromInteger(-1)),
+            LuaValue.FromInteger(long.MinValue),
+            LuaValue.FromInteger(0),
+            LuaValue.FromInteger(-1),
+            LuaValue.FromInteger(4_611_686_018_427_387_904),
+            LuaValue.FromInteger(long.MaxValue),
+            LuaValue.FromInteger(long.MinValue + 1),
+            LuaValue.FromInteger(long.MinValue),
+            LuaValue.FromBoolean(true),
+            LuaValue.FromBoolean(true),
+            LuaValue.FromBoolean(false));
+    }
+
+    [Fact]
+    public void ExactFloatAndMixedNumericProfilesUseSpecializedTier2Cil()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var floats = Compile("""
+            local left, right = ...
+            return left // right, left % right,
+                left < right, left <= right, left == right
+            """);
+        var floatArguments = new[]
+        {
+            LuaValue.FromFloat(5.5),
+            LuaValue.FromFloat(2.0),
+        };
+
+        _ = ExecuteFresh(executor, floats, floatArguments);
+        AssertValues(
+            ExecuteFresh(executor, floats, floatArguments),
+            LuaValue.FromFloat(2.0),
+            LuaValue.FromFloat(1.5),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(false));
+        Assert.Equal(
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+            Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(floats, 0)).CodeKind);
+
+        var mixed = Compile("""
+            local floating, integer = ...
+            return floating < integer, floating <= integer,
+                floating == integer, floating > integer
+            """);
+        var mixedArguments = new[]
+        {
+            LuaValue.FromFloat(1.5),
+            LuaValue.FromInteger(2),
+        };
+        _ = ExecuteFresh(executor, mixed, mixedArguments);
+        _ = ExecuteFresh(executor, mixed, mixedArguments);
+        Assert.Equal(
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+            Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(mixed, 0)).CodeKind);
+
+        AssertValues(
+            ExecuteFresh(
+                executor,
+                mixed,
+                LuaValue.FromFloat(9_223_372_036_854_775_808d),
+                LuaValue.FromInteger(long.MaxValue)),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(true));
+    }
+
+    [Fact]
     public void Tier2GuardFailureRestoresCanonicalExecutionAndReprofiles()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with

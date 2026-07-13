@@ -120,7 +120,11 @@ public static class LuaCilCodeGenerator
 
         var analysisStarted = Stopwatch.GetTimestamp();
         var blockLayout = CilBlockLayout.Build(function, cancellationToken);
-        var liveness = LuaRegisterLiveness.Analyze(module, function, cancellationToken);
+        var liveness = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            function,
+            out _,
+            cancellationToken);
         var controlFlowAnalysisDuration = Stopwatch.GetElapsedTime(analysisStarted);
         var planningStarted = Stopwatch.GetTimestamp();
         var plan = LuaCilMethodPlanner.Build(

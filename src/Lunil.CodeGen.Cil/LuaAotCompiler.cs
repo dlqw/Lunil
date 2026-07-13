@@ -60,7 +60,7 @@ public static class LuaAotCompiler
         {
             var shards = ImmutableArray.CreateBuilder<LuaAotMethodShardManifest>();
             var blockLayout = CilBlockLayout.Build(function);
-            var liveness = LuaRegisterLiveness.Analyze(module, function);
+            var liveness = LuaRegisterLiveness.AnalyzeCached(module, function, out _);
             var ranges = PartitionFunction(
                 function,
                 options.MaximumCanonicalInstructionsPerMethod);

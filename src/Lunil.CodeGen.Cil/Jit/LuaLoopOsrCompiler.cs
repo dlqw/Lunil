@@ -78,7 +78,7 @@ internal static class LuaLoopOsrAnalyzer
         }
 
         var dominators = ComputeDominators(blocks, predecessors);
-        var liveness = LuaRegisterLiveness.Analyze(module, function);
+        var liveness = LuaRegisterLiveness.AnalyzeCached(module, function, out _);
         var plans = ImmutableArray.CreateBuilder<LuaJitLoopOsrPlan>();
         foreach (var block in blocks)
         {
