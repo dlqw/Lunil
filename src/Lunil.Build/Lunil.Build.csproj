@@ -15,8 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
-    <ProjectReference Include="..\Lunil.Semantics\Lunil.Semantics.csproj" />
-    <ProjectReference Include="..\Lunil.Syntax\Lunil.Syntax.csproj" />
+    <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />
   </ItemGroup>
 
   <ItemGroup>

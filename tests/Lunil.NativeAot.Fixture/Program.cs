@@ -1,11 +1,8 @@
 using Lunil.CodeGen.Cil;
-using Lunil.Core.Text;
-using Lunil.IR.Canonical;
 using Lunil.CodeGen.Cil.Jit;
+using Lunil.Compiler;
+using Lunil.IR.Canonical;
 using Lunil.Runtime;
-using Lunil.Semantics.Binding;
-using Lunil.Semantics.Lowering;
-using Lunil.Syntax.Parsing;
 
 namespace Lunil.NativeAot.Fixture;
 
@@ -107,10 +104,10 @@ public static class Program
 
     private static LuaIrModule Compile(string source)
     {
-        var parsing = LuaParser.Parse(SourceText.FromUtf8(source));
-        var binding = LuaBinder.Bind(parsing);
-        var lowering = LuaLowerer.Lower(binding);
-        return lowering.Module ?? throw new InvalidOperationException(
-            string.Join("; ", lowering.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+        var compilation = new LuaCompiler().CompileUtf8(source, "=nativeaot-fixture");
+        return compilation.Module ?? throw new InvalidOperationException(
+            string.Join(
+                "; ",
+                compilation.Diagnostics.Select(static diagnostic => diagnostic.Message)));
     }
 }

@@ -1,5 +1,7 @@
 using System.Collections;
+using System.Text;
 using Lunil.Build.Tasks;
+using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Caching;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
@@ -101,6 +103,37 @@ public sealed class LunilCompileTaskTests
 
         Assert.Equal(pePath, Assert.Single(second.GeneratedReferences).ItemSpec);
         Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(pePath));
+    }
+
+    [Fact]
+    public void SourceCompilationUsesStableLogicalDebugIdentity()
+    {
+        using var firstFixture = BuildFixture.Create();
+        using var secondFixture = BuildFixture.Create();
+        var firstItem = new TaskItem(firstFixture.SourcePath);
+        var secondItem = new TaskItem(secondFixture.SourcePath);
+        firstItem.SetMetadata("ModuleName", "sample.math");
+        secondItem.SetMetadata("ModuleName", "sample.math");
+        var first = firstFixture.CreateTask(new RecordingBuildEngine(), firstItem);
+        var second = secondFixture.CreateTask(new RecordingBuildEngine(), secondItem);
+
+        Assert.True(first.Execute());
+        Assert.True(second.Execute());
+
+        var firstModuleBytes = File.ReadAllBytes(Assert.Single(
+            first.GeneratedArtifacts,
+            static item => item.ItemSpec.EndsWith(".lir", StringComparison.Ordinal))
+            .ItemSpec);
+        var secondModuleBytes = File.ReadAllBytes(Assert.Single(
+            second.GeneratedArtifacts,
+            static item => item.ItemSpec.EndsWith(".lir", StringComparison.Ordinal))
+            .ItemSpec);
+        Assert.Equal(firstModuleBytes, secondModuleBytes);
+
+        var module = LuaAotModuleIdentity.DeserializeCanonicalModule(firstModuleBytes);
+        Assert.All(module.Functions, static function => Assert.Equal(
+            "@sample/math.lua",
+            Encoding.UTF8.GetString(function.SourceName.AsSpan())));
     }
 
     [Fact]

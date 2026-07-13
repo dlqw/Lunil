@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Public bounded Lua source compilation pipeline for Lunil.</Description>
+    <PackageTags>lua;lua54;compiler;diagnostics;ir</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
+    <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
+    <ProjectReference Include="..\Lunil.Semantics\Lunil.Semantics.csproj" />
+    <ProjectReference Include="..\Lunil.Syntax\Lunil.Syntax.csproj" />
+  </ItemGroup>
+
+</Project>

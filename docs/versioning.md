@@ -5,11 +5,11 @@ Git tags, changelog names, binary bundle names, and GitHub releases all derive f
 one version declared in `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.6.0</VersionPrefix>
-<VersionSuffix>alpha.14</VersionSuffix>
+<VersionPrefix>0.7.0</VersionPrefix>
+<VersionSuffix>alpha.1</VersionSuffix>
 ```
 
-The resulting version is `0.6.0-alpha.14` and its tag is `v0.6.0-alpha.14`.
+The resulting version is `0.7.0-alpha.1` and its tag is `v0.7.0-alpha.1`.
 `VersionSuffix` is removed for a stable release.
 
 The three numeric fields select the compatibility line; the optional suffix selects
@@ -22,10 +22,12 @@ does not by itself justify removing the suffix or promoting the entire product.
   `1.0.0`, increment it only for intentional breaking changes to the supported stable API.
 - `Y` identifies the next pre-1.0 development milestone. After `1.0.0`, it identifies a
   backward-compatible feature release. Starting work on the next planned milestone after
-  `0.6.0` therefore uses `0.7.0-alpha.1`, not `0.6.1-alpha.1`.
+  the `0.6.0` development line therefore uses `0.7.0-alpha.1`, not `0.6.1-alpha.1`.
+  A prerelease line may be superseded without publishing its suffix-free version; that
+  decision must be recorded explicitly and never mutates its published tags.
 - `Z` identifies backward-compatible fixes and refinements to a stable release line. A fix
-  for published `0.6.0` uses `0.6.1`; a fix while `0.6.0` is still in prerelease increments
-  that prerelease channel instead, for example `0.6.0-alpha.15`.
+  for published `0.7.0` uses `0.7.1`; a fix while `0.7.0` is still in prerelease increments
+  that prerelease channel instead, for example `0.7.0-alpha.2`.
 
 Do not increment a numeric field merely because one feature branch was merged. Choose the
 numeric line from the intended compatibility milestone, then choose the suffix from the
@@ -33,23 +35,23 @@ actual maturity and allowed-change policy.
 
 | Development work | Version action |
 | --- | --- |
-| Add or redesign a planned `0.6.0` feature while scope is still open | Publish the next `0.6.0-alpha.N` |
-| Freeze the complete `0.6.0` feature/API scope | Promote to `0.6.0-beta.1` |
-| Fix compatibility, diagnostics, docs, or performance during beta | Publish the next `0.6.0-beta.N` |
-| Declare the hardened beta ready for release-candidate validation | Promote to `0.6.0-rc.1` |
-| Fix a release blocker during RC | Publish the next `0.6.0-rc.N` |
-| Accept an RC without further code changes | Remove the suffix and publish `0.6.0` from the accepted commit |
-| Fix a backward-compatible defect after stable `0.6.0` | Publish `0.6.1` |
-| Begin the next feature/API milestone after `0.6.0` | Start `0.7.0-alpha.1` |
+| Add or redesign a planned `0.7.0` feature while scope is still open | Publish the next `0.7.0-alpha.N` |
+| Freeze the complete `0.7.0` feature/API scope | Promote to `0.7.0-beta.1` |
+| Fix compatibility, diagnostics, docs, or performance during beta | Publish the next `0.7.0-beta.N` |
+| Declare the hardened beta ready for release-candidate validation | Promote to `0.7.0-rc.1` |
+| Fix a release blocker during RC | Publish the next `0.7.0-rc.N` |
+| Accept an RC without further code changes | Remove the suffix and publish `0.7.0` from the accepted commit |
+| Fix a backward-compatible defect after stable `0.7.0` | Publish `0.7.1` |
+| Begin the next feature/API milestone after `0.7.0` | Start `0.8.0-alpha.1` |
 
 Documentation-only release preparation does not consume a new prerelease number when the
-current number has not been published. Once `v0.6.0-alpha.14` exists, every code or release
-metadata correction must use `0.6.0-alpha.15` or a later appropriate version.
+current number has not been published. Once `v0.7.0-alpha.1` exists, every code or release
+metadata correction must use `0.7.0-alpha.2` or a later appropriate version.
 
 ## Compatibility while below 1.0
 
-- Minor releases such as `0.6.0` may contain breaking public API changes.
-- Patch releases such as `0.6.1` are backward-compatible fixes and refinements.
+- Minor releases such as `0.7.0` may contain breaking public API changes.
+- Patch releases such as `0.7.1` are backward-compatible fixes and refinements.
 - Every intentional break must be identified in the matching changelog.
 - `1.0.0` will declare the first supported stable public API contract.
 
@@ -68,25 +70,30 @@ metadata correction must use `0.6.0-alpha.15` or a later appropriate version.
 Promotion for this milestone is therefore:
 
 ```text
-0.6.0-alpha.1 -> alpha.2 -> ... -> alpha.11 -> alpha.12 -> alpha.13 -> alpha.14 -> beta.1 -> ... -> rc.1 -> ... -> 0.6.0
+0.7.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.7.0
 ```
 
 Numbers increase monotonically within a channel and restart at `1` when the milestone
-enters a new channel (`alpha.14` to `beta.1`, not `beta.15`). Published versions and tags
+enters a new channel (`alpha.N` to `beta.1`, not `beta.N+1`). Published versions and tags
 are immutable and are never deleted and reused. An unpublished version may be refined on
 its release branch before tagging, but a fix after publication always receives a new
 prerelease number or patch version. Build metadata (`+metadata`) is reserved for local/CI
 provenance and is not used in release tags or package identities.
 
-## Current `0.6.0-alpha.14` decision
+## Transition from `0.6.0-alpha.14` to `0.7.0-alpha.1`
 
 The interpreter, qualified CoreCLR Tier 1/Tier 2 JIT, exact-numeric loop OSR, persisted
 CIL AOT, build-time AOT, and NativeAOT integration have multi-platform CI and release-gate
-evidence. This makes `0.6.0-alpha.14` suitable for an alpha prerelease build.
+evidence. This made `0.6.0-alpha.14` suitable for an alpha prerelease build.
 
 The full `0.6.0` public API and feature scope, complete official Lua test-suite coverage,
-and long-term compatibility/support contract are not frozen. Therefore the correct version
-remains `0.6.0-alpha.14`; `beta.1`, `rc.1`, and suffix-free `0.6.0` are not yet justified.
+and long-term compatibility/support contract were not frozen. The project therefore ended
+the `0.6.0` line at the immutable `0.6.0-alpha.14` preview instead of publishing a
+misleading beta, RC, or suffix-free `0.6.0`.
+
+New compiler, analysis, hosting, and package-boundary work starts at
+`0.7.0-alpha.1`. Its scope and promotion gates are defined in the
+[`0.7.0` roadmap](roadmap-0.7.0.md).
 
 ## Release procedure
 

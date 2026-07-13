@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.14-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0--alpha.1-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.6.0-alpha.14`**. The compiler, managed runtime,
-> standard library, and qualified JIT/AOT paths are functional and covered by six-RID CI.
-> This tree is ready for an **alpha prerelease build**, not a beta, release candidate, or
-> stable release: the public API, full official Lua test-suite coverage, and long-term
-> compatibility/support contract are not frozen yet.
+> The current source version is **`0.7.0-alpha.1`**. The `0.6.0` line ended at the
+> immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
+> This milestone adds public `Lunil.Compiler` and `Lunil.Hosting` product boundaries while
+> LuaLS/EmmyLua annotations, type/flow/module analysis, the incremental workspace, and CLI
+> remain active alpha work. The `0.7.0` scope and promotion gates are not frozen yet.
 
 ## Table of contents
 
@@ -76,11 +76,14 @@ collector.
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
 | JIT / AOT backends | Alpha-qualified | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
+| Compiler product API | Alpha foundation | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
+| Hosting product API | Alpha foundation | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
+| Static analysis and CLI | Planned for 0.7 alpha | LuaLS/legacy EmmyLua annotations, type/flow/module analysis, incremental workspace, and `run`/`check`/`build`/`dump` CLI |
 | Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness in `0.6.0-alpha.14` |
+| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.1` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -89,9 +92,9 @@ collector.
 | Persisted CIL AOT | Explicit artifact compile, validation, collectible load, and execution | Runtime path and production performance gates qualified on all six release RIDs |
 | Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
 
-These results close the current JIT/AOT productionization milestone, but they do not by
-themselves freeze the whole product. Beta promotion additionally requires a frozen `0.6.0`
-feature/API scope; stable promotion requires an accepted RC and its compatibility criteria.
+These results closed the `0.6.0-alpha.14` JIT/AOT productionization milestone and remain
+regression gates for `0.7.0`. The current alpha series instead closes the compiler, analysis,
+hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md).
 
 ## Features
 
@@ -102,6 +105,8 @@ feature/API scope; stable promotion requires an accepted RC and its compatibilit
 - Error-tolerant immutable syntax trees for the complete Lua 5.4 grammar.
 - Lexical binding for locals, captures, `_ENV`, attributes, labels, and gotos.
 - Syntax/semantic lowering into verified canonical register IR.
+- A public `LuaCompiler` pipeline with bounded phase options, stable phase-attributed
+  diagnostics, cancellation boundaries, immutable results, and logical source identities.
 - Full Lua 5.4 opcode model with binary-compatible 32-bit instruction layouts.
 - Bounded PUC Lua 5.4 binary chunk reading, writing, validation, and conversion.
 
@@ -173,18 +178,17 @@ Tagged releases provide six RID bundles and publish the corresponding `Lunil.*`
 NuGet and symbol packages to GitHub Packages. Projects may also be referenced directly
 from a source checkout.
 
-The following example parses Lua source, binds and lowers it to canonical IR, verifies
-the IR, and executes it with the reference interpreter:
+```xml
+<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.1" />
+```
+
+The high-level host compiles, verifies, installs the standard library, and executes through
+one reusable state. The default profile is restricted; trusted access and deterministic
+execution are explicit options:
 
 ```csharp
-using Lunil.Core.Text;
-using Lunil.IR.Canonical;
-using Lunil.Runtime;
+using Lunil.Hosting;
 using Lunil.Runtime.Execution;
-using Lunil.Semantics.Binding;
-using Lunil.Semantics.Lowering;
-using Lunil.StandardLibrary;
-using Lunil.Syntax.Parsing;
 
 const string lua = """
     local total = 0
@@ -194,45 +198,38 @@ const string lua = """
     return total
     """;
 
-var syntax = LuaParser.Parse(SourceText.FromUtf8(lua));
-var semantics = LuaBinder.Bind(syntax);
-var lowering = LuaLowerer.Lower(semantics);
+var host = new LuaHost(LuaHostOptions.Restricted);
+var run = host.RunUtf8(lua, "@examples/sum.lua");
 
-if (!lowering.Succeeded || lowering.Module is null)
+if (!run.CompilationSucceeded)
 {
-    foreach (var diagnostic in lowering.Diagnostics)
+    foreach (var diagnostic in run.Compilation.Diagnostics)
     {
-        Console.Error.WriteLine($"{diagnostic.Code}: {diagnostic.Message}");
+        Console.Error.WriteLine($"{diagnostic.Phase} {diagnostic.Code}: {diagnostic.Message}");
     }
 
     return;
 }
 
-var verificationErrors = LuaIrVerifier.Verify(lowering.Module);
-if (!verificationErrors.IsEmpty)
+if (run.Execution?.Signal != LuaVmSignal.Completed)
 {
-    throw new InvalidOperationException("Generated IR failed verification.");
+    throw new InvalidOperationException("Lua execution did not complete.");
 }
 
-var state = new LuaState();
-LuaStandardLibrary.InstallAll(state);
-var closure = state.CreateMainClosure(lowering.Module);
-var result = new LuaExecutor().Execute(state, closure);
-
-Console.WriteLine(result.Values[0].AsInteger()); // 55
+Console.WriteLine(run.Execution.Values[0].AsInteger()); // 55
 ```
 
 To execute a validated PUC Lua 5.4 binary chunk:
 
 ```csharp
 var bytecode = File.ReadAllBytes("program.luac");
-var state = new LuaState();
-LuaStandardLibrary.InstallAll(state);
-var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
+var host = new LuaHost(LuaHostOptions.Restricted);
+var result = host.ExecuteBinaryChunk(bytecode);
 ```
 
-`LuaExecutor` is the backend-neutral host facade. `LuaInterpreter` remains available when a host
-explicitly requires the Tier 0 reference backend.
+`LuaCompiler`, `LuaExecutor`, and the individual syntax/semantic/IR packages remain available to
+lower-level consumers. `LuaHost` is the product-level embedding entry point; `LuaInterpreter`
+remains available when a host explicitly requires the Tier 0 reference backend.
 
 `LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
 in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
@@ -293,7 +290,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.14" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.1" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -359,8 +356,10 @@ Lunil/
 │   ├── Lunil.Core/              # source text, diagnostics, Lua numerics
 │   ├── Lunil.Syntax/            # lexer, tokens, parser, immutable syntax
 │   ├── Lunil.Semantics/         # binding and canonical lowering
+│   ├── Lunil.Compiler/          # public bounded compilation pipeline and results
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
+│   ├── Lunil.Hosting/           # reusable host, capability profiles and execution boundary
 │   ├── Lunil.CodeGen.Cil/       # typed CIL plans, persisted AOT and tiered CoreCLR JIT
 │   ├── Lunil.Build/             # MSBuild task, build assets and NativeAOT registry generation
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
@@ -400,18 +399,17 @@ describe different things:
 | `rc.N` | A stable-release candidate; only release-blocking fixes may enter |
 | no suffix | Stable release, promoted only from an accepted RC |
 
-The `0.6.0` promotion sequence is:
+The `0.7.0` promotion sequence is:
 
 ```text
-0.6.0-alpha.N -> 0.6.0-beta.N -> 0.6.0-rc.N -> 0.6.0
+0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current release decision is **`0.6.0-alpha.14`**: JIT/AOT productionization is
-qualified, but the complete `0.6.0` feature/API scope is not frozen, so changing the
-suffix to `beta`, `rc`, or removing it would overstate stability. Prerelease counters
-increase for every published build within a channel and restart at `1` when entering a
-new channel. Once a version is tagged or published it is immutable; any follow-up fix
-uses the next number, for example `alpha.15`.
+The current development version is **`0.7.0-alpha.1`**. The `0.6.0` line was explicitly
+superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
+`0.6.0` will be created. Prerelease counters increase for every published build within a
+channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.1` is tagged,
+any follow-up change uses `0.7.0-alpha.2` or a later appropriate version.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
@@ -423,6 +421,7 @@ suffix are automatically marked as prereleases. See the
 | Document | Description |
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
+| [0.7.0 roadmap](docs/roadmap-0.7.0.md) | Compiler/hosting foundation, annotations, analysis, workspace, CLI and promotion gates |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
 | [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
 | [Loop OSR rollout evidence closure](docs/adr/0008-loop-osr-qualified-preparation-and-evidence.md) | Qualified lazy emitter preparation and balanced high-sample rollout evidence |

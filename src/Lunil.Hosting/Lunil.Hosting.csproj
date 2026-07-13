@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Reusable compiler, runtime, capability, and execution host for Lunil.</Description>
+    <PackageTags>lua;lua54;hosting;embedding;sandbox</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />
+    <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
+    <ProjectReference Include="..\Lunil.Runtime\Lunil.Runtime.csproj" />
+    <ProjectReference Include="..\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
+  </ItemGroup>
+
+</Project>
