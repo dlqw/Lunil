@@ -482,3 +482,127 @@ slope, and 100% liveness-cache hits. Warm negative medians were 1.019x, 1.000x, 
 startup medians were 0.996x, 1.016x, 0.977x, and 0.988x. Automatic negative acceptance, guard
 failures, and managed installations remained zero. See
 [ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md).
+
+## M16 Loop OSR automatic default rollout
+
+The strengthened M15 contract was repeated by protected CI run `29244862401` on win-x64, win-arm64,
+linux-x64, linux-arm64, osx-x64, and osx-arm64. Every RID used six independent processes with an
+exact 3:3 Loop OSR on/off order balance, nine cold samples, and 30 warm operations per throughput row.
+The aggregate reported `AllRidsQualify=true`:
+
+| Six-RID aggregate metric | M16 authorization result |
+|---|---:|
+| Minimum arithmetic bootstrap 95% lower bound | **4.349x** |
+| Minimum OSR-on/disabled bootstrap 95% lower bound | **63.933x** |
+| Maximum specialized-emitter preparation p95 | **1.239 ms** |
+| Maximum Loop OSR compilation p95 | **6.399 ms** |
+| Maximum compilation allocation p95 | 44,824 B |
+| Maximum absolute allocation slope | **0 B/iteration** |
+| Minimum liveness-cache hit rate | **100%** |
+| Minimum warm operations per process | **30** |
+| All RIDs balanced pair order | **yes** |
+| All RIDs use `GuardedExactNumericCil` | **yes** |
+| All RIDs accept the automatic exact-numeric candidate | **yes** |
+| All RIDs reject negative automatic OSR | **yes** |
+| All RIDs avoid negative guard failures | **yes** |
+| All RIDs avoid managed installations | **yes** |
+| All RIDs pass negative startup and throughput gates | **yes** |
+
+This closes the prerequisite recorded by ADR 0008. M16 changes
+`LuaJitExecutorOptions.EnableLoopOsr` to `true` by default while retaining the same automatic
+eligibility, runtime qualification, code-kind validation, preparation, compilation, and negative
+workload gates. `EnableLoopOsrManagedFallback=false` remains unchanged, and
+`EnableLoopOsr=false` remains a complete opt-out.
+
+The `loop_osr` evidence row now uses the actual release default. Its paired control changes only
+`EnableLoopOsr=false`, while standalone Tier 1 and Tier 2 measurements explicitly disable Loop OSR
+so each tier keeps an independent performance baseline. NativeAOT and other dynamic-code-unavailable
+runtimes continue to close the capability gate before analysis, preparation, or registry entry
+creation. The decision is recorded in
+[ADR 0009](adr/0009-loop-osr-auto-default-rollout.md).
+
+The rollout branch repeated the same contract locally at
+`artifacts/backend-performance/win-x64/20260713-113245`. Six balanced Release processes produced a
+7.941x arithmetic median with bootstrap interval `[6.242x, 11.615x]`, and a 118.505x median over the
+explicit disabled pair with interval `[93.004x, 158.071x]`. Preparation p95 was 0.545 ms,
+compilation p95 was 3.099 ms, compilation allocation p95 was 45,092 bytes, allocation slope was zero,
+and liveness-cache hit rate was 100%. Negative warm medians were 0.984x, 1.021x, 0.981x, and 1.054x;
+startup medians were 0.966x, 1.029x, 0.983x, and 0.982x. All automatic negative acceptance, guard
+failure, and managed-installation counts remained zero. The compact benchmark now names this path
+`jit_default_loop_osr_candidate` and consumes the same release default.
+
+## M17 persisted CIL AOT performance productionization
+
+Persisted CIL previously contributed deterministic PE/PDB size to the backend runner but was not an
+executable evidence row. M17 adds a caller-owned `LuaPersistedAotExecutor` that binds a validated
+`LuaAotLoadedModule` to the shared scheduler. Compiled lookup requires an exact canonical module
+content-ID match; a mismatched, missing, or disposed artifact returns `UnsupportedInstruction` at
+the current canonical PC. Loader metrics attribute validation, assembly loading, delegate binding,
+total duration, and allocated bytes independently.
+
+The repeated runner now measures `persisted_aot` for arithmetic, control flow, Lua calls, table
+access, metamethods, and coroutine/error/hook behavior. Cold startup contains validation, collectible
+load, binding, and first execution. Steady-state measurement performs 256 warm persisted calls first
+so CoreCLR tiering of the loaded methods is not mistaken for persisted-code throughput. Every row
+records PE/PDB size, minimum compiled invocation count, maximum artifact fallback/deoptimization
+counts, and at least 30 warm operations. Exact debug-hook execution is expected to deopt with
+`DebugModeChanged`; only artifact lookup fallback or any non-debug compiled deoptimization fails the
+gate.
+
+Six independent win-x64 Release processes with nine cold samples produced:
+
+| Metric | M17 persisted CIL AOT |
+|---|---:|
+| Arithmetic median speedup vs interpreter | **3.053x** |
+| Arithmetic bootstrap median 95% interval | **[3.026x, 3.151x]** |
+| Control-flow median speedup vs interpreter | **2.578x** |
+| Control-flow bootstrap median 95% interval | **[2.383x, 2.631x]** |
+| Maximum validation p95 | 12.061 ms |
+| Maximum assembly-load p95 | 0.424 ms |
+| Maximum delegate-binding p95 | 15.814 ms |
+| Maximum total-load p95 | **29.741 ms** |
+| Maximum load allocation p95 | **153,368 B** |
+| Largest PE + PDB in the fixed workload matrix | **19,168 B** |
+| Minimum compiled invocations | **286** |
+| Artifact lookup fallbacks / unexpected deoptimizations | **0 / 0** |
+| Expected debug-mode deoptimizations | **1,550,120** |
+| Arithmetic allocation slope | **0 B/iteration** |
+
+Semantic medians were 2.032x for `lua_calls`, 1.529x for `table_access`, 1.394x for
+`metamethod`, and 0.965x for `coroutine_error_hook`; allocation ratios remained between 0.9997x and
+1.0001x. The local decision at
+`artifacts/backend-performance/win-x64/20260713-133602` qualifies.
+
+Per-RID qualification requires arithmetic and control-flow medians of at least 2.0x with bootstrap
+95% lower bounds of at least 1.5x, zero artifact fallback and unexpected deoptimization in every
+process, validation/assembly-load/delegate-binding p95 below 40/25/30 ms, total-load p95 below 75 ms,
+load allocation p95 below 192 KiB, fixed-corpus artifact size below 32 KiB, arithmetic allocation ratio
+at most 1.10x, and semantic throughput/allocation floors of 0.90x/1.10x. The six-RID aggregator emits
+`persisted-aot-six-rid-decision.json` alongside the existing tier decisions. See
+[ADR 0010](adr/0010-persisted-cil-aot-performance-productionization.md).
+
+The first protected six-RID run, `29251784825`, confirmed strong throughput and bounded individual
+load phases but exposed two evidence-model errors. Exact debug hooks produced only
+`DebugModeChanged` deoptimizations and were incorrectly counted as artifact fallback, while the
+single 50 ms combined-load bound conflated first CoreCLR loader initialization on shared Windows
+runners with an artifact-specific phase regression. M17 therefore keeps expected debug deopt as a
+separate positive attribution, fails any other deopt, and replaces the single bound with the phase
+and 75 ms end-to-end limits above rather than removing cold-load controls.
+
+The corrected protected run, `29255625454`, qualified all six release RIDs:
+
+| RID | Arithmetic median / CI95 lower | Control-flow median / CI95 lower | Maximum total-load p95 |
+|---|---:|---:|---:|
+| `win-x64` | 3.374x / 3.262x | 2.829x / 2.482x | 56.312 ms |
+| `win-arm64` | 3.754x / 3.709x | 3.264x / 3.185x | 53.074 ms |
+| `linux-x64` | 3.410x / 3.323x | 2.838x / 2.732x | 27.308 ms |
+| `linux-arm64` | 3.740x / 3.671x | 3.387x / 3.215x | 24.932 ms |
+| `osx-x64` | 3.444x / 3.057x | 3.143x / 2.914x | 34.054 ms |
+| `osx-arm64` | 3.745x / 2.942x | 3.426x / 2.706x | 22.328 ms |
+
+The aggregate maximum validation/load/binding p95 values were 20.692/17.091/20.871 ms, maximum
+load allocation was 153,432 B, and maximum artifact size was 19,168 B. Every RID executed persisted
+methods with zero artifact fallback and zero unexpected deoptimization; all maximum deoptimizations
+were the expected 1,550,120 `DebugModeChanged` exits per RID. The aggregate records
+`AllRidsExecutePersistedAot=true`, `AllRidsAttributeExpectedDebugDeoptimization=true`, and
+`AllRidsQualify=true`.

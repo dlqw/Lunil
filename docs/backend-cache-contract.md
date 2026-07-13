@@ -75,13 +75,14 @@ semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Di
 进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义
 compiler 或陈旧 profile 绕过。
 
-Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `false`；显式开启后，先在当前
-进程累计 verified backedge，达到阈值后才重新执行 natural-loop/static eligibility。可保证生成
+Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `true`；启用后先在当前进程
+累计 verified backedge，达到阈值才执行 natural-loop/static eligibility。可保证生成
 `GuardedExactNumericCil` 的 loop 还必须在 interpreter 中成功观察全部 exact-numeric guard site，才会
 自动进入队列；一次非数值 operand 会以 `JIT3105` 永久拒绝。`EnableLoopOsrManagedFallback` 默认是
 `false`，managed canonical loop 必须由宿主再次显式开启。static/runtime eligibility、guard-site
 observation、资格接受后的惰性 emitter preparation、guard-failure widening、backedge counters、
 生成 delegate 与 code-kind 安装状态均不持久化，因此不能由导入 profile 或磁盘 cache 绕过。
+`EnableLoopOsr=false` 会完整关闭 backedge 驱动的分析、运行时资格、emitter preparation 与编译。
 
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该
@@ -99,6 +100,12 @@ Tier 1 planning 另有不落盘的 owner-scoped weak cache。key 是 canonical m
 cache hit 的 planning durations 为零，避免把复用结果误计为新的编译工作。planning、liveness、
 method-plan verification 任一阶段收到 cancellation 时立即放弃当前 builder，取消结果和半成品不得
 写入 owner cache；后续未取消调用必须重新完成 verification 后才能发布 plan。
+
+`LuaPersistedAotExecutor` 的 runtime identity memo 也按 canonical module owner 使用
+`ConditionalWeakTable`，只保存 content-ID 是否匹配的布尔结果；它不进入磁盘 cache，也不保存
+closure、state 或 frame。executor 的单个匹配 fast owner 仅服务当前 loaded artifact，生命周期与
+宿主持有的 executor 相同。collectible delegate 仍只由 `LuaAotLoadedModule` 持有，`Dispose` 会立即
+清空函数表并请求卸载 load context。
 
 ## 兼容与损坏策略
 

@@ -52,7 +52,7 @@ public static class Program
         if (defaultJit.Options.Policy != LuaJitPolicy.Auto ||
             !defaultJit.Options.EnableTier2 ||
             defaultJit.Options.EnableTier2ManagedFallback ||
-            defaultJit.Options.EnableLoopOsr ||
+            !defaultJit.Options.EnableLoopOsr ||
             defaultJit.Options.EnableLoopOsrManagedFallback)
         {
             Console.Error.WriteLine("The default JIT rollout policy is invalid.");

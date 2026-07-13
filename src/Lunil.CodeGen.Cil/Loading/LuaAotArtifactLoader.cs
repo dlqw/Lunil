@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -23,10 +24,18 @@ public sealed record LuaAotLoadOptions
 
 public sealed record LuaAotLoadResult(
     LuaAotLoadedModule? Module,
-    ImmutableArray<LuaAotDiagnostic> Diagnostics)
+    ImmutableArray<LuaAotDiagnostic> Diagnostics,
+    LuaAotLoadMetrics Metrics = default)
 {
     public bool Succeeded => Module is not null && Diagnostics.IsEmpty;
 }
+
+public readonly record struct LuaAotLoadMetrics(
+    TimeSpan ValidationDuration,
+    TimeSpan AssemblyLoadDuration,
+    TimeSpan DelegateBindingDuration,
+    TimeSpan TotalDuration,
+    long AllocatedBytes);
 
 public sealed record LuaAotValidationResult(
     LuaAotArtifactManifest? Manifest,
@@ -180,18 +189,42 @@ public static class LuaAotArtifactLoader
         ImmutableArray<byte> portablePdbImage = default,
         LuaAotLoadOptions? options = null)
     {
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var totalStopwatch = Stopwatch.StartNew();
+        var validationDuration = TimeSpan.Zero;
+        var assemblyLoadDuration = TimeSpan.Zero;
+        var delegateBindingDuration = TimeSpan.Zero;
+
+        LuaAotLoadMetrics CompleteMetrics()
+        {
+            totalStopwatch.Stop();
+            return new LuaAotLoadMetrics(
+                validationDuration,
+                assemblyLoadDuration,
+                delegateBindingDuration,
+                totalStopwatch.Elapsed,
+                Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore));
+        }
+
         options ??= LuaAotLoadOptions.Default;
         if (!RuntimeFeature.IsDynamicCodeSupported)
         {
             return Failure(
                 "AOT2010",
-                "Dynamic PE loading is unavailable. Register build-time artifacts through LuaStaticAotRegistry.");
+                "Dynamic PE loading is unavailable. Register build-time artifacts through LuaStaticAotRegistry.",
+                CompleteMetrics());
         }
 
+        var validationStopwatch = Stopwatch.StartNew();
         var validation = Validate(peImage, portablePdbImage, options);
+        validationStopwatch.Stop();
+        validationDuration = validationStopwatch.Elapsed;
         if (!validation.Succeeded)
         {
-            return new LuaAotLoadResult(null, validation.Diagnostics);
+            return new LuaAotLoadResult(
+                null,
+                validation.Diagnostics,
+                CompleteMetrics());
         }
 
         var envelope = ReadArtifactEnvelope(peImage)!;
@@ -202,14 +235,25 @@ public static class LuaAotArtifactLoader
             loadContext = new LuaAotLoadContext(manifest.AssemblyName);
             using var peStream = new MemoryStream(envelope.CoreImage.ToArray(), writable: false);
             Assembly assembly;
-            if (portablePdbImage.IsDefaultOrEmpty)
+            var assemblyLoadStopwatch = Stopwatch.StartNew();
+            try
             {
-                assembly = loadContext.LoadFromStream(peStream);
+                if (portablePdbImage.IsDefaultOrEmpty)
+                {
+                    assembly = loadContext.LoadFromStream(peStream);
+                }
+                else
+                {
+                    using var pdbStream = new MemoryStream(
+                        portablePdbImage.ToArray(),
+                        writable: false);
+                    assembly = loadContext.LoadFromStream(peStream, pdbStream);
+                }
             }
-            else
+            finally
             {
-                using var pdbStream = new MemoryStream(portablePdbImage.ToArray(), writable: false);
-                assembly = loadContext.LoadFromStream(peStream, pdbStream);
+                assemblyLoadStopwatch.Stop();
+                assemblyLoadDuration = assemblyLoadStopwatch.Elapsed;
             }
 
             if (!string.Equals(
@@ -225,17 +269,28 @@ public static class LuaAotArtifactLoader
                 manifest.TypeName,
                 throwOnError: true,
                 ignoreCase: false)!;
-            var functions = BindFunctions(generatedType, manifest);
+            var delegateBindingStopwatch = Stopwatch.StartNew();
+            Dictionary<int, LuaCompiledMethod> functions;
+            try
+            {
+                functions = BindFunctions(generatedType, manifest);
+            }
+            finally
+            {
+                delegateBindingStopwatch.Stop();
+                delegateBindingDuration = delegateBindingStopwatch.Elapsed;
+            }
             var module = new LuaAotLoadedModule(manifest, loadContext, functions);
             loadContext = null;
-            return new LuaAotLoadResult(module, []);
+            return new LuaAotLoadResult(module, [], CompleteMetrics());
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and
             not StackOverflowException and not AccessViolationException)
         {
             return Failure(
                 "AOT2003",
-                $"The AOT artifact was rejected: {exception.GetType().Name}: {exception.Message}");
+                $"The AOT artifact was rejected: {exception.GetType().Name}: {exception.Message}",
+                CompleteMetrics());
         }
         finally
         {
@@ -591,8 +646,11 @@ public static class LuaAotArtifactLoader
         return result;
     }
 
-    private static LuaAotLoadResult Failure(string code, string message) =>
-        new(null, [new LuaAotDiagnostic(code, message)]);
+    private static LuaAotLoadResult Failure(
+        string code,
+        string message,
+        LuaAotLoadMetrics metrics = default) =>
+        new(null, [new LuaAotDiagnostic(code, message)], metrics);
 
     private static LuaAotValidationResult ValidationFailure(string code, string message) =>
         new(null, [new LuaAotDiagnostic(code, message)]);

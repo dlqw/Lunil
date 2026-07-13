@@ -6,10 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.6.0</VersionPrefix>
-<VersionSuffix>alpha.12</VersionSuffix>
+<VersionSuffix>alpha.14</VersionSuffix>
 ```
 
-The resulting version is `0.6.0-alpha.12` and its tag is `v0.6.0-alpha.12`.
+The resulting version is `0.6.0-alpha.14` and its tag is `v0.6.0-alpha.14`.
 `VersionSuffix` is removed for a stable release.
 
 ## Compatibility while below 1.0
@@ -30,7 +30,7 @@ The resulting version is `0.6.0-alpha.12` and its tag is `v0.6.0-alpha.12`.
 Promotion for this milestone is therefore:
 
 ```text
-0.6.0-alpha.1 -> alpha.2 -> ... -> alpha.10 -> alpha.11 -> alpha.12 -> beta.1 -> ... -> rc.1 -> ... -> 0.6.0
+0.6.0-alpha.1 -> alpha.2 -> ... -> alpha.11 -> alpha.12 -> alpha.13 -> alpha.14 -> beta.1 -> ... -> rc.1 -> ... -> 0.6.0
 ```
 
 Numbers increase monotonically within a channel. Published versions and tags are
