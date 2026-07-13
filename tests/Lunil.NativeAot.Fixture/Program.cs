@@ -38,7 +38,9 @@ public static class Program
             }
         }
 
-        var dynamicValue = Execute(executor, Compile("---@type integer\nreturn 21 * 2"));
+        var dynamicValue = Execute(
+            executor,
+            Compile("---@type integer\nreturn 21 * 2", requireAnalysis: true));
         if (dynamicValue != 42)
         {
             Console.Error.WriteLine($"Unexpected dynamic fallback result: {dynamicValue}.");
@@ -102,9 +104,14 @@ public static class Program
         return result.Values[0].AsInteger();
     }
 
-    private static LuaIrModule Compile(string source)
+    private static LuaIrModule Compile(string source, bool requireAnalysis = false)
     {
         var compilation = new LuaCompiler().CompileUtf8(source, "=nativeaot-fixture");
+        if (requireAnalysis && compilation.Analysis.Expressions.IsEmpty)
+        {
+            throw new InvalidOperationException("Static analysis was not published.");
+        }
+
         return compilation.Module ?? throw new InvalidOperationException(
             string.Join(
                 "; ",

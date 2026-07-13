@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0--alpha.2-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0--alpha.3-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.7.0-alpha.2`**. The `0.6.0` line ended at the
+> The current source version is **`0.7.0-alpha.3`**. The `0.6.0` line ended at the
 > immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
-> Public Compiler/Hosting boundaries and the LuaLS/legacy EmmyLua annotation front end are
-> now available. Type/flow/module analysis, the incremental workspace, and CLI remain active
-> alpha work. The `0.7.0` scope and promotion gates are not frozen yet.
+> Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
+> bounded type/control-flow analysis are now available. Module/workspace analysis and the CLI
+> remain active alpha work. The `0.7.0` scope and promotion gates are not frozen yet.
 
 ## Table of contents
 
@@ -79,12 +79,13 @@ collector.
 | Compiler product API | Alpha foundation | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
 | Hosting product API | Alpha foundation | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
 | Annotation product API | Alpha foundation | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
-| Type analysis and CLI | Planned for 0.7 alpha | Type/flow/module analysis, incremental workspace, and `run`/`check`/`build`/`dump` CLI |
+| Type and flow analysis API | Alpha foundation | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
+| Workspace and CLI | Planned for later 0.7 alpha | Module graph, content-addressed incremental workspace, and `run`/`check`/`build`/`dump` CLI |
 | Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.2` |
+| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.3` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -111,6 +112,10 @@ hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0
 - A public LuaLS/legacy EmmyLua annotation front end with bounded lexing/type parsing,
   independent dialect parsers, compatibility resolution, unknown-tag preservation, and
   diagnostic suppression; annotations remain erased from runtime IR.
+- A public `Lunil.Analysis` phase with immutable semantic types, type packs, class/alias/enum
+  declarations, structural tables, overloads, generics, constraints and CFGs; flow analysis
+  performs nil/type/assert/discriminant/short-circuit narrowing, definite-assignment and
+  unreachable checks, return-pack inference, source suppression, and bounded widening.
 - Full Lua 5.4 opcode model with binary-compatible 32-bit instruction layouts.
 - Bounded PUC Lua 5.4 binary chunk reading, writing, validation, and conversion.
 
@@ -183,7 +188,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.2" />
+<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.3" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through
@@ -231,9 +236,10 @@ var host = new LuaHost(LuaHostOptions.Restricted);
 var result = host.ExecuteBinaryChunk(bytecode);
 ```
 
-`LuaCompiler`, `LuaExecutor`, and the individual syntax/semantic/IR packages remain available to
-lower-level consumers. `LuaHost` is the product-level embedding entry point; `LuaInterpreter`
-remains available when a host explicitly requires the Tier 0 reference backend.
+`LuaCompiler`, `LuaExecutor`, and the individual syntax, annotation, analysis, semantic, and IR
+packages remain available to lower-level consumers. `LuaHost` is the product-level embedding
+entry point; `LuaInterpreter` remains available when a host explicitly requires the Tier 0
+reference backend.
 
 `LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
 in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
@@ -294,7 +300,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.2" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.3" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -331,6 +337,9 @@ flowchart LR
     Text --> Lexer[Lossless lexer]
     Lexer --> Parser[Error-tolerant parser]
     Parser --> Binder[Semantic binder]
+    Text --> Annotation[LuaLS / EmmyLua annotations]
+    Annotation --> Analysis[Type + flow analysis]
+    Binder --> Analysis
     Binder --> Lowerer[Canonical lowering]
 
     Chunk[PUC Lua 5.4 chunk] --> Reader[Reader + verifier]
@@ -346,11 +355,11 @@ flowchart LR
     IR --> AOT[Persisted CIL AOT]
 ```
 
-The compiler is byte-oriented at its boundaries, uses immutable syntax and semantic
-models, and lowers to a backend-neutral IR. The runtime deliberately models Lua
-objects, ownership, stacks, continuations, and logical GC independently of CLR object
-lifetime. This keeps interpreter behavior explicit and gives future backends a common
-semantic contract.
+The compiler is byte-oriented at its boundaries, publishes immutable syntax, annotation,
+semantic, type, and control-flow models, and lowers runtime behavior to a backend-neutral IR.
+Static-analysis metadata remains erased from that IR. The runtime deliberately models Lua
+objects, ownership, stacks, continuations, and logical GC independently of CLR object lifetime.
+This keeps interpreter behavior explicit and gives future backends a common semantic contract.
 
 ## Repository layout
 
@@ -360,6 +369,7 @@ Lunil/
 │   ├── Lunil.Core/              # source text, diagnostics, Lua numerics
 │   ├── Lunil.Syntax/            # lexer, tokens, parser, immutable syntax
 │   ├── Lunil.EmmyLua/           # LuaLS and legacy EmmyLua annotation front end
+│   ├── Lunil.Analysis/          # semantic types, CFGs, constraints and flow analysis
 │   ├── Lunil.Semantics/         # binding and canonical lowering
 │   ├── Lunil.Compiler/          # public bounded compilation pipeline and results
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
@@ -410,11 +420,11 @@ The `0.7.0` promotion sequence is:
 0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current development version is **`0.7.0-alpha.2`**. The `0.6.0` line was explicitly
+The current development version is **`0.7.0-alpha.3`**. The `0.6.0` line was explicitly
 superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
 `0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.2` is tagged,
-any follow-up change uses `0.7.0-alpha.3` or a later appropriate version.
+channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.3` is tagged,
+any follow-up change uses `0.7.0-alpha.4` or a later appropriate version.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a

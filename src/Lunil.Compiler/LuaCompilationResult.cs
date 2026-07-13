@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Analysis;
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
@@ -13,6 +14,7 @@ public sealed record LuaCompilationResult(
     LuaParseResult Syntax,
     LuaAnnotationDocument Annotations,
     LuaSemanticModel SemanticModel,
+    LuaAnalysisResult Analysis,
     LuaIrModule? Module,
     ImmutableArray<LuaCompilationDiagnostic> Diagnostics)
 {

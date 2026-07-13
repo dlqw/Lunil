@@ -5,11 +5,16 @@ verified canonical IR、persisted CIL、可选 Portable PDB、canonical module p
 C# registry。所有入口以直接 method group 注册，因此 trimming 和 NativeAOT 无需 runtime
 reflection、assembly discovery 或动态 PE load。
 
+`0.7.0-alpha.3` 的 source compilation 还会运行 `Lunil.Analysis` 并发布 immutable type/CFG
+结果供 task 诊断使用；该阶段不依赖 reflection 或 dynamic code，analysis object 不写入 canonical
+module payload，因此生成的 registry 与运行时执行仍保持 annotation/type erasure。NativeAOT fixture
+同时验证动态 source fallback 能构造 analysis result 后继续执行 interpreter 路径。
+
 ## 引用与 item metadata
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.2" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.3" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"
