@@ -175,6 +175,7 @@ internal sealed class Tier2JitBackendHarness : ILuaBackendHarness, IDisposable
             Policy = LuaJitPolicy.PreferJit,
             SynchronousCompilation = true,
             EnableTier2 = true,
+            EnableTier2ManagedFallback = true,
             Tier2InvocationThreshold = 1,
             Tier2BackedgeThreshold = 1,
             Interpreter = options,

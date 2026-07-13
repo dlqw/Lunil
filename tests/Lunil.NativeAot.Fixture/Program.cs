@@ -50,7 +50,8 @@ public static class Program
 
         using var defaultJit = new LuaJitExecutor();
         if (defaultJit.Options.Policy != LuaJitPolicy.Auto ||
-            defaultJit.Options.EnableTier2 ||
+            !defaultJit.Options.EnableTier2 ||
+            defaultJit.Options.EnableTier2ManagedFallback ||
             defaultJit.Options.EnableLoopOsr)
         {
             Console.Error.WriteLine("The default JIT rollout policy is invalid.");
@@ -72,8 +73,11 @@ public static class Program
         }
         else
         {
+            var fallbackModule = Compile("return 6 * 7");
             if (defaultJit.IsDynamicCodeAvailable ||
-                Execute(defaultJit, Compile("return 6 * 7")) != 42 ||
+                Execute(defaultJit, fallbackModule) != 42 ||
+                defaultJit.GetTier2State(fallbackModule, 0) != LuaJitTier2State.Disabled ||
+                defaultJit.GetFunctionProfile(fallbackModule, 0).Samples != 0 ||
                 jit.IsDynamicCodeAvailable ||
                 Execute(jit, Compile("return 6 * 7")) != 42)
             {

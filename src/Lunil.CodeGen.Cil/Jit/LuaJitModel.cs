@@ -39,6 +39,24 @@ public enum LuaJitTier2State : byte
     Invalidated,
 }
 
+public enum LuaJitTier2EligibilityReason : byte
+{
+    Eligible,
+    NoNumericHotspot,
+    PolymorphicNumericProfile,
+    ManagedOptimizationRequired,
+    ManagedSemanticBoundary,
+}
+
+public static class LuaJitTier2DiagnosticCodes
+{
+    public const string NoNumericHotspot = "JIT2101";
+    public const string PolymorphicNumericProfile = "JIT2102";
+    public const string ManagedOptimizationRequired = "JIT2103";
+    public const string UnexpectedCodeKind = "JIT2104";
+    public const string ManagedSemanticBoundary = "JIT2105";
+}
+
 public enum LuaJitOsrState : byte
 {
     Disabled,
@@ -76,6 +94,8 @@ public enum LuaJitEventKind : byte
     LoopOsrInvalidated,
     EligibilityAccepted,
     EligibilityRejected,
+    Tier2EligibilityAccepted,
+    Tier2EligibilityRejected,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -103,10 +123,17 @@ public sealed record LuaJitExecutorOptions
     public int MaximumPolymorphicShapes { get; init; } = 4;
 
     /// <summary>
-    /// Enables experimental profile-guided Tier 2 promotion. Tier 2 remains opt-in until its
-    /// cross-platform throughput and allocation gates pass independently from Tier 1.
+    /// Enables profile-guided Tier 2 promotion. The release default admits only profiles that
+    /// deterministically produce exact-numeric specialized CIL and retains Tier 1 otherwise.
     /// </summary>
-    public bool EnableTier2 { get; init; }
+    public bool EnableTier2 { get; init; } = true;
+
+    /// <summary>
+    /// Allows Tier 2 profiles that require the managed profile-program fallback. This path remains
+    /// an explicit opt-in because table, call, metamethod, and coroutine workloads have not passed
+    /// the default-rollout performance gates.
+    /// </summary>
+    public bool EnableTier2ManagedFallback { get; init; }
 
     public int Tier2InvocationThreshold { get; init; } = 128;
 
@@ -185,7 +212,19 @@ public sealed record LuaJitStatistics(
     long TotalDelegateCreationTicks,
     long EligibilityEvaluated,
     long EligibilityAccepted,
-    long EligibilityRejected);
+    long EligibilityRejected,
+    long Tier2EligibilityEvaluated,
+    long Tier2EligibilityAccepted,
+    long Tier2EligibilityRejected);
+
+public sealed record LuaJitTier2Eligibility(
+    bool IsAutoEligible,
+    LuaJitTier2EligibilityReason Reason,
+    string? DiagnosticCode,
+    long ProfileSamples,
+    int OptimizationCount,
+    int NumericOptimizationCount,
+    LuaJitTier2CodeKind ExpectedCodeKind);
 
 public readonly record struct LuaJitCompilationMetrics(
     TimeSpan CanonicalVerificationDuration,
@@ -226,7 +265,8 @@ public sealed record LuaJitEvent(
     LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1,
     LuaJitCompilationMetrics? CompilationMetrics = null,
     LuaJitFunctionEligibility? Eligibility = null,
-    LuaJitTier2CompilationMetrics? Tier2CompilationMetrics = null);
+    LuaJitTier2CompilationMetrics? Tier2CompilationMetrics = null,
+    LuaJitTier2Eligibility? Tier2Eligibility = null);
 
 public sealed class LuaJitException : Exception
 {

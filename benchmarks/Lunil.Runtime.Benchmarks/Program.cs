@@ -338,7 +338,9 @@ foreach (var workload in backendWorkloads.Where(item =>
                 module,
                 LuaJitExecutorOptions.Default with
                 {
-                    Policy = LuaJitPolicy.PreferJit,
+                    Policy = LuaJitPolicy.Auto,
+                    FunctionEntryThreshold = 1,
+                    BackedgeThreshold = 1,
                     SynchronousCompilation = true,
                     EnableTier2 = false,
                 },
@@ -357,9 +359,10 @@ foreach (var workload in backendWorkloads.Where(item =>
                 module,
                 LuaJitExecutorOptions.Default with
                 {
-                    Policy = LuaJitPolicy.PreferJit,
+                    Policy = LuaJitPolicy.Auto,
+                    FunctionEntryThreshold = 1,
+                    BackedgeThreshold = 1,
                     SynchronousCompilation = true,
-                    EnableTier2 = true,
                     Tier2InvocationThreshold = 1,
                     Tier2BackedgeThreshold = 1,
                 },
@@ -638,6 +641,11 @@ static void RunBackendEvidence(
         $"tier2_optimization_count={warmed.Tier2OptimizationCount}, " +
         $"tier2_specialized_optimization_count={warmed.Tier2SpecializedOptimizationCount}, " +
         $"tier2_deopt_site_count={warmed.Tier2DeoptSiteCount}, " +
+        $"tier2_managed_compilation_count={warmed.Tier2ManagedCompilationCount}, " +
+        $"tier2_compilation_queued={statistics?.Tier2CompilationQueued ?? 0}, " +
+        $"tier2_eligibility_evaluated={statistics?.Tier2EligibilityEvaluated ?? 0}, " +
+        $"tier2_eligibility_accepted={statistics?.Tier2EligibilityAccepted ?? 0}, " +
+        $"tier2_eligibility_rejected={statistics?.Tier2EligibilityRejected ?? 0}, " +
         $"compiled_invocations={statistics?.CompiledInvocations ?? 0}, " +
         $"compiled_instructions={compiledCanonicalInstructions}, " +
         $"scheduler_exits={schedulerExits}, " +
@@ -853,6 +861,11 @@ sealed class BackendEvidenceRunner : IDisposable
 
     public int Tier2DeoptSiteCount =>
         _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?.DeoptMap.Length ?? 0;
+
+    public int Tier2ManagedCompilationCount => _compilationEvents.Count(static jitEvent =>
+        jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted &&
+        jitEvent.Tier2CompilationMetrics?.CodeKind ==
+            LuaJitTier2CodeKind.ManagedProfileProgram);
 
     public static BackendEvidenceRunner CreateInterpreter(
         LuaIrModule module,

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.8-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.6.0--alpha.9-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,7 +28,7 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.6.0-alpha.8`**. The compiler, managed runtime, and complete
+> Lunil is currently **`0.6.0-alpha.9`**. The compiler, managed runtime, and complete
 > Lua 5.4 standard library are functional and extensively tested, but the public API,
 > full official Lua test-suite coverage, and optimizing-backend performance are not yet stable.
 > It is not a production-stable Lua replacement yet.
@@ -74,7 +74,7 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Preview | Qualified Tier 1 is enabled through `Auto`; exact numeric Tier 2 profiles emit guarded specialized CIL, while non-numeric Tier 2 and loop OSR remain explicit opt-ins pending broader gates |
+| JIT / AOT backends | Preview | Qualified Tier 1 and exact-numeric Tier 2 are enabled automatically; managed-profile Tier 2 and loop OSR remain explicit opt-ins pending broader gates |
 | Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
 
 ## Features
@@ -220,11 +220,14 @@ explicitly requires the Tier 0 reference backend.
 
 `LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
 in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
-for Tier 1 compilation. Dynamic-code-unavailable deployments, including NativeAOT, keep exact
-interpreter fallback. With `EnableTier2=true`, stable integer, float, and mixed-numeric profiles
-emit guarded specialized CIL and deopt exactly to canonical execution when a guard fails. Other
-Tier 2 profile shapes retain the managed fallback, so Tier 2 remains an explicit opt-in. Loop OSR
-is independently enabled with `EnableLoopOsr=true`.
+for Tier 1 compilation. Exact integer, float, and mixed-numeric profiles are then automatically
+promoted only when eligibility analysis guarantees `ExactNumericSpecializedCil`; table, closure,
+call, upvalue, and to-be-closed profile sites remain on Tier 1. Guard failure deoptimizes exactly
+to canonical execution and re-runs eligibility against the widened profile. Set
+`EnableTier2=false` to disable Tier 2 profiling and profile import completely, or explicitly set
+`EnableTier2ManagedFallback=true` to allow the still-experimental `ManagedProfileProgram` path.
+Dynamic-code-unavailable deployments, including NativeAOT, keep exact interpreter fallback and do
+not collect Tier 2 profiles. Loop OSR is independently enabled with `EnableLoopOsr=true`.
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.
@@ -235,7 +238,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.8" />
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.9" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
