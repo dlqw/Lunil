@@ -67,8 +67,8 @@ using var warmed = new LuaJitExecutor(LuaJitExecutorOptions.Default with
 LuaJitProfileImportResult result = warmed.ImportProfile(module, payload);
 ```
 
-release 默认 policy 是 `InterpreterOnly`，因此 profile 预热不会自行把动态 tier 变成默认执行路径；
-宿主必须显式选择 `Auto` 或 `PreferJit`。
+release 默认 policy 是 `Auto`，但只启用通过确定性收益检查的 Tier 1；`EnableTier2` 默认仍为
+`false`，因此 profile 导入会返回 `Disabled`，宿主必须显式启用 Tier 2 才能导入并使用预热数据。
 
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该

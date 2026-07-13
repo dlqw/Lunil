@@ -211,9 +211,10 @@ var result = new LuaExecutor().ExecuteBinaryChunk(state, bytecode);
 `LuaExecutor` 是后端中立的宿主入口；需要明确固定到 Tier 0 reference backend 时仍可直接使用
 `LuaInterpreter`。
 
-`LuaJitExecutor` 是 CoreCLR 专用的显式 opt-in。release 默认 policy 为
-`InterpreterOnly`；只有宿主接受当前启动、分配和吞吐取舍时才选择 `Auto` 或 `PreferJit`。
-Tier 2 profile 可导入导出但不持久化生成代码；Loop OSR 仍需单独设置 `EnableLoopOsr=true`。
+`LuaJitExecutor` 是 CoreCLR 动态后端。release 默认 policy 为 `Auto`：先由解释器执行，只有
+确定性收益检查通过且重复变热的函数才会进入 Tier 1 编译队列。NativeAOT 等动态代码不可用环境
+继续精确回退解释器。Tier 2 与 Loop OSR 仍是独立的实验性 opt-in，分别需要设置
+`EnableTier2=true` 与 `EnableLoopOsr=true`。
 
 处理不可信源码或 bytecode 时，应根据宿主需求配置有界 parser/chunk option、解释器
 instruction/stack budget 和 heap quota。
