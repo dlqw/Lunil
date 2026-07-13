@@ -19,9 +19,7 @@
                       PrivateAssets="all"
                       AdditionalProperties="PublishAot=false;PublishTrimmed=false;EnableTrimAnalyzer=false;EnableAotAnalyzer=false" />
     <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
-    <ProjectReference Include="..\..\src\Lunil.Core\Lunil.Core.csproj" />
-    <ProjectReference Include="..\..\src\Lunil.Semantics\Lunil.Semantics.csproj" />
-    <ProjectReference Include="..\..\src\Lunil.Syntax\Lunil.Syntax.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Compiler\Lunil.Compiler.csproj" />
   </ItemGroup>
 
   <ItemGroup>

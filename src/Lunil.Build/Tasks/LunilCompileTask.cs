@@ -7,13 +7,11 @@ using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Caching;
 using Lunil.CodeGen.Cil.Loading;
+using Lunil.Compiler;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
-using Lunil.Semantics.Binding;
-using Lunil.Semantics.Lowering;
-using Lunil.Syntax.Parsing;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 
@@ -207,6 +205,8 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
             return reused;
         }
 
+        var logicalName = options.ModuleName.Replace('.', '/') +
+            (inputKind == LunilBuildInputKind.BinaryChunk ? ".luac" : ".lua");
         LuaIrModule canonicalModule;
         if (inputKind == LunilBuildInputKind.BinaryChunk)
         {
@@ -238,33 +238,23 @@ public sealed class LunilCompileTask : Microsoft.Build.Utilities.Task
         else
         {
             var source = new SourceText(sourceBytes);
-            var parsing = LuaParser.Parse(source);
-            var binding = LuaBinder.Bind(parsing);
-            var lowering = LuaLowerer.Lower(binding);
-            var frontendDiagnostics = parsing.Diagnostics
-                .Concat(binding.Diagnostics)
-                .Concat(lowering.Diagnostics)
-                .DistinctBy(static diagnostic => (
-                    diagnostic.Code,
-                    diagnostic.Severity,
-                    diagnostic.Span,
-                    diagnostic.Message));
-            foreach (var diagnostic in frontendDiagnostics)
+            var frontendCompilation = new LuaCompiler().Compile(source, "@" + logicalName);
+            foreach (var diagnostic in frontendCompilation.Diagnostics)
             {
-                LogFrontendDiagnostic(options.SourcePath, source, diagnostic);
+                LogFrontendDiagnostic(options.SourcePath, source, diagnostic.Diagnostic);
             }
 
-            if (!lowering.Succeeded || lowering.Module is null || Log.HasLoggedErrors)
+            if (!frontendCompilation.Succeeded ||
+                frontendCompilation.Module is null ||
+                Log.HasLoggedErrors)
             {
                 return null;
             }
 
-            canonicalModule = lowering.Module;
+            canonicalModule = frontendCompilation.Module;
         }
 
         var canonicalModuleBytes = LuaAotModuleIdentity.SerializeCanonicalModule(canonicalModule);
-        var logicalName = options.ModuleName.Replace('.', '/') +
-            (inputKind == LunilBuildInputKind.BinaryChunk ? ".luac" : ".lua");
         var cacheKey = CreateCacheKey(
             options,
             inputKind,

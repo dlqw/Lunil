@@ -142,6 +142,15 @@ Lua 字符串和源码以字节为真实表示。`SourceText` 保存不可变字
 
 ## 5. 注解与语义分析
 
+`0.7.0-alpha.1` 新增 `Lunil.Compiler` 公共产品边界。它统一拥有 byte source、逻辑 source
+identity、有界 lexer/parser/binder 选项、canonical lowering、独立 verifier、按阶段归属的稳定
+diagnostic、阶段间 cancellation 检查和不可变 compilation result。`Lunil.Build` 的源码输入必须
+复用该入口，不能继续维护第二套 parse/bind/lower 拼装逻辑。后续注解、类型、流与模块分析均接入
+同一 compilation result，不绕过该边界直接向宿主发布内部 mutable state。
+
+注解与类型分析仍属于后续 `0.7.0-alpha.N` 工作；`alpha.1` 不以空 annotation result
+或占位诊断宣称支持。
+
 默认方言为 LuaLS。旧 EmmyLua IDE 方言通过 `--enable-legacy-emmylua` 开启；也提供显式 `--emmy-dialect=luals` 配置项。组合模式中：
 
 1. 优先按 LuaLS 解释；
@@ -286,7 +295,7 @@ yield 返回显式 `VmSignal.Yield`，而不是保留 CLR 调用栈。resume 从
 
 `LuaInterpreter` 直接执行 canonical IR，Lua 调用和 Lua 元方法只压入显式 frame。共享调度覆盖 `__index`、`__newindex`、`__call`、算术/位运算、`__len`、`__concat`、`__eq`、`__lt`、`__le` 及其 fallback；类型元表与对象元表走同一路径，并具有 2,000 层链预算。普通算术和 numeric-for 使用与 lexer 共享的 Lua 数字解析器转换完整数字字符串，integer loop 在边界处用宽中间值判定，避免 64 位回绕造成额外迭代。
 
-Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换将在后续版本中按依赖顺序推进。
+Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换均已完成，并继续由解释器、JIT/AOT 差分及官方 portable user-mode 语料回归。
 
 ## 9. 执行后端
 
@@ -535,6 +544,13 @@ Lunil intermediate root。
 
 宿主能力接口至少包括 `IFileSystem`、`IProcessService`、`IEnvironmentProvider`、`IClock`、`IRandomSource`、`IModuleResolver` 和 `IConsole`。提供 Full、Sandbox、Deterministic 配置。路径穿越、符号链接、设备文件、进程启动与环境泄漏由能力实现控制，而非散落在标准库中。
 
+`0.7.0-alpha.1` 的 `Lunil.Hosting` 将现有标准库 capability provider 组合为显式
+Trusted、Restricted 与 Deterministic profile。默认 Restricted 禁止文件系统、环境变量和进程
+能力，并使用 binary-safe buffered console；Deterministic 进一步固定 UTC/Unix epoch、clock 和
+table hash seed。宿主显式注入的 capability 优先于 profile 默认值，因此注入后确定性保证由宿主
+承担。state/heap/stack/call-depth/instruction budget 仍由现有 Runtime option 直接控制，不在 Hosting
+复制第二套配额实现。
+
 ## 11. 编译缓存
 
 项目 artifact 默认位于 `obj/lunil/`；用户级 backend cache 默认位于 local app-data 下的
@@ -604,6 +620,11 @@ tests/
 ```
 
 Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Runtime 不反向依赖 Compiler；标准库通过 Runtime Abstractions 获取宿主能力。跨层数据结构放在最窄的共同抽象项目，禁止形成循环引用。
+
+`0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`：Compiler 依赖
+Core/Syntax/Semantics/IR；Hosting 依赖 Compiler/IR/Runtime/StandardLibrary；Build 复用 Compiler。
+`Lunil.EmmyLua`、`Lunil.Runtime.Abstractions` 与 `Lunil.Cli` 仍在后续 Alpha 中按路线图拆分，
+在拆分前不得制造循环依赖，也不得为满足目录名称而提交无行为的空项目。
 
 ## 14. 验证策略
 
