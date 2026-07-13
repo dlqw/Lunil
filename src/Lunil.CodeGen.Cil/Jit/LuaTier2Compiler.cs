@@ -198,6 +198,103 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             metrics);
     }
 
+    internal static LuaJitTier2Eligibility EvaluateAutoPromotionEligibility(
+        LuaIrModule module,
+        int functionId,
+        LuaJitFunctionProfile profile,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(profile);
+        if ((uint)functionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var function = module.Functions[functionId];
+        var liveness = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            function,
+            out _,
+            cancellationToken);
+        var optimized = BuildOptimizations(function, profile, liveness);
+        var numericOptimizationCount = optimized.Values.Count(static optimization =>
+            optimization.Kind is LuaJitOptimizationKind.NumericUnary or
+                LuaJitOptimizationKind.NumericBinary);
+        var hasManagedSemanticProfileSites = HasManagedSemanticProfileSites(profile);
+        var status = hasManagedSemanticProfileSites
+            ? LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired
+            : ReflectionEmitLuaTier2Compiler.EvaluateNumericSpecialization(
+                function,
+                optimized);
+        var reason = hasManagedSemanticProfileSites
+            ? LuaJitTier2EligibilityReason.ManagedSemanticBoundary
+            : status switch
+            {
+                LuaTier2NumericSpecializationStatus.Eligible =>
+                    LuaJitTier2EligibilityReason.Eligible,
+                LuaTier2NumericSpecializationStatus.NoNumericHotspot =>
+                    LuaJitTier2EligibilityReason.NoNumericHotspot,
+                LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile =>
+                    LuaJitTier2EligibilityReason.PolymorphicNumericProfile,
+                LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired =>
+                    LuaJitTier2EligibilityReason.ManagedOptimizationRequired,
+                _ => throw new InvalidOperationException(
+                    $"Unknown Tier 2 specialization status {status}."),
+            };
+        var diagnosticCode = reason switch
+        {
+            LuaJitTier2EligibilityReason.Eligible => null,
+            LuaJitTier2EligibilityReason.NoNumericHotspot =>
+                LuaJitTier2DiagnosticCodes.NoNumericHotspot,
+            LuaJitTier2EligibilityReason.PolymorphicNumericProfile =>
+                LuaJitTier2DiagnosticCodes.PolymorphicNumericProfile,
+            LuaJitTier2EligibilityReason.ManagedOptimizationRequired =>
+                LuaJitTier2DiagnosticCodes.ManagedOptimizationRequired,
+            LuaJitTier2EligibilityReason.ManagedSemanticBoundary =>
+                LuaJitTier2DiagnosticCodes.ManagedSemanticBoundary,
+            _ => throw new InvalidOperationException(
+                $"Unknown Tier 2 eligibility reason {reason}."),
+        };
+
+        return new LuaJitTier2Eligibility(
+            status == LuaTier2NumericSpecializationStatus.Eligible,
+            reason,
+            diagnosticCode,
+            profile.Samples,
+            optimized.Count,
+            numericOptimizationCount,
+            status == LuaTier2NumericSpecializationStatus.Eligible
+                ? LuaJitTier2CodeKind.ExactNumericSpecializedCil
+                : LuaJitTier2CodeKind.ManagedProfileProgram);
+    }
+
+    private static bool HasManagedSemanticProfileSites(LuaJitFunctionProfile profile)
+    {
+        foreach (var site in profile.Sites)
+        {
+            if (site.Samples <= 0 || site.Opcode is not (
+                LuaIrOpcode.GetUpvalue or
+                LuaIrOpcode.SetUpvalue or
+                LuaIrOpcode.NewTable or
+                LuaIrOpcode.GetTable or
+                LuaIrOpcode.SetTable or
+                LuaIrOpcode.SetList or
+                LuaIrOpcode.Closure or
+                LuaIrOpcode.Call or
+                LuaIrOpcode.TailCall or
+                LuaIrOpcode.MarkToBeClosed))
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",

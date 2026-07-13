@@ -79,6 +79,20 @@ public sealed class LuaJitExecutor : IDisposable
             includeInstructionObservation);
     }
 
+    public static LuaJitTier2Eligibility EvaluateTier2PromotionEligibility(
+        LuaIrModule module,
+        int functionId,
+        LuaJitFunctionProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(profile);
+        return ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+            module,
+            functionId,
+            profile,
+            CancellationToken.None);
+    }
+
     public LuaJitStatistics Statistics => _registry.GetStatistics();
 
     public event EventHandler<LuaJitEvent>? EventOccurred
@@ -150,6 +164,14 @@ public sealed class LuaJitExecutor : IDisposable
         return _registry.GetFunctionProfile(module, functionId);
     }
 
+    public LuaJitTier2Eligibility GetTier2PromotionEligibility(
+        LuaIrModule module,
+        int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetTier2PromotionEligibility(module, functionId);
+    }
+
     public byte[] ExportProfile(LuaIrModule module)
     {
         ThrowIfDisposed();
@@ -166,7 +188,7 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(module);
-        if (!Options.EnableTier2)
+        if (!Options.EnableTier2 || !IsDynamicCodeAvailable)
         {
             return new LuaJitProfileImportResult(LuaJitProfileImportStatus.Disabled);
         }

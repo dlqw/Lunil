@@ -134,6 +134,11 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         Tier2OptimizationCount = [int]$values.tier2_optimization_count
         Tier2SpecializedOptimizationCount = [int]$values.tier2_specialized_optimization_count
         Tier2DeoptSiteCount = [int]$values.tier2_deopt_site_count
+        Tier2ManagedCompilationCount = [int]$values.tier2_managed_compilation_count
+        Tier2CompilationQueued = [long]$values.tier2_compilation_queued
+        Tier2EligibilityEvaluated = [long]$values.tier2_eligibility_evaluated
+        Tier2EligibilityAccepted = [long]$values.tier2_eligibility_accepted
+        Tier2EligibilityRejected = [long]$values.tier2_eligibility_rejected
         CompiledInvocations = [long]$values.compiled_invocations
         CompiledInstructions = [long]$values.compiled_instructions
         SchedulerExits = [long]$values.scheduler_exits
@@ -288,6 +293,11 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         Tier2SpecializedOptimizationCount = Get-Median @(
             $group.Group.Tier2SpecializedOptimizationCount)
         Tier2DeoptSiteCount = Get-Median @($group.Group.Tier2DeoptSiteCount)
+        Tier2ManagedCompilationCount = Get-Median @($group.Group.Tier2ManagedCompilationCount)
+        Tier2CompilationQueued = Get-Median @($group.Group.Tier2CompilationQueued)
+        Tier2EligibilityEvaluated = Get-Median @($group.Group.Tier2EligibilityEvaluated)
+        Tier2EligibilityAccepted = Get-Median @($group.Group.Tier2EligibilityAccepted)
+        Tier2EligibilityRejected = Get-Median @($group.Group.Tier2EligibilityRejected)
         AutoEligible = $eligibility.AutoEligible
         EligibilityReason = $eligibility.Reason
         BreakEven = $eligibility.BreakEven
@@ -302,6 +312,8 @@ $tier2Arithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier2'
 } | Select-Object -First 1
 $negativeGateFailures = [Collections.Generic.List[string]]::new()
+$tier2NegativeGateFailures = [Collections.Generic.List[string]]::new()
+$tier2NegativeComparisons = [Collections.Generic.List[object]]::new()
 foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
     $eligibility = $eligibilityRecords | Where-Object { $_.Workload -eq $workload } |
         Select-Object -First 1
@@ -311,6 +323,43 @@ foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_er
     if ($eligibility.AutoEligible -and $tier1.SpeedupVsInterpreterCi95Lower -lt 0.95) {
         $negativeGateFailures.Add(
             "$workload is Auto-eligible with speedup CI lower $($tier1.SpeedupVsInterpreterCi95Lower).")
+    }
+
+    $tier2 = $summary | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'tier2'
+    } | Select-Object -First 1
+    if ($tier2.Tier2ManagedCompilationCount -ne 0) {
+        $tier2NegativeGateFailures.Add(
+            "$workload installed $($tier2.Tier2ManagedCompilationCount) managed Tier 2 methods.")
+    }
+
+    $rolloutRatios = [Collections.Generic.List[double]]::new()
+    foreach ($record in $records | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'tier2'
+    }) {
+        $tier1Record = $records | Where-Object {
+            $_.Round -eq $record.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'tier1'
+        } | Select-Object -First 1
+        if ($null -eq $tier1Record) {
+            throw "Missing Tier 1 rollout pair for round $($record.Round), workload $workload."
+        }
+
+        $rolloutRatios.Add($tier1Record.WarmNsOp / $record.WarmNsOp)
+    }
+
+    $rolloutInterval = Get-BootstrapMedianInterval $rolloutRatios.ToArray()
+    $tier2NegativeComparisons.Add([pscustomobject]@{
+        Workload = $workload
+        SpeedupVsTier1Median = Get-Median $rolloutRatios.ToArray()
+        SpeedupVsTier1Ci95Lower = $rolloutInterval.Lower
+        SpeedupVsTier1Ci95Upper = $rolloutInterval.Upper
+    })
+    $rolloutMedian = Get-Median $rolloutRatios.ToArray()
+    if ($rolloutMedian -lt 0.90) {
+        $tier2NegativeGateFailures.Add(
+            "$workload Tier 2-default/Tier 1 median speedup is $rolloutMedian.")
     }
 }
 
@@ -352,13 +401,22 @@ $tier2Decision = [pscustomobject]@{
     Tier2CilEmitP95Ms = $tier2Arithmetic.Tier2CilEmitP95Ms
     Tier2DelegateCreateP95Ms = $tier2Arithmetic.Tier2DelegateCreateP95Ms
     Tier2CompileAllocatedP95Bytes = $tier2Arithmetic.Tier2CompileAllocatedP95Bytes
+    Tier2EligibilityEvaluated = $tier2Arithmetic.Tier2EligibilityEvaluated
+    Tier2EligibilityAccepted = $tier2Arithmetic.Tier2EligibilityAccepted
+    Tier2EligibilityRejected = $tier2Arithmetic.Tier2EligibilityRejected
+    Tier2ManagedCompilationCount = $tier2Arithmetic.Tier2ManagedCompilationCount
+    NegativeWorkloadComparisons = $tier2NegativeComparisons.ToArray()
+    NegativeWorkloadGateFailures = $tier2NegativeGateFailures.ToArray()
     QualifiesThisRid =
         $tier2Arithmetic.SpeedupVsInterpreterMedian -ge 4.0 -and
         $tier2Arithmetic.SpeedupVsInterpreterCi95Lower -ge 4.0 -and
         [Math]::Abs($tier2Arithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
         $tier2Arithmetic.Tier2P95Ms -lt 10.0 -and
         $tier2Arithmetic.Tier2CodeKind -eq 'ExactNumericSpecializedCil' -and
-        $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0
+        $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0 -and
+        $tier2Arithmetic.Tier2ManagedCompilationCount -eq 0 -and
+        $tier2Arithmetic.Tier2EligibilityAccepted -gt 0 -and
+        $tier2NegativeGateFailures.Count -eq 0
 }
 $tier2Decision | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'tier2-decision.json') -Encoding utf8

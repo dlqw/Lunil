@@ -307,3 +307,39 @@ Reproduce the qualification record with:
 The measurement directory contains `tier1-decision.json`, `tier2-decision.json`, raw process
 output, CSV, and summary JSON. The six-RID aggregator writes both
 `tier1-six-rid-decision.json` and `tier2-six-rid-decision.json`.
+
+## M12 Tier 2 automatic default rollout
+
+M12 changes the Tier 2 evidence row to use the release default rather than an explicit broad
+opt-in. Promotion first computes `LuaJitTier2Eligibility`; only profiles guaranteed to install
+`ExactNumericSpecializedCil` may enter the automatic compile queue. Observed table, upvalue,
+closure, call/tail-call, and to-be-closed semantic sites are rejected, while
+`EnableTier2ManagedFallback=true` preserves the previous experimental managed path for hosts that
+request it explicitly. The runner records eligibility decisions and fails the negative gate if any
+`ManagedProfileProgram` is installed automatically or if the paired Tier 2-enabled/Tier 2-disabled
+`Auto` median falls below 0.90.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced the following rollout result:
+
+| Metric | Automatic exact-numeric Tier 2 |
+|---|---:|
+| Paired arithmetic median speedup | **11.282x** |
+| Bootstrap median 95% interval | **[8.754x, 11.864x]** |
+| Allocation slope | **0 B/iteration** |
+| Tier 2 compilation p95 | **0.234 ms** |
+| Liveness cache hit rate | **100%** |
+| Optimization planning p95 | 0.086 ms |
+| Specialized CIL emission p95 | 0.095 ms |
+| Delegate creation p95 | 0.020 ms |
+| Compilation allocation p95 | 56,360 B |
+| Code kind / specialized optimizations | `ExactNumericSpecializedCil` / 5 |
+| Eligibility evaluated / accepted / rejected | 1 / 1 / 0 |
+| Automatic managed Tier 2 installations | **0** |
+
+The `lua_calls`, `table_access`, `metamethod`, and `coroutine_error_hook` negative matrix installed
+zero managed Tier 2 methods. Their paired Tier 2-enabled/Tier 2-disabled `Auto` medians were
+0.995x, 0.981x, 1.056x, and 1.221x respectively, so the local rollout decision qualifies. The
+prerequisite M11 six-RID CI record already showed an exact-numeric bootstrap 95% lower bound of at
+least 7.086x and a Tier 2 compile p95 no greater than 3.228 ms on every RID. The rollout CI repeats
+the six-RID record with the new default and managed-installation gate before merge.
