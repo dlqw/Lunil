@@ -108,7 +108,7 @@ or Loop OSR.
 Reproduce the multi-process evidence with:
 
 ```powershell
-./scripts/Measure-BackendPerformance.ps1 -Rounds 3 -Iterations 1000000 -Configuration Release
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -Iterations 1000000 -Configuration Release
 ```
 
 The script writes raw process output, `runs.csv`, and `summary.json` under the ignored
@@ -217,13 +217,13 @@ coroutine/error/hook workloads were rejected for insufficient direct coverage.
 Reproduce and aggregate evidence with:
 
 ```powershell
-./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 `
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 `
   -Iterations 1000000 -Configuration Release
 ./scripts/Merge-BackendPerformanceEvidence.ps1
 ```
 
 The measurement script writes raw output, CSV, JSON, and `tier1-decision.json` under ignored
-`artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same five-process
+`artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same six-process
 measurement on win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64, then publishes
 the aggregate without using shared-runner timing as a CI pass/fail condition.
 
@@ -252,3 +252,233 @@ The local five-process win-x64 qualification rerun reported a 2.392x median spee
 95% interval `[2.306x, 2.634x]`, 1.312 ms compile p95, zero allocation slope, and no negative
 workload failure. The rollout commit still requires the independent six-RID CI aggregate before
 merge.
+
+## M11 Tier 2 exact-numeric productionization
+
+M11 replaces the arithmetic hot path of the managed Tier 2 profile program with guarded,
+profile-specialized CIL. Exact integer, float, and mixed-numeric sites execute in a generated
+`DynamicMethod`; other optimization combinations retain the managed fallback. The benchmark now
+records the actual Tier 2 code kind, specialized/deopt counts, IR verification, liveness/cache
+hit, optimization planning, CIL emission, delegate creation, and compilation allocation.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced:
+
+| Metric | Interpreter | Tier 1 | Exact-numeric Tier 2 |
+|---|---:|---:|---:|
+| Warm median | 7,453,430 ns/op | 2,405,760 ns/op | 801,230 ns/op |
+| Paired median speedup | 1.000x | 3.187x | **9.177x** |
+| Bootstrap median 95% interval | n/a | [2.579x, 3.433x] | **[6.557x, 10.272x]** |
+| Allocated/op | 1,844 B | 1,974.4 B | 2,102.4 B |
+| Allocation slope | 0 B/iteration | 0 B/iteration | 0 B/iteration |
+| Tier 2 compilation p95 | n/a | n/a | **1.395 ms** |
+
+The Tier 2 compilation attribution was:
+
+| Phase/shape | p95 or value |
+|---|---:|
+| Canonical IR verification | 0.006 ms |
+| Register liveness | 0.007 ms |
+| Liveness cache hit rate | 100% |
+| Optimization planning | 1.199 ms |
+| Specialized CIL emission | 0.087 ms |
+| Delegate creation | 0.022 ms |
+| Compilation allocation | 57,344 B |
+| Code kind | `ExactNumericSpecializedCil` |
+| Specialized optimizations / deopt sites | 5 / 5 |
+
+This passes the local exact-numeric Tier 2 gate: paired median and bootstrap lower bound are both
+at least 4x, compilation p95 is below 10 ms, and the linear allocation slope is zero. The same
+run also measured 10.732x on the numeric control-flow workload.
+
+This decision does **not** enable Tier 2 by default. The current table, call, metamethod, and
+coroutine/error/hook shapes still select `ManagedProfileProgram` for all or part of their hot
+paths and do not have a non-regressing default policy. `EnableTier2` therefore remains explicit,
+while CI records and aggregates the exact-numeric decision independently on all six native RIDs.
+
+Reproduce the qualification record with:
+
+```powershell
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 `
+  -Iterations 1000000 -Configuration Release
+./scripts/Merge-BackendPerformanceEvidence.ps1
+```
+
+The measurement directory contains `tier1-decision.json`, `tier2-decision.json`, raw process
+output, CSV, and summary JSON. The six-RID aggregator writes both
+`tier1-six-rid-decision.json` and `tier2-six-rid-decision.json`.
+
+## M12 Tier 2 automatic default rollout
+
+M12 changes the Tier 2 evidence row to use the release default rather than an explicit broad
+opt-in. Promotion first computes `LuaJitTier2Eligibility`; only profiles guaranteed to install
+`ExactNumericSpecializedCil` may enter the automatic compile queue. Observed table, upvalue,
+closure, call/tail-call, and to-be-closed semantic sites are rejected, while
+`EnableTier2ManagedFallback=true` preserves the previous experimental managed path for hosts that
+request it explicitly. The runner records eligibility decisions and fails the negative gate if any
+`ManagedProfileProgram` is installed automatically or if the paired Tier 2-enabled/Tier 2-disabled
+`Auto` median falls below 0.90.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced the following rollout result:
+
+| Metric | Automatic exact-numeric Tier 2 |
+|---|---:|
+| Paired arithmetic median speedup | **11.282x** |
+| Bootstrap median 95% interval | **[8.754x, 11.864x]** |
+| Allocation slope | **0 B/iteration** |
+| Tier 2 compilation p95 | **0.234 ms** |
+| Liveness cache hit rate | **100%** |
+| Optimization planning p95 | 0.086 ms |
+| Specialized CIL emission p95 | 0.095 ms |
+| Delegate creation p95 | 0.020 ms |
+| Compilation allocation p95 | 56,360 B |
+| Code kind / specialized optimizations | `ExactNumericSpecializedCil` / 5 |
+| Eligibility evaluated / accepted / rejected | 1 / 1 / 0 |
+| Automatic managed Tier 2 installations | **0** |
+
+The `lua_calls`, `table_access`, `metamethod`, and `coroutine_error_hook` negative matrix installed
+zero managed Tier 2 methods. Their paired Tier 2-enabled/Tier 2-disabled `Auto` medians were
+0.995x, 0.981x, 1.056x, and 1.221x respectively, so the local rollout decision qualifies. The
+prerequisite M11 six-RID CI record already showed an exact-numeric bootstrap 95% lower bound of at
+least 7.086x and a Tier 2 compile p95 no greater than 3.228 ms on every RID. The rollout CI repeats
+the six-RID record with the new default and managed-installation gate before merge.
+
+## M13 Loop OSR exact-numeric productionization
+
+M13 replaces the managed arithmetic loop prototype with `GuardedExactNumericCil`. The Loop OSR
+row now has an independently configured `loop_osr_off` baseline, and qualification compares each
+OSR-on result with its disabled pair from the same process. The runner records canonical
+verification, natural-loop analysis, liveness/cache hit, specialization planning, CIL emission,
+delegate creation, compilation allocation, code kind, specialized-instruction/guard counts,
+eligibility decisions, and managed installation count.
+
+Automatic OSR eligibility accepts only verified natural loops whose complete code shape can be
+emitted as exact integer, float, or mixed-numeric CIL. Managed table/call/upvalue/closure/vararg/
+to-be-closed loops are rejected unless the host separately enables `EnableLoopOsrManagedFallback`.
+Loop-free and fully rejected functions are analyzed once at entry and then use a permanent
+fast-rejection state so negative workloads do not classify every instruction as a possible
+backedge.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced:
+
+| Metric | Production exact-numeric Loop OSR |
+|---|---:|
+| Arithmetic median speedup vs interpreter | **8.516x** |
+| Bootstrap median 95% interval vs interpreter | **[6.012x, 9.406x]** |
+| Arithmetic median speedup vs OSR disabled | **128.737x** |
+| Bootstrap median 95% interval vs OSR disabled | **[93.992x, 142.973x]** |
+| Allocation slope | **0 B/iteration** |
+| Loop OSR compilation p95 | **3.080 ms** |
+| Liveness cache hit rate | **100%** |
+| Canonical IR verification p95 | 0.004 ms |
+| Natural-loop analysis p95 | 0.089 ms |
+| Specialization planning p95 | 0.053 ms |
+| Specialized CIL emission p95 | 1.525 ms |
+| Delegate creation p95 | 0.018 ms |
+| Compilation allocation p95 | 44,592 B |
+| Code kind | `GuardedExactNumericCil` |
+| Specialized instructions / guards | 5 / 13 |
+| Eligibility evaluated / accepted / rejected | 1 / 1 / 0 |
+| Automatic managed arithmetic installations | **0** |
+
+The negative workload matrix also installed zero managed OSR methods. Paired OSR-on/off medians
+were 0.935x for `lua_calls`, 1.003x for `table_access`, 0.992x for `metamethod`, and 0.980x for
+`coroutine_error_hook`; all meet the unchanged 0.90 floor. This local Loop OSR decision qualifies
+without changing `EnableLoopOsr=false`.
+
+`Measure-BackendPerformance.ps1` now writes `loop-osr-decision.json` in addition to the Tier 1 and
+Tier 2 decisions. `Merge-BackendPerformanceEvidence.ps1` selects the newest decision for each of
+win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64 and writes
+`loop-osr-six-rid-decision.json`. A synthetic six-RID corpus validated the full aggregate contract,
+including minimum confidence bounds, maximum compile/allocation values, exact code kind,
+liveness, automatic eligibility, managed-installation avoidance, negative gates, and the final
+`AllRidsQualify` flag. Protected CI publishes the real six-RID evidence without enforcing absolute
+wall-clock timing on shared runners.
+
+The productionization decision and unchanged default are recorded in
+[ADR 0006](adr/0006-loop-osr-performance-productionization.md).
+
+## M14 Loop OSR default-rollout readiness
+
+The real M13 six-RID CI run `29238433084` passed every arithmetic, code-kind, allocation,
+compilation, liveness, and managed-installation requirement. Its minimum arithmetic bootstrap 95%
+lower bound was 7.215x, maximum Loop OSR compilation p95 was 5.978 ms, and every RID emitted
+`GuardedExactNumericCil`. It did not pass the rollout gate: fixed-order shared-runner comparisons
+placed one or more negative workload medians below 0.90 on win-x64, linux-x64, linux-arm64, and
+osx-arm64. The metamethod row also installed specialized OSR before discovering non-numeric table
+operands through guards.
+
+M14 makes three contract changes before any default rollout:
+
+1. natural-loop analysis and specialized-emitter initialization are delayed until verified function
+   backedges reach `LoopOsrBackedgeThreshold`;
+2. structurally specialized loops must observe every exact-numeric guard site successfully before
+   queue admission, while a non-exact operand produces permanent `JIT3105` rejection; and
+3. repeated processes alternate the `loop_osr`/`loop_osr_off` execution order. Negative qualification
+   now includes startup, warm throughput, automatic acceptance, guard failures, and managed installs.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced:
+
+| Metric | M14 rollout-readiness Loop OSR |
+|---|---:|
+| Arithmetic median speedup vs interpreter | **8.670x** |
+| Bootstrap median 95% interval vs interpreter | **[6.765x, 10.089x]** |
+| Arithmetic median speedup vs OSR disabled | **115.995x** |
+| Bootstrap median 95% interval vs OSR disabled | **[86.944x, 127.997x]** |
+| Allocation slope | **0 B/iteration** |
+| Loop OSR compilation p95 | **3.538 ms** |
+| Compilation allocation p95 | 50,296 B |
+| Liveness cache hit rate | **100%** |
+| Code kind | `GuardedExactNumericCil` |
+| Specialized instructions / guards | 5 / 13 |
+| Eligibility evaluated / accepted / rejected | 1 / 1 / 0 |
+| Automatic managed arithmetic installations | **0** |
+
+The paired warm on/off medians were 0.993x for `lua_calls`, 0.982x for `table_access`, 1.007x for
+`metamethod`, and 0.987x for `coroutine_error_hook`. Their paired first-execution startup medians
+were 1.005x, 1.027x, 0.984x, and 1.002x. All four workloads reported zero automatic acceptance,
+zero managed installations, and zero OSR guard failures. The metamethod workload now reports
+`NonExactNumericProfile` instead of compiling specialized CIL.
+
+This local result qualifies the implementation but does not change `EnableLoopOsr=false`. A new
+real six-RID aggregate must report `AllRidsQualify=true` before the separate default-rollout change.
+The readiness decision is recorded in
+[ADR 0007](adr/0007-loop-osr-default-rollout-readiness.md).
+
+## M15 Loop OSR rollout evidence closure
+
+The real M14 six-RID CI run `29241821560` proved that runtime qualification closes the semantic
+gap: every RID rejected all four negative workloads automatically, installed no managed OSR,
+observed no guard failures, passed every startup gate, and accepted the exact-numeric arithmetic
+loop. It still did not authorize default rollout. The linux-arm64 metamethod warm median was
+0.8565x, the osx-x64 table-access warm median was 0.8876x, and osx-x64 reported a 13.272 ms first
+Loop OSR compilation p95 after constructor-time emitter preparation had been removed.
+
+Raw process data showed that the negative throughput gate used only ten warm executions and an odd
+five-process order split. The failing linux-arm64 metamethod ratios followed the 3:2 order imbalance,
+while osx table access showed wide allocation/GC noise. M15 strengthens rather than lowers the gate:
+
+1. qualification uses six independent processes, enforcing an exact 3:3 `loop_osr`/`loop_osr_off`
+   order balance;
+2. every backend throughput row measures at least 30 warm executions;
+3. `WarmOperationsPerProcess` and `BalancedLoopOsrPairOrder` are persisted in each RID decision and
+   aggregated across all six RIDs; and
+4. the specialized emitter is prepared only after exact-numeric runtime qualification succeeds.
+   `LoopOsrCompilerPrepared` attributes this one-time cost separately, and both preparation p95 and
+   per-loop compilation p95 retain independent `<10 ms` gates.
+
+The negative workload floor remains 0.90, the startup floor remains 0.90, and automatic acceptance,
+guard failure, and managed installation must remain zero. `EnableLoopOsr=false` remains unchanged
+until a new real six-RID aggregate reports `AllRidsQualify=true`.
+
+The final local win-x64 record at
+`artifacts/backend-performance/win-x64/20260713-104847` passed the strengthened contract: 7.547x
+arithmetic median speedup over the interpreter, 119.634x over OSR-disabled execution, 0.527 ms
+preparation p95, 3.104 ms compilation p95, 45,092-byte compilation allocation p95, zero allocation
+slope, and 100% liveness-cache hits. Warm negative medians were 1.019x, 1.000x, 0.967x, and 0.988x;
+startup medians were 0.996x, 1.016x, 0.977x, and 0.988x. Automatic negative acceptance, guard
+failures, and managed installations remained zero. See
+[ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md).

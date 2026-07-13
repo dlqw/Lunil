@@ -55,20 +55,33 @@ Tier 1/Tier 2 阈值，但 Tier 1/Tier 2/OSR 仍在本进程重新生成，profi
 using var training = new LuaJitExecutor(LuaJitExecutorOptions.Default with
 {
     Policy = LuaJitPolicy.PreferJit,
-    EnableTier2 = true,
 });
 byte[] payload = training.ExportProfile(module);
 
 using var warmed = new LuaJitExecutor(LuaJitExecutorOptions.Default with
 {
     Policy = LuaJitPolicy.Auto,
-    EnableTier2 = true,
 });
 LuaJitProfileImportResult result = warmed.ImportProfile(module, payload);
 ```
 
-release 默认 policy 是 `Auto`，但只启用通过确定性收益检查的 Tier 1；`EnableTier2` 默认仍为
-`false`，因此 profile 导入会返回 `Disabled`，宿主必须显式启用 Tier 2 才能导入并使用预热数据。
+release 默认 policy 是 `Auto`，同时默认设置 `EnableTier2=true`，因此动态代码可用的 CoreCLR
+宿主可直接导入 profile。导入数据只能提前满足 hotness：自动 Tier 2 仍会重新检查 profile，只有可
+保证生成 `ExactNumericSpecializedCil` 且未观察到 table/closure/call/upvalue/to-be-closed managed
+semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Disabled`；动态代码不可用时也不会
+合并 profile 或采集运行时反馈。
+
+`EnableTier2ManagedFallback` 默认是 `false`。宿主只有显式将其设为 `true`，才允许导入的 profile
+进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义
+compiler 或陈旧 profile 绕过。
+
+Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `false`；显式开启后，先在当前
+进程累计 verified backedge，达到阈值后才重新执行 natural-loop/static eligibility。可保证生成
+`GuardedExactNumericCil` 的 loop 还必须在 interpreter 中成功观察全部 exact-numeric guard site，才会
+自动进入队列；一次非数值 operand 会以 `JIT3105` 永久拒绝。`EnableLoopOsrManagedFallback` 默认是
+`false`，managed canonical loop 必须由宿主再次显式开启。static/runtime eligibility、guard-site
+observation、资格接受后的惰性 emitter preparation、guard-failure widening、backedge counters、
+生成 delegate 与 code-kind 安装状态均不持久化，因此不能由导入 profile 或磁盘 cache 绕过。
 
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该
@@ -77,7 +90,10 @@ slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；
 ## In-process verified plan cache
 
 Tier 1 planning 另有不落盘的 owner-scoped weak cache。key 是 canonical module 对象、function id
-和 instruction-observation mode；显式自定义 `CilPlanLimits` 的调用不进入共享缓存。cache value
+和 instruction-observation mode；显式自定义 `CilPlanLimits` 的调用不进入共享缓存。register liveness
+也按 module owner/function 使用 weak cache，在 Tier 1、Tier 2、Loop OSR 与 persisted AOT planning
+之间复用；Loop OSR 的 natural-loop plan、static/runtime eligibility、guard-site map 和生成方法仍只
+保存在 registry entry 中。cache value
 只保存 verified plan/diagnostic，不保存 `LuaState`、closure、table 或 delegate。module owner 被
 回收后，`ConditionalWeakTable` entry 及 plan 一并可回收。并发首次访问在 owner lock 下只构建一次；
 cache hit 的 planning durations 为零，避免把复用结果误计为新的编译工作。planning、liveness、

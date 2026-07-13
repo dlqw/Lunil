@@ -86,6 +86,13 @@ internal sealed class LuaTieredJitRegistry :
     private long _eligibilityEvaluated;
     private long _eligibilityAccepted;
     private long _eligibilityRejected;
+    private long _tier2EligibilityEvaluated;
+    private long _tier2EligibilityAccepted;
+    private long _tier2EligibilityRejected;
+    private long _loopOsrEligibilityEvaluated;
+    private long _loopOsrEligibilityAccepted;
+    private long _loopOsrEligibilityRejected;
+    private int _loopOsrCompilerPreparationState;
     private int _disposed;
 
     public LuaTieredJitRegistry(
@@ -118,6 +125,9 @@ internal sealed class LuaTieredJitRegistry :
     public event EventHandler<LuaJitEvent>? EventOccurred;
 
     private bool IsLoopOsrEnabled => _options.EnableLoopOsr &&
+        _capabilities.IsDynamicCodeSupported && _capabilities.IsDynamicCodeCompiled;
+
+    private bool IsTier2Enabled => _options.EnableTier2 &&
         _capabilities.IsDynamicCodeSupported && _capabilities.IsDynamicCodeCompiled;
 
     public LuaCompiledExit Execute(
@@ -158,9 +168,10 @@ internal sealed class LuaTieredJitRegistry :
             LuaCodegenAbiV2.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, frame.Closure.Function.ParameterCount);
-        _observedFrames.GetValue(
+        var frameObservation = _observedFrames.GetValue(
             frame,
-            static _ => new FunctionEntryObservation()).Entry = entry;
+            static _ => new FunctionEntryObservation());
+        frameObservation.Entry = entry;
         Interlocked.Exchange(
             ref entry.LastAccessStamp,
             Interlocked.Increment(ref _accessStamp));
@@ -175,7 +186,15 @@ internal sealed class LuaTieredJitRegistry :
                 LuaCompiledExitReason.DebugModeChanged);
         }
 
-        if (TryInvokeLoopOsr(entry, module, context, thread, frame) is { } osrExit)
+        if (Volatile.Read(ref entry.LoopOsrObservationState) > 0 &&
+            Volatile.Read(ref frameObservation.HasPendingLoop) != 0 &&
+            TryInvokeLoopOsr(
+                entry,
+                module,
+                context,
+                thread,
+                frame,
+                frameObservation) is { } osrExit)
         {
             return osrExit;
         }
@@ -279,8 +298,18 @@ internal sealed class LuaTieredJitRegistry :
             entry = observedEntry;
         }
 
+        if (Volatile.Read(ref entry.LoopOsrRuntimeQualificationPendingCount) != 0)
+        {
+            ObserveLoopOsrRuntimeQualification(
+                entry,
+                thread,
+                frame,
+                programCounter,
+                instruction);
+        }
+
         ObserveHotness(entry, frame, programCounter, instruction);
-        if (_options.EnableTier2)
+        if (Volatile.Read(ref entry.Tier2ProfilingActive) != 0)
         {
             entry.Profile.Observe(
                 context,
@@ -366,7 +395,13 @@ internal sealed class LuaTieredJitRegistry :
         Interlocked.Read(ref _totalDelegateCreationTicks),
         Interlocked.Read(ref _eligibilityEvaluated),
         Interlocked.Read(ref _eligibilityAccepted),
-        Interlocked.Read(ref _eligibilityRejected));
+        Interlocked.Read(ref _eligibilityRejected),
+        Interlocked.Read(ref _tier2EligibilityEvaluated),
+        Interlocked.Read(ref _tier2EligibilityAccepted),
+        Interlocked.Read(ref _tier2EligibilityRejected),
+        Interlocked.Read(ref _loopOsrEligibilityEvaluated),
+        Interlocked.Read(ref _loopOsrEligibilityAccepted),
+        Interlocked.Read(ref _loopOsrEligibilityRejected));
 
     public LuaJitFunctionState GetFunctionState(LuaIrModule module, int functionId)
     {
@@ -433,6 +468,41 @@ internal sealed class LuaTieredJitRegistry :
                 []);
     }
 
+    public LuaJitTier2Eligibility GetTier2PromotionEligibility(
+        LuaIrModule module,
+        int functionId)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if ((uint)functionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
+        LuaJitFunctionProfile profile;
+        lock (entry.Gate)
+        {
+            if (entry.Tier2Eligibility is { } cached &&
+                cached.ProfileSamples == entry.Profile.Samples)
+            {
+                return cached;
+            }
+
+            profile = entry.Profile.Snapshot();
+        }
+
+        return ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+            module,
+            functionId,
+            profile,
+            CancellationToken.None);
+    }
+
     public void ImportProfile(LuaIrModule module, LuaJitModuleProfile profile)
     {
         ArgumentNullException.ThrowIfNull(module);
@@ -447,6 +517,11 @@ internal sealed class LuaTieredJitRegistry :
                 CodegenVersion);
             var entry = GetOrCreateEntry(key, function.ParameterCount);
             entry.Profile.Merge(imported.Profile);
+            lock (entry.Gate)
+            {
+                entry.Tier2Eligibility = null;
+                entry.NextTier2EligibilitySample = 0;
+            }
             var entrySamples = imported.Profile.Sites
                 .FirstOrDefault(static site => site.ProgramCounter == 0)?
                 .Samples ?? 0;
@@ -479,7 +554,7 @@ internal sealed class LuaTieredJitRegistry :
         var entry = FindEntry(module, functionId);
         if (entry is null)
         {
-            return _options.EnableTier2
+            return IsTier2Enabled
                 ? LuaJitTier2State.Profiling
                 : LuaJitTier2State.Disabled;
         }
@@ -515,7 +590,15 @@ internal sealed class LuaTieredJitRegistry :
             throw new ArgumentOutOfRangeException(nameof(functionId));
         }
 
-        return LuaLoopOsrAnalyzer.Analyze(module, functionId);
+        var function = module.Functions[functionId];
+        return LuaLoopOsrAnalyzer.Analyze(module, functionId)
+            .Select(plan => plan with
+            {
+                CodeKind = LuaLoopOsrEligibilityEvaluator.Evaluate(
+                    function,
+                    plan).ExpectedCodeKind,
+            })
+            .ToArray();
     }
 
     public LuaJitOsrState GetLoopOsrState(
@@ -524,14 +607,23 @@ internal sealed class LuaTieredJitRegistry :
         int headerProgramCounter,
         int backedgeProgramCounter)
     {
-        var entry = FindEntry(module, functionId);
-        if (entry is null)
+        ArgumentNullException.ThrowIfNull(module);
+        if ((uint)functionId >= (uint)module.Functions.Length)
         {
-            return IsLoopOsrEnabled
-                ? LuaJitOsrState.Profiling
-                : LuaJitOsrState.Disabled;
+            throw new ArgumentOutOfRangeException(nameof(functionId));
         }
 
+        if (!IsLoopOsrEnabled)
+        {
+            return LuaJitOsrState.Disabled;
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
         EnsureLoopOsrEntries(entry, module);
         lock (entry.Gate)
         {
@@ -543,6 +635,53 @@ internal sealed class LuaTieredJitRegistry :
                     ? LuaJitOsrState.Profiling
                     : LuaJitOsrState.Disabled;
         }
+    }
+
+    public LuaJitLoopOsrEligibility GetLoopOsrEligibility(
+        LuaIrModule module,
+        int functionId,
+        int headerProgramCounter,
+        int backedgeProgramCounter)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if ((uint)functionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(functionId));
+        }
+
+        if (!IsLoopOsrEnabled)
+        {
+            var plan = LuaLoopOsrAnalyzer.Analyze(module, functionId).FirstOrDefault(candidate =>
+                candidate.HeaderProgramCounter == headerProgramCounter &&
+                candidate.BackedgeProgramCounter == backedgeProgramCounter) ??
+                throw new ArgumentException(
+                    "The requested edge is not a verified natural-loop backedge.",
+                    nameof(backedgeProgramCounter));
+            return LuaLoopOsrEligibilityEvaluator.Evaluate(
+                module.Functions[functionId],
+                plan);
+        }
+
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV2.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
+        EnsureLoopOsrEntries(entry, module);
+        lock (entry.Gate)
+        {
+            if (entry.LoopOsrEntries.TryGetValue(
+                    new LoopKey(headerProgramCounter, backedgeProgramCounter),
+                    out var loop))
+            {
+                return loop.Eligibility;
+            }
+        }
+
+        throw new ArgumentException(
+            "The requested edge is not a verified natural-loop backedge.",
+            nameof(backedgeProgramCounter));
     }
 
     public void Invalidate(LuaIrModule module)
@@ -622,6 +761,7 @@ internal sealed class LuaTieredJitRegistry :
                 entry.ActiveTier = LuaJitCompilationTier.Interpreter;
                 entry.State = LuaJitFunctionState.Invalidated;
                 entry.Tier2State = LuaJitTier2State.Invalidated;
+                Volatile.Write(ref entry.Tier2ProfilingActive, 0);
                 entry.Completion?.TrySetCanceled();
                 entry.Completion = null;
                 entry.Tier2Completion?.TrySetCanceled();
@@ -666,7 +806,7 @@ internal sealed class LuaTieredJitRegistry :
                 entryKey,
                 state.ParameterCount,
                 state.Registry._options.MaximumPolymorphicShapes,
-                state.Registry._options.EnableTier2,
+                state.Registry.IsTier2Enabled,
                 state.Registry.IsLoopOsrEnabled),
             new FunctionEntryFactoryState(this, parameterCount));
 
@@ -780,23 +920,62 @@ internal sealed class LuaTieredJitRegistry :
             Interlocked.Increment(ref _backedges);
         }
 
-        if (!IsLoopOsrEnabled ||
+        var observationState = Volatile.Read(ref entry.LoopOsrObservationState);
+        if (observationState < 0 ||
+            !IsLoopOsrEnabled ||
             !LuaLoopOsrAnalyzer.IsOsrBackedgeInstruction(instruction, programCounter))
         {
             return;
         }
 
+        var analyzeAtHotBackedge = observationState == 0;
+        if (analyzeAtHotBackedge &&
+            Interlocked.Read(ref entry.Backedges) < _options.LoopOsrBackedgeThreshold)
+        {
+            return;
+        }
+
         EnsureLoopOsrEntries(entry, frame.Closure.Module);
+        if (Volatile.Read(ref entry.LoopOsrObservationState) < 0)
+        {
+            return;
+        }
         LoopOsrEntry? loop;
+        var canProfile = false;
         lock (entry.Gate)
         {
             entry.LoopOsrEntries.TryGetValue(
                 new LoopKey(instruction.B, programCounter),
                 out loop);
+            canProfile = loop is
+            {
+                ExactNumericQualificationState: > 0,
+                State: not (
+                    LuaJitOsrState.Disabled or
+                    LuaJitOsrState.Ineligible or
+                    LuaJitOsrState.Invalidated),
+            };
         }
 
-        if (loop is null ||
-            Interlocked.Increment(ref loop.Backedges) < _options.LoopOsrBackedgeThreshold)
+        if (loop is null)
+        {
+            return;
+        }
+
+        if (analyzeAtHotBackedge)
+        {
+            Interlocked.Exchange(
+                ref loop.Backedges,
+                _options.LoopOsrBackedgeThreshold - 1L);
+        }
+
+        if (!canProfile)
+        {
+            return;
+        }
+
+        var observedBackedges = Interlocked.Increment(ref loop.Backedges);
+        if (observedBackedges < _options.LoopOsrBackedgeThreshold)
         {
             return;
         }
@@ -807,6 +986,7 @@ internal sealed class LuaTieredJitRegistry :
         lock (frameObservation.Gate)
         {
             frameObservation.PendingLoop = loop.Key;
+            Volatile.Write(ref frameObservation.HasPendingLoop, 1);
         }
     }
 
@@ -815,10 +995,10 @@ internal sealed class LuaTieredJitRegistry :
         LuaIrModule module,
         LuaExecutionContext context,
         LuaThread thread,
-        LuaFrame frame)
+        LuaFrame frame,
+        FunctionEntryObservation observation)
     {
-        if (!IsLoopOsrEnabled ||
-            !_observedFrames.TryGetValue(frame, out var observation))
+        if (!IsLoopOsrEnabled)
         {
             return null;
         }
@@ -834,6 +1014,7 @@ internal sealed class LuaTieredJitRegistry :
             }
 
             observation.PendingLoop = null;
+            Volatile.Write(ref observation.HasPendingLoop, 0);
         }
 
         if (pending is not { } key || frame.ProgramCounter != key.HeaderProgramCounter)
@@ -913,6 +1094,8 @@ internal sealed class LuaTieredJitRegistry :
             return;
         }
 
+        List<(LoopOsrEntry Loop, LuaJitLoopOsrEligibility Eligibility)>? evaluated = null;
+        var runtimeQualificationPendingCount = 0;
         lock (entry.Gate)
         {
             if (entry.LoopOsrAnalyzed)
@@ -925,11 +1108,220 @@ internal sealed class LuaTieredJitRegistry :
                 var key = new LoopKey(
                     plan.HeaderProgramCounter,
                     plan.BackedgeProgramCounter);
-                entry.LoopOsrEntries.TryAdd(key, new LoopOsrEntry(key, plan));
+                var eligibility = LuaLoopOsrEligibilityEvaluator.Evaluate(
+                    module.Functions[entry.Key.FunctionId],
+                    plan);
+                var loop = new LoopOsrEntry(
+                    key,
+                    plan,
+                    eligibility,
+                    _options.EnableLoopOsrManagedFallback);
+                if (entry.LoopOsrEntries.TryAdd(key, loop))
+                {
+                    if (eligibility.IsAutoEligible &&
+                        !_options.EnableLoopOsrManagedFallback)
+                    {
+                        foreach (var pc in plan.ProgramCounters)
+                        {
+                            if (!LuaLoopOsrRuntimeEligibilityEvaluator
+                                .RequiresExactNumericObservation(
+                                    module.Functions[entry.Key.FunctionId].Instructions[pc]))
+                            {
+                                continue;
+                            }
+
+                            loop.PendingExactNumericGuardSites.Add(pc);
+                            if (!entry.LoopOsrGuardSites.TryGetValue(pc, out var guardedLoops))
+                            {
+                                guardedLoops = [];
+                                entry.LoopOsrGuardSites.Add(pc, guardedLoops);
+                            }
+
+                            guardedLoops.Add(loop);
+                        }
+
+                        if (loop.PendingExactNumericGuardSites.Count == 0)
+                        {
+                            loop.ExactNumericQualificationState = 1;
+                            loop.Eligibility = eligibility;
+                            (evaluated ??= []).Add((loop, eligibility));
+                        }
+                        else
+                        {
+                            runtimeQualificationPendingCount++;
+                        }
+                    }
+                    else
+                    {
+                        (evaluated ??= []).Add((loop, eligibility));
+                    }
+                }
             }
 
             entry.LoopOsrAnalyzed = true;
+            Volatile.Write(
+                ref entry.LoopOsrRuntimeQualificationPendingCount,
+                runtimeQualificationPendingCount);
+            Volatile.Write(
+                ref entry.LoopOsrObservationState,
+                entry.LoopOsrEntries.Values.Any(static loop =>
+                    loop.State != LuaJitOsrState.Ineligible) ? 1 : -1);
         }
+
+        if (evaluated is null)
+        {
+            return;
+        }
+
+        foreach (var evaluation in evaluated)
+        {
+            RecordLoopOsrEligibility(entry, evaluation.Eligibility);
+        }
+    }
+
+    private void ObserveLoopOsrRuntimeQualification(
+        FunctionEntry entry,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter,
+        LuaIrInstruction instruction)
+    {
+        if (_options.EnableLoopOsrManagedFallback ||
+            !entry.LoopOsrGuardSites.TryGetValue(programCounter, out var guardedLoops))
+        {
+            return;
+        }
+
+        var exactNumeric = LuaLoopOsrRuntimeEligibilityEvaluator.HasExactNumericOperands(
+            thread,
+            frame,
+            instruction);
+        List<LuaJitLoopOsrEligibility>? completed = null;
+        lock (entry.Gate)
+        {
+            foreach (var loop in guardedLoops)
+            {
+                if (loop.ExactNumericQualificationState != 0)
+                {
+                    continue;
+                }
+
+                if (!exactNumeric)
+                {
+                    loop.ExactNumericQualificationState = -1;
+                    loop.State = LuaJitOsrState.Ineligible;
+                    loop.PendingExactNumericGuardSites.Clear();
+                    loop.Eligibility = loop.Eligibility with
+                    {
+                        IsAutoEligible = false,
+                        Reason = LuaJitLoopOsrEligibilityReason.NonExactNumericProfile,
+                        DiagnosticCode = LuaJitLoopOsrDiagnosticCodes.NonExactNumericProfile,
+                        ExpectedCodeKind = LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
+                    };
+                    Interlocked.Decrement(
+                        ref entry.LoopOsrRuntimeQualificationPendingCount);
+                    (completed ??= []).Add(loop.Eligibility);
+                    continue;
+                }
+
+                loop.PendingExactNumericGuardSites.Remove(programCounter);
+                if (loop.PendingExactNumericGuardSites.Count != 0)
+                {
+                    continue;
+                }
+
+                loop.ExactNumericQualificationState = 1;
+                loop.Eligibility = loop.StructuralEligibility;
+                Interlocked.Decrement(ref entry.LoopOsrRuntimeQualificationPendingCount);
+                (completed ??= []).Add(loop.Eligibility);
+            }
+
+            if (entry.LoopOsrEntries.Values.All(static loop =>
+                    loop.State == LuaJitOsrState.Ineligible))
+            {
+                Volatile.Write(ref entry.LoopOsrObservationState, -1);
+            }
+        }
+
+        if (completed is null)
+        {
+            return;
+        }
+
+        foreach (var eligibility in completed)
+        {
+            RecordLoopOsrEligibility(entry, eligibility);
+        }
+    }
+
+    private void RecordLoopOsrEligibility(
+        FunctionEntry entry,
+        LuaJitLoopOsrEligibility eligibility)
+    {
+        Interlocked.Increment(ref _loopOsrEligibilityEvaluated);
+        if (eligibility.IsAutoEligible)
+        {
+            Interlocked.Increment(ref _loopOsrEligibilityAccepted);
+        }
+        else
+        {
+            Interlocked.Increment(ref _loopOsrEligibilityRejected);
+        }
+
+        RaiseEvent(new LuaJitEvent(
+            eligibility.IsAutoEligible
+                ? LuaJitEventKind.LoopOsrEligibilityAccepted
+                : LuaJitEventKind.LoopOsrEligibilityRejected,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            ReadState(entry),
+            DiagnosticCode: eligibility.DiagnosticCode,
+            Tier: LuaJitCompilationTier.LoopOsr,
+            LoopOsrEligibility: eligibility));
+
+        if (eligibility.IsAutoEligible)
+        {
+            EnsureLoopOsrCompilerPrepared(entry);
+        }
+    }
+
+    private void EnsureLoopOsrCompilerPrepared(FunctionEntry entry)
+    {
+        if (_loopOsrCompiler is not CanonicalLuaLoopOsrCompiler ||
+            Volatile.Read(ref _loopOsrCompilerPreparationState) == 2)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(
+                ref _loopOsrCompilerPreparationState,
+                1,
+                0) != 0)
+        {
+            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+            return;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+        }
+        catch
+        {
+            Volatile.Write(ref _loopOsrCompilerPreparationState, 0);
+            throw;
+        }
+
+        var duration = Stopwatch.GetElapsedTime(started);
+        Volatile.Write(ref _loopOsrCompilerPreparationState, 2);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.LoopOsrCompilerPrepared,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            ReadState(entry),
+            Duration: duration,
+            Tier: LuaJitCompilationTier.LoopOsr));
     }
 
     private bool ShouldConsiderCompilation(FunctionEntry entry) => _options.Policy switch
@@ -957,7 +1349,7 @@ internal sealed class LuaTieredJitRegistry :
             eligibility = LuaTier1EligibilityEvaluator.Evaluate(
                 module,
                 entry.Key.FunctionId,
-                _options.EnableTier2 || IsLoopOsrEnabled);
+                IsTier2Enabled || IsLoopOsrEnabled);
             entry.Eligibility = eligibility;
             evaluated = true;
         }
@@ -991,7 +1383,7 @@ internal sealed class LuaTieredJitRegistry :
 
     private bool ShouldPromoteToTier2(FunctionEntry entry, int programCounter)
     {
-        if (!_options.EnableTier2)
+        if (!IsTier2Enabled)
         {
             return false;
         }
@@ -1000,11 +1392,50 @@ internal sealed class LuaTieredJitRegistry :
         {
             return entry.ActiveTier == LuaJitCompilationTier.Tier1 &&
                 entry.Tier2State == LuaJitTier2State.Profiling &&
+                !entry.Tier2EligibilityEvaluationInProgress &&
+                (entry.Tier2Eligibility is not { IsAutoEligible: false } ||
+                 entry.Profile.Samples >= entry.NextTier2EligibilitySample) &&
                 (programCounter == 0 &&
                  Interlocked.Read(ref entry.CompletedTier1Invocations) >=
                     _options.Tier2InvocationThreshold ||
                  Interlocked.Read(ref entry.Backedges) >= _options.Tier2BackedgeThreshold);
         }
+    }
+
+    private void RecordTier2Eligibility(
+        FunctionEntry entry,
+        LuaJitTier2Eligibility eligibility)
+    {
+        Interlocked.Increment(ref _tier2EligibilityEvaluated);
+        if (eligibility.IsAutoEligible)
+        {
+            Interlocked.Increment(ref _tier2EligibilityAccepted);
+        }
+        else
+        {
+            Interlocked.Increment(ref _tier2EligibilityRejected);
+        }
+
+        RaiseEvent(new LuaJitEvent(
+            eligibility.IsAutoEligible
+                ? LuaJitEventKind.Tier2EligibilityAccepted
+                : LuaJitEventKind.Tier2EligibilityRejected,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            DiagnosticCode: eligibility.DiagnosticCode,
+            Tier: LuaJitCompilationTier.Tier2,
+            Tier2Eligibility: eligibility));
+    }
+
+    private static long CalculateNextTier2EligibilitySample(long profileSamples)
+    {
+        if (profileSamples >= long.MaxValue / 2)
+        {
+            return long.MaxValue;
+        }
+
+        return Math.Max(profileSamples + 1, profileSamples * 2);
     }
 
     private Task<bool>? RequestLoopOsrCompilation(
@@ -1013,9 +1444,19 @@ internal sealed class LuaTieredJitRegistry :
         LuaIrModule module,
         bool compileSynchronously)
     {
+        if (loop.Eligibility.IsAutoEligible)
+        {
+            EnsureLoopOsrCompilerPrepared(entry);
+        }
+
         CompilationRequest request;
         lock (entry.Gate)
         {
+            if (loop.State == LuaJitOsrState.Ineligible)
+            {
+                return null;
+            }
+
             if (loop.State == LuaJitOsrState.Ready)
             {
                 return Task.FromResult(true);
@@ -1086,6 +1527,83 @@ internal sealed class LuaTieredJitRegistry :
         LuaIrModule module,
         bool compileSynchronously)
     {
+        LuaJitFunctionProfile profile;
+        var evaluateEligibility = !_options.EnableTier2ManagedFallback;
+        lock (entry.Gate)
+        {
+            if (entry.ActiveTier == LuaJitCompilationTier.Tier2)
+            {
+                return Task.FromResult(true);
+            }
+
+            if (entry.State != LuaJitFunctionState.Ready || entry.Tier1Method is null ||
+                entry.Tier2State is LuaJitTier2State.Queued or LuaJitTier2State.Compiling)
+            {
+                return entry.Tier2Completion?.Task;
+            }
+
+            if (entry.Tier2State == LuaJitTier2State.Failed &&
+                (entry.Tier2CompilationAttempts >= _options.MaximumCompilationAttempts ||
+                 Stopwatch.GetTimestamp() < entry.Tier2RetryAfterTimestamp))
+            {
+                return entry.Tier2Completion?.Task;
+            }
+
+            if (evaluateEligibility)
+            {
+                if (entry.Tier2EligibilityEvaluationInProgress)
+                {
+                    return null;
+                }
+
+                if (entry.Tier2Eligibility is { IsAutoEligible: false } &&
+                    entry.Profile.Samples < entry.NextTier2EligibilitySample)
+                {
+                    return null;
+                }
+
+                entry.Tier2EligibilityEvaluationInProgress = true;
+            }
+
+            profile = entry.Profile.Snapshot();
+        }
+
+        if (evaluateEligibility)
+        {
+            LuaJitTier2Eligibility eligibility;
+            try
+            {
+                eligibility = ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+                    module,
+                    entry.Key.FunctionId,
+                    profile,
+                    _disposeCancellation.Token);
+            }
+            finally
+            {
+                lock (entry.Gate)
+                {
+                    entry.Tier2EligibilityEvaluationInProgress = false;
+                }
+            }
+
+            lock (entry.Gate)
+            {
+                entry.Tier2Eligibility = eligibility;
+                entry.NextTier2EligibilitySample = eligibility.IsAutoEligible
+                    ? 0
+                    : eligibility.Reason == LuaJitTier2EligibilityReason.NoNumericHotspot
+                        ? CalculateNextTier2EligibilitySample(profile.Samples)
+                        : long.MaxValue;
+            }
+
+            RecordTier2Eligibility(entry, eligibility);
+            if (!eligibility.IsAutoEligible)
+            {
+                return null;
+            }
+        }
+
         CompilationRequest request;
         lock (entry.Gate)
         {
@@ -1117,7 +1635,7 @@ internal sealed class LuaTieredJitRegistry :
                 Stopwatch.GetTimestamp(),
                 entry.Tier2Completion,
                 LuaJitCompilationTier.Tier2,
-                entry.Profile.Snapshot(),
+                profile,
                 null);
         }
 
@@ -1324,7 +1842,7 @@ internal sealed class LuaTieredJitRegistry :
             result = _compiler.Compile(
                 request.Module,
                 request.Entry.Key.FunctionId,
-                _options.EnableTier2 || IsLoopOsrEnabled,
+                IsTier2Enabled || IsLoopOsrEnabled,
                 _disposeCancellation.Token);
             _disposeCancellation.Token.ThrowIfCancellationRequested();
         }
@@ -1430,7 +1948,8 @@ internal sealed class LuaTieredJitRegistry :
 
         var compileDuration = Stopwatch.GetElapsedTime(started);
         Interlocked.Add(ref _totalCompilationTicks, compileDuration.Ticks);
-        if (result.Succeeded && TryInstallTier2Method(request, result))
+        var codeKindAllowed = IsTier2CodeKindAllowed(result);
+        if (result.Succeeded && codeKindAllowed && TryInstallTier2Method(request, result))
         {
             Interlocked.Increment(ref _tier2CompilationCompleted);
             RaiseEvent(new LuaJitEvent(
@@ -1440,15 +1959,25 @@ internal sealed class LuaTieredJitRegistry :
                 LuaJitFunctionState.Ready,
                 result.EstimatedCodeBytes,
                 compileDuration,
-                Tier: LuaJitCompilationTier.Tier2));
+                Tier: LuaJitCompilationTier.Tier2,
+                Tier2CompilationMetrics: result.Metrics));
             return;
         }
 
         FailTier2Compilation(
             request,
-            result.Succeeded ? "JIT2002" : "JIT2001",
-            compileDuration);
+            result.Succeeded
+                ? codeKindAllowed
+                    ? "JIT2002"
+                    : LuaJitTier2DiagnosticCodes.UnexpectedCodeKind
+                : "JIT2001",
+            compileDuration,
+            result.Metrics);
     }
+
+    private bool IsTier2CodeKindAllowed(LuaTier2CompilationResult result) =>
+        _options.EnableTier2ManagedFallback ||
+        result.Plan?.CodeKind == LuaJitTier2CodeKind.ExactNumericSpecializedCil;
 
     private void CompileLoopOsr(CompilationRequest request)
     {
@@ -1484,6 +2013,7 @@ internal sealed class LuaTieredJitRegistry :
             result = _loopOsrCompiler.Compile(
                 request.Module,
                 loop.Plan,
+                !loop.PreferManagedFallback,
                 _disposeCancellation.Token);
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
@@ -1508,7 +2038,9 @@ internal sealed class LuaTieredJitRegistry :
 
         var compileDuration = Stopwatch.GetElapsedTime(started);
         Interlocked.Add(ref _totalCompilationTicks, compileDuration.Ticks);
-        if (result.Succeeded && TryInstallLoopOsrMethod(request, loop, result))
+        var codeKindAllowed = IsLoopOsrCodeKindAllowed(result);
+        if (result.Succeeded && codeKindAllowed &&
+            TryInstallLoopOsrMethod(request, loop, result))
         {
             Interlocked.Increment(ref _loopOsrCompilationCompleted);
             RaiseEvent(new LuaJitEvent(
@@ -1518,7 +2050,8 @@ internal sealed class LuaTieredJitRegistry :
                 ReadState(request.Entry),
                 result.EstimatedCodeBytes,
                 compileDuration,
-                Tier: LuaJitCompilationTier.LoopOsr));
+                Tier: LuaJitCompilationTier.LoopOsr,
+                LoopOsrCompilationMetrics: result.Metrics));
             return;
         }
 
@@ -1547,9 +2080,18 @@ internal sealed class LuaTieredJitRegistry :
             request.Entry.Key.FunctionId,
             ReadState(request.Entry),
             Duration: compileDuration,
-            DiagnosticCode: result.Succeeded ? "JIT3002" : "JIT3001",
-            Tier: LuaJitCompilationTier.LoopOsr));
+            DiagnosticCode: result.Succeeded
+                ? codeKindAllowed
+                    ? "JIT3002"
+                    : LuaJitLoopOsrDiagnosticCodes.UnexpectedCodeKind
+                : "JIT3001",
+            Tier: LuaJitCompilationTier.LoopOsr,
+            LoopOsrCompilationMetrics: result.Metrics));
     }
+
+    private bool IsLoopOsrCodeKindAllowed(LuaLoopOsrCompilationResult result) =>
+        _options.EnableLoopOsrManagedFallback ||
+        result.Plan?.CodeKind == LuaJitLoopOsrCodeKind.GuardedExactNumericCil;
 
     private bool TryInstallLoopOsrMethod(
         CompilationRequest request,
@@ -1601,6 +2143,7 @@ internal sealed class LuaTieredJitRegistry :
                 }
 
                 loop.Method = result.Method;
+                loop.Plan = result.Plan ?? loop.Plan;
                 loop.EstimatedCodeBytes = result.EstimatedCodeBytes;
                 loop.State = LuaJitOsrState.Ready;
                 loop.GuardFailures = 0;
@@ -1693,7 +2236,8 @@ internal sealed class LuaTieredJitRegistry :
     private void FailTier2Compilation(
         CompilationRequest request,
         string diagnosticCode,
-        TimeSpan duration)
+        TimeSpan duration,
+        LuaJitTier2CompilationMetrics? metrics)
     {
         lock (request.Entry.Gate)
         {
@@ -1717,7 +2261,8 @@ internal sealed class LuaTieredJitRegistry :
             LuaJitFunctionState.Ready,
             Duration: duration,
             DiagnosticCode: diagnosticCode,
-            Tier: LuaJitCompilationTier.Tier2));
+            Tier: LuaJitCompilationTier.Tier2,
+            Tier2CompilationMetrics: metrics));
     }
 
     private bool TryInstallCompiledMethod(
@@ -1775,9 +2320,12 @@ internal sealed class LuaTieredJitRegistry :
                 request.Entry.EstimatedCodeBytes = checked(
                     result.EstimatedCodeBytes + GetLoopOsrCodeBytes(request.Entry));
                 request.Entry.State = LuaJitFunctionState.Ready;
-                request.Entry.Tier2State = _options.EnableTier2
+                request.Entry.Tier2State = IsTier2Enabled
                     ? LuaJitTier2State.Profiling
                     : LuaJitTier2State.Disabled;
+                Volatile.Write(
+                    ref request.Entry.Tier2ProfilingActive,
+                    IsTier2Enabled ? 1 : 0);
                 request.Entry.FailureCode = null;
                 Interlocked.Add(ref _estimatedCodeBytes, result.EstimatedCodeBytes);
                 request.Completion.TrySetResult(true);
@@ -1937,6 +2485,7 @@ internal sealed class LuaTieredJitRegistry :
             entry.ActiveTier = LuaJitCompilationTier.Interpreter;
             entry.State = LuaJitFunctionState.Invalidated;
             entry.Tier2State = LuaJitTier2State.Invalidated;
+            Volatile.Write(ref entry.Tier2ProfilingActive, 0);
             entry.Tier2Completion?.TrySetResult(false);
             entry.Tier2Completion = null;
             var invalidatedLoops = entry.LoopOsrEntries.Values.Count(static loop =>
@@ -2000,6 +2549,8 @@ internal sealed class LuaTieredJitRegistry :
                 entry.Tier2CompilationAttempts = 0;
                 entry.Tier2GuardFailures = 0;
                 entry.CompletedTier1Invocations = 0;
+                entry.Tier2Eligibility = null;
+                entry.NextTier2EligibilitySample = 0;
                 Interlocked.Add(ref _estimatedCodeBytes, -released);
             }
         }
@@ -2042,11 +2593,23 @@ internal sealed class LuaTieredJitRegistry :
                 }
 
                 released = loop.EstimatedCodeBytes;
+                var specialized = loop.Plan.CodeKind ==
+                    LuaJitLoopOsrCodeKind.GuardedExactNumericCil;
                 loop.Method = null;
                 loop.EstimatedCodeBytes = 0;
-                loop.State = LuaJitOsrState.Profiling;
+                loop.State = specialized && !_options.EnableLoopOsrManagedFallback
+                    ? LuaJitOsrState.Ineligible
+                    : LuaJitOsrState.Profiling;
                 loop.CompilationAttempts = 0;
                 loop.GuardFailures = 0;
+                loop.PreferManagedFallback = specialized &&
+                    _options.EnableLoopOsrManagedFallback;
+                if (loop.State == LuaJitOsrState.Ineligible &&
+                    entry.LoopOsrEntries.Values.All(static candidate =>
+                        candidate.State == LuaJitOsrState.Ineligible))
+                {
+                    Volatile.Write(ref entry.LoopOsrObservationState, -1);
+                }
                 entry.EstimatedCodeBytes -= released;
                 Interlocked.Add(ref _estimatedCodeBytes, -released);
             }
@@ -2090,6 +2653,7 @@ internal sealed class LuaTieredJitRegistry :
                     entry.ActiveTier = LuaJitCompilationTier.Interpreter;
                     entry.State = LuaJitFunctionState.Invalidated;
                     entry.Tier2State = LuaJitTier2State.Invalidated;
+                    Volatile.Write(ref entry.Tier2ProfilingActive, 0);
                     entry.FailureCode = null;
                     entry.Completion?.TrySetResult(false);
                     entry.Completion = null;
@@ -2281,7 +2845,13 @@ internal sealed class LuaTieredJitRegistry :
 
         public Dictionary<LoopKey, LoopOsrEntry> LoopOsrEntries { get; } = [];
 
+        public Dictionary<int, List<LoopOsrEntry>> LoopOsrGuardSites { get; } = [];
+
         public bool LoopOsrAnalyzed { get; set; } = !enableLoopOsr;
+
+        public int LoopOsrObservationState = enableLoopOsr ? 0 : -1;
+
+        public int LoopOsrRuntimeQualificationPendingCount;
 
         public LuaCompiledMethod? Method { get; set; }
 
@@ -2290,6 +2860,12 @@ internal sealed class LuaTieredJitRegistry :
         public LuaCompiledMethod? Tier2Method { get; set; }
 
         public LuaJitTier2Plan? Tier2Plan { get; set; }
+
+        public LuaJitTier2Eligibility? Tier2Eligibility { get; set; }
+
+        public bool Tier2EligibilityEvaluationInProgress { get; set; }
+
+        public long NextTier2EligibilitySample { get; set; }
 
         public LuaJitFunctionEligibility? Eligibility { get; set; }
 
@@ -2315,6 +2891,8 @@ internal sealed class LuaTieredJitRegistry :
 
         public long Tier2GuardFailures;
 
+        public int Tier2ProfilingActive;
+
         public int CompilationAttempts { get; set; }
 
         public long RetryAfterTimestamp { get; set; }
@@ -2335,13 +2913,31 @@ internal sealed class LuaTieredJitRegistry :
         LuaJitFunctionProfile? Profile,
         LoopOsrEntry? LoopOsr);
 
-    private sealed class LoopOsrEntry(LoopKey key, LuaJitLoopOsrPlan plan)
+    private sealed class LoopOsrEntry(
+        LoopKey key,
+        LuaJitLoopOsrPlan plan,
+        LuaJitLoopOsrEligibility eligibility,
+        bool enableManagedFallback)
     {
         public LoopKey Key { get; } = key;
 
-        public LuaJitLoopOsrPlan Plan { get; } = plan;
+        public LuaJitLoopOsrPlan Plan { get; set; } = plan;
 
-        public LuaJitOsrState State { get; set; } = LuaJitOsrState.Profiling;
+        public LuaJitLoopOsrEligibility StructuralEligibility { get; } = eligibility;
+
+        public LuaJitLoopOsrEligibility Eligibility { get; set; } =
+            eligibility.IsAutoEligible && !enableManagedFallback
+                ? eligibility with
+                {
+                    IsAutoEligible = false,
+                    Reason = LuaJitLoopOsrEligibilityReason.AwaitingExactNumericProfile,
+                }
+                : eligibility;
+
+        public LuaJitOsrState State { get; set; } =
+            eligibility.IsAutoEligible || enableManagedFallback
+                ? LuaJitOsrState.Profiling
+                : LuaJitOsrState.Ineligible;
 
         public LuaCompiledMethod? Method { get; set; }
 
@@ -2353,6 +2949,13 @@ internal sealed class LuaTieredJitRegistry :
 
         public long GuardFailures;
 
+        public HashSet<int> PendingExactNumericGuardSites { get; } = [];
+
+        public int ExactNumericQualificationState { get; set; } =
+            eligibility.IsAutoEligible && !enableManagedFallback ? 0 : 1;
+
+        public bool PreferManagedFallback { get; set; }
+
         public int CompilationAttempts { get; set; }
 
         public long RetryAfterTimestamp { get; set; }
@@ -2363,6 +2966,8 @@ internal sealed class LuaTieredJitRegistry :
         public Lock Gate { get; } = new();
 
         public int Counted;
+
+        public int HasPendingLoop;
 
         public LoopKey? PendingLoop { get; set; }
 

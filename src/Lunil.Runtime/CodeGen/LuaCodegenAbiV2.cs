@@ -3,6 +3,7 @@ using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Runtime.CodeGen;
 
@@ -31,16 +32,67 @@ public static class LuaCodegenAbiV2
             frame.Base <= context.Thread.Stack.Capacity - registerCount;
     }
 
+    public static bool CanEnterLoopOsr(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int functionId,
+        int registerCount,
+        int headerProgramCounter)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        return frame.ProgramCounter == headerProgramCounter &&
+            CanExecuteCompiledFrame(context, frame, functionId, registerCount) &&
+            ReferenceEquals(context.Thread, thread) &&
+            ReferenceEquals(thread.CurrentFrame, frame) &&
+            thread.UnwindState is null &&
+            !thread.IsClosing &&
+            frame.Continuation.Kind == LuaContinuationKind.None &&
+            frame.Top >= frame.Base &&
+            frame.Top <= frame.Base + registerCount &&
+            frame.ToBeClosedSlots.All(slot => slot >= frame.Base && slot < frame.Top);
+    }
+
+    public static LuaCompiledExitReason CheckLoopOsrHeader(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(frame);
+        if (!LuaCodegenAbiV1.CanExecuteCompiled(context) ||
+            !ReferenceEquals(context.Thread, thread) ||
+            !ReferenceEquals(thread.CurrentFrame, frame) ||
+            thread.UnwindState is not null ||
+            thread.IsClosing)
+        {
+            return LuaCompiledExitReason.GuardFailure;
+        }
+
+        if (context.RemainingInstructionCount == 0)
+        {
+            return LuaCompiledExitReason.InstructionBudget;
+        }
+
+        context.State.Heap.SafePoint();
+        return context.State.Heap.PendingFinalizerCount == 0
+            ? LuaCompiledExitReason.None
+            : LuaCompiledExitReason.GarbageCollection;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static LuaValue ReadRegisterUnchecked(
         LuaThread thread,
         LuaFrame frame,
-        int register) => thread.Stack[frame.Base + register];
+        int register) => thread.Stack.ReadUnchecked(frame.Base + register);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteRegisterUnchecked(
         LuaThread thread,
         LuaFrame frame,
         int register,
-        LuaValue value) => thread.Stack[frame.Base + register] = value;
+        LuaValue value) => thread.Stack.WriteUnchecked(frame.Base + register, value);
 
     public static void ClearRegistersUnchecked(
         LuaThread thread,

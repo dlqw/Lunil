@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(5, 101)]
-    [int] $Rounds = 5,
+    [ValidateRange(2, 100)]
+    [int] $Rounds = 6,
 
     [ValidateRange(1, 1000000000)]
     [int] $Iterations = 1000000,
@@ -17,6 +17,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (($Rounds % 2) -ne 0) {
+    throw 'Rounds must be even so Loop OSR on/off process order is exactly balanced.'
+}
+
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $project = Join-Path $repositoryRoot `
     'benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj'
@@ -115,6 +119,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         CompilationP95Ms = [double]::Parse($values.compilation_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier1P95Ms = [double]::Parse($values.tier1_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier2P95Ms = [double]::Parse($values.tier2_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrPreparationP95Ms = [double]::Parse(
+            $values.loop_osr_prepare_p95_ms,
+            [Globalization.CultureInfo]::InvariantCulture)
         LoopOsrP95Ms = [double]::Parse($values.loop_osr_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CanonicalVerifyP95Ms = [double]::Parse($values.canonical_verify_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CfgLivenessP95Ms = [double]::Parse($values.cfg_liveness_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
@@ -123,6 +130,38 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         ReflectionEmitP95Ms = [double]::Parse($values.reflection_emit_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         DelegateCreateP95Ms = [double]::Parse($values.delegate_create_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CompileAllocatedP95Bytes = [double]::Parse($values.compile_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2IrVerifyP95Ms = [double]::Parse($values.tier2_ir_verify_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2LivenessP95Ms = [double]::Parse($values.tier2_liveness_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2LivenessCacheHitRate = [double]::Parse($values.tier2_liveness_cache_hit_rate, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2OptimizationPlanP95Ms = [double]::Parse($values.tier2_optimization_plan_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CilEmitP95Ms = [double]::Parse($values.tier2_cil_emit_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2DelegateCreateP95Ms = [double]::Parse($values.tier2_delegate_create_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CompileAllocatedP95Bytes = [double]::Parse($values.tier2_compile_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrIrVerifyP95Ms = [double]::Parse($values.loop_osr_ir_verify_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrAnalysisP95Ms = [double]::Parse($values.loop_osr_analysis_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrLivenessCacheHitRate = [double]::Parse($values.loop_osr_liveness_cache_hit_rate, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrSpecializationPlanP95Ms = [double]::Parse($values.loop_osr_specialization_plan_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrCilEmitP95Ms = [double]::Parse($values.loop_osr_cil_emit_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrDelegateCreateP95Ms = [double]::Parse($values.loop_osr_delegate_create_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrCompileAllocatedP95Bytes = [double]::Parse($values.loop_osr_compile_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CodeKind = $values.tier2_code_kind
+        Tier2OptimizationCount = [int]$values.tier2_optimization_count
+        Tier2SpecializedOptimizationCount = [int]$values.tier2_specialized_optimization_count
+        Tier2DeoptSiteCount = [int]$values.tier2_deopt_site_count
+        Tier2ManagedCompilationCount = [int]$values.tier2_managed_compilation_count
+        Tier2CompilationQueued = [long]$values.tier2_compilation_queued
+        Tier2EligibilityEvaluated = [long]$values.tier2_eligibility_evaluated
+        Tier2EligibilityAccepted = [long]$values.tier2_eligibility_accepted
+        Tier2EligibilityRejected = [long]$values.tier2_eligibility_rejected
+        LoopOsrCodeKind = $values.loop_osr_code_kind
+        LoopOsrSpecializedInstructionCount = [int]$values.loop_osr_specialized_instruction_count
+        LoopOsrGuardCount = [int]$values.loop_osr_guard_count
+        LoopOsrManagedCompilationCount = [int]$values.loop_osr_managed_compilation_count
+        LoopOsrEligibilityEvaluated = [long]$values.loop_osr_eligibility_evaluated
+        LoopOsrEligibilityAccepted = [long]$values.loop_osr_eligibility_accepted
+        LoopOsrEligibilityRejected = [long]$values.loop_osr_eligibility_rejected
+        LoopOsrEligibilityReason = $values.loop_osr_eligibility_reason
+        LoopOsrGuardFailures = [long]$values.loop_osr_guard_failures
         CompiledInvocations = [long]$values.compiled_invocations
         CompiledInstructions = [long]$values.compiled_instructions
         SchedulerExits = [long]$values.scheduler_exits
@@ -183,6 +222,9 @@ try {
         $arguments += @(
             '--', '--backend-only', "--cold-samples=$ColdSamples", $Iterations
         )
+        if (($round % 2) -eq 0) {
+            $arguments += '--reverse-loop-osr-pair'
+        }
         $lines = & dotnet @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "Backend performance runner failed in round $round."
@@ -202,7 +244,7 @@ finally {
     Pop-Location
 }
 
-$expectedRecords = $Rounds * 6 * 4
+$expectedRecords = $Rounds * 6 * 5
 if ($records.Count -ne $expectedRecords) {
     throw "Expected $expectedRecords backend evidence records, found $($records.Count)."
 }
@@ -247,6 +289,7 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         Workload = $first.Workload
         Name = $first.Name
         Rounds = $group.Count
+        Operations = Get-Median @($group.Group.Operations)
         StartupMedianMs = Get-Median @($group.Group.StartupMedianMs)
         StartupP95Ms = Get-Median @($group.Group.StartupP95Ms)
         WarmNsOp = Get-Median @($group.Group.WarmNsOp)
@@ -257,12 +300,58 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         AllocationRatioVsInterpreterMedian = Get-Median $allocationRatios.ToArray()
         AllocationSlopeBytesIteration = Get-Median @($group.Group.AllocationSlopeBytesIteration)
         CompilationP95Ms = Get-Median @($group.Group.CompilationP95Ms)
+        Tier1P95Ms = Get-Median @($group.Group.Tier1P95Ms)
+        Tier2P95Ms = Get-Median @($group.Group.Tier2P95Ms)
+        LoopOsrPreparationP95Ms = Get-Median @(
+            $group.Group.LoopOsrPreparationP95Ms)
+        LoopOsrP95Ms = Get-Median @($group.Group.LoopOsrP95Ms)
         PlanVerifyP95Ms = Get-Median @($group.Group.PlanVerifyP95Ms)
         ReflectionEmitP95Ms = Get-Median @($group.Group.ReflectionEmitP95Ms)
         CompileAllocatedP95Bytes = Get-Median @($group.Group.CompileAllocatedP95Bytes)
+        Tier2IrVerifyP95Ms = Get-Median @($group.Group.Tier2IrVerifyP95Ms)
+        Tier2LivenessP95Ms = Get-Median @($group.Group.Tier2LivenessP95Ms)
+        Tier2LivenessCacheHitRate = Get-Median @($group.Group.Tier2LivenessCacheHitRate)
+        Tier2OptimizationPlanP95Ms = Get-Median @($group.Group.Tier2OptimizationPlanP95Ms)
+        Tier2CilEmitP95Ms = Get-Median @($group.Group.Tier2CilEmitP95Ms)
+        Tier2DelegateCreateP95Ms = Get-Median @($group.Group.Tier2DelegateCreateP95Ms)
+        Tier2CompileAllocatedP95Bytes = Get-Median @($group.Group.Tier2CompileAllocatedP95Bytes)
+        LoopOsrIrVerifyP95Ms = Get-Median @($group.Group.LoopOsrIrVerifyP95Ms)
+        LoopOsrAnalysisP95Ms = Get-Median @($group.Group.LoopOsrAnalysisP95Ms)
+        LoopOsrLivenessCacheHitRate = Get-Median @($group.Group.LoopOsrLivenessCacheHitRate)
+        LoopOsrSpecializationPlanP95Ms = Get-Median @(
+            $group.Group.LoopOsrSpecializationPlanP95Ms)
+        LoopOsrCilEmitP95Ms = Get-Median @($group.Group.LoopOsrCilEmitP95Ms)
+        LoopOsrDelegateCreateP95Ms = Get-Median @($group.Group.LoopOsrDelegateCreateP95Ms)
+        LoopOsrCompileAllocatedP95Bytes = Get-Median @(
+            $group.Group.LoopOsrCompileAllocatedP95Bytes)
         InstructionsPerSchedulerExit = Get-Median @($group.Group.InstructionsPerSchedulerExit)
         RssPeakDeltaBytes = Get-Median @($group.Group.RssPeakDeltaBytes)
         EstimatedCodeBytes = Get-Median @($group.Group.EstimatedCodeBytes)
+        Tier2CodeKind = @($group.Group.Tier2CodeKind | Sort-Object -Unique) -join '+'
+        Tier2OptimizationCount = Get-Median @($group.Group.Tier2OptimizationCount)
+        Tier2SpecializedOptimizationCount = Get-Median @(
+            $group.Group.Tier2SpecializedOptimizationCount)
+        Tier2DeoptSiteCount = Get-Median @($group.Group.Tier2DeoptSiteCount)
+        Tier2ManagedCompilationCount = Get-Median @($group.Group.Tier2ManagedCompilationCount)
+        Tier2CompilationQueued = Get-Median @($group.Group.Tier2CompilationQueued)
+        Tier2EligibilityEvaluated = Get-Median @($group.Group.Tier2EligibilityEvaluated)
+        Tier2EligibilityAccepted = Get-Median @($group.Group.Tier2EligibilityAccepted)
+        Tier2EligibilityRejected = Get-Median @($group.Group.Tier2EligibilityRejected)
+        LoopOsrCodeKind = @($group.Group.LoopOsrCodeKind | Sort-Object -Unique) -join '+'
+        LoopOsrSpecializedInstructionCount = Get-Median @(
+            $group.Group.LoopOsrSpecializedInstructionCount)
+        LoopOsrGuardCount = Get-Median @($group.Group.LoopOsrGuardCount)
+        LoopOsrManagedCompilationCount = Get-Median @(
+            $group.Group.LoopOsrManagedCompilationCount)
+        LoopOsrEligibilityEvaluated = Get-Median @(
+            $group.Group.LoopOsrEligibilityEvaluated)
+        LoopOsrEligibilityAccepted = Get-Median @(
+            $group.Group.LoopOsrEligibilityAccepted)
+        LoopOsrEligibilityRejected = Get-Median @(
+            $group.Group.LoopOsrEligibilityRejected)
+        LoopOsrEligibilityReason = @(
+            $group.Group.LoopOsrEligibilityReason | Sort-Object -Unique) -join '+'
+        LoopOsrGuardFailures = Get-Median @($group.Group.LoopOsrGuardFailures)
         AutoEligible = $eligibility.AutoEligible
         EligibilityReason = $eligibility.Reason
         BreakEven = $eligibility.BreakEven
@@ -273,7 +362,15 @@ $summary | ConvertTo-Json | Set-Content `
 $tier1Arithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier1'
 } | Select-Object -First 1
+$tier2Arithmetic = $summary | Where-Object {
+    $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier2'
+} | Select-Object -First 1
+$loopOsrArithmetic = $summary | Where-Object {
+    $_.Workload -eq 'arithmetic' -and $_.Name -eq 'loop_osr'
+} | Select-Object -First 1
 $negativeGateFailures = [Collections.Generic.List[string]]::new()
+$tier2NegativeGateFailures = [Collections.Generic.List[string]]::new()
+$tier2NegativeComparisons = [Collections.Generic.List[object]]::new()
 foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
     $eligibility = $eligibilityRecords | Where-Object { $_.Workload -eq $workload } |
         Select-Object -First 1
@@ -283,6 +380,43 @@ foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_er
     if ($eligibility.AutoEligible -and $tier1.SpeedupVsInterpreterCi95Lower -lt 0.95) {
         $negativeGateFailures.Add(
             "$workload is Auto-eligible with speedup CI lower $($tier1.SpeedupVsInterpreterCi95Lower).")
+    }
+
+    $tier2 = $summary | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'tier2'
+    } | Select-Object -First 1
+    if ($tier2.Tier2ManagedCompilationCount -ne 0) {
+        $tier2NegativeGateFailures.Add(
+            "$workload installed $($tier2.Tier2ManagedCompilationCount) managed Tier 2 methods.")
+    }
+
+    $rolloutRatios = [Collections.Generic.List[double]]::new()
+    foreach ($record in $records | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'tier2'
+    }) {
+        $tier1Record = $records | Where-Object {
+            $_.Round -eq $record.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'tier1'
+        } | Select-Object -First 1
+        if ($null -eq $tier1Record) {
+            throw "Missing Tier 1 rollout pair for round $($record.Round), workload $workload."
+        }
+
+        $rolloutRatios.Add($tier1Record.WarmNsOp / $record.WarmNsOp)
+    }
+
+    $rolloutInterval = Get-BootstrapMedianInterval $rolloutRatios.ToArray()
+    $tier2NegativeComparisons.Add([pscustomobject]@{
+        Workload = $workload
+        SpeedupVsTier1Median = Get-Median $rolloutRatios.ToArray()
+        SpeedupVsTier1Ci95Lower = $rolloutInterval.Lower
+        SpeedupVsTier1Ci95Upper = $rolloutInterval.Upper
+    })
+    $rolloutMedian = Get-Median $rolloutRatios.ToArray()
+    if ($rolloutMedian -lt 0.90) {
+        $tier2NegativeGateFailures.Add(
+            "$workload Tier 2-default/Tier 1 median speedup is $rolloutMedian.")
     }
 }
 
@@ -304,6 +438,181 @@ $decision = [pscustomobject]@{
 }
 $decision | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'tier1-decision.json') -Encoding utf8
+$tier2Decision = [pscustomobject]@{
+    Rid = $effectiveRid
+    Rounds = $Rounds
+    ColdSamplesPerProcess = $ColdSamples
+    ArithmeticSpeedupMedian = $tier2Arithmetic.SpeedupVsInterpreterMedian
+    ArithmeticSpeedupCi95Lower = $tier2Arithmetic.SpeedupVsInterpreterCi95Lower
+    ArithmeticSpeedupCi95Upper = $tier2Arithmetic.SpeedupVsInterpreterCi95Upper
+    ArithmeticAllocationSlopeBytesIteration = $tier2Arithmetic.AllocationSlopeBytesIteration
+    Tier2CompilationP95Ms = $tier2Arithmetic.Tier2P95Ms
+    Tier2CodeKind = $tier2Arithmetic.Tier2CodeKind
+    Tier2OptimizationCount = $tier2Arithmetic.Tier2OptimizationCount
+    Tier2SpecializedOptimizationCount = $tier2Arithmetic.Tier2SpecializedOptimizationCount
+    Tier2DeoptSiteCount = $tier2Arithmetic.Tier2DeoptSiteCount
+    Tier2IrVerifyP95Ms = $tier2Arithmetic.Tier2IrVerifyP95Ms
+    Tier2LivenessP95Ms = $tier2Arithmetic.Tier2LivenessP95Ms
+    Tier2LivenessCacheHitRate = $tier2Arithmetic.Tier2LivenessCacheHitRate
+    Tier2OptimizationPlanP95Ms = $tier2Arithmetic.Tier2OptimizationPlanP95Ms
+    Tier2CilEmitP95Ms = $tier2Arithmetic.Tier2CilEmitP95Ms
+    Tier2DelegateCreateP95Ms = $tier2Arithmetic.Tier2DelegateCreateP95Ms
+    Tier2CompileAllocatedP95Bytes = $tier2Arithmetic.Tier2CompileAllocatedP95Bytes
+    Tier2EligibilityEvaluated = $tier2Arithmetic.Tier2EligibilityEvaluated
+    Tier2EligibilityAccepted = $tier2Arithmetic.Tier2EligibilityAccepted
+    Tier2EligibilityRejected = $tier2Arithmetic.Tier2EligibilityRejected
+    Tier2ManagedCompilationCount = $tier2Arithmetic.Tier2ManagedCompilationCount
+    NegativeWorkloadComparisons = $tier2NegativeComparisons.ToArray()
+    NegativeWorkloadGateFailures = $tier2NegativeGateFailures.ToArray()
+    QualifiesThisRid =
+        $tier2Arithmetic.SpeedupVsInterpreterMedian -ge 4.0 -and
+        $tier2Arithmetic.SpeedupVsInterpreterCi95Lower -ge 4.0 -and
+        [Math]::Abs($tier2Arithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
+        $tier2Arithmetic.Tier2P95Ms -lt 10.0 -and
+        $tier2Arithmetic.Tier2CodeKind -eq 'ExactNumericSpecializedCil' -and
+        $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0 -and
+        $tier2Arithmetic.Tier2ManagedCompilationCount -eq 0 -and
+        $tier2Arithmetic.Tier2EligibilityAccepted -gt 0 -and
+        $tier2NegativeGateFailures.Count -eq 0
+}
+$tier2Decision | ConvertTo-Json | Set-Content `
+    -LiteralPath (Join-Path $outputDirectory 'tier2-decision.json') -Encoding utf8
+$loopOsrNegativeGateFailures = [Collections.Generic.List[string]]::new()
+$loopOsrWorkloadComparisons = foreach ($workload in @(
+    'lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
+    $record = $summary | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'loop_osr'
+    } | Select-Object -First 1
+    $ratios = [Collections.Generic.List[double]]::new()
+    $startupRatios = [Collections.Generic.List[double]]::new()
+    foreach ($run in $records | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'loop_osr'
+    }) {
+        $baseline = $records | Where-Object {
+            $_.Round -eq $run.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'loop_osr_off'
+        } | Select-Object -First 1
+        if ($null -eq $baseline) {
+            throw "Missing Loop OSR-off pair for round $($run.Round), workload $workload."
+        }
+
+        $ratios.Add($baseline.WarmNsOp / $run.WarmNsOp)
+        $startupRatios.Add($baseline.StartupMedianMs / $run.StartupMedianMs)
+    }
+
+    $interval = Get-BootstrapMedianInterval $ratios.ToArray()
+    $median = Get-Median $ratios.ToArray()
+    $startupInterval = Get-BootstrapMedianInterval $startupRatios.ToArray()
+    $startupMedian = Get-Median $startupRatios.ToArray()
+    if ($median -lt 0.90) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload Loop OSR-on/off median speedup is $median.")
+    }
+    if ($startupMedian -lt 0.90) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload Loop OSR-on/off startup median speedup is $startupMedian.")
+    }
+    if ($record.LoopOsrEligibilityAccepted -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload accepted automatic Loop OSR eligibility unexpectedly.")
+    }
+    if ($record.LoopOsrGuardFailures -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload observed $($record.LoopOsrGuardFailures) Loop OSR guard failures.")
+    }
+    if ($record.LoopOsrManagedCompilationCount -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload installed $($record.LoopOsrManagedCompilationCount) managed Loop OSR methods.")
+    }
+
+    [pscustomobject]@{
+        Workload = $workload
+        SpeedupVsDisabledMedian = $median
+        SpeedupVsDisabledCi95Lower = $interval.Lower
+        SpeedupVsDisabledCi95Upper = $interval.Upper
+        StartupSpeedupVsDisabledMedian = $startupMedian
+        StartupSpeedupVsDisabledCi95Lower = $startupInterval.Lower
+        StartupSpeedupVsDisabledCi95Upper = $startupInterval.Upper
+        CodeKind = $record.LoopOsrCodeKind
+        ManagedCompilationCount = $record.LoopOsrManagedCompilationCount
+        EligibilityAccepted = $record.LoopOsrEligibilityAccepted
+        EligibilityRejected = $record.LoopOsrEligibilityRejected
+        EligibilityReason = $record.LoopOsrEligibilityReason
+        GuardFailures = $record.LoopOsrGuardFailures
+    }
+}
+$loopOsrArithmeticRatios = [Collections.Generic.List[double]]::new()
+foreach ($run in $records | Where-Object {
+    $_.Workload -eq 'arithmetic' -and $_.Name -eq 'loop_osr'
+}) {
+    $baseline = $records | Where-Object {
+        $_.Round -eq $run.Round -and
+        $_.Workload -eq 'arithmetic' -and
+        $_.Name -eq 'loop_osr_off'
+    } | Select-Object -First 1
+    if ($null -eq $baseline) {
+        throw "Missing arithmetic Loop OSR-off pair for round $($run.Round)."
+    }
+
+    $loopOsrArithmeticRatios.Add($baseline.WarmNsOp / $run.WarmNsOp)
+}
+$loopOsrArithmeticInterval = Get-BootstrapMedianInterval $loopOsrArithmeticRatios.ToArray()
+$loopOsrDecision = [pscustomobject]@{
+    Rid = $effectiveRid
+    Rounds = $Rounds
+    ColdSamplesPerProcess = $ColdSamples
+    WarmOperationsPerProcess = $loopOsrArithmetic.Operations
+    BalancedLoopOsrPairOrder = ($Rounds % 2) -eq 0
+    ArithmeticSpeedupMedian = $loopOsrArithmetic.SpeedupVsInterpreterMedian
+    ArithmeticSpeedupCi95Lower = $loopOsrArithmetic.SpeedupVsInterpreterCi95Lower
+    ArithmeticSpeedupCi95Upper = $loopOsrArithmetic.SpeedupVsInterpreterCi95Upper
+    ArithmeticSpeedupVsDisabledMedian = Get-Median $loopOsrArithmeticRatios.ToArray()
+    ArithmeticSpeedupVsDisabledCi95Lower = $loopOsrArithmeticInterval.Lower
+    ArithmeticSpeedupVsDisabledCi95Upper = $loopOsrArithmeticInterval.Upper
+    ArithmeticAllocationSlopeBytesIteration =
+        $loopOsrArithmetic.AllocationSlopeBytesIteration
+    LoopOsrCompilationP95Ms = $loopOsrArithmetic.LoopOsrP95Ms
+    LoopOsrPreparationP95Ms = $loopOsrArithmetic.LoopOsrPreparationP95Ms
+    LoopOsrCodeKind = $loopOsrArithmetic.LoopOsrCodeKind
+    LoopOsrSpecializedInstructionCount =
+        $loopOsrArithmetic.LoopOsrSpecializedInstructionCount
+    LoopOsrGuardCount = $loopOsrArithmetic.LoopOsrGuardCount
+    LoopOsrManagedCompilationCount = $loopOsrArithmetic.LoopOsrManagedCompilationCount
+    LoopOsrEligibilityEvaluated = $loopOsrArithmetic.LoopOsrEligibilityEvaluated
+    LoopOsrEligibilityAccepted = $loopOsrArithmetic.LoopOsrEligibilityAccepted
+    LoopOsrEligibilityRejected = $loopOsrArithmetic.LoopOsrEligibilityRejected
+    LoopOsrIrVerifyP95Ms = $loopOsrArithmetic.LoopOsrIrVerifyP95Ms
+    LoopOsrAnalysisP95Ms = $loopOsrArithmetic.LoopOsrAnalysisP95Ms
+    LoopOsrLivenessCacheHitRate = $loopOsrArithmetic.LoopOsrLivenessCacheHitRate
+    LoopOsrSpecializationPlanP95Ms =
+        $loopOsrArithmetic.LoopOsrSpecializationPlanP95Ms
+    LoopOsrCilEmitP95Ms = $loopOsrArithmetic.LoopOsrCilEmitP95Ms
+    LoopOsrDelegateCreateP95Ms = $loopOsrArithmetic.LoopOsrDelegateCreateP95Ms
+    LoopOsrCompileAllocatedP95Bytes =
+        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes
+    NegativeWorkloadComparisons = @($loopOsrWorkloadComparisons)
+    NegativeWorkloadGateFailures = $loopOsrNegativeGateFailures.ToArray()
+    QualifiesThisRid =
+        (Get-Median $loopOsrArithmeticRatios.ToArray()) -ge 2.0 -and
+        $loopOsrArithmeticInterval.Lower -ge 1.5 -and
+        $loopOsrArithmetic.Operations -ge 30 -and
+        ($Rounds % 2) -eq 0 -and
+        [Math]::Abs($loopOsrArithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
+        $loopOsrArithmetic.LoopOsrPreparationP95Ms -lt 10.0 -and
+        $loopOsrArithmetic.LoopOsrP95Ms -lt 10.0 -and
+        $loopOsrArithmetic.LoopOsrCodeKind -eq 'GuardedExactNumericCil' -and
+        $loopOsrArithmetic.LoopOsrSpecializedInstructionCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrManagedCompilationCount -eq 0 -and
+        $loopOsrArithmetic.LoopOsrEligibilityAccepted -gt 0 -and
+        $loopOsrArithmetic.LoopOsrLivenessCacheHitRate -eq 1.0 -and
+        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes -lt 65536 -and
+        $loopOsrNegativeGateFailures.Count -eq 0
+}
+$loopOsrDecision | ConvertTo-Json -Depth 8 | Set-Content `
+    -LiteralPath (Join-Path $outputDirectory 'loop-osr-decision.json') -Encoding utf8
 $summary | Format-Table -AutoSize
 $decision | Format-List
+$tier2Decision | Format-List
+$loopOsrDecision | Format-List
 Write-Host "Backend performance evidence written to $outputDirectory"

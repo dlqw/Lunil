@@ -41,12 +41,21 @@ public sealed class LuaJitExecutor : IDisposable
             ReflectionEmitLuaTier1Compiler.PrepareCompiler();
         }
 
+        var selectedTier2Compiler = tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance;
+        if (IsDynamicCodeAvailable &&
+            options.EnableTier2 &&
+            selectedTier2Compiler is ProfileGuidedLuaTier2Compiler)
+        {
+            ProfileGuidedLuaTier2Compiler.PrepareCompiler();
+        }
+
+        var selectedLoopOsrCompiler = loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance;
         _registry = new LuaTieredJitRegistry(
             options,
             capabilities,
             compiler,
-            tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance,
-            loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance);
+            selectedTier2Compiler,
+            selectedLoopOsrCompiler);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }
 
@@ -69,6 +78,36 @@ public sealed class LuaJitExecutor : IDisposable
             module,
             functionId,
             includeInstructionObservation);
+    }
+
+    public static LuaJitTier2Eligibility EvaluateTier2PromotionEligibility(
+        LuaIrModule module,
+        int functionId,
+        LuaJitFunctionProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(profile);
+        return ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+            module,
+            functionId,
+            profile,
+            CancellationToken.None);
+    }
+
+    public static LuaJitLoopOsrEligibility EvaluateLoopOsrEligibility(
+        LuaIrModule module,
+        LuaJitLoopOsrPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(plan);
+        if ((uint)plan.FunctionId >= (uint)module.Functions.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(plan));
+        }
+
+        return LuaLoopOsrEligibilityEvaluator.Evaluate(
+            module.Functions[plan.FunctionId],
+            plan);
     }
 
     public LuaJitStatistics Statistics => _registry.GetStatistics();
@@ -142,6 +181,14 @@ public sealed class LuaJitExecutor : IDisposable
         return _registry.GetFunctionProfile(module, functionId);
     }
 
+    public LuaJitTier2Eligibility GetTier2PromotionEligibility(
+        LuaIrModule module,
+        int functionId)
+    {
+        ThrowIfDisposed();
+        return _registry.GetTier2PromotionEligibility(module, functionId);
+    }
+
     public byte[] ExportProfile(LuaIrModule module)
     {
         ThrowIfDisposed();
@@ -158,7 +205,7 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(module);
-        if (!Options.EnableTier2)
+        if (!Options.EnableTier2 || !IsDynamicCodeAvailable)
         {
             return new LuaJitProfileImportResult(LuaJitProfileImportStatus.Disabled);
         }
@@ -214,6 +261,20 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         return _registry.GetLoopOsrState(
+            module,
+            functionId,
+            headerProgramCounter,
+            backedgeProgramCounter);
+    }
+
+    public LuaJitLoopOsrEligibility GetLoopOsrEligibility(
+        LuaIrModule module,
+        int functionId,
+        int headerProgramCounter,
+        int backedgeProgramCounter)
+    {
+        ThrowIfDisposed();
+        return _registry.GetLoopOsrEligibility(
             module,
             functionId,
             headerProgramCounter,

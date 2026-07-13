@@ -39,15 +39,59 @@ public enum LuaJitTier2State : byte
     Invalidated,
 }
 
+public enum LuaJitTier2EligibilityReason : byte
+{
+    Eligible,
+    NoNumericHotspot,
+    PolymorphicNumericProfile,
+    ManagedOptimizationRequired,
+    ManagedSemanticBoundary,
+}
+
+public static class LuaJitTier2DiagnosticCodes
+{
+    public const string NoNumericHotspot = "JIT2101";
+    public const string PolymorphicNumericProfile = "JIT2102";
+    public const string ManagedOptimizationRequired = "JIT2103";
+    public const string UnexpectedCodeKind = "JIT2104";
+    public const string ManagedSemanticBoundary = "JIT2105";
+}
+
 public enum LuaJitOsrState : byte
 {
     Disabled,
+    Ineligible,
     Profiling,
     Queued,
     Compiling,
     Ready,
     Failed,
     Invalidated,
+}
+
+public enum LuaJitLoopOsrCodeKind : byte
+{
+    ManagedCanonicalProgram,
+    GuardedExactNumericCil,
+}
+
+public enum LuaJitLoopOsrEligibilityReason : byte
+{
+    Eligible,
+    NoNumericHotspot,
+    ManagedSemanticBoundary,
+    UnsupportedInstruction,
+    AwaitingExactNumericProfile,
+    NonExactNumericProfile,
+}
+
+public static class LuaJitLoopOsrDiagnosticCodes
+{
+    public const string NoNumericHotspot = "JIT3101";
+    public const string ManagedSemanticBoundary = "JIT3102";
+    public const string UnsupportedInstruction = "JIT3103";
+    public const string UnexpectedCodeKind = "JIT3104";
+    public const string NonExactNumericProfile = "JIT3105";
 }
 
 public enum LuaJitEventKind : byte
@@ -76,6 +120,11 @@ public enum LuaJitEventKind : byte
     LoopOsrInvalidated,
     EligibilityAccepted,
     EligibilityRejected,
+    Tier2EligibilityAccepted,
+    Tier2EligibilityRejected,
+    LoopOsrEligibilityAccepted,
+    LoopOsrEligibilityRejected,
+    LoopOsrCompilerPrepared,
 }
 
 public sealed record LuaJitExecutorOptions
@@ -103,10 +152,17 @@ public sealed record LuaJitExecutorOptions
     public int MaximumPolymorphicShapes { get; init; } = 4;
 
     /// <summary>
-    /// Enables experimental profile-guided Tier 2 promotion. Tier 2 remains opt-in until its
-    /// cross-platform throughput and allocation gates pass independently from Tier 1.
+    /// Enables profile-guided Tier 2 promotion. The release default admits only profiles that
+    /// deterministically produce exact-numeric specialized CIL and retains Tier 1 otherwise.
     /// </summary>
-    public bool EnableTier2 { get; init; }
+    public bool EnableTier2 { get; init; } = true;
+
+    /// <summary>
+    /// Allows Tier 2 profiles that require the managed profile-program fallback. This path remains
+    /// an explicit opt-in because table, call, metamethod, and coroutine workloads have not passed
+    /// the default-rollout performance gates.
+    /// </summary>
+    public bool EnableTier2ManagedFallback { get; init; }
 
     public int Tier2InvocationThreshold { get; init; } = 128;
 
@@ -115,10 +171,16 @@ public sealed record LuaJitExecutorOptions
     public int MaximumTier2GuardFailures { get; init; } = 16;
 
     /// <summary>
-    /// Enables experimental loop on-stack replacement. It remains disabled by default until
-    /// representative steady-state benchmarks show at least a ten percent improvement.
+    /// Enables loop on-stack replacement. It remains disabled by default until the strengthened
+    /// startup, negative-workload, and exact-numeric qualification gates pass on every release RID.
     /// </summary>
     public bool EnableLoopOsr { get; init; }
+
+    /// <summary>
+    /// Allows natural loops that cannot produce guarded exact-numeric CIL to use the managed
+    /// canonical loop program. This experimental path remains an explicit opt-in.
+    /// </summary>
+    public bool EnableLoopOsrManagedFallback { get; init; }
 
     public int LoopOsrBackedgeThreshold { get; init; } = 1_024;
 
@@ -185,7 +247,31 @@ public sealed record LuaJitStatistics(
     long TotalDelegateCreationTicks,
     long EligibilityEvaluated,
     long EligibilityAccepted,
-    long EligibilityRejected);
+    long EligibilityRejected,
+    long Tier2EligibilityEvaluated,
+    long Tier2EligibilityAccepted,
+    long Tier2EligibilityRejected,
+    long LoopOsrEligibilityEvaluated,
+    long LoopOsrEligibilityAccepted,
+    long LoopOsrEligibilityRejected);
+
+public sealed record LuaJitTier2Eligibility(
+    bool IsAutoEligible,
+    LuaJitTier2EligibilityReason Reason,
+    string? DiagnosticCode,
+    long ProfileSamples,
+    int OptimizationCount,
+    int NumericOptimizationCount,
+    LuaJitTier2CodeKind ExpectedCodeKind);
+
+public sealed record LuaJitLoopOsrEligibility(
+    bool IsAutoEligible,
+    LuaJitLoopOsrEligibilityReason Reason,
+    string? DiagnosticCode,
+    int LoopInstructionCount,
+    int SpecializedInstructionCount,
+    int GuardCount,
+    LuaJitLoopOsrCodeKind ExpectedCodeKind);
 
 public readonly record struct LuaJitCompilationMetrics(
     TimeSpan CanonicalVerificationDuration,
@@ -201,6 +287,34 @@ public readonly record struct LuaJitCompilationMetrics(
     int PlanInstructionCount,
     long EstimatedCodeBytes);
 
+public readonly record struct LuaJitLoopOsrCompilationMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan LoopAnalysisDuration,
+    bool LivenessCacheHit,
+    TimeSpan SpecializationPlanningDuration,
+    TimeSpan CilEmissionDuration,
+    TimeSpan DelegateCreationDuration,
+    long AllocatedBytes,
+    LuaJitLoopOsrCodeKind CodeKind,
+    int LoopInstructionCount,
+    int SpecializedInstructionCount,
+    int GuardCount,
+    long EstimatedCodeBytes);
+
+public readonly record struct LuaJitTier2CompilationMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan LivenessAnalysisDuration,
+    bool LivenessCacheHit,
+    TimeSpan OptimizationPlanningDuration,
+    TimeSpan CilEmissionDuration,
+    TimeSpan DelegateCreationDuration,
+    long AllocatedBytes,
+    LuaJitTier2CodeKind CodeKind,
+    int OptimizationCount,
+    int SpecializedOptimizationCount,
+    int DeoptSiteCount,
+    long EstimatedCodeBytes);
+
 public sealed record LuaJitEvent(
     LuaJitEventKind Kind,
     string ModuleContentId,
@@ -211,7 +325,11 @@ public sealed record LuaJitEvent(
     string? DiagnosticCode = null,
     LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1,
     LuaJitCompilationMetrics? CompilationMetrics = null,
-    LuaJitFunctionEligibility? Eligibility = null);
+    LuaJitFunctionEligibility? Eligibility = null,
+    LuaJitTier2CompilationMetrics? Tier2CompilationMetrics = null,
+    LuaJitTier2Eligibility? Tier2Eligibility = null,
+    LuaJitLoopOsrCompilationMetrics? LoopOsrCompilationMetrics = null,
+    LuaJitLoopOsrEligibility? LoopOsrEligibility = null);
 
 public sealed class LuaJitException : Exception
 {
