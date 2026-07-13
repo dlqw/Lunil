@@ -92,6 +92,7 @@ internal sealed class LuaTieredJitRegistry :
     private long _loopOsrEligibilityEvaluated;
     private long _loopOsrEligibilityAccepted;
     private long _loopOsrEligibilityRejected;
+    private int _loopOsrCompilerPreparationState;
     private int _disposed;
 
     public LuaTieredJitRegistry(
@@ -1277,6 +1278,50 @@ internal sealed class LuaTieredJitRegistry :
             DiagnosticCode: eligibility.DiagnosticCode,
             Tier: LuaJitCompilationTier.LoopOsr,
             LoopOsrEligibility: eligibility));
+
+        if (eligibility.IsAutoEligible)
+        {
+            EnsureLoopOsrCompilerPrepared(entry);
+        }
+    }
+
+    private void EnsureLoopOsrCompilerPrepared(FunctionEntry entry)
+    {
+        if (_loopOsrCompiler is not CanonicalLuaLoopOsrCompiler ||
+            Volatile.Read(ref _loopOsrCompilerPreparationState) == 2)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(
+                ref _loopOsrCompilerPreparationState,
+                1,
+                0) != 0)
+        {
+            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+            return;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+        }
+        catch
+        {
+            Volatile.Write(ref _loopOsrCompilerPreparationState, 0);
+            throw;
+        }
+
+        var duration = Stopwatch.GetElapsedTime(started);
+        Volatile.Write(ref _loopOsrCompilerPreparationState, 2);
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.LoopOsrCompilerPrepared,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            ReadState(entry),
+            Duration: duration,
+            Tier: LuaJitCompilationTier.LoopOsr));
     }
 
     private bool ShouldConsiderCompilation(FunctionEntry entry) => _options.Policy switch
@@ -1399,6 +1444,11 @@ internal sealed class LuaTieredJitRegistry :
         LuaIrModule module,
         bool compileSynchronously)
     {
+        if (loop.Eligibility.IsAutoEligible)
+        {
+            EnsureLoopOsrCompilerPrepared(entry);
+        }
+
         CompilationRequest request;
         lock (entry.Gate)
         {

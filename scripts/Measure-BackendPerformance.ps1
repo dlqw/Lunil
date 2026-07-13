@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(5, 101)]
-    [int] $Rounds = 5,
+    [ValidateRange(2, 100)]
+    [int] $Rounds = 6,
 
     [ValidateRange(1, 1000000000)]
     [int] $Iterations = 1000000,
@@ -17,6 +17,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (($Rounds % 2) -ne 0) {
+    throw 'Rounds must be even so Loop OSR on/off process order is exactly balanced.'
+}
+
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $project = Join-Path $repositoryRoot `
     'benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj'
@@ -115,6 +119,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         CompilationP95Ms = [double]::Parse($values.compilation_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier1P95Ms = [double]::Parse($values.tier1_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier2P95Ms = [double]::Parse($values.tier2_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        LoopOsrPreparationP95Ms = [double]::Parse(
+            $values.loop_osr_prepare_p95_ms,
+            [Globalization.CultureInfo]::InvariantCulture)
         LoopOsrP95Ms = [double]::Parse($values.loop_osr_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CanonicalVerifyP95Ms = [double]::Parse($values.canonical_verify_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CfgLivenessP95Ms = [double]::Parse($values.cfg_liveness_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
@@ -282,6 +289,7 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         Workload = $first.Workload
         Name = $first.Name
         Rounds = $group.Count
+        Operations = Get-Median @($group.Group.Operations)
         StartupMedianMs = Get-Median @($group.Group.StartupMedianMs)
         StartupP95Ms = Get-Median @($group.Group.StartupP95Ms)
         WarmNsOp = Get-Median @($group.Group.WarmNsOp)
@@ -294,6 +302,8 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         CompilationP95Ms = Get-Median @($group.Group.CompilationP95Ms)
         Tier1P95Ms = Get-Median @($group.Group.Tier1P95Ms)
         Tier2P95Ms = Get-Median @($group.Group.Tier2P95Ms)
+        LoopOsrPreparationP95Ms = Get-Median @(
+            $group.Group.LoopOsrPreparationP95Ms)
         LoopOsrP95Ms = Get-Median @($group.Group.LoopOsrP95Ms)
         PlanVerifyP95Ms = Get-Median @($group.Group.PlanVerifyP95Ms)
         ReflectionEmitP95Ms = Get-Median @($group.Group.ReflectionEmitP95Ms)
@@ -552,6 +562,8 @@ $loopOsrDecision = [pscustomobject]@{
     Rid = $effectiveRid
     Rounds = $Rounds
     ColdSamplesPerProcess = $ColdSamples
+    WarmOperationsPerProcess = $loopOsrArithmetic.Operations
+    BalancedLoopOsrPairOrder = ($Rounds % 2) -eq 0
     ArithmeticSpeedupMedian = $loopOsrArithmetic.SpeedupVsInterpreterMedian
     ArithmeticSpeedupCi95Lower = $loopOsrArithmetic.SpeedupVsInterpreterCi95Lower
     ArithmeticSpeedupCi95Upper = $loopOsrArithmetic.SpeedupVsInterpreterCi95Upper
@@ -561,6 +573,7 @@ $loopOsrDecision = [pscustomobject]@{
     ArithmeticAllocationSlopeBytesIteration =
         $loopOsrArithmetic.AllocationSlopeBytesIteration
     LoopOsrCompilationP95Ms = $loopOsrArithmetic.LoopOsrP95Ms
+    LoopOsrPreparationP95Ms = $loopOsrArithmetic.LoopOsrPreparationP95Ms
     LoopOsrCodeKind = $loopOsrArithmetic.LoopOsrCodeKind
     LoopOsrSpecializedInstructionCount =
         $loopOsrArithmetic.LoopOsrSpecializedInstructionCount
@@ -583,7 +596,10 @@ $loopOsrDecision = [pscustomobject]@{
     QualifiesThisRid =
         (Get-Median $loopOsrArithmeticRatios.ToArray()) -ge 2.0 -and
         $loopOsrArithmeticInterval.Lower -ge 1.5 -and
+        $loopOsrArithmetic.Operations -ge 30 -and
+        ($Rounds % 2) -eq 0 -and
         [Math]::Abs($loopOsrArithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
+        $loopOsrArithmetic.LoopOsrPreparationP95Ms -lt 10.0 -and
         $loopOsrArithmetic.LoopOsrP95Ms -lt 10.0 -and
         $loopOsrArithmetic.LoopOsrCodeKind -eq 'GuardedExactNumericCil' -and
         $loopOsrArithmetic.LoopOsrSpecializedInstructionCount -gt 0 -and

@@ -216,7 +216,10 @@ if (!backendOnly)
     });
 }
 
-var backendEvidenceOperations = Math.Max(5, Scaled(iterations));
+const int MinimumBackendEvidenceOperations = 30;
+var backendEvidenceOperations = Math.Max(
+    MinimumBackendEvidenceOperations,
+    Scaled(iterations));
 BackendEvidenceWorkload[] backendWorkloads =
 [
     new("arithmetic", ArithmeticSource(5_000)),
@@ -512,6 +515,7 @@ static void RunBackendEvidence(
     var compilationMilliseconds = new List<double>();
     var tier1CompilationMilliseconds = new List<double>();
     var tier2CompilationMilliseconds = new List<double>();
+    var loopOsrPreparationMilliseconds = new List<double>();
     var loopOsrCompilationMilliseconds = new List<double>();
     var canonicalVerificationMilliseconds = new List<double>();
     var controlFlowAnalysisMilliseconds = new List<double>();
@@ -560,6 +564,7 @@ static void RunBackendEvidence(
             compilationMilliseconds,
             tier1CompilationMilliseconds,
             tier2CompilationMilliseconds,
+            loopOsrPreparationMilliseconds,
             loopOsrCompilationMilliseconds,
             canonicalVerificationMilliseconds,
             controlFlowAnalysisMilliseconds,
@@ -636,6 +641,7 @@ static void RunBackendEvidence(
         $"tier2_cil_emit_ms={JoinSamples(tier2CilEmissionMilliseconds)}, " +
         $"tier2_delegate_create_ms={JoinSamples(tier2DelegateCreationMilliseconds)}, " +
         $"tier2_allocated_bytes={JoinSamples(tier2CompileAllocatedBytes)}, " +
+        $"loop_osr_prepare_ms={JoinSamples(loopOsrPreparationMilliseconds)}, " +
         $"loop_osr_ir_verify_ms={JoinSamples(loopOsrIrVerificationMilliseconds)}, " +
         $"loop_osr_analysis_ms={JoinSamples(loopOsrAnalysisMilliseconds)}, " +
         $"loop_osr_specialization_plan_ms={JoinSamples(loopOsrSpecializationPlanningMilliseconds)}, " +
@@ -652,6 +658,7 @@ static void RunBackendEvidence(
         $"compilation_p95_ms={Percentile(compilationMilliseconds, 0.95):F3}, " +
         $"tier1_p95_ms={Percentile(tier1CompilationMilliseconds, 0.95):F3}, " +
         $"tier2_p95_ms={Percentile(tier2CompilationMilliseconds, 0.95):F3}, " +
+        $"loop_osr_prepare_p95_ms={Percentile(loopOsrPreparationMilliseconds, 0.95):F3}, " +
         $"loop_osr_p95_ms={Percentile(loopOsrCompilationMilliseconds, 0.95):F3}, " +
         $"canonical_verify_p95_ms={Percentile(canonicalVerificationMilliseconds, 0.95):F3}, " +
         $"cfg_liveness_p95_ms={Percentile(controlFlowAnalysisMilliseconds, 0.95):F3}, " +
@@ -734,6 +741,7 @@ static void CollectCompilationDurations(
     List<double> all,
     List<double> tier1,
     List<double> tier2,
+    List<double> loopOsrPreparation,
     List<double> loopOsr,
     List<double> canonicalVerification,
     List<double> controlFlowAnalysis,
@@ -760,9 +768,16 @@ static void CollectCompilationDurations(
     foreach (var jitEvent in events.Where(static item => item.Kind is
                  LuaJitEventKind.CompilationCompleted or
                  LuaJitEventKind.Tier2CompilationCompleted or
+                 LuaJitEventKind.LoopOsrCompilerPrepared or
                  LuaJitEventKind.LoopOsrCompilationCompleted))
     {
         var milliseconds = jitEvent.Duration.TotalMilliseconds;
+        if (jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared)
+        {
+            loopOsrPreparation.Add(milliseconds);
+            continue;
+        }
+
         all.Add(milliseconds);
         switch (jitEvent.Tier)
         {

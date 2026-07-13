@@ -390,6 +390,12 @@ widening 行为。
 采样完成前，registry query 返回 `AwaitingExactNumericProfile` 与 `IsAutoEligible=false`；纯静态
 `EvaluateLoopOsrEligibility` 仍只回答 code shape 是否可生成。
 
+specialized emitter 不在 executor 构造、普通函数入口或结构分析阶段预热。只有运行时 guard-site
+采样发布 `LoopOsrEligibilityAccepted` 后，canonical compiler 才执行一次进程级惰性准备，并发布
+`LoopOsrCompilerPrepared` 及其耗时；negative profile、managed boundary、短循环与 dynamic-code
+不可用路径不会触发准备。实际编译请求再次等待同一线程安全准备屏障，避免并发请求与首次 emitter
+初始化竞态，同时把一次性准备与逐 loop 编译时延分别归因。
+
 生成的 `DynamicMethod` 在 entry 及每次 loop header 检查 canonical PC、instruction budget、
 hook/debug epoch、GC/finalizer、close/unwind 与寄存器 tag。guard failure、poll、预算耗尽、invalidation
 或离开 natural loop 均以当前 materialized canonical PC 和精确 consumed count 返回 scheduler，不重放
@@ -425,6 +431,11 @@ paired negative workload 与六 RID 聚合证据，但保持 `EnableLoopOsr=fals
 把分析延后到 hot backedge、加入 observed exact-numeric qualification/`JIT3105`，并平衡 on/off 运行顺序；
 默认仍不改变，直到新 aggregate 全部通过，见
 [ADR 0007](adr/0007-loop-osr-default-rollout-readiness.md)。
+M15 审查真实 CI run `29241821560` 后继续保持默认关闭：该 run 的拒绝、startup 与 guard 门槛通过，
+但两个 10-operation negative median 和 osx-x64 首次 emitter 编译时延仍未达标。当前证据改为至少
+30 次 warm operation、六个进程严格 3:3 平衡 on/off 顺序，并仅在 exact-numeric 资格通过后惰性准备
+emitter；决策见
+[ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md)。
 
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结；当前 unchecked

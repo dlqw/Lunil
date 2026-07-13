@@ -1620,6 +1620,8 @@ public sealed class LuaJitExecutorTests
         Assert.DoesNotContain(events, static jitEvent => jitEvent.Kind is
             LuaJitEventKind.LoopOsrEligibilityAccepted or
             LuaJitEventKind.LoopOsrEligibilityRejected);
+        Assert.DoesNotContain(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
     }
 
     [Fact]
@@ -1685,6 +1687,13 @@ public sealed class LuaJitExecutorTests
 
         var completed = Assert.Single(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        var acceptedEvent = Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrEligibilityAccepted);
+        var preparedEvent = Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
+        Assert.True(preparedEvent.Duration >= TimeSpan.Zero);
+        Assert.True(events.IndexOf(acceptedEvent) < events.IndexOf(preparedEvent));
+        Assert.True(events.IndexOf(preparedEvent) < events.IndexOf(completed));
         var metrics = Assert.IsType<LuaJitLoopOsrCompilationMetrics>(
             completed.LoopOsrCompilationMetrics);
         Assert.Equal(LuaJitLoopOsrCodeKind.GuardedExactNumericCil, metrics.CodeKind);
@@ -1758,6 +1767,8 @@ public sealed class LuaJitExecutorTests
             jitEvent.Kind == LuaJitEventKind.LoopOsrEligibilityRejected);
         Assert.DoesNotContain(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.DoesNotContain(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
         Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
     }
@@ -1828,6 +1839,8 @@ public sealed class LuaJitExecutorTests
             jitEvent.DiagnosticCode == LuaJitLoopOsrDiagnosticCodes.NonExactNumericProfile);
         Assert.DoesNotContain(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.DoesNotContain(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
         Assert.Equal(0, executor.Statistics.LoopOsrEligibilityAccepted);
         Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);

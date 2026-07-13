@@ -124,6 +124,7 @@ public enum LuaJitEventKind : byte
     Tier2EligibilityRejected,
     LoopOsrEligibilityAccepted,
     LoopOsrEligibilityRejected,
+    LoopOsrCompilerPrepared,
 }
 
 public sealed record LuaJitExecutorOptions

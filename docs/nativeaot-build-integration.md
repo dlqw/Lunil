@@ -9,7 +9,7 @@ reflection、assembly discovery 或动态 PE load。
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.11" />
+  <PackageReference Include="Lunil.Build" Version="0.6.0-alpha.12" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"
@@ -81,7 +81,9 @@ NativeAOT 下 `LuaJitExecutor.IsDynamicCodeAvailable` 为 `false`；动态 persi
 不会采集 Tier 2 profile，也不会分析、预热或编译 Loop OSR。`EnableLoopOsrManagedFallback` 不改变
 NativeAOT 行为；动态 Lua 模块继续精确使用解释器，预注册模块继续使用构建期 AOT。
 CoreCLR 上即使显式开启 Loop OSR，natural-loop 分析和 specialized emitter 也会延后到 verified
-backedge hotness 与运行时 exact-numeric 资格通过之后；该惰性路径不改变 NativeAOT capability gate。
+backedge hotness 与运行时 exact-numeric 资格通过之后；资格接受后发布的
+`LoopOsrCompilerPrepared` 会单独归因一次性 emitter 准备耗时。该惰性路径不改变 NativeAOT
+capability gate。
 
 ## Publish mode
 

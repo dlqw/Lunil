@@ -108,7 +108,7 @@ or Loop OSR.
 Reproduce the multi-process evidence with:
 
 ```powershell
-./scripts/Measure-BackendPerformance.ps1 -Rounds 3 -Iterations 1000000 -Configuration Release
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -Iterations 1000000 -Configuration Release
 ```
 
 The script writes raw process output, `runs.csv`, and `summary.json` under the ignored
@@ -217,13 +217,13 @@ coroutine/error/hook workloads were rejected for insufficient direct coverage.
 Reproduce and aggregate evidence with:
 
 ```powershell
-./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 `
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 `
   -Iterations 1000000 -Configuration Release
 ./scripts/Merge-BackendPerformanceEvidence.ps1
 ```
 
 The measurement script writes raw output, CSV, JSON, and `tier1-decision.json` under ignored
-`artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same five-process
+`artifacts/backend-performance/<RID>/<UTC timestamp>/` directories. CI runs the same six-process
 measurement on win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64, then publishes
 the aggregate without using shared-runner timing as a CI pass/fail condition.
 
@@ -299,7 +299,7 @@ while CI records and aggregates the exact-numeric decision independently on all 
 Reproduce the qualification record with:
 
 ```powershell
-./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 `
+./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 `
   -Iterations 1000000 -Configuration Release
 ./scripts/Merge-BackendPerformanceEvidence.ps1
 ```
@@ -447,3 +447,38 @@ This local result qualifies the implementation but does not change `EnableLoopOs
 real six-RID aggregate must report `AllRidsQualify=true` before the separate default-rollout change.
 The readiness decision is recorded in
 [ADR 0007](adr/0007-loop-osr-default-rollout-readiness.md).
+
+## M15 Loop OSR rollout evidence closure
+
+The real M14 six-RID CI run `29241821560` proved that runtime qualification closes the semantic
+gap: every RID rejected all four negative workloads automatically, installed no managed OSR,
+observed no guard failures, passed every startup gate, and accepted the exact-numeric arithmetic
+loop. It still did not authorize default rollout. The linux-arm64 metamethod warm median was
+0.8565x, the osx-x64 table-access warm median was 0.8876x, and osx-x64 reported a 13.272 ms first
+Loop OSR compilation p95 after constructor-time emitter preparation had been removed.
+
+Raw process data showed that the negative throughput gate used only ten warm executions and an odd
+five-process order split. The failing linux-arm64 metamethod ratios followed the 3:2 order imbalance,
+while osx table access showed wide allocation/GC noise. M15 strengthens rather than lowers the gate:
+
+1. qualification uses six independent processes, enforcing an exact 3:3 `loop_osr`/`loop_osr_off`
+   order balance;
+2. every backend throughput row measures at least 30 warm executions;
+3. `WarmOperationsPerProcess` and `BalancedLoopOsrPairOrder` are persisted in each RID decision and
+   aggregated across all six RIDs; and
+4. the specialized emitter is prepared only after exact-numeric runtime qualification succeeds.
+   `LoopOsrCompilerPrepared` attributes this one-time cost separately, and both preparation p95 and
+   per-loop compilation p95 retain independent `<10 ms` gates.
+
+The negative workload floor remains 0.90, the startup floor remains 0.90, and automatic acceptance,
+guard failure, and managed installation must remain zero. `EnableLoopOsr=false` remains unchanged
+until a new real six-RID aggregate reports `AllRidsQualify=true`.
+
+The final local win-x64 record at
+`artifacts/backend-performance/win-x64/20260713-104847` passed the strengthened contract: 7.547x
+arithmetic median speedup over the interpreter, 119.634x over OSR-disabled execution, 0.527 ms
+preparation p95, 3.104 ms compilation p95, 45,092-byte compilation allocation p95, zero allocation
+slope, and 100% liveness-cache hits. Warm negative medians were 1.019x, 1.000x, 0.967x, and 0.988x;
+startup medians were 0.996x, 1.016x, 0.977x, and 0.988x. Automatic negative acceptance, guard
+failures, and managed installations remained zero. See
+[ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md).

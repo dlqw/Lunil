@@ -176,6 +176,13 @@ $loopOsrResult = [pscustomobject]@{
             Measure-Object ArithmeticSpeedupVsDisabledCi95Lower -Minimum).Minimum
     MaximumLoopOsrCompilationP95Ms = (
         $loopOsrSelected | Measure-Object LoopOsrCompilationP95Ms -Maximum).Maximum
+    MaximumLoopOsrPreparationP95Ms = (
+        $loopOsrSelected | Measure-Object LoopOsrPreparationP95Ms -Maximum).Maximum
+    MinimumWarmOperationsPerProcess = (
+        $loopOsrSelected | Measure-Object WarmOperationsPerProcess -Minimum).Minimum
+    AllRidsBalanceLoopOsrPairOrder = @($loopOsrSelected | Where-Object {
+        -not $_.BalancedLoopOsrPairOrder
+    }).Count -eq 0
     MinimumLoopOsrLivenessCacheHitRate = (
         $loopOsrSelected | Measure-Object LoopOsrLivenessCacheHitRate -Minimum).Minimum
     MaximumLoopOsrCompileAllocatedP95Bytes = (

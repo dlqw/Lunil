@@ -80,8 +80,8 @@ Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `
 `GuardedExactNumericCil` 的 loop 还必须在 interpreter 中成功观察全部 exact-numeric guard site，才会
 自动进入队列；一次非数值 operand 会以 `JIT3105` 永久拒绝。`EnableLoopOsrManagedFallback` 默认是
 `false`，managed canonical loop 必须由宿主再次显式开启。static/runtime eligibility、guard-site
-observation、guard-failure widening、backedge counters、生成 delegate 与 code-kind 安装状态均不
-持久化，因此不能由导入 profile 或磁盘 cache 绕过。
+observation、资格接受后的惰性 emitter preparation、guard-failure widening、backedge counters、
+生成 delegate 与 code-kind 安装状态均不持久化，因此不能由导入 profile 或磁盘 cache 绕过。
 
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该
