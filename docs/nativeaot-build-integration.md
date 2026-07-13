@@ -5,16 +5,17 @@ verified canonical IR、persisted CIL、可选 Portable PDB、canonical module p
 C# registry。所有入口以直接 method group 注册，因此 trimming 和 NativeAOT 无需 runtime
 reflection、assembly discovery 或动态 PE load。
 
-`0.7.0-alpha.3` 的 source compilation 还会运行 `Lunil.Analysis` 并发布 immutable type/CFG
-结果供 task 诊断使用；该阶段不依赖 reflection 或 dynamic code，analysis object 不写入 canonical
-module payload，因此生成的 registry 与运行时执行仍保持 annotation/type erasure。NativeAOT fixture
-同时验证动态 source fallback 能构造 analysis result 后继续执行 interpreter 路径。
+`0.7.0-alpha.4` 的 source compilation 会先通过 `Lunil.Workspace` 对全部 source item 建立模块图，
+运行跨模块 type/flow analysis，并将 unresolved/dynamic require 与依赖类型诊断交给 task。workspace、
+annotation 与 analysis object 均不写入 canonical module payload，因此生成的 registry 与运行时执行
+仍保持 annotation/type erasure。NativeAOT fixture 同时验证动态 source fallback 和两模块 workspace
+fixed-point/cache 路径可在无 reflection/dynamic code 环境中运行。
 
 ## 引用与 item metadata
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.3" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.4" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"
@@ -53,7 +54,8 @@ module payload，因此生成的 registry 与运行时执行仍保持 annotation
 - `LunilModules.g.cs`：`ModuleInitializer` static registry；
 - `LunilCompile.stamp`：当前 module name/content ID 集合。
 
-task 每次执行以恢复 `Compile`、`Reference` 和 `FileWrites` item，但仅在 source bytes、input kind、
+task 每次执行先以 `ModuleName` 作为稳定 identity 对 source item 建图；direct-global literal `require`
+形成静态依赖，动态名称保持保守诊断边界。随后恢复 `Compile`、`Reference` 和 `FileWrites` item，但仅在 source bytes、input kind、
 optimization/debug/sandbox、TFM 或 RID 改变时重新编译。相同内容不会改写文件时间。并发 build
 通过 output lock 串行提交，并以同目录临时文件和 atomic replace 防止部分写入。design-time build
 使用隔离目录，只生成空 registry skeleton；`Clean` 删除整个 Lunil intermediate root。

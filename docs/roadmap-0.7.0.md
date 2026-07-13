@@ -66,15 +66,24 @@ milestones and must not treat parsed annotations as unchecked runtime truth.
 Module-cycle fixed points and content-addressed invalidation remain workspace responsibilities
 for the next Alpha rather than hidden global state inside the single-document analyzer.
 
-### Later Alpha: workspace and incremental module analysis
+### Alpha 4: workspace and incremental module analysis
 
-- stable source and module identities;
-- module resolution and a dependency graph with cyclic fixed points;
-- conservative treatment of dynamic `require`;
-- content-addressed analysis results and minimal invalidation;
-- cancellation, bounded parallel scheduling, and deterministic result merging.
+`0.7.0-alpha.4` delivers:
 
-### CLI and build integration
+- the public `Lunil.Workspace` package with stable source/module identities, immutable snapshots,
+  injectable in-memory and root-confined file resolvers, and deterministic graph results;
+- direct-global static `require` extraction with shadowing awareness, unresolved-module diagnostics,
+  and a conservative `any` boundary plus explicit graph markers for dynamic require names;
+- dependency-aware module export types, deterministic strongly connected components, bounded cyclic
+  fixed points, and stable widening when a cycle exceeds its iteration budget;
+- reusable content-addressed discovery/analysis caches whose keys include source content and direct
+  dependency export hashes, so implementation-only leaf changes do not invalidate dependents;
+- global module/source/dependency/diagnostic/cache/fixed-point budgets, cancellation, globally bounded
+  parallel compilation, deterministic result merging, cache metrics, and minimal invalidation evidence;
+- `LuaHost` workspace access, `Lunil.Build` multi-source workspace preflight, and NativeAOT/trimming
+  coverage while leaving runtime package loaders and canonical IR unchanged.
+
+### Later Alpha: CLI and command-line build integration
 
 - `lunil run`, `lunil check`, `lunil build`, and `lunil dump`;
 - consistent exit codes and text/machine-readable diagnostics;

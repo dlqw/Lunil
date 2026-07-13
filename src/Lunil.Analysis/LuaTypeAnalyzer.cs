@@ -10,10 +10,25 @@ public static class LuaTypeAnalyzer
         LuaSemanticModel semanticModel,
         LuaAnnotationDocument annotations,
         LuaAnalysisOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        Analyze(
+            semanticModel,
+            annotations,
+            LuaAnalysisEnvironment.Empty,
+            options,
+            cancellationToken);
+
+    public static LuaAnalysisResult Analyze(
+        LuaSemanticModel semanticModel,
+        LuaAnnotationDocument annotations,
+        LuaAnalysisEnvironment environment,
+        LuaAnalysisOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(semanticModel);
         ArgumentNullException.ThrowIfNull(annotations);
+        ArgumentNullException.ThrowIfNull(environment);
+        ArgumentNullException.ThrowIfNull(environment.ModuleTypes);
         options ??= LuaAnalysisOptions.Default;
         cancellationToken.ThrowIfCancellationRequested();
         ValidateOptions(options);
@@ -31,7 +46,7 @@ public static class LuaTypeAnalyzer
         }
 
         var context = new LuaAnalysisContext(options, cancellationToken);
-        var environment = new AnnotationTypeEnvironment(annotations, context);
+        var typeEnvironment = new AnnotationTypeEnvironment(annotations, context);
         cancellationToken.ThrowIfCancellationRequested();
         var graphs = ControlFlowGraphBuilder.BuildAll(semanticModel, context);
         cancellationToken.ThrowIfCancellationRequested();
@@ -39,6 +54,7 @@ public static class LuaTypeAnalyzer
             semanticModel,
             annotations,
             environment,
+            typeEnvironment,
             graphs,
             context).Analyze();
         cancellationToken.ThrowIfCancellationRequested();

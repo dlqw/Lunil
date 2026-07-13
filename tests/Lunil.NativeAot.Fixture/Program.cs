@@ -3,6 +3,7 @@ using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
+using Lunil.Workspace;
 
 namespace Lunil.NativeAot.Fixture;
 
@@ -45,6 +46,25 @@ public static class Program
         {
             Console.Error.WriteLine($"Unexpected dynamic fallback result: {dynamicValue}.");
             return 2;
+        }
+
+        using (var workspace = new LuaWorkspace())
+        {
+            var workspaceResult = workspace.AnalyzeAsync([
+                LuaWorkspaceDocument.FromUtf8(
+                    "fixture.app",
+                    "local dep = require('fixture.dep')\nreturn dep.value + 1"),
+                LuaWorkspaceDocument.FromUtf8(
+                    "fixture.dep",
+                    "return { value = 41 }"),
+            ]).GetAwaiter().GetResult();
+            if (!workspaceResult.Succeeded ||
+                workspaceResult.Graph.Nodes.Length != 2 ||
+                workspaceResult.GetModule("fixture.app")?.ExportedType.DisplayName != "integer")
+            {
+                Console.Error.WriteLine("Incremental workspace analysis is invalid.");
+                return 2;
+            }
         }
 
         using var defaultJit = new LuaJitExecutor();

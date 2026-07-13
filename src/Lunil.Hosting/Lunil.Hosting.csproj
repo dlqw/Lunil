@@ -13,6 +13,7 @@
     <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
     <ProjectReference Include="..\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
+    <ProjectReference Include="..\Lunil.Workspace\Lunil.Workspace.csproj" />
   </ItemGroup>
 
 </Project>

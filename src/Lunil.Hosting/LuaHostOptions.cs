@@ -2,6 +2,7 @@ using Lunil.Compiler;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.StandardLibrary;
+using Lunil.Workspace;
 
 namespace Lunil.Hosting;
 
@@ -33,6 +34,10 @@ public sealed record LuaHostOptions
     public LuaStateOptions State { get; init; } = LuaStateOptions.Default;
 
     public LuaInterpreterOptions Execution { get; init; } = LuaInterpreterOptions.Default;
+
+    public LuaWorkspaceOptions Workspace { get; init; } = LuaWorkspaceOptions.Default;
+
+    public ILuaModuleResolver? ModuleResolver { get; init; }
 
     public bool InstallStandardLibrary { get; init; } = true;
 

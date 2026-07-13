@@ -55,7 +55,7 @@ internal sealed partial class AnalysisEngine
             }
         }
 
-        if (TryGetCalledIdentifier(expression, out var called) &&
+        if (TryGetCalledGlobalIdentifier(expression, out var called) &&
             string.Equals(called, "assert", StringComparison.Ordinal))
         {
             var argument = GetCallArguments(expression).FirstOrDefault();
@@ -260,7 +260,7 @@ internal sealed partial class AnalysisEngine
     {
         key = default;
         type = LuaTypes.Unknown;
-        if (!TryGetCalledIdentifier(call, out var called) ||
+        if (!TryGetCalledGlobalIdentifier(call, out var called) ||
             !string.Equals(called, "type", StringComparison.Ordinal) ||
             !TryGetStringLiteral(literal, out var tag))
         {
@@ -703,6 +703,33 @@ internal sealed partial class AnalysisEngine
 
         name = string.Empty;
         return false;
+    }
+
+    private bool TryGetCalledGlobalIdentifier(LuaSyntaxNode expression, out string name)
+    {
+        if (expression.Kind == LuaSyntaxKind.ExpressionList)
+        {
+            var only = expression.ChildNodes().SingleOrDefault();
+            if (only is not null)
+            {
+                return TryGetCalledGlobalIdentifier(only, out name);
+            }
+        }
+
+        if (!TryGetCalledIdentifier(expression, out name))
+        {
+            return false;
+        }
+
+        var callee = expression.ChildNodes().FirstOrDefault();
+        if (callee?.Kind != LuaSyntaxKind.IdentifierExpression)
+        {
+            return false;
+        }
+
+        var token = callee.ChildTokens().Single(static item => item.Kind == LuaTokenKind.Identifier);
+        return _references.TryGetValue(token.Span, out var reference) &&
+            reference.ResolutionKind == LuaNameResolutionKind.Global;
     }
 
     private static IEnumerable<LuaSyntaxNode> GetCallArguments(LuaSyntaxNode expression)

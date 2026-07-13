@@ -221,7 +221,7 @@ internal sealed partial class AnalysisEngine
     {
         var call = statement.ChildNodes().Single();
         var result = InferExpressionPack(call, state);
-        if (TryGetCalledIdentifier(call, out var name) &&
+        if (TryGetCalledGlobalIdentifier(call, out var name) &&
             string.Equals(name, "assert", StringComparison.Ordinal))
         {
             var argument = GetCallArguments(call).FirstOrDefault();
@@ -450,7 +450,7 @@ internal sealed partial class AnalysisEngine
         LuaTypePack iteratorPack,
         FlowState state)
     {
-        if (TryGetCalledIdentifier(expressions, out var iteratorName))
+        if (TryGetCalledGlobalIdentifier(expressions, out var iteratorName))
         {
             var call = expressions.ChildNodes().SingleOrDefault();
             var argument = call is null ? null : GetCallArguments(call).FirstOrDefault();

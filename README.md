@@ -28,11 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.7.0-alpha.3`**. The `0.6.0` line ended at the
+> The current source version is **`0.7.0-alpha.4`**. The `0.6.0` line ended at the
 > immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
 > Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
-> bounded type/control-flow analysis are now available. Module/workspace analysis and the CLI
-> remain active alpha work. The `0.7.0` scope and promotion gates are not frozen yet.
+> bounded type/control-flow analysis and incremental module workspace are now available. The CLI
+> and complete conformance/API gates remain active alpha work; the `0.7.0` scope is not frozen yet.
 
 ## Table of contents
 
@@ -80,12 +80,13 @@ collector.
 | Hosting product API | Alpha foundation | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
 | Annotation product API | Alpha foundation | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
 | Type and flow analysis API | Alpha foundation | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
-| Workspace and CLI | Planned for later 0.7 alpha | Module graph, content-addressed incremental workspace, and `run`/`check`/`build`/`dump` CLI |
+| Workspace product API | Alpha foundation | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
+| CLI | Planned for later 0.7 alpha | `run`/`check`/`build`/`dump`, configuration, response files, consistent diagnostics, and deterministic/sandbox options |
 | Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.3` |
+| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.4` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -116,6 +117,10 @@ hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0
   declarations, structural tables, overloads, generics, constraints and CFGs; flow analysis
   performs nil/type/assert/discriminant/short-circuit narrowing, definite-assignment and
   unreachable checks, return-pack inference, source suppression, and bounded widening.
+- A public `Lunil.Workspace` layer with stable module/source identities, in-memory and root-confined
+  file resolvers, direct-global static `require` extraction, dynamic boundaries, deterministic SCC
+  fixed points, dependency-aware export types, content-addressed caches, minimal invalidation,
+  global budgets, cancellation, bounded parallel scheduling, and deterministic result merging.
 - Full Lua 5.4 opcode model with binary-compatible 32-bit instruction layouts.
 - Bounded PUC Lua 5.4 binary chunk reading, writing, validation, and conversion.
 
@@ -188,7 +193,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.3" />
+<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.4" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through
@@ -236,7 +241,24 @@ var host = new LuaHost(LuaHostOptions.Restricted);
 var result = host.ExecuteBinaryChunk(bytecode);
 ```
 
-`LuaCompiler`, `LuaExecutor`, and the individual syntax, annotation, analysis, semantic, and IR
+The same host exposes a reusable incremental workspace without changing runtime `package` or
+`require` behavior:
+
+```csharp
+using Lunil.Workspace;
+
+using var host = new LuaHost(LuaHostOptions.Restricted);
+var workspace = await host.AnalyzeWorkspaceAsync([
+    LuaWorkspaceDocument.FromUtf8(
+        "app",
+        "local dep = require('dep')\nreturn dep.value + 1"),
+    LuaWorkspaceDocument.FromUtf8("dep", "return { value = 41 }"),
+]);
+
+Console.WriteLine(workspace.GetModule("app")!.ExportedType.DisplayName); // integer
+```
+
+`LuaCompiler`, `LuaExecutor`, and the individual syntax, annotation, analysis, workspace, semantic, and IR
 packages remain available to lower-level consumers. `LuaHost` is the product-level embedding
 entry point; `LuaInterpreter` remains available when a host explicitly requires the Tier 0
 reference backend.
@@ -300,7 +322,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.3" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.4" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -310,9 +332,10 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 </ItemGroup>
 ```
 
-The package verifies and compiles each module before `CoreCompile`, writes deterministic
-artifacts under `obj/lunil/`, and generates a direct-method registry without runtime
-reflection. A host can obtain the embedded canonical module and execute its static entry:
+The package resolves all source items through the same workspace graph, reports cross-module
+analysis diagnostics, verifies and compiles each module before `CoreCompile`, writes deterministic
+artifacts under `obj/lunil/`, and generates a direct-method registry without runtime reflection.
+A host can obtain the embedded canonical module and execute its static entry:
 
 ```csharp
 if (!LuaStaticAotRegistry.TryGetModule("app.math", out var module) || module is null)
@@ -340,6 +363,7 @@ flowchart LR
     Text --> Annotation[LuaLS / EmmyLua annotations]
     Annotation --> Analysis[Type + flow analysis]
     Binder --> Analysis
+    Analysis --> Workspace[Incremental module workspace]
     Binder --> Lowerer[Canonical lowering]
 
     Chunk[PUC Lua 5.4 chunk] --> Reader[Reader + verifier]
@@ -370,6 +394,7 @@ Lunil/
 │   ├── Lunil.Syntax/            # lexer, tokens, parser, immutable syntax
 │   ├── Lunil.EmmyLua/           # LuaLS and legacy EmmyLua annotation front end
 │   ├── Lunil.Analysis/          # semantic types, CFGs, constraints and flow analysis
+│   ├── Lunil.Workspace/         # module graph, resolvers and incremental analysis cache
 │   ├── Lunil.Semantics/         # binding and canonical lowering
 │   ├── Lunil.Compiler/          # public bounded compilation pipeline and results
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
@@ -420,11 +445,11 @@ The `0.7.0` promotion sequence is:
 0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current development version is **`0.7.0-alpha.3`**. The `0.6.0` line was explicitly
+The current development version is **`0.7.0-alpha.4`**. The `0.6.0` line was explicitly
 superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
 `0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.3` is tagged,
-any follow-up change uses `0.7.0-alpha.4` or a later appropriate version.
+channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.4` is tagged,
+any follow-up change uses `0.7.0-alpha.5` or a later appropriate version.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
