@@ -73,6 +73,15 @@ internal interface ILuaTier2Compiler
 internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 {
     public static ProfileGuidedLuaTier2Compiler Instance { get; } = new();
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
+    private static readonly Lazy<bool> CompilerPrepared = new(
+        PrepareCompilerCore,
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
 
     public LuaTier2CompilationResult Compile(
         LuaIrModule module,
@@ -206,6 +215,66 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             out method,
             out estimatedCodeBytes,
             out metrics);
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
+    private static bool PrepareCompilerCore()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                a: 2,
+                b: 0,
+                c: 1,
+                d: (int)LuaIrBinaryOperator.Add),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 2, b: 1));
+        var module = new LuaIrModule
+        {
+            MainFunctionId = 0,
+            Functions =
+            [
+                new LuaIrFunction
+                {
+                    Id = 0,
+                    Span = default,
+                    ParameterCount = 2,
+                    RegisterCount = 3,
+                    Constants = [],
+                    Instructions = instructions,
+                    BasicBlocks = LuaIrControlFlow.Build(instructions),
+                },
+            ],
+        };
+        var profile = new LuaJitFunctionProfile(
+            Samples: 1,
+            ArgumentKinds: [LuaJitValueKinds.Integer, LuaJitValueKinds.Integer],
+            Sites:
+            [
+                new LuaJitSiteProfile(
+                    ProgramCounter: 0,
+                    Opcode: LuaIrOpcode.Binary,
+                    Samples: 1,
+                    FirstOperandKinds: LuaJitValueKinds.Integer,
+                    SecondOperandKinds: LuaJitValueKinds.Integer,
+                    ThirdOperandKinds: LuaJitValueKinds.None,
+                    BranchTaken: 0,
+                    BranchNotTaken: 0,
+                    IsMegamorphic: false,
+                    TableShapes: [],
+                    CallTargets: []),
+            ]);
+        var result = Instance.Compile(module, 0, profile, CancellationToken.None);
+        if (!result.Succeeded || result.Plan?.CodeKind !=
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil)
+        {
+            throw new InvalidOperationException(
+                $"Tier 2 compiler preparation failed: {string.Join("; ", result.Diagnostics)}");
+        }
+
+        return true;
+    }
 
     private static ImmutableDictionary<int, OptimizedInstruction> BuildOptimizations(
         LuaIrFunction function,
