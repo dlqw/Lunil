@@ -16,6 +16,14 @@ internal readonly record struct LuaTier2EmissionMetrics(
     TimeSpan CilEmissionDuration,
     TimeSpan DelegateCreationDuration);
 
+internal enum LuaTier2NumericSpecializationStatus : byte
+{
+    Eligible,
+    NoNumericHotspot,
+    PolymorphicNumericProfile,
+    ManagedOptimizationRequired,
+}
+
 internal static class ReflectionEmitLuaTier2Compiler
 {
     private static readonly Type[] CompiledMethodParameters =
@@ -137,7 +145,8 @@ internal static class ReflectionEmitLuaTier2Compiler
         estimatedCodeBytes = 0;
         metrics = default;
         if (!RuntimeFeature.IsDynamicCodeSupported ||
-            !CanEmitNumericSpecialization(function, optimized))
+            EvaluateNumericSpecialization(function, optimized) !=
+                LuaTier2NumericSpecializationStatus.Eligible)
         {
             return false;
         }
@@ -247,10 +256,11 @@ internal static class ReflectionEmitLuaTier2Compiler
         return true;
     }
 
-    private static bool CanEmitNumericSpecialization(
+    internal static LuaTier2NumericSpecializationStatus EvaluateNumericSpecialization(
         LuaIrFunction function,
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized)
     {
+        var hasNumericHotspot = false;
         foreach (var pair in optimized)
         {
             var optimization = pair.Value;
@@ -266,26 +276,28 @@ internal static class ReflectionEmitLuaTier2Compiler
                                 LuaIrUnaryOperator.BitwiseNot or
                                 LuaIrUnaryOperator.LogicalNot))
                     {
-                        return false;
+                        return LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile;
                     }
 
+                    hasNumericHotspot = true;
                     break;
                 case LuaJitOptimizationKind.NumericBinary:
                     if (!IsExactNumericKind(optimization.FirstKinds) ||
                         !IsExactNumericKind(optimization.SecondKinds))
                     {
-                        return false;
+                        return LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile;
                     }
 
+                    hasNumericHotspot = true;
                     break;
                 default:
-                    return false;
+                    return LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired;
             }
         }
 
-        return optimized.Values.Any(static optimization =>
-            optimization.Kind is LuaJitOptimizationKind.NumericUnary or
-                LuaJitOptimizationKind.NumericBinary);
+        return hasNumericHotspot
+            ? LuaTier2NumericSpecializationStatus.Eligible
+            : LuaTier2NumericSpecializationStatus.NoNumericHotspot;
     }
 
     private static bool IsExactNumericKind(LuaJitValueKinds kinds) =>

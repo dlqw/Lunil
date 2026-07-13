@@ -318,8 +318,9 @@ LRU code-byte budget 与显式 module/cache invalidation。cache key 和 emitted
 `LuaState`、closure 或 upvalue owner；动态代码不可用时不会进入 Reflection.Emit。
 取消令牌贯穿 CFG/liveness、method-plan build/verification 与 CIL emission；取消的 plan 不进入 weak
 cache，未执行 `EndMethod` 的 emitter 不创建 delegate，registry 在安装方法前再次检查 dispose token，
-因此忽略取消后迟到的 compiler result 也不会发布为 `Ready`。release 默认 policy 为 `Auto`；
-`EnableTier2` 与 `EnableLoopOsr` 默认均为 `false`，所以默认迁移只启用资格检查保护的 Tier 1。
+因此忽略取消后迟到的 compiler result 也不会发布为 `Ready`。release 默认 policy 为 `Auto`，
+`EnableTier2=true` 且 `EnableTier2ManagedFallback=false`：默认迁移同时启用资格检查保护的 Tier 1
+与 exact-numeric Tier 2，但 managed-profile Tier 2 和 Loop OSR 仍保持显式 opt-in。
 
 Tier 1 可观测性公开 compile queue latency、compile time、compiled invocation、fallback、deopt、failure、
 eviction 与 estimated code bytes 计数和结构化事件。事件订阅者异常不得改变 Lua 执行语义。
@@ -351,6 +352,17 @@ fold 等尚未完整发射组合的 plan 继续使用 `ManagedProfileProgram`，
 creation、allocation、代码形态与专门化/deopt 数量。register liveness 由 module owner-scoped weak cache
 在 Tier 1、Tier 2、Loop OSR 与 persisted AOT 之间共享。
 
+自动 Tier 2 promotion 在进入 compile queue 前复用同一 optimization/liveness planner 计算
+`LuaJitTier2Eligibility`。只有 code-shape 检查可保证 `ExactNumericSpecializedCil`，且运行 profile 未
+观察到 table、upvalue、closure、call 或 to-be-closed managed semantic site 时才接受；精确数值
+hotspot 之外的 stable branch/dead move 可以共存。拒绝结果通过 `Tier2EligibilityAccepted/Rejected`
+事件、独立 statistics、`GetTier2PromotionEligibility` 与 `JIT2101`–`JIT2105` 诊断公开。不可逆的
+polymorphic/managed 拒绝会永久缓存；尚无数值 hotspot 的 profile 使用指数 sample backoff 复查。
+安装阶段再次要求 exact code kind，因此自定义 compiler 也不能把 `ManagedProfileProgram` 发布到
+默认路径。显式 `EnableTier2ManagedFallback=true` 才跳过收益门控并保留原有 table/call 等实验路径。
+逐指令 Tier 2 profile observation 只在 Tier 1 方法安装后激活；被 Tier 1 `Auto` 收益检查拒绝的函数
+不会承担 profile 采集成本。
+
 实验性 loop OSR 由 `EnableLoopOsr` 独立控制，默认关闭。CFG 分析只接受 target 为基本块 leader、
 header 支配 backedge source 的 natural loop；编译请求不会在分支执行前发出，而是在 backedge 已完成且
 同一 frame 的 canonical PC 已提交到 header 后发出。entry map 使用 liveness 将 interpreter canonical
@@ -373,11 +385,13 @@ M8 将启动、稳态吞吐、分配、编译 p95、RSS、code bytes 和 persist
 5 ms、allocation slope 均为 0，且 negative workload gate 无失败。M10 据此只将 Tier 1 默认迁移为
 `Auto`；Tier 2 与 Loop OSR 继续独立 opt-in。
 
-M11 的 win-x64 五进程精确数值证据达到 9.492 倍 arithmetic median speedup、bootstrap 95% 下界
-9.124 倍、6.442 ms Tier 2 compile p95 与零 allocation slope。该结果将 exact-numeric Tier 2
-生产化为显式 opt-in 路径，但 managed table/call/metamethod profile 尚未获得非回归资格，所以
-`EnableTier2` 默认值不变。详细决策见
-[ADR 0004](adr/0004-tier2-exact-numeric-productionization.md)。
+M11 的最终 win-x64 五进程精确数值证据达到 9.177 倍 arithmetic median speedup、bootstrap 95%
+下界 6.557 倍、1.395 ms Tier 2 compile p95 与零 allocation slope；六 RID CI 的最低 bootstrap
+下界为 7.086 倍、最大 compile p95 为 3.228 ms。该结果先将 exact-numeric Tier 2 生产化，详细
+决策见 [ADR 0004](adr/0004-tier2-exact-numeric-productionization.md)。M12 再以 profile/code-shape
+eligibility 隔离 managed table/call/metamethod/coroutine 路径，将 `EnableTier2` 默认改为 `true`，
+同时保持 `EnableTier2ManagedFallback=false`；默认策略见
+[ADR 0005](adr/0005-tier2-auto-default-rollout.md)。
 
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结；当前 unchecked
@@ -399,8 +413,8 @@ upvalue access 和 guarded empty-range `Close`。primitive guard 在 reservation
 省略逐指令 observation helper。canonical module/function/observation-mode 的 verified plan 使用
 owner-scoped `ConditionalWeakTable` 缓存；显式 plan limit 不共享缓存，module 回收不会被 plan 反向
 阻止。Reflection.Emit ABI method lookup 和首次 DynamicMethod 基础设施在 executor startup 预热；
-显式启用 Tier 2 时还会按进程预热完整 profile planning、deopt-map build 与 specialized emission
-pipeline，避免首次 promotion 的 compilation event 承担通用代码 JIT 初始化。
+动态代码可用且 Tier 2 未关闭时还会按进程预热完整 profile planning、deopt-map build 与
+specialized emission pipeline，避免首次 promotion 的 compilation event 承担通用代码 JIT 初始化。
 
 ### 9.3 AOT
 

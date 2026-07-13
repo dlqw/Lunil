@@ -55,20 +55,25 @@ Tier 1/Tier 2 阈值，但 Tier 1/Tier 2/OSR 仍在本进程重新生成，profi
 using var training = new LuaJitExecutor(LuaJitExecutorOptions.Default with
 {
     Policy = LuaJitPolicy.PreferJit,
-    EnableTier2 = true,
 });
 byte[] payload = training.ExportProfile(module);
 
 using var warmed = new LuaJitExecutor(LuaJitExecutorOptions.Default with
 {
     Policy = LuaJitPolicy.Auto,
-    EnableTier2 = true,
 });
 LuaJitProfileImportResult result = warmed.ImportProfile(module, payload);
 ```
 
-release 默认 policy 是 `Auto`，但只启用通过确定性收益检查的 Tier 1；`EnableTier2` 默认仍为
-`false`，因此 profile 导入会返回 `Disabled`，宿主必须显式启用 Tier 2 才能导入并使用预热数据。
+release 默认 policy 是 `Auto`，同时默认设置 `EnableTier2=true`，因此动态代码可用的 CoreCLR
+宿主可直接导入 profile。导入数据只能提前满足 hotness：自动 Tier 2 仍会重新检查 profile，只有可
+保证生成 `ExactNumericSpecializedCil` 且未观察到 table/closure/call/upvalue/to-be-closed managed
+semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Disabled`；动态代码不可用时也不会
+合并 profile 或采集运行时反馈。
+
+`EnableTier2ManagedFallback` 默认是 `false`。宿主只有显式将其设为 `true`，才允许导入的 profile
+进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义
+compiler 或陈旧 profile 绕过。
 
 profile 只可以提前满足 hotness。`Auto` 仍会基于 verified function facts 检查 direct coverage、
 slow-path/semantic-boundary density、backedge/reuse 和 estimated code bytes；profile 不得绕过该

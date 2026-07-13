@@ -118,6 +118,12 @@ $tier2Result = [pscustomobject]@{
     AllRidsUseExactNumericSpecializedCil = @($tier2Selected | Where-Object {
         $_.Tier2CodeKind -ne 'ExactNumericSpecializedCil'
     }).Count -eq 0
+    AllRidsAcceptAutomaticExactNumericTier2 = @($tier2Selected | Where-Object {
+        $_.Tier2EligibilityAccepted -le 0
+    }).Count -eq 0
+    AllRidsRejectNegativeAutomaticTier2 = @($tier2Selected | Where-Object {
+        @($_.NegativeWorkloadGateFailures).Count -ne 0
+    }).Count -eq 0
     AllRidsQualify = @($tier2Selected | Where-Object {
         -not $_.QualifiesThisRid
     }).Count -eq 0
