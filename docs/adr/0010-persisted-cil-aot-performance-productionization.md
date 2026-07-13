@@ -92,6 +92,14 @@ Semantic-workload medians were 2.032x for Lua calls, 1.529x for table access, 1.
 metamethods, and 0.965x for coroutine/error/hook execution. Their allocation ratios ranged from
 0.9997x to 1.0001x, every row executed persisted delegates, and no process fell back.
 
+Protected CI run `29255625454` then qualified all six release RIDs. Across those RIDs, the minimum
+arithmetic and control-flow bootstrap 95% lower bounds were 2.942x and 2.482x. The maximum
+validation, assembly-load, delegate-binding, and total-load p95 values were 20.692, 17.091, 20.871,
+and 56.312 ms; maximum load allocation was 153,432 B and the largest artifact was 19,168 B. Every
+RID executed persisted methods and recorded zero artifact fallback and zero unexpected
+deoptimization. The maximum deoptimization count on every RID was 1,550,120, all attributed to
+`DebugModeChanged`; the aggregate set `AllRidsQualify=true`.
+
 Focused tests cover scheduler execution, metrics, artifact/module mismatch, disposed artifact
 fallback, collectible loading, malformed artifacts, and dynamic-code-unavailable validation.
 Release solution, publish-mode, packaging, soak, formatting, synthetic aggregate, and protected real

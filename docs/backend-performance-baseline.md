@@ -588,3 +588,21 @@ single 50 ms combined-load bound conflated first CoreCLR loader initialization o
 runners with an artifact-specific phase regression. M17 therefore keeps expected debug deopt as a
 separate positive attribution, fails any other deopt, and replaces the single bound with the phase
 and 75 ms end-to-end limits above rather than removing cold-load controls.
+
+The corrected protected run, `29255625454`, qualified all six release RIDs:
+
+| RID | Arithmetic median / CI95 lower | Control-flow median / CI95 lower | Maximum total-load p95 |
+|---|---:|---:|---:|
+| `win-x64` | 3.374x / 3.262x | 2.829x / 2.482x | 56.312 ms |
+| `win-arm64` | 3.754x / 3.709x | 3.264x / 3.185x | 53.074 ms |
+| `linux-x64` | 3.410x / 3.323x | 2.838x / 2.732x | 27.308 ms |
+| `linux-arm64` | 3.740x / 3.671x | 3.387x / 3.215x | 24.932 ms |
+| `osx-x64` | 3.444x / 3.057x | 3.143x / 2.914x | 34.054 ms |
+| `osx-arm64` | 3.745x / 2.942x | 3.426x / 2.706x | 22.328 ms |
+
+The aggregate maximum validation/load/binding p95 values were 20.692/17.091/20.871 ms, maximum
+load allocation was 153,432 B, and maximum artifact size was 19,168 B. Every RID executed persisted
+methods with zero artifact fallback and zero unexpected deoptimization; all maximum deoptimizations
+were the expected 1,550,120 `DebugModeChanged` exits per RID. The aggregate records
+`AllRidsExecutePersistedAot=true`, `AllRidsAttributeExpectedDebugDeoptimization=true`, and
+`AllRidsQualify=true`.
