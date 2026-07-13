@@ -178,6 +178,102 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void ExecutesLoadedPersistedCilThroughTheSharedScheduler()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(11)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        var loading = LuaAotArtifactLoader.Load(artifact);
+
+        Assert.True(
+            loading.Succeeded,
+            string.Join("; ", loading.Diagnostics.Select(static item => item.Message)));
+        Assert.True(loading.Metrics.ValidationDuration > TimeSpan.Zero);
+        Assert.True(loading.Metrics.AssemblyLoadDuration > TimeSpan.Zero);
+        Assert.True(loading.Metrics.DelegateBindingDuration > TimeSpan.Zero);
+        Assert.True(loading.Metrics.TotalDuration >= loading.Metrics.ValidationDuration);
+        Assert.True(loading.Metrics.AllocatedBytes > 0);
+        using var loaded = loading.Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+
+        var result = executor.Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(LuaValue.FromInteger(11), Assert.Single(result.Values));
+        Assert.True(executor.Statistics.CompiledInvocations > 0);
+        Assert.Equal(0, executor.Statistics.InterpreterFallbacks);
+        Assert.Equal(0, executor.Statistics.Deoptimizations);
+        Assert.Equal(0, executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
+    public void PersistedExecutorAttributesExpectedDebugDeoptimizationSeparately()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(13)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(module).Artifact!;
+        using var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+        LuaDebugApi.SetHook(
+            state,
+            state.MainThread,
+            LuaValue.FromFunction(new LuaNativeFunction("hook", static (_, _) => [])),
+            LuaDebugHookMask.Count,
+            count: 1);
+
+        var result = executor.Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(LuaValue.FromInteger(13), Assert.Single(result.Values));
+        Assert.True(executor.Statistics.CompiledInvocations > 0);
+        Assert.Equal(0, executor.Statistics.InterpreterFallbacks);
+        Assert.True(executor.Statistics.Deoptimizations > 0);
+        Assert.Equal(
+            executor.Statistics.Deoptimizations,
+            executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
+    public void PersistedExecutorFallsBackForAMismatchedOrDisposedArtifact()
+    {
+        var compiledModule = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(7)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var fallbackModule = CreateModule(
+            registerCount: 1,
+            constants: [LuaIrConstant.FromInteger(19)],
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+        var artifact = LuaAotCompiler.Compile(compiledModule).Artifact!;
+        var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+
+        var mismatched = executor.Execute(state, state.CreateMainClosure(fallbackModule));
+        loaded.Dispose();
+        var disposed = executor.Execute(state, state.CreateMainClosure(compiledModule));
+
+        Assert.Equal(LuaValue.FromInteger(19), Assert.Single(mismatched.Values));
+        Assert.Equal(LuaValue.FromInteger(7), Assert.Single(disposed.Values));
+        Assert.Equal(0, executor.Statistics.CompiledInvocations);
+        Assert.Equal(4, executor.Statistics.InterpreterFallbacks);
+        Assert.Equal(0, executor.Statistics.Deoptimizations);
+        Assert.Equal(0, executor.Statistics.DebugModeDeoptimizations);
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
     public void ValidatesPersistedArtifactWithoutLoadingDynamicCode()
     {
         var module = CreateModule(
