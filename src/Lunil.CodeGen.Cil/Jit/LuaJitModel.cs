@@ -81,6 +81,8 @@ public enum LuaJitLoopOsrEligibilityReason : byte
     NoNumericHotspot,
     ManagedSemanticBoundary,
     UnsupportedInstruction,
+    AwaitingExactNumericProfile,
+    NonExactNumericProfile,
 }
 
 public static class LuaJitLoopOsrDiagnosticCodes
@@ -89,6 +91,7 @@ public static class LuaJitLoopOsrDiagnosticCodes
     public const string ManagedSemanticBoundary = "JIT3102";
     public const string UnsupportedInstruction = "JIT3103";
     public const string UnexpectedCodeKind = "JIT3104";
+    public const string NonExactNumericProfile = "JIT3105";
 }
 
 public enum LuaJitEventKind : byte
@@ -167,8 +170,8 @@ public sealed record LuaJitExecutorOptions
     public int MaximumTier2GuardFailures { get; init; } = 16;
 
     /// <summary>
-    /// Enables experimental loop on-stack replacement. It remains disabled by default until
-    /// representative steady-state benchmarks show at least a ten percent improvement.
+    /// Enables loop on-stack replacement. It remains disabled by default until the strengthened
+    /// startup, negative-workload, and exact-numeric qualification gates pass on every release RID.
     /// </summary>
     public bool EnableLoopOsr { get; init; }
 

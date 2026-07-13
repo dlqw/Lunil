@@ -193,6 +193,21 @@ $loopOsrResult = [pscustomobject]@{
     AllRidsAcceptAutomaticExactNumericOsr = @($loopOsrSelected | Where-Object {
         $_.LoopOsrEligibilityAccepted -le 0
     }).Count -eq 0
+    AllRidsRejectNegativeAutomaticOsr = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.EligibilityAccepted -ne 0
+        }).Count -ne 0
+    }).Count -eq 0
+    AllRidsAvoidNegativeGuardFailures = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.GuardFailures -ne 0
+        }).Count -ne 0
+    }).Count -eq 0
+    AllRidsPassNegativeStartupGate = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.StartupSpeedupVsDisabledMedian -lt 0.90
+        }).Count -ne 0
+    }).Count -eq 0
     AllRidsPassNegativeWorkloadGate = @($loopOsrSelected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0
     }).Count -eq 0

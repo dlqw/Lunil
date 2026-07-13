@@ -1595,6 +1595,75 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void LoopOsrDefersAnalysisUntilTheFunctionIsHot()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1_024,
+            SynchronousCompilation = true,
+        });
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile(
+            "local total=0; for i=1,8 do total=total+i end; return total");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
+
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.Equal(0, executor.Statistics.LoopOsrEntries);
+        Assert.DoesNotContain(events, static jitEvent => jitEvent.Kind is
+            LuaJitEventKind.LoopOsrEligibilityAccepted or
+            LuaJitEventKind.LoopOsrEligibilityRejected);
+    }
+
+    [Fact]
+    public void LoopOsrEligibilityWaitsForObservedExactNumericOperands()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
+        var module = Compile(
+            "local total=0; for i=1,8 do total=total+i end; return total");
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+
+        var pending = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+
+        Assert.False(pending.IsAutoEligible);
+        Assert.Equal(
+            LuaJitLoopOsrEligibilityReason.AwaitingExactNumericProfile,
+            pending.Reason);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
+
+        var accepted = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.True(accepted.IsAutoEligible);
+        Assert.Equal(LuaJitLoopOsrEligibilityReason.Eligible, accepted.Reason);
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityAccepted);
+    }
+
+    [Fact]
     public void LoopOsrUsesGuardedExactNumericCilForQualifiedLoops()
     {
         using var executor = CreateLoopOsrExecutor();
@@ -1691,6 +1760,78 @@ public sealed class LuaJitExecutorTests
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
         Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+    }
+
+    [Fact]
+    public void LoopOsrRejectsNonExactNumericProfileBeforeCompilation()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local value, limit = ...
+            local count = 0
+            while count < limit do
+                value = value + 1
+                count = count + 1
+            end
+            return count
+            """);
+        var state = new LuaState();
+        var metatable = state.CreateTable();
+        metatable.Set(
+            LuaValue.FromString(state.Strings.GetOrCreate("__add"u8)),
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "add",
+                static (_, arguments) => [arguments[0]])));
+        var value = state.CreateTable();
+        value.SetMetatable(metatable);
+
+        AssertValues(
+            executor.Execute(
+                state,
+                state.CreateMainClosure(module),
+                [LuaValue.FromTable(value), LuaValue.FromInteger(8)]),
+            LuaValue.FromInteger(8));
+
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        var eligibility = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.Equal(
+            LuaJitLoopOsrEligibilityReason.NonExactNumericProfile,
+            eligibility.Reason);
+        Assert.Equal(
+            LuaJitLoopOsrDiagnosticCodes.NonExactNumericProfile,
+            eligibility.DiagnosticCode);
+        Assert.Equal(
+            LuaJitOsrState.Ineligible,
+            executor.GetLoopOsrState(
+                module,
+                0,
+                plan.HeaderProgramCounter,
+                plan.BackedgeProgramCounter));
+        Assert.Contains(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrEligibilityRejected &&
+            jitEvent.DiagnosticCode == LuaJitLoopOsrDiagnosticCodes.NonExactNumericProfile);
+        Assert.DoesNotContain(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityAccepted);
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.Equal(0, executor.Statistics.LoopOsrGuardFailures);
     }
 
     [Fact]

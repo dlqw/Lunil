@@ -399,3 +399,51 @@ wall-clock timing on shared runners.
 
 The productionization decision and unchanged default are recorded in
 [ADR 0006](adr/0006-loop-osr-performance-productionization.md).
+
+## M14 Loop OSR default-rollout readiness
+
+The real M13 six-RID CI run `29238433084` passed every arithmetic, code-kind, allocation,
+compilation, liveness, and managed-installation requirement. Its minimum arithmetic bootstrap 95%
+lower bound was 7.215x, maximum Loop OSR compilation p95 was 5.978 ms, and every RID emitted
+`GuardedExactNumericCil`. It did not pass the rollout gate: fixed-order shared-runner comparisons
+placed one or more negative workload medians below 0.90 on win-x64, linux-x64, linux-arm64, and
+osx-arm64. The metamethod row also installed specialized OSR before discovering non-numeric table
+operands through guards.
+
+M14 makes three contract changes before any default rollout:
+
+1. natural-loop analysis and specialized-emitter initialization are delayed until verified function
+   backedges reach `LoopOsrBackedgeThreshold`;
+2. structurally specialized loops must observe every exact-numeric guard site successfully before
+   queue admission, while a non-exact operand produces permanent `JIT3105` rejection; and
+3. repeated processes alternate the `loop_osr`/`loop_osr_off` execution order. Negative qualification
+   now includes startup, warm throughput, automatic acceptance, guard failures, and managed installs.
+
+Five independent win-x64 Release processes, each with nine cold samples and
+`iterations=1,000,000`, produced:
+
+| Metric | M14 rollout-readiness Loop OSR |
+|---|---:|
+| Arithmetic median speedup vs interpreter | **8.670x** |
+| Bootstrap median 95% interval vs interpreter | **[6.765x, 10.089x]** |
+| Arithmetic median speedup vs OSR disabled | **115.995x** |
+| Bootstrap median 95% interval vs OSR disabled | **[86.944x, 127.997x]** |
+| Allocation slope | **0 B/iteration** |
+| Loop OSR compilation p95 | **3.538 ms** |
+| Compilation allocation p95 | 50,296 B |
+| Liveness cache hit rate | **100%** |
+| Code kind | `GuardedExactNumericCil` |
+| Specialized instructions / guards | 5 / 13 |
+| Eligibility evaluated / accepted / rejected | 1 / 1 / 0 |
+| Automatic managed arithmetic installations | **0** |
+
+The paired warm on/off medians were 0.993x for `lua_calls`, 0.982x for `table_access`, 1.007x for
+`metamethod`, and 0.987x for `coroutine_error_hook`. Their paired first-execution startup medians
+were 1.005x, 1.027x, 0.984x, and 1.002x. All four workloads reported zero automatic acceptance,
+zero managed installations, and zero OSR guard failures. The metamethod workload now reports
+`NonExactNumericProfile` instead of compiling specialized CIL.
+
+This local result qualifies the implementation but does not change `EnableLoopOsr=false`. A new
+real six-RID aggregate must report `AllRidsQualify=true` before the separate default-rollout change.
+The readiness decision is recorded in
+[ADR 0007](adr/0007-loop-osr-default-rollout-readiness.md).

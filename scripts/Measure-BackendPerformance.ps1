@@ -153,6 +153,8 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         LoopOsrEligibilityEvaluated = [long]$values.loop_osr_eligibility_evaluated
         LoopOsrEligibilityAccepted = [long]$values.loop_osr_eligibility_accepted
         LoopOsrEligibilityRejected = [long]$values.loop_osr_eligibility_rejected
+        LoopOsrEligibilityReason = $values.loop_osr_eligibility_reason
+        LoopOsrGuardFailures = [long]$values.loop_osr_guard_failures
         CompiledInvocations = [long]$values.compiled_invocations
         CompiledInstructions = [long]$values.compiled_instructions
         SchedulerExits = [long]$values.scheduler_exits
@@ -213,6 +215,9 @@ try {
         $arguments += @(
             '--', '--backend-only', "--cold-samples=$ColdSamples", $Iterations
         )
+        if (($round % 2) -eq 0) {
+            $arguments += '--reverse-loop-osr-pair'
+        }
         $lines = & dotnet @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "Backend performance runner failed in round $round."
@@ -334,6 +339,9 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
             $group.Group.LoopOsrEligibilityAccepted)
         LoopOsrEligibilityRejected = Get-Median @(
             $group.Group.LoopOsrEligibilityRejected)
+        LoopOsrEligibilityReason = @(
+            $group.Group.LoopOsrEligibilityReason | Sort-Object -Unique) -join '+'
+        LoopOsrGuardFailures = Get-Median @($group.Group.LoopOsrGuardFailures)
         AutoEligible = $eligibility.AutoEligible
         EligibilityReason = $eligibility.Reason
         BreakEven = $eligibility.BreakEven
@@ -466,6 +474,7 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
         $_.Workload -eq $workload -and $_.Name -eq 'loop_osr'
     } | Select-Object -First 1
     $ratios = [Collections.Generic.List[double]]::new()
+    $startupRatios = [Collections.Generic.List[double]]::new()
     foreach ($run in $records | Where-Object {
         $_.Workload -eq $workload -and $_.Name -eq 'loop_osr'
     }) {
@@ -479,13 +488,32 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
         }
 
         $ratios.Add($baseline.WarmNsOp / $run.WarmNsOp)
+        $startupRatios.Add($baseline.StartupMedianMs / $run.StartupMedianMs)
     }
 
     $interval = Get-BootstrapMedianInterval $ratios.ToArray()
     $median = Get-Median $ratios.ToArray()
+    $startupInterval = Get-BootstrapMedianInterval $startupRatios.ToArray()
+    $startupMedian = Get-Median $startupRatios.ToArray()
     if ($median -lt 0.90) {
         $loopOsrNegativeGateFailures.Add(
             "$workload Loop OSR-on/off median speedup is $median.")
+    }
+    if ($startupMedian -lt 0.90) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload Loop OSR-on/off startup median speedup is $startupMedian.")
+    }
+    if ($record.LoopOsrEligibilityAccepted -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload accepted automatic Loop OSR eligibility unexpectedly.")
+    }
+    if ($record.LoopOsrGuardFailures -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload observed $($record.LoopOsrGuardFailures) Loop OSR guard failures.")
+    }
+    if ($record.LoopOsrManagedCompilationCount -ne 0) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload installed $($record.LoopOsrManagedCompilationCount) managed Loop OSR methods.")
     }
 
     [pscustomobject]@{
@@ -493,8 +521,15 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
         SpeedupVsDisabledMedian = $median
         SpeedupVsDisabledCi95Lower = $interval.Lower
         SpeedupVsDisabledCi95Upper = $interval.Upper
+        StartupSpeedupVsDisabledMedian = $startupMedian
+        StartupSpeedupVsDisabledCi95Lower = $startupInterval.Lower
+        StartupSpeedupVsDisabledCi95Upper = $startupInterval.Upper
         CodeKind = $record.LoopOsrCodeKind
         ManagedCompilationCount = $record.LoopOsrManagedCompilationCount
+        EligibilityAccepted = $record.LoopOsrEligibilityAccepted
+        EligibilityRejected = $record.LoopOsrEligibilityRejected
+        EligibilityReason = $record.LoopOsrEligibilityReason
+        GuardFailures = $record.LoopOsrGuardFailures
     }
 }
 $loopOsrArithmeticRatios = [Collections.Generic.List[double]]::new()

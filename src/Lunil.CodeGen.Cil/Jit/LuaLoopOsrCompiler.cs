@@ -344,6 +344,59 @@ internal static class LuaLoopOsrEligibilityEvaluator
     }
 }
 
+internal static class LuaLoopOsrRuntimeEligibilityEvaluator
+{
+    public static bool RequiresExactNumericObservation(LuaIrInstruction instruction) =>
+        instruction.Opcode switch
+        {
+            LuaIrOpcode.Unary => (LuaIrUnaryOperator)instruction.C is
+                LuaIrUnaryOperator.Negate or LuaIrUnaryOperator.BitwiseNot,
+            LuaIrOpcode.Binary =>
+                (LuaIrBinaryOperator)instruction.D != LuaIrBinaryOperator.Concatenate,
+            _ => false,
+        };
+
+    public static bool HasExactNumericOperands(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        if (instruction.Opcode == LuaIrOpcode.Unary)
+        {
+            var operand = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                thread,
+                frame,
+                instruction.B);
+            return (LuaIrUnaryOperator)instruction.C == LuaIrUnaryOperator.BitwiseNot
+                ? operand.Kind == LuaValueKind.Integer
+                : IsExactNumber(operand);
+        }
+
+        if (instruction.Opcode != LuaIrOpcode.Binary)
+        {
+            return true;
+        }
+
+        var left = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.B);
+        var right = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.C);
+        var operation = (LuaIrBinaryOperator)instruction.D;
+        if (operation is
+            LuaIrBinaryOperator.BitwiseAnd or
+            LuaIrBinaryOperator.BitwiseOr or
+            LuaIrBinaryOperator.BitwiseXor or
+            LuaIrBinaryOperator.ShiftLeft or
+            LuaIrBinaryOperator.ShiftRight)
+        {
+            return left.Kind == LuaValueKind.Integer && right.Kind == LuaValueKind.Integer;
+        }
+
+        return IsExactNumber(left) && IsExactNumber(right);
+    }
+
+    private static bool IsExactNumber(LuaValue value) =>
+        value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
+}
+
 internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
 {
     public static CanonicalLuaLoopOsrCompiler Instance { get; } = new();
