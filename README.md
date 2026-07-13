@@ -28,10 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> Lunil is currently **`0.6.0-alpha.14`**. The compiler, managed runtime, and complete
-> Lua 5.4 standard library are functional and extensively tested, but the public API,
-> full official Lua test-suite coverage, and optimizing-backend performance are not yet stable.
-> It is not a production-stable Lua replacement yet.
+> The current source version is **`0.6.0-alpha.14`**. The compiler, managed runtime,
+> standard library, and qualified JIT/AOT paths are functional and covered by six-RID CI.
+> This tree is ready for an **alpha prerelease build**, not a beta, release candidate, or
+> stable release: the public API, full official Lua test-suite coverage, and long-term
+> compatibility/support contract are not frozen yet.
 
 ## Table of contents
 
@@ -74,8 +75,23 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Preview | Qualified Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR are enabled automatically; persisted CIL has validated collectible loading and production performance gates; all managed fallback paths remain explicit opt-ins |
-| Stability contract | Alpha | Breaking API changes remain possible before `1.0.0` |
+| JIT / AOT backends | Alpha-qualified | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
+| Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
+
+### Current backend readiness
+
+| Execution path | Release behavior | Readiness in `0.6.0-alpha.14` |
+| --- | --- | --- |
+| Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
+| CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
+| Exact-numeric Tier 2 JIT | Automatic promotion after Tier 1 qualification | Qualified on all six release RIDs; managed semantic profiles stay on Tier 1 unless explicitly enabled |
+| Exact-numeric loop OSR | Enabled by default after loop and runtime-value qualification | Qualified on all six release RIDs; non-exact loops are rejected before compilation |
+| Persisted CIL AOT | Explicit artifact compile, validation, collectible load, and execution | Runtime path and production performance gates qualified on all six release RIDs |
+| Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
+
+These results close the current JIT/AOT productionization milestone, but they do not by
+themselves freeze the whole product. Beta promotion additionally requires a frozen `0.6.0`
+feature/API scope; stable promotion requires an accepted RC and its compatibility criteria.
 
 ## Features
 
@@ -371,11 +387,31 @@ known non-goals of the current milestone.
 
 ## Packages and releases
 
-Lunil follows [SemVer 2.0](https://semver.org/). The current promotion sequence is:
+Lunil follows [SemVer 2.0](https://semver.org/). `X.Y.Z` and the prerelease suffix
+describe different things:
+
+| Version change | Use it for |
+| --- | --- |
+| `X` major | A new stable compatibility generation after `1.0.0`; increment when stable consumers must make intentional breaking migrations |
+| `Y` minor | The next pre-1.0 development milestone, or a backward-compatible feature release after `1.0.0` |
+| `Z` patch | Backward-compatible fixes and refinements to an already released stable `X.Y.0` line |
+| `alpha.N` | Active feature/API development; incomplete behavior and breaking changes are still expected |
+| `beta.N` | Feature and public-API scope frozen; compatibility, diagnostics, documentation, and performance hardening only |
+| `rc.N` | A stable-release candidate; only release-blocking fixes may enter |
+| no suffix | Stable release, promoted only from an accepted RC |
+
+The `0.6.0` promotion sequence is:
 
 ```text
 0.6.0-alpha.N -> 0.6.0-beta.N -> 0.6.0-rc.N -> 0.6.0
 ```
+
+The current release decision is **`0.6.0-alpha.14`**: JIT/AOT productionization is
+qualified, but the complete `0.6.0` feature/API scope is not frozen, so changing the
+suffix to `beta`, `rc`, or removing it would overstate stability. Prerelease counters
+increase for every published build within a channel and restart at `1` when entering a
+new channel. Once a version is tagged or published it is immutable; any follow-up fix
+uses the next number, for example `alpha.15`.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a

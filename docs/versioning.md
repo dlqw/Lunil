@@ -12,6 +12,40 @@ one version declared in `Directory.Build.props`:
 The resulting version is `0.6.0-alpha.14` and its tag is `v0.6.0-alpha.14`.
 `VersionSuffix` is removed for a stable release.
 
+The three numeric fields select the compatibility line; the optional suffix selects
+the maturity channel of a build on that line. A backend passing its performance gates
+does not by itself justify removing the suffix or promoting the entire product.
+
+## Choosing `X.Y.Z`
+
+- `X` is the stable compatibility generation. Before `1.0.0` it remains `0`. After
+  `1.0.0`, increment it only for intentional breaking changes to the supported stable API.
+- `Y` identifies the next pre-1.0 development milestone. After `1.0.0`, it identifies a
+  backward-compatible feature release. Starting work on the next planned milestone after
+  `0.6.0` therefore uses `0.7.0-alpha.1`, not `0.6.1-alpha.1`.
+- `Z` identifies backward-compatible fixes and refinements to a stable release line. A fix
+  for published `0.6.0` uses `0.6.1`; a fix while `0.6.0` is still in prerelease increments
+  that prerelease channel instead, for example `0.6.0-alpha.15`.
+
+Do not increment a numeric field merely because one feature branch was merged. Choose the
+numeric line from the intended compatibility milestone, then choose the suffix from the
+actual maturity and allowed-change policy.
+
+| Development work | Version action |
+| --- | --- |
+| Add or redesign a planned `0.6.0` feature while scope is still open | Publish the next `0.6.0-alpha.N` |
+| Freeze the complete `0.6.0` feature/API scope | Promote to `0.6.0-beta.1` |
+| Fix compatibility, diagnostics, docs, or performance during beta | Publish the next `0.6.0-beta.N` |
+| Declare the hardened beta ready for release-candidate validation | Promote to `0.6.0-rc.1` |
+| Fix a release blocker during RC | Publish the next `0.6.0-rc.N` |
+| Accept an RC without further code changes | Remove the suffix and publish `0.6.0` from the accepted commit |
+| Fix a backward-compatible defect after stable `0.6.0` | Publish `0.6.1` |
+| Begin the next feature/API milestone after `0.6.0` | Start `0.7.0-alpha.1` |
+
+Documentation-only release preparation does not consume a new prerelease number when the
+current number has not been published. Once `v0.6.0-alpha.14` exists, every code or release
+metadata correction must use `0.6.0-alpha.15` or a later appropriate version.
+
 ## Compatibility while below 1.0
 
 - Minor releases such as `0.6.0` may contain breaking public API changes.
@@ -21,11 +55,15 @@ The resulting version is `0.6.0-alpha.14` and its tag is `v0.6.0-alpha.14`.
 
 ## Prerelease channels
 
-1. `alpha.N`: active feature and API development; incomplete behavior is expected.
-2. `beta.N`: feature scope is frozen; compatibility, diagnostics, and performance are
-   being hardened.
-3. `rc.N`: release candidate; only release-blocking fixes are accepted.
-4. Stable: remove the suffix after an accepted release candidate, producing `X.Y.Z`.
+1. `alpha.N`: active feature and API development; incomplete behavior and breaking changes
+   are expected. New planned features may enter.
+2. `beta.N`: feature and public-API scope is frozen; compatibility, diagnostics,
+   documentation, and performance are being hardened. New planned features wait for the
+   next numeric milestone.
+3. `rc.N`: release candidate; only release-blocking fixes are accepted. Any substantial
+   feature or API redesign returns the milestone to an appropriate prerelease channel.
+4. Stable: remove the suffix only after an accepted release candidate, producing `X.Y.Z`.
+   A project must not jump directly from alpha or beta to a suffix-free release.
 
 Promotion for this milestone is therefore:
 
@@ -33,10 +71,22 @@ Promotion for this milestone is therefore:
 0.6.0-alpha.1 -> alpha.2 -> ... -> alpha.11 -> alpha.12 -> alpha.13 -> alpha.14 -> beta.1 -> ... -> rc.1 -> ... -> 0.6.0
 ```
 
-Numbers increase monotonically within a channel. Published versions and tags are
-immutable and are never deleted and reused. A fix after publication always receives a
-new prerelease number or patch version. Build metadata (`+metadata`) is reserved for
-local/CI provenance and is not used in release tags or package identities.
+Numbers increase monotonically within a channel and restart at `1` when the milestone
+enters a new channel (`alpha.14` to `beta.1`, not `beta.15`). Published versions and tags
+are immutable and are never deleted and reused. An unpublished version may be refined on
+its release branch before tagging, but a fix after publication always receives a new
+prerelease number or patch version. Build metadata (`+metadata`) is reserved for local/CI
+provenance and is not used in release tags or package identities.
+
+## Current `0.6.0-alpha.14` decision
+
+The interpreter, qualified CoreCLR Tier 1/Tier 2 JIT, exact-numeric loop OSR, persisted
+CIL AOT, build-time AOT, and NativeAOT integration have multi-platform CI and release-gate
+evidence. This makes `0.6.0-alpha.14` suitable for an alpha prerelease build.
+
+The full `0.6.0` public API and feature scope, complete official Lua test-suite coverage,
+and long-term compatibility/support contract are not frozen. Therefore the correct version
+remains `0.6.0-alpha.14`; `beta.1`, `rc.1`, and suffix-free `0.6.0` are not yet justified.
 
 ## Release procedure
 
