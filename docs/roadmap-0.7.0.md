@@ -31,15 +31,21 @@ annotation, workspace, CLI, and compatibility work will refine during alpha.
 
 ## Later alpha milestones
 
-### Annotation front end
+### Alpha 2: annotation front end
 
-- shared annotation lexer and type AST;
+`0.7.0-alpha.2` delivers:
+
+- a shared bounded annotation lexer and public type AST;
 - LuaLS as the default dialect;
-- separately implemented legacy EmmyLua input compatibility;
-- unknown-tag preservation, configurable diagnostics, suppression, and fuzzing;
-- annotation erasure at runtime.
+- separately dispatched legacy EmmyLua input compatibility;
+- unknown-tag preservation, configurable diagnostics, suppression, and deterministic bounded
+  random-byte parser fuzzing;
+- annotation results integrated into `LuaCompiler` while remaining erased from runtime IR.
 
-### Type and flow analysis
+Annotation syntax remains an Alpha API. Semantic type/flow interpretation follows in later
+milestones and must not treat parsed annotations as unchecked runtime truth.
+
+### Later Alpha: type and flow analysis
 
 - `any`, `unknown`, `never`, literal, union, intersection, class, alias, enum,
   structural table, array, map, function, overload, generic, vararg, tuple and

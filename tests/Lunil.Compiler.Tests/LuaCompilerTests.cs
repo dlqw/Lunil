@@ -1,4 +1,6 @@
 using System.Text;
+using Lunil.Core.Diagnostics;
+using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
 
 namespace Lunil.Compiler.Tests;
@@ -85,5 +87,41 @@ public sealed class LuaCompilerTests
 
         Assert.True(result.Succeeded);
         Assert.Equal(source, result.Source.Text.ToArray());
+    }
+
+    [Fact]
+    public void CompilePublishesAnnotationsWithoutChangingRuntimeLowering()
+    {
+        var result = new LuaCompiler().CompileUtf8(
+            "---@type string|number\nreturn 42",
+            "=annotations");
+
+        Assert.True(result.Succeeded);
+        var annotation = Assert.IsType<LuaTypeAnnotationSyntax>(
+            Assert.Single(result.Annotations.Annotations));
+        Assert.IsType<LuaUnionTypeSyntax>(Assert.Single(annotation.Types));
+        Assert.Empty(result.Diagnostics);
+        Assert.NotNull(result.Module);
+    }
+
+    [Fact]
+    public void ConfiguredAnnotationErrorsPreventModulePublication()
+    {
+        var compiler = new LuaCompiler(new LuaCompilerOptions
+        {
+            Annotations = new LuaAnnotationOptions
+            {
+                SyntaxDiagnosticSeverity = DiagnosticSeverity.Error,
+                ReportUnknownTags = true,
+            },
+        });
+
+        var result = compiler.CompileUtf8("---@vendor payload\nreturn 42");
+
+        Assert.False(result.Succeeded);
+        Assert.Null(result.Module);
+        Assert.Contains(result.Diagnostics, static diagnostic =>
+            diagnostic.Phase == LuaCompilationPhase.Annotation &&
+            diagnostic.Code == "LUA5002");
     }
 }

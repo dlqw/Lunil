@@ -99,4 +99,16 @@ public sealed class LuaHostTests
         Assert.Same(console, host.BufferedConsole);
         Assert.Equal("custom\n", Encoding.UTF8.GetString(console.GetStandardOutput()));
     }
+
+    [Fact]
+    public void AnnotationsAreErasedFromRuntimeExecution()
+    {
+        var host = new LuaHost();
+
+        var result = host.RunUtf8("---@type string\nreturn 42");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(42, Assert.Single(result.Execution!.Values).AsInteger());
+        Assert.Single(result.Compilation.Annotations.Annotations);
+    }
 }

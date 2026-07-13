@@ -6,10 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.7.0</VersionPrefix>
-<VersionSuffix>alpha.1</VersionSuffix>
+<VersionSuffix>alpha.2</VersionSuffix>
 ```
 
-The resulting version is `0.7.0-alpha.1` and its tag is `v0.7.0-alpha.1`.
+The resulting version is `0.7.0-alpha.2` and its tag is `v0.7.0-alpha.2`.
 `VersionSuffix` is removed for a stable release.
 
 The three numeric fields select the compatibility line; the optional suffix selects
@@ -45,8 +45,8 @@ actual maturity and allowed-change policy.
 | Begin the next feature/API milestone after `0.7.0` | Start `0.8.0-alpha.1` |
 
 Documentation-only release preparation does not consume a new prerelease number when the
-current number has not been published. Once `v0.7.0-alpha.1` exists, every code or release
-metadata correction must use `0.7.0-alpha.2` or a later appropriate version.
+current number has not been published. Once `v0.7.0-alpha.2` exists, every code or release
+metadata correction must use `0.7.0-alpha.3` or a later appropriate version.
 
 ## Compatibility while below 1.0
 
@@ -94,6 +94,14 @@ misleading beta, RC, or suffix-free `0.6.0`.
 New compiler, analysis, hosting, and package-boundary work starts at
 `0.7.0-alpha.1`. Its scope and promotion gates are defined in the
 [`0.7.0` roadmap](roadmap-0.7.0.md).
+
+## Current `0.7.0-alpha.2` decision
+
+`0.7.0-alpha.1` established the public compiler and hosting boundaries. The current
+`0.7.0-alpha.2` milestone adds the bounded LuaLS/legacy EmmyLua annotation syntax front end and
+integrates immutable annotation results into `LuaCompiler` while keeping runtime IR annotation
+free. Type/flow/module analysis, workspace and CLI scope are still open, so beta promotion is not
+yet justified.
 
 ## Release procedure
 
