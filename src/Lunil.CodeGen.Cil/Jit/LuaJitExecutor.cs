@@ -50,13 +50,6 @@ public sealed class LuaJitExecutor : IDisposable
         }
 
         var selectedLoopOsrCompiler = loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance;
-        if (IsDynamicCodeAvailable &&
-            options.EnableLoopOsr &&
-            selectedLoopOsrCompiler is CanonicalLuaLoopOsrCompiler)
-        {
-            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
-        }
-
         _registry = new LuaTieredJitRegistry(
             options,
             capabilities,

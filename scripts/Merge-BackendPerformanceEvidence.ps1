@@ -176,6 +176,13 @@ $loopOsrResult = [pscustomobject]@{
             Measure-Object ArithmeticSpeedupVsDisabledCi95Lower -Minimum).Minimum
     MaximumLoopOsrCompilationP95Ms = (
         $loopOsrSelected | Measure-Object LoopOsrCompilationP95Ms -Maximum).Maximum
+    MaximumLoopOsrPreparationP95Ms = (
+        $loopOsrSelected | Measure-Object LoopOsrPreparationP95Ms -Maximum).Maximum
+    MinimumWarmOperationsPerProcess = (
+        $loopOsrSelected | Measure-Object WarmOperationsPerProcess -Minimum).Minimum
+    AllRidsBalanceLoopOsrPairOrder = @($loopOsrSelected | Where-Object {
+        -not $_.BalancedLoopOsrPairOrder
+    }).Count -eq 0
     MinimumLoopOsrLivenessCacheHitRate = (
         $loopOsrSelected | Measure-Object LoopOsrLivenessCacheHitRate -Minimum).Minimum
     MaximumLoopOsrCompileAllocatedP95Bytes = (
@@ -192,6 +199,21 @@ $loopOsrResult = [pscustomobject]@{
     }).Count -eq 0
     AllRidsAcceptAutomaticExactNumericOsr = @($loopOsrSelected | Where-Object {
         $_.LoopOsrEligibilityAccepted -le 0
+    }).Count -eq 0
+    AllRidsRejectNegativeAutomaticOsr = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.EligibilityAccepted -ne 0
+        }).Count -ne 0
+    }).Count -eq 0
+    AllRidsAvoidNegativeGuardFailures = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.GuardFailures -ne 0
+        }).Count -ne 0
+    }).Count -eq 0
+    AllRidsPassNegativeStartupGate = @($loopOsrSelected | Where-Object {
+        @($_.NegativeWorkloadComparisons | Where-Object {
+            $_.StartupSpeedupVsDisabledMedian -lt 0.90
+        }).Count -ne 0
     }).Count -eq 0
     AllRidsPassNegativeWorkloadGate = @($loopOsrSelected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0

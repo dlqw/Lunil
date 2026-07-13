@@ -21,6 +21,9 @@ var iterations = iterationArgument is null
     ? 1_000_000
     : int.Parse(iterationArgument, CultureInfo.InvariantCulture);
 var backendOnly = args.Contains("--backend-only", StringComparer.Ordinal);
+var reverseLoopOsrPair = args.Contains(
+    "--reverse-loop-osr-pair",
+    StringComparer.Ordinal);
 var backendFilter = GetOption(args, "--backend=") ?? "all";
 var workloadFilter = GetOption(args, "--workload=") ?? "all";
 var coldSamples = int.Parse(
@@ -213,7 +216,10 @@ if (!backendOnly)
     });
 }
 
-var backendEvidenceOperations = Math.Max(5, Scaled(iterations));
+const int MinimumBackendEvidenceOperations = 30;
+var backendEvidenceOperations = Math.Max(
+    MinimumBackendEvidenceOperations,
+    Scaled(iterations));
 BackendEvidenceWorkload[] backendWorkloads =
 [
     new("arithmetic", ArithmeticSource(5_000)),
@@ -369,33 +375,19 @@ foreach (var workload in backendWorkloads.Where(item =>
                 workload.InstallStandardLibrary));
     }
 
-    if (ShouldRunBackend(backendFilter, "loop_osr_off"))
+    (string Name, bool Enabled)[] loopOsrPair = reverseLoopOsrPair
+        ? [("loop_osr", true), ("loop_osr_off", false)]
+        : [("loop_osr_off", false), ("loop_osr", true)];
+    foreach (var loopOsr in loopOsrPair)
     {
-        RunBackendEvidence(
-            workload.Name,
-            "loop_osr_off",
-            backendEvidenceModule,
-            backendEvidenceOperations,
-            coldSamples,
-            module => BackendEvidenceRunner.CreateJit(
-                module,
-                LuaJitExecutorOptions.Default with
-                {
-                    Policy = LuaJitPolicy.Auto,
-                    FunctionEntryThreshold = int.MaxValue,
-                    BackedgeThreshold = int.MaxValue,
-                    SynchronousCompilation = true,
-                    EnableTier2 = false,
-                    EnableLoopOsr = false,
-                },
-                workload.InstallStandardLibrary));
-    }
+        if (!ShouldRunBackend(backendFilter, loopOsr.Name))
+        {
+            continue;
+        }
 
-    if (ShouldRunBackend(backendFilter, "loop_osr"))
-    {
         RunBackendEvidence(
             workload.Name,
-            "loop_osr",
+            loopOsr.Name,
             backendEvidenceModule,
             backendEvidenceOperations,
             coldSamples,
@@ -408,8 +400,7 @@ foreach (var workload in backendWorkloads.Where(item =>
                     BackedgeThreshold = int.MaxValue,
                     SynchronousCompilation = true,
                     EnableTier2 = false,
-                    EnableLoopOsr = true,
-                    LoopOsrBackedgeThreshold = 1,
+                    EnableLoopOsr = loopOsr.Enabled,
                 },
                 workload.InstallStandardLibrary));
     }
@@ -524,6 +515,7 @@ static void RunBackendEvidence(
     var compilationMilliseconds = new List<double>();
     var tier1CompilationMilliseconds = new List<double>();
     var tier2CompilationMilliseconds = new List<double>();
+    var loopOsrPreparationMilliseconds = new List<double>();
     var loopOsrCompilationMilliseconds = new List<double>();
     var canonicalVerificationMilliseconds = new List<double>();
     var controlFlowAnalysisMilliseconds = new List<double>();
@@ -572,6 +564,7 @@ static void RunBackendEvidence(
             compilationMilliseconds,
             tier1CompilationMilliseconds,
             tier2CompilationMilliseconds,
+            loopOsrPreparationMilliseconds,
             loopOsrCompilationMilliseconds,
             canonicalVerificationMilliseconds,
             controlFlowAnalysisMilliseconds,
@@ -648,6 +641,7 @@ static void RunBackendEvidence(
         $"tier2_cil_emit_ms={JoinSamples(tier2CilEmissionMilliseconds)}, " +
         $"tier2_delegate_create_ms={JoinSamples(tier2DelegateCreationMilliseconds)}, " +
         $"tier2_allocated_bytes={JoinSamples(tier2CompileAllocatedBytes)}, " +
+        $"loop_osr_prepare_ms={JoinSamples(loopOsrPreparationMilliseconds)}, " +
         $"loop_osr_ir_verify_ms={JoinSamples(loopOsrIrVerificationMilliseconds)}, " +
         $"loop_osr_analysis_ms={JoinSamples(loopOsrAnalysisMilliseconds)}, " +
         $"loop_osr_specialization_plan_ms={JoinSamples(loopOsrSpecializationPlanningMilliseconds)}, " +
@@ -664,6 +658,7 @@ static void RunBackendEvidence(
         $"compilation_p95_ms={Percentile(compilationMilliseconds, 0.95):F3}, " +
         $"tier1_p95_ms={Percentile(tier1CompilationMilliseconds, 0.95):F3}, " +
         $"tier2_p95_ms={Percentile(tier2CompilationMilliseconds, 0.95):F3}, " +
+        $"loop_osr_prepare_p95_ms={Percentile(loopOsrPreparationMilliseconds, 0.95):F3}, " +
         $"loop_osr_p95_ms={Percentile(loopOsrCompilationMilliseconds, 0.95):F3}, " +
         $"canonical_verify_p95_ms={Percentile(canonicalVerificationMilliseconds, 0.95):F3}, " +
         $"cfg_liveness_p95_ms={Percentile(controlFlowAnalysisMilliseconds, 0.95):F3}, " +
@@ -702,6 +697,8 @@ static void RunBackendEvidence(
         $"loop_osr_eligibility_evaluated={statistics?.LoopOsrEligibilityEvaluated ?? 0}, " +
         $"loop_osr_eligibility_accepted={statistics?.LoopOsrEligibilityAccepted ?? 0}, " +
         $"loop_osr_eligibility_rejected={statistics?.LoopOsrEligibilityRejected ?? 0}, " +
+        $"loop_osr_eligibility_reason={warmed.LoopOsrEligibilityReason}, " +
+        $"loop_osr_guard_failures={statistics?.LoopOsrGuardFailures ?? 0}, " +
         $"compiled_invocations={statistics?.CompiledInvocations ?? 0}, " +
         $"compiled_instructions={compiledCanonicalInstructions}, " +
         $"scheduler_exits={schedulerExits}, " +
@@ -744,6 +741,7 @@ static void CollectCompilationDurations(
     List<double> all,
     List<double> tier1,
     List<double> tier2,
+    List<double> loopOsrPreparation,
     List<double> loopOsr,
     List<double> canonicalVerification,
     List<double> controlFlowAnalysis,
@@ -770,9 +768,16 @@ static void CollectCompilationDurations(
     foreach (var jitEvent in events.Where(static item => item.Kind is
                  LuaJitEventKind.CompilationCompleted or
                  LuaJitEventKind.Tier2CompilationCompleted or
+                 LuaJitEventKind.LoopOsrCompilerPrepared or
                  LuaJitEventKind.LoopOsrCompilationCompleted))
     {
         var milliseconds = jitEvent.Duration.TotalMilliseconds;
+        if (jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared)
+        {
+            loopOsrPreparation.Add(milliseconds);
+            continue;
+        }
+
         all.Add(milliseconds);
         switch (jitEvent.Tier)
         {
@@ -963,6 +968,13 @@ sealed class BackendEvidenceRunner : IDisposable
         jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted &&
         jitEvent.LoopOsrCompilationMetrics?.CodeKind ==
             LuaJitLoopOsrCodeKind.ManagedCanonicalProgram);
+
+    public LuaJitLoopOsrEligibilityReason? LoopOsrEligibilityReason => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind is
+                LuaJitEventKind.LoopOsrEligibilityAccepted or
+                LuaJitEventKind.LoopOsrEligibilityRejected)?
+        .LoopOsrEligibility?.Reason;
 
     public static BackendEvidenceRunner CreateInterpreter(
         LuaIrModule module,

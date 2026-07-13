@@ -77,7 +77,7 @@ jobs:
             Tee-Object -FilePath 'artifacts/benchmarks/${{ matrix.rid }}.txt'
       - name: Record repeated Tier 1, Tier 2, and Loop OSR qualification evidence
         shell: pwsh
-        run: ./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 -Iterations 1000000 -Configuration Release -NoBuild
+        run: ./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 -Iterations 1000000 -Configuration Release -NoBuild
       - uses: actions/upload-artifact@v7
         with:
           name: backend-performance-${{ matrix.rid }}
