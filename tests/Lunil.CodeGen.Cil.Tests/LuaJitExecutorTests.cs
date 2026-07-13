@@ -20,19 +20,19 @@ namespace Lunil.CodeGen.Cil.Tests;
 public sealed class LuaJitExecutorTests
 {
     [Fact]
-    public void ReleaseDefaultEnablesQualifiedTier1AndExactNumericTier2AutoPolicy()
+    public void ReleaseDefaultEnablesQualifiedTier1Tier2AndLoopOsrAutoPolicy()
     {
         Assert.Equal(LuaJitPolicy.Auto, LuaJitExecutorOptions.Default.Policy);
         Assert.True(LuaJitExecutorOptions.Default.EnableTier2);
         Assert.False(LuaJitExecutorOptions.Default.EnableTier2ManagedFallback);
-        Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsr);
+        Assert.True(LuaJitExecutorOptions.Default.EnableLoopOsr);
         Assert.False(LuaJitExecutorOptions.Default.EnableLoopOsrManagedFallback);
 
         var constructed = new LuaJitExecutorOptions();
         Assert.Equal(LuaJitPolicy.Auto, constructed.Policy);
         Assert.True(constructed.EnableTier2);
         Assert.False(constructed.EnableTier2ManagedFallback);
-        Assert.False(constructed.EnableLoopOsr);
+        Assert.True(constructed.EnableLoopOsr);
         Assert.False(constructed.EnableLoopOsrManagedFallback);
     }
 
@@ -1537,19 +1537,82 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void LoopOsrRemainsCompletelyDisabledByDefault()
+    public void DefaultLoopOsrCompilesQualifiedExactNumericLoops()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
             Policy = LuaJitPolicy.Auto,
             FunctionEntryThreshold = int.MaxValue,
             BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            LoopOsrBackedgeThreshold = 1,
             SynchronousCompilation = true,
         });
-        var module = Compile(
-            "local total = 0; for i = 1, 8 do total = total + i end; return total");
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile("""
+            local total, first, second, index = 0, 0, 1, 0
+            while index < 200 do
+                local next = first + second
+                first = second
+                second = next
+                total = total + (next & 1023)
+                index = index + 1
+            end
+            return total
+            """);
 
-        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
+        _ = ExecuteFresh(executor, module);
+
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        var eligibility = executor.GetLoopOsrEligibility(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.True(eligibility.IsAutoEligible);
+        Assert.Equal(
+            LuaJitLoopOsrCodeKind.GuardedExactNumericCil,
+            eligibility.ExpectedCodeKind);
+        Assert.Equal(
+            LuaJitOsrState.Ready,
+            executor.GetLoopOsrState(
+                module,
+                0,
+                plan.HeaderProgramCounter,
+                plan.BackedgeProgramCounter));
+        Assert.Contains(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrEligibilityAccepted);
+        Assert.Contains(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
+        var completed = Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(
+            LuaJitLoopOsrCodeKind.GuardedExactNumericCil,
+            completed.LoopOsrCompilationMetrics?.CodeKind);
+        Assert.True(executor.Statistics.LoopOsrRequests >= 1);
+        Assert.True(executor.Statistics.LoopOsrEntries >= 1);
+    }
+
+    [Fact]
+    public void ExplicitLoopOsrDisableRemainsCompleteOptOut()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = false,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
+        var module = Compile(
+            "local total = 0; for i = 1, 2000 do total = total + i end; return total");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2_001_000));
 
         var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
         Assert.Equal(
@@ -1559,12 +1622,20 @@ public sealed class LuaJitExecutorTests
                 0,
                 plan.HeaderProgramCounter,
                 plan.BackedgeProgramCounter));
+        Assert.DoesNotContain(events, static jitEvent => jitEvent.Kind is
+            LuaJitEventKind.LoopOsrEligibilityAccepted or
+            LuaJitEventKind.LoopOsrEligibilityRejected or
+            LuaJitEventKind.LoopOsrCompilerPrepared or
+            LuaJitEventKind.LoopOsrQueued or
+            LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
         Assert.Equal(0, executor.Statistics.LoopOsrRequests);
         Assert.Equal(0, executor.Statistics.LoopOsrEntries);
     }
 
     [Fact]
-    public void LoopOsrDoesNotRunWhenDynamicCodeIsUnavailable()
+    public void DefaultLoopOsrDoesNotRunWhenDynamicCodeIsUnavailable()
     {
         using var executor = CreateExecutor(
             LuaJitExecutorOptions.Default with
@@ -1573,11 +1644,12 @@ public sealed class LuaJitExecutorTests
                 FunctionEntryThreshold = int.MaxValue,
                 BackedgeThreshold = int.MaxValue,
                 EnableTier2 = false,
-                EnableLoopOsr = true,
                 LoopOsrBackedgeThreshold = 1,
                 SynchronousCompilation = true,
             },
             capabilities: new TestDynamicCodeCapabilities(false, false));
+        var events = new List<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
         var module = Compile("local n=0; while n<4 do n=n+1 end; return n");
 
         AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(4));
@@ -1590,7 +1662,15 @@ public sealed class LuaJitExecutorTests
                 0,
                 plan.HeaderProgramCounter,
                 plan.BackedgeProgramCounter));
+        Assert.DoesNotContain(events, static jitEvent => jitEvent.Kind is
+            LuaJitEventKind.LoopOsrEligibilityAccepted or
+            LuaJitEventKind.LoopOsrEligibilityRejected or
+            LuaJitEventKind.LoopOsrCompilerPrepared or
+            LuaJitEventKind.LoopOsrQueued or
+            LuaJitEventKind.LoopOsrCompilationCompleted);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.Equal(0, executor.Statistics.LoopOsrRequests);
         Assert.Equal(0, executor.Statistics.LoopOsrEntries);
     }
 
@@ -1717,7 +1797,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void LoopOsrRejectsManagedBoundaryWithoutExplicitFallback()
+    public void DefaultLoopOsrRejectsManagedBoundaryWithoutCompilation()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -1725,7 +1805,6 @@ public sealed class LuaJitExecutorTests
             FunctionEntryThreshold = int.MaxValue,
             BackedgeThreshold = int.MaxValue,
             EnableTier2 = false,
-            EnableLoopOsr = true,
             LoopOsrBackedgeThreshold = 1,
             SynchronousCompilation = true,
         });
@@ -1774,7 +1853,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void LoopOsrRejectsNonExactNumericProfileBeforeCompilation()
+    public void DefaultLoopOsrRejectsNonExactNumericProfileBeforeCompilation()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -1782,7 +1861,6 @@ public sealed class LuaJitExecutorTests
             FunctionEntryThreshold = int.MaxValue,
             BackedgeThreshold = int.MaxValue,
             EnableTier2 = false,
-            EnableLoopOsr = true,
             LoopOsrBackedgeThreshold = 1,
             SynchronousCompilation = true,
         });
