@@ -343,6 +343,14 @@ branch、mono/poly table PIC、known-closure call guard 与 fixed result-window 
 canonical PC 与 live register。guard failure 在零重复副作用的 PC 恢复 reference executor；连续失败达到阈值
 会丢弃 Tier 2、保留 Tier 1、合并新 profile 后重新 promotion。debug/hook epoch 变化走同一精确 deopt 边界。
 
+精确 integer、float 与 mixed-numeric profile 会进一步生成 `ExactNumericSpecializedCil`
+`DynamicMethod`，在 CIL 中直接执行 entry guard、预算预留、ABI v2 unchecked register 访问、canonical
+control flow 与数值 helper；tag guard 失败从原 canonical PC deopt。包含 table PIC、known call、constant
+fold 等尚未完整发射组合的 plan 继续使用 `ManagedProfileProgram`，不会生成部分专门化方法。Tier 2
+编译事件分别记录 IR verification、liveness/cache hit、optimization planning、CIL emission、delegate
+creation、allocation、代码形态与专门化/deopt 数量。register liveness 由 module owner-scoped weak cache
+在 Tier 1、Tier 2、Loop OSR 与 persisted AOT 之间共享。
+
 实验性 loop OSR 由 `EnableLoopOsr` 独立控制，默认关闭。CFG 分析只接受 target 为基本块 leader、
 header 支配 backedge source 的 natural loop；编译请求不会在分支执行前发出，而是在 backedge 已完成且
 同一 frame 的 canonical PC 已提交到 header 后发出。entry map 使用 liveness 将 interpreter canonical
@@ -364,6 +372,12 @@ M8 将启动、稳态吞吐、分配、编译 p95、RSS、code bytes 和 persist
 编译延迟收口后，六 RID 的 Tier 1 arithmetic bootstrap 95% 下界均超过 2 倍、编译 p95 均低于
 5 ms、allocation slope 均为 0，且 negative workload gate 无失败。M10 据此只将 Tier 1 默认迁移为
 `Auto`；Tier 2 与 Loop OSR 继续独立 opt-in。
+
+M11 的 win-x64 五进程精确数值证据达到 9.492 倍 arithmetic median speedup、bootstrap 95% 下界
+9.124 倍、6.442 ms Tier 2 compile p95 与零 allocation slope。该结果将 exact-numeric Tier 2
+生产化为显式 opt-in 路径，但 managed table/call/metamethod profile 尚未获得非回归资格，所以
+`EnableTier2` 默认值不变。详细决策见
+[ADR 0004](adr/0004-tier2-exact-numeric-productionization.md)。
 
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 和 artifact identity 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结；当前 unchecked

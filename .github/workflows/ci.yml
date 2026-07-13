@@ -75,7 +75,7 @@ jobs:
           dotnet run --project benchmarks/Lunil.Runtime.Benchmarks/Lunil.Runtime.Benchmarks.csproj `
             --configuration Release --no-build -- 1000000 |
             Tee-Object -FilePath 'artifacts/benchmarks/${{ matrix.rid }}.txt'
-      - name: Record repeated Tier 1 qualification evidence
+      - name: Record repeated Tier 1 and Tier 2 qualification evidence
         shell: pwsh
         run: ./scripts/Measure-BackendPerformance.ps1 -Rounds 5 -ColdSamples 9 -Iterations 1000000 -Configuration Release -NoBuild
       - uses: actions/upload-artifact@v7
@@ -93,7 +93,7 @@ jobs:
           if-no-files-found: error
 
   backend-performance-decision:
-    name: Aggregate Tier 1 six-RID evidence
+    name: Aggregate Tier 1/Tier 2 six-RID evidence
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: backend-performance-six-rid-decision
-          path: artifacts/backend-performance/tier1-six-rid-decision.json
+          path: artifacts/backend-performance/*-six-rid-decision.json
           if-no-files-found: error
 
   formatting-and-packages:

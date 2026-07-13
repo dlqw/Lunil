@@ -123,6 +123,17 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         ReflectionEmitP95Ms = [double]::Parse($values.reflection_emit_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         DelegateCreateP95Ms = [double]::Parse($values.delegate_create_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         CompileAllocatedP95Bytes = [double]::Parse($values.compile_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2IrVerifyP95Ms = [double]::Parse($values.tier2_ir_verify_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2LivenessP95Ms = [double]::Parse($values.tier2_liveness_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2LivenessCacheHitRate = [double]::Parse($values.tier2_liveness_cache_hit_rate, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2OptimizationPlanP95Ms = [double]::Parse($values.tier2_optimization_plan_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CilEmitP95Ms = [double]::Parse($values.tier2_cil_emit_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2DelegateCreateP95Ms = [double]::Parse($values.tier2_delegate_create_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CompileAllocatedP95Bytes = [double]::Parse($values.tier2_compile_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
+        Tier2CodeKind = $values.tier2_code_kind
+        Tier2OptimizationCount = [int]$values.tier2_optimization_count
+        Tier2SpecializedOptimizationCount = [int]$values.tier2_specialized_optimization_count
+        Tier2DeoptSiteCount = [int]$values.tier2_deopt_site_count
         CompiledInvocations = [long]$values.compiled_invocations
         CompiledInstructions = [long]$values.compiled_instructions
         SchedulerExits = [long]$values.scheduler_exits
@@ -257,12 +268,26 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         AllocationRatioVsInterpreterMedian = Get-Median $allocationRatios.ToArray()
         AllocationSlopeBytesIteration = Get-Median @($group.Group.AllocationSlopeBytesIteration)
         CompilationP95Ms = Get-Median @($group.Group.CompilationP95Ms)
+        Tier1P95Ms = Get-Median @($group.Group.Tier1P95Ms)
+        Tier2P95Ms = Get-Median @($group.Group.Tier2P95Ms)
         PlanVerifyP95Ms = Get-Median @($group.Group.PlanVerifyP95Ms)
         ReflectionEmitP95Ms = Get-Median @($group.Group.ReflectionEmitP95Ms)
         CompileAllocatedP95Bytes = Get-Median @($group.Group.CompileAllocatedP95Bytes)
+        Tier2IrVerifyP95Ms = Get-Median @($group.Group.Tier2IrVerifyP95Ms)
+        Tier2LivenessP95Ms = Get-Median @($group.Group.Tier2LivenessP95Ms)
+        Tier2LivenessCacheHitRate = Get-Median @($group.Group.Tier2LivenessCacheHitRate)
+        Tier2OptimizationPlanP95Ms = Get-Median @($group.Group.Tier2OptimizationPlanP95Ms)
+        Tier2CilEmitP95Ms = Get-Median @($group.Group.Tier2CilEmitP95Ms)
+        Tier2DelegateCreateP95Ms = Get-Median @($group.Group.Tier2DelegateCreateP95Ms)
+        Tier2CompileAllocatedP95Bytes = Get-Median @($group.Group.Tier2CompileAllocatedP95Bytes)
         InstructionsPerSchedulerExit = Get-Median @($group.Group.InstructionsPerSchedulerExit)
         RssPeakDeltaBytes = Get-Median @($group.Group.RssPeakDeltaBytes)
         EstimatedCodeBytes = Get-Median @($group.Group.EstimatedCodeBytes)
+        Tier2CodeKind = @($group.Group.Tier2CodeKind | Sort-Object -Unique) -join '+'
+        Tier2OptimizationCount = Get-Median @($group.Group.Tier2OptimizationCount)
+        Tier2SpecializedOptimizationCount = Get-Median @(
+            $group.Group.Tier2SpecializedOptimizationCount)
+        Tier2DeoptSiteCount = Get-Median @($group.Group.Tier2DeoptSiteCount)
         AutoEligible = $eligibility.AutoEligible
         EligibilityReason = $eligibility.Reason
         BreakEven = $eligibility.BreakEven
@@ -272,6 +297,9 @@ $summary | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'summary.json') -Encoding utf8
 $tier1Arithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier1'
+} | Select-Object -First 1
+$tier2Arithmetic = $summary | Where-Object {
+    $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier2'
 } | Select-Object -First 1
 $negativeGateFailures = [Collections.Generic.List[string]]::new()
 foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
@@ -304,6 +332,37 @@ $decision = [pscustomobject]@{
 }
 $decision | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'tier1-decision.json') -Encoding utf8
+$tier2Decision = [pscustomobject]@{
+    Rid = $effectiveRid
+    Rounds = $Rounds
+    ColdSamplesPerProcess = $ColdSamples
+    ArithmeticSpeedupMedian = $tier2Arithmetic.SpeedupVsInterpreterMedian
+    ArithmeticSpeedupCi95Lower = $tier2Arithmetic.SpeedupVsInterpreterCi95Lower
+    ArithmeticSpeedupCi95Upper = $tier2Arithmetic.SpeedupVsInterpreterCi95Upper
+    ArithmeticAllocationSlopeBytesIteration = $tier2Arithmetic.AllocationSlopeBytesIteration
+    Tier2CompilationP95Ms = $tier2Arithmetic.Tier2P95Ms
+    Tier2CodeKind = $tier2Arithmetic.Tier2CodeKind
+    Tier2OptimizationCount = $tier2Arithmetic.Tier2OptimizationCount
+    Tier2SpecializedOptimizationCount = $tier2Arithmetic.Tier2SpecializedOptimizationCount
+    Tier2DeoptSiteCount = $tier2Arithmetic.Tier2DeoptSiteCount
+    Tier2IrVerifyP95Ms = $tier2Arithmetic.Tier2IrVerifyP95Ms
+    Tier2LivenessP95Ms = $tier2Arithmetic.Tier2LivenessP95Ms
+    Tier2LivenessCacheHitRate = $tier2Arithmetic.Tier2LivenessCacheHitRate
+    Tier2OptimizationPlanP95Ms = $tier2Arithmetic.Tier2OptimizationPlanP95Ms
+    Tier2CilEmitP95Ms = $tier2Arithmetic.Tier2CilEmitP95Ms
+    Tier2DelegateCreateP95Ms = $tier2Arithmetic.Tier2DelegateCreateP95Ms
+    Tier2CompileAllocatedP95Bytes = $tier2Arithmetic.Tier2CompileAllocatedP95Bytes
+    QualifiesThisRid =
+        $tier2Arithmetic.SpeedupVsInterpreterMedian -ge 4.0 -and
+        $tier2Arithmetic.SpeedupVsInterpreterCi95Lower -ge 4.0 -and
+        [Math]::Abs($tier2Arithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
+        $tier2Arithmetic.Tier2P95Ms -lt 10.0 -and
+        $tier2Arithmetic.Tier2CodeKind -eq 'ExactNumericSpecializedCil' -and
+        $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0
+}
+$tier2Decision | ConvertTo-Json | Set-Content `
+    -LiteralPath (Join-Path $outputDirectory 'tier2-decision.json') -Encoding utf8
 $summary | Format-Table -AutoSize
 $decision | Format-List
+$tier2Decision | Format-List
 Write-Host "Backend performance evidence written to $outputDirectory"

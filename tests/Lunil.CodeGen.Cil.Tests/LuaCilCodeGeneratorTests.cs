@@ -548,6 +548,38 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void OwnerScopedLivenessCacheReusesAnalysisWithoutKeepingModuleAlive()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+
+        var first = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            module.Functions[0],
+            out var firstHit);
+        var second = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            module.Functions[0],
+            out var secondHit);
+
+        Assert.False(firstHit);
+        Assert.True(secondHit);
+        Assert.Same(first, second);
+
+        var moduleReference = CreateLivenessCachedModuleWeakReference();
+        for (var attempt = 0; attempt < 10 && moduleReference.IsAlive; attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(moduleReference.IsAlive);
+    }
+
+    [Fact]
     public void RejectsEvaluationStackUnderflow()
     {
         var plan = MinimalPlan(
@@ -986,6 +1018,20 @@ public sealed class LuaCilCodeGeneratorTests
             0,
             includeInstructionObservation: false);
         Assert.True(result.Succeeded);
+        return new WeakReference(module);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference CreateLivenessCachedModuleWeakReference()
+    {
+        var module = CreateModule(
+            registerCount: 1,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
+        _ = LuaRegisterLiveness.AnalyzeCached(
+            module,
+            module.Functions[0],
+            out _);
         return new WeakReference(module);
     }
 

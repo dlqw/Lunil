@@ -3,6 +3,7 @@ using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Runtime.CodeGen;
 
@@ -31,16 +32,18 @@ public static class LuaCodegenAbiV2
             frame.Base <= context.Thread.Stack.Capacity - registerCount;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static LuaValue ReadRegisterUnchecked(
         LuaThread thread,
         LuaFrame frame,
-        int register) => thread.Stack[frame.Base + register];
+        int register) => thread.Stack.ReadUnchecked(frame.Base + register);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void WriteRegisterUnchecked(
         LuaThread thread,
         LuaFrame frame,
         int register,
-        LuaValue value) => thread.Stack[frame.Base + register] = value;
+        LuaValue value) => thread.Stack.WriteUnchecked(frame.Base + register, value);
 
     public static void ClearRegistersUnchecked(
         LuaThread thread,

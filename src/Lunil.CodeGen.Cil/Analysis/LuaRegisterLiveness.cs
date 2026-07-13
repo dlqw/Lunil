@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Lunil.IR.Canonical;
 using Lunil.CodeGen.Cil.Planning;
 
@@ -11,6 +12,8 @@ public sealed record LuaRegisterLivenessResult(
 
 public static class LuaRegisterLiveness
 {
+    private static readonly ConditionalWeakTable<LuaIrModule, ModuleCache> Caches = new();
+
     public static LuaRegisterLivenessResult Analyze(
         LuaIrModule module,
         LuaIrFunction function,
@@ -84,6 +87,22 @@ public static class LuaRegisterLiveness
             before.MoveToImmutable(),
             after.MoveToImmutable(),
             gcMaps.ToImmutable());
+    }
+
+    internal static LuaRegisterLivenessResult AnalyzeCached(
+        LuaIrModule module,
+        LuaIrFunction function,
+        out bool cacheHit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        ArgumentNullException.ThrowIfNull(function);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Caches.GetValue(module, static _ => new ModuleCache()).GetOrAdd(
+            module,
+            function,
+            out cacheHit,
+            cancellationToken);
     }
 
     private static bool[][] CreateMatrix(
@@ -295,4 +314,34 @@ public static class LuaRegisterLiveness
             .Where(static item => item.isLive)
             .Select(static item => item.register)
             .ToImmutableArray();
+
+    private sealed class ModuleCache
+    {
+        private readonly Lock _gate = new();
+        private readonly Dictionary<LuaIrFunction, LuaRegisterLivenessResult> _results =
+            new(ReferenceEqualityComparer.Instance);
+
+        public LuaRegisterLivenessResult GetOrAdd(
+            LuaIrModule module,
+            LuaIrFunction function,
+            out bool cacheHit,
+            CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_results.TryGetValue(function, out var cached))
+                {
+                    cacheHit = true;
+                    return cached;
+                }
+
+                var result = Analyze(module, function, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _results.Add(function, result);
+                cacheHit = false;
+                return result;
+            }
+        }
+    }
 }

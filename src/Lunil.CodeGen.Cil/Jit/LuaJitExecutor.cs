@@ -41,11 +41,19 @@ public sealed class LuaJitExecutor : IDisposable
             ReflectionEmitLuaTier1Compiler.PrepareCompiler();
         }
 
+        var selectedTier2Compiler = tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance;
+        if (IsDynamicCodeAvailable &&
+            options.EnableTier2 &&
+            selectedTier2Compiler is ProfileGuidedLuaTier2Compiler)
+        {
+            ReflectionEmitLuaTier2Compiler.PrepareCompiler();
+        }
+
         _registry = new LuaTieredJitRegistry(
             options,
             capabilities,
             compiler,
-            tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance,
+            selectedTier2Compiler,
             loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }

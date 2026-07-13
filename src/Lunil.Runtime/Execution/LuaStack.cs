@@ -1,5 +1,6 @@
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Runtime.Execution;
 
@@ -37,6 +38,20 @@ public sealed class LuaStack
             EnsureCapacity(index + 1);
             _values[index] = value;
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal LuaValue ReadUnchecked(int index) => _values[index];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void WriteUnchecked(int index, LuaValue value)
+    {
+        if (value.TryGetGcObject() is not null)
+        {
+            _owner.Owner.WriteBarrier(_owner, value);
+        }
+
+        _values[index] = value;
     }
 
     public void EnsureCapacity(int required)

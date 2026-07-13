@@ -201,6 +201,20 @@ public readonly record struct LuaJitCompilationMetrics(
     int PlanInstructionCount,
     long EstimatedCodeBytes);
 
+public readonly record struct LuaJitTier2CompilationMetrics(
+    TimeSpan CanonicalVerificationDuration,
+    TimeSpan LivenessAnalysisDuration,
+    bool LivenessCacheHit,
+    TimeSpan OptimizationPlanningDuration,
+    TimeSpan CilEmissionDuration,
+    TimeSpan DelegateCreationDuration,
+    long AllocatedBytes,
+    LuaJitTier2CodeKind CodeKind,
+    int OptimizationCount,
+    int SpecializedOptimizationCount,
+    int DeoptSiteCount,
+    long EstimatedCodeBytes);
+
 public sealed record LuaJitEvent(
     LuaJitEventKind Kind,
     string ModuleContentId,
@@ -211,7 +225,8 @@ public sealed record LuaJitEvent(
     string? DiagnosticCode = null,
     LuaJitCompilationTier Tier = LuaJitCompilationTier.Tier1,
     LuaJitCompilationMetrics? CompilationMetrics = null,
-    LuaJitFunctionEligibility? Eligibility = null);
+    LuaJitFunctionEligibility? Eligibility = null,
+    LuaJitTier2CompilationMetrics? Tier2CompilationMetrics = null);
 
 public sealed class LuaJitException : Exception
 {
