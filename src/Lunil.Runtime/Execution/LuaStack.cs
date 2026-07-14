@@ -34,7 +34,7 @@ public sealed class LuaStack
         {
             ArgumentOutOfRangeException.ThrowIfNegative(index);
             _owner.Owner.ValidateValue(value);
-            _owner.Owner.WriteBarrier(_owner, value);
+            _owner.Owner.WriteBarrierBack(_owner, value);
             EnsureCapacity(index + 1);
             _values[index] = value;
         }
@@ -48,7 +48,7 @@ public sealed class LuaStack
     {
         if (value.TryGetGcObject() is not null)
         {
-            _owner.Owner.WriteBarrier(_owner, value);
+            _owner.Owner.WriteBarrierBack(_owner, value);
         }
 
         _values[index] = value;

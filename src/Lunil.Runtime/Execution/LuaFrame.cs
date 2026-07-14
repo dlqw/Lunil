@@ -29,6 +29,8 @@ public sealed class LuaFrame
         Continuation.IsCloseHandler = isCloseHandler;
         IsDebugHook = isDebugHook;
         IsHidden = isHidden;
+        HasSourceLineInformation = closure.Function.Instructions.Any(
+            static instruction => instruction.SourceLine > 0);
     }
 
     public LuaClosure Closure { get; }
@@ -53,11 +55,29 @@ public sealed class LuaFrame
 
     public bool IsTailCall { get; internal set; }
 
+    public string? DebugFunctionName { get; internal set; }
+
+    public string? DebugFunctionNameWhat { get; internal set; }
+
+    internal LuaValue DebugFunctionOverride { get; set; }
+
     internal int LastDebugHookLine { get; set; } = -1;
+
+    internal int LastDebugHookProgramCounter { get; set; } = -1;
+
+    internal int LastLineHookProgramCounter { get; set; } = -1;
+
+    internal bool HasSourceLineInformation { get; }
 
     internal int DebugHookCheckedProgramCounter { get; set; } = -1;
 
+    internal string? DispatchedDebugHookEvent { get; set; }
+
     internal int ReturnHookProgramCounter { get; set; } = -1;
+
+    internal int NativeCallHookProgramCounter { get; set; } = -1;
+
+    internal int NativeCallSourceLine { get; set; } = -1;
 
     internal LuaValue[] VarArgStorage => (LuaValue[])VarArgs;
 

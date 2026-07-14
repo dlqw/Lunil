@@ -80,6 +80,35 @@ public sealed class LuaGarbageCollectorTests
     }
 
     [Fact]
+    public void BackwardBarrierDuringSweepPreservesANewChild()
+    {
+        var options = new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StepObjectBudget = 1 },
+        };
+        var state = new LuaState(options);
+        var parent = state.CreateTable();
+        var child = state.CreateTable();
+        state.SetGlobal("parent", LuaValue.FromTable(parent));
+
+        state.Heap.Step(1);
+        while (state.Heap.Phase != LuaGcPhase.Sweep)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.Equal(LuaGcColor.White, child.Color);
+        parent.Set(LuaValue.FromInteger(1), LuaValue.FromTable(child));
+        while (state.Heap.Phase != LuaGcPhase.Paused)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.True(child.IsAlive);
+        Assert.Equal(LuaValue.FromTable(child), parent.Get(LuaValue.FromInteger(1)));
+    }
+
+    [Fact]
     public void GenerationalCollectionRemembersOldToYoungWrites()
     {
         var state = new LuaState(new LuaStateOptions

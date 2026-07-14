@@ -119,6 +119,16 @@ public static class CilWellKnownCalls
         [CilStackValueKind.Thread, CilStackValueKind.Frame, CilStackValueKind.Int32],
         CilStackValueKind.Void);
 
+    public static CilCallTarget ReadTruthyAndSetFrameTopUnchecked { get; } = Call(
+        "LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32);
+
     public static CilCallTarget CanSkipClose { get; } = Call(
         "LuaCodegenAbiV2.CanSkipClose",
         [CilStackValueKind.Frame, CilStackValueKind.Int32],
@@ -249,6 +259,7 @@ public static class CilWellKnownCalls
             WriteRegisterUnchecked,
             ClearRegistersUnchecked,
             SetFrameTopUnchecked,
+            ReadTruthyAndSetFrameTopUnchecked,
             CanSkipClose,
             ObserveCanonicalInstruction,
             ExecuteCanonicalInstruction,

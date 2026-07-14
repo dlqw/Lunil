@@ -811,10 +811,16 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                         return BudgetPoll(context, pc);
                     }
 
-                    var truthy = LuaCodegenAbiV1.ReadRegister(
-                        thread,
-                        frame,
-                        instruction.A).IsTruthy;
+                    var truthy = instruction.D != 0
+                        ? LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked(
+                            thread,
+                            frame,
+                            instruction.A,
+                            instruction.C)
+                        : LuaCodegenAbiV1.ReadRegister(
+                            thread,
+                            frame,
+                            instruction.A).IsTruthy;
                     var taken = instruction.Opcode == LuaIrOpcode.JumpIfTrue
                         ? truthy
                         : !truthy;

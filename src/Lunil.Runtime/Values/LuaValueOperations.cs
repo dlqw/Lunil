@@ -7,6 +7,30 @@ namespace Lunil.Runtime.Values;
 
 public static class LuaValueOperations
 {
+    public static string TypeName(LuaValue value)
+    {
+        var metatable = value.Kind switch
+        {
+            LuaValueKind.Table => value.AsTable().Metatable,
+            LuaValueKind.Userdata => value.AsUserdata().Metatable,
+            _ => null,
+        };
+        if (metatable?.GetStringField("__name"u8) is { Kind: LuaValueKind.String } customName)
+        {
+            return customName.AsString().ToString();
+        }
+
+        return BasicTypeName(value);
+    }
+
+    public static string BasicTypeName(LuaValue value) =>
+        value.Kind switch
+        {
+            LuaValueKind.Integer or LuaValueKind.Float => "number",
+            LuaValueKind.LightUserdata => "userdata",
+            _ => value.Kind.ToString().ToLowerInvariant(),
+        };
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static LuaValue UnaryIntegerSpecialized(
         LuaIrUnaryOperator operation,
@@ -172,7 +196,8 @@ public static class LuaValueOperations
             LuaValue.FromInteger(operand.AsString().Length),
         LuaIrUnaryOperator.Length when operand.Kind == LuaValueKind.Table =>
             LuaValue.FromInteger(operand.AsTable().ArrayLength),
-        _ => throw new LuaRuntimeException($"Cannot apply {operation} to {operand.Kind}."),
+        _ => throw new LuaRuntimeException(
+            $"Cannot apply {operation} to {TypeName(operand)}."),
     };
 
     public static LuaValue Binary(
@@ -287,7 +312,7 @@ public static class LuaValueOperations
             value.AsInteger().ToString(CultureInfo.InvariantCulture)),
         LuaValueKind.Float => System.Text.Encoding.ASCII.GetBytes(
             FormatFloat(value.AsFloat())),
-        _ => throw new LuaRuntimeException($"Cannot concatenate a {value.Kind} value."),
+        _ => throw new LuaRuntimeException($"Cannot concatenate a {TypeName(value)} value."),
     };
 
     private static bool LessThan(LuaValue left, LuaValue right)
@@ -308,7 +333,8 @@ public static class LuaValueOperations
             return left.AsString().AsSpan().SequenceCompareTo(right.AsString().AsSpan()) < 0;
         }
 
-        throw new LuaRuntimeException($"Cannot compare {left.Kind} with {right.Kind}.");
+        throw new LuaRuntimeException(
+            $"Cannot compare {TypeName(left)} with {TypeName(right)}.");
     }
 
     private static bool LessThanOrEqual(LuaValue left, LuaValue right)
@@ -329,7 +355,8 @@ public static class LuaValueOperations
             return left.AsString().AsSpan().SequenceCompareTo(right.AsString().AsSpan()) <= 0;
         }
 
-        throw new LuaRuntimeException($"Cannot compare {left.Kind} with {right.Kind}.");
+        throw new LuaRuntimeException(
+            $"Cannot compare {TypeName(left)} with {TypeName(right)}.");
     }
 
     private static int CompareNumbers(LuaValue left, LuaValue right)
@@ -410,7 +437,7 @@ public static class LuaValueOperations
     {
         if (divisor == 0)
         {
-            throw new LuaRuntimeException("Attempt to divide by zero.");
+            throw new LuaRuntimeException("attempt to divide by zero");
         }
 
         if (divisor == -1)
@@ -432,7 +459,7 @@ public static class LuaValueOperations
     {
         if (divisor == 0)
         {
-            throw new LuaRuntimeException("Attempt to perform modulo by zero.");
+            throw new LuaRuntimeException("attempt to perform 'n%0'");
         }
 
         if (divisor == -1)
@@ -490,7 +517,7 @@ public static class LuaValueOperations
 
     private static double ToNumber(LuaValue value) => TryToNumber(value, out var number)
         ? number.AsFloat()
-        : throw new LuaRuntimeException($"Expected number, got {value.Kind}.");
+        : throw new LuaRuntimeException($"Expected number, got {TypeName(value)}.");
 
     private static long ToInteger(LuaValue value) => value.TryGetInteger(out var integer)
         ? integer

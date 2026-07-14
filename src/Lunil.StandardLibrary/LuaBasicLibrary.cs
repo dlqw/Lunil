@@ -68,17 +68,35 @@ internal static class LuaBasicLibrary
             return arguments.ToArray();
         }
 
-        var error = arguments.Length > 1
-            ? arguments[1]
-            : LuaLibraryHelpers.String(state, "assertion failed!");
-        throw new LuaRuntimeException(error);
+        if (arguments.Length <= 1)
+        {
+            throw new LuaRuntimeException("assertion failed!");
+        }
+
+        throw new LuaRuntimeException(arguments[1]);
     }
 
     private static LuaValue[] Error(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
-        _ = state;
         var error = arguments.Length == 0 ? LuaValue.Nil : arguments[0];
-        _ = LuaLibraryHelpers.OptionalInteger(arguments, 1, 1, "error");
+        var level = LuaLibraryHelpers.OptionalInteger(arguments, 1, 1, "error");
+        if (error.Kind == LuaValueKind.String && level > 0 && level <= int.MaxValue &&
+            state.RunningThread is { } thread &&
+            LuaDebugApi.GetFrame(state, thread, (int)level - 1) is { } frame)
+        {
+            var line = LuaDebugApi.GetCurrentLine(thread, frame);
+            if (line > 0)
+            {
+                var prefix = Encoding.UTF8.GetBytes(
+                    $"{LuaLibraryHelpers.ShortSource(frame.Closure.Function.SourceName)}:{line}: ");
+                var message = error.AsString().AsSpan();
+                var bytes = new byte[prefix.Length + message.Length];
+                prefix.CopyTo(bytes, 0);
+                message.CopyTo(bytes.AsSpan(prefix.Length));
+                error = LuaValue.FromString(state.Strings.GetOrCreate(bytes));
+            }
+        }
+
         throw new LuaRuntimeException(error);
     }
 
@@ -290,7 +308,7 @@ internal static class LuaBasicLibrary
     private static LuaValue[] Type(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "type");
-        return [LuaLibraryHelpers.String(state, LuaLibraryHelpers.TypeName(value))];
+        return [LuaLibraryHelpers.String(state, LuaValueOperations.BasicTypeName(value))];
     }
 
     private static LuaNativeStep ToStringStep(
@@ -423,6 +441,11 @@ internal static class LuaBasicLibrary
         var option = arguments.Length == 0 || arguments[0].IsNil
             ? "collect"
             : Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 0, "collectgarbage"));
+        if (state.IsRunningFinalizer && option == "collect")
+        {
+            return [LuaValue.FromBoolean(false)];
+        }
+
         return option switch
         {
             "stop" => StopGc(state),
@@ -465,7 +488,14 @@ internal static class LuaBasicLibrary
     private static LuaValue[] StepGc(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var size = LuaLibraryHelpers.OptionalInteger(arguments, 1, 0, "collectgarbage");
-        var budget = size <= 0 ? 1 : checked((int)Math.Max(1, size * 16));
+        // In generational mode Lua's zero-sized step performs a complete young
+        // collection. Leaving it as a single object of incremental work makes the
+        // observable result depend on unrelated allocations before the call.
+        var budget = state.Heap.Mode == LuaGcMode.Generational && size == 0
+            ? int.MaxValue / 4
+            : size <= 0
+                ? 1
+                : checked((int)Math.Max(1, size * 16));
         state.Heap.Step(budget);
         return [LuaValue.FromBoolean(state.Heap.Phase == LuaGcPhase.Paused)];
     }
@@ -516,7 +546,8 @@ internal static class LuaBasicLibrary
                         LuaValue.FromBoolean(hasEnvironment),
                         environment,
                     ],
-                    callIsYieldable: false);
+                    callIsYieldable: false,
+                    callIsProtected: true);
             }
 
             var bytes = LuaLibraryHelpers.CheckStringBytes(values, 0, "load");
@@ -524,7 +555,25 @@ internal static class LuaBasicLibrary
         }
 
         var stateValues = context.InvocationState;
-        if (values.Length == 0 || values[0].IsNil)
+        if (values.Length == 0 || values[0].Kind != LuaValueKind.Boolean)
+        {
+            throw new InvalidOperationException(
+                "A protected load reader callback did not report its status.");
+        }
+
+        if (!values[0].AsBoolean())
+        {
+            return LuaNativeStep.Completed(
+                LuaValue.Nil,
+                values.Length > 1
+                    ? values[1]
+                    : LuaLibraryHelpers.String(context.State, "load reader failed"));
+        }
+
+        var readerValues = values[1..];
+        if (readerValues.Length == 0 || readerValues[0].IsNil ||
+            readerValues[0].Kind == LuaValueKind.String &&
+            readerValues[0].AsString().Length == 0)
         {
             var chunks = stateValues.Skip(5).SelectMany(static value => value.AsString().ToArray()).ToArray();
             return FinishLoad(
@@ -536,7 +585,19 @@ internal static class LuaBasicLibrary
                 stateValues[4]);
         }
 
-        var nextChunk = LuaLibraryHelpers.CheckStringBytes(values, 0, "load reader");
+        byte[] nextChunk;
+        try
+        {
+            nextChunk = LuaLibraryHelpers.CheckStringBytes(readerValues, 0, "load reader");
+        }
+        catch (LuaRuntimeException exception)
+        {
+            var error = exception.HasErrorValue
+                ? exception.ErrorValue
+                : LuaLibraryHelpers.String(context.State, exception.Message);
+            return LuaNativeStep.Completed(LuaValue.Nil, error);
+        }
+
         return LuaNativeStep.CallLua(
             stateValues[0],
             [],
@@ -546,7 +607,8 @@ internal static class LuaBasicLibrary
                 .. stateValues,
                 LuaValue.FromString(context.State.Strings.GetOrCreate(nextChunk)),
             ],
-            callIsYieldable: false);
+            callIsYieldable: false,
+            callIsProtected: true);
     }
 
     private static LuaValue[] LoadFile(LuaState state, ReadOnlySpan<LuaValue> arguments)
@@ -671,7 +733,10 @@ internal static class LuaBasicLibrary
                 {
                     var message = lowering.Diagnostics.IsEmpty
                         ? "failed to compile chunk"
-                        : lowering.Diagnostics[0].Message;
+                        : FormatLoadDiagnostic(
+                            source,
+                            chunkName,
+                            SelectLoadDiagnostic(lowering.Diagnostics));
                     return LuaNativeStep.Completed(
                         LuaValue.Nil,
                         LuaLibraryHelpers.String(state, message));
@@ -704,6 +769,142 @@ internal static class LuaBasicLibrary
                 LuaValue.Nil,
                 LuaLibraryHelpers.String(state, exception.Message));
         }
+    }
+
+    private static string FormatLoadDiagnostic(
+        SourceText source,
+        byte[] chunkName,
+        Lunil.Core.Diagnostics.Diagnostic diagnostic)
+    {
+        var location = source.GetLocation(Math.Min(diagnostic.Span.Start, source.Length));
+        var prefix = $"{LuaLibraryHelpers.ShortSource(chunkName)}:{location.Line + 1}: ";
+        if (diagnostic.Code == "LUA2001" &&
+            diagnostic.Span.Start >= source.Length &&
+            source.Length > 512)
+        {
+            // PUC Lua's recursive production for an unfinished, very long list
+            // exhausts its parser stack before it can report the missing token.
+            return $"{prefix}C stack overflow";
+        }
+
+        var message = diagnostic.Code switch
+        {
+            "LUA1006" => "malformed number",
+            "LUA2006" => "C stack overflow",
+            "LUA2001" => "expected token",
+            "LUA2002" => "unexpected symbol",
+            "LUA2004" => "syntax error",
+            _ => diagnostic.Message,
+        };
+        if (diagnostic.Code is "LUA1002" or "LUA1003" or "LUA1004" or "LUA1005" ||
+            diagnostic.Span.Start >= source.Length)
+        {
+            return $"{prefix}{message} near <eof>";
+        }
+
+        var line = source.GetLineSpan(location.Line);
+        var contextSpan = GetLoadDiagnosticContextSpan(source, line, diagnostic);
+        const int maximumContextBytes = 96;
+        var start = Math.Max(line.Start, contextSpan.Start);
+        var end = Math.Min(
+            line.End,
+            Math.Max(contextSpan.End, contextSpan.Start + 1));
+        if (end - start > maximumContextBytes)
+        {
+            start = end - maximumContextBytes;
+        }
+
+        var nearBytes = source.AsSpan()[start..end];
+        var near = nearBytes.Length == 1 && (nearBytes[0] < 0x20 || nearBytes[0] >= 0x7f)
+            ? $"<\\{nearBytes[0]}>"
+            : Encoding.UTF8.GetString(nearBytes);
+        return $"{prefix}{message} near '{near}'";
+    }
+
+    private static Lunil.Core.Text.TextSpan GetLoadDiagnosticContextSpan(
+        SourceText source,
+        Lunil.Core.Text.TextSpan line,
+        Lunil.Core.Diagnostics.Diagnostic diagnostic)
+    {
+        var start = diagnostic.Span.Start;
+        var end = diagnostic.Span.End;
+        if (diagnostic.Code is "LUA1009" or "LUA1010" or "LUA1011" or
+            "LUA1012" or "LUA1013" or "LUA1014")
+        {
+            start = FindQuotedTokenStart(source.AsSpan()[line.Start..start]) + line.Start;
+            end = diagnostic.Code switch
+            {
+                // Lua reports the character that made an escape invalid. For an
+                // otherwise complete escape that character is the closing quote.
+                "LUA1010" or "LUA1011" or "LUA1012" or "LUA1013" => end + 1,
+                // The UTF-8 overflow is known only after reading '}', but Lua's
+                // near-token stops immediately before that delimiter.
+                "LUA1014" => end - 1,
+                _ => end,
+            };
+        }
+
+        return Lunil.Core.Text.TextSpan.FromBounds(
+            Math.Clamp(start, line.Start, line.End),
+            Math.Clamp(end, Math.Clamp(start, line.Start, line.End), line.End));
+    }
+
+    private static int FindQuotedTokenStart(ReadOnlySpan<byte> prefix)
+    {
+        var quotedStart = -1;
+        byte quote = 0;
+        for (var position = 0; position < prefix.Length; position++)
+        {
+            var current = prefix[position];
+            if (quote == 0)
+            {
+                if (current is (byte)'\'' or (byte)'"')
+                {
+                    quote = current;
+                    quotedStart = position;
+                }
+
+                continue;
+            }
+
+            if (current == (byte)'\\')
+            {
+                position++;
+            }
+            else if (current == quote)
+            {
+                quote = 0;
+                quotedStart = -1;
+            }
+        }
+
+        return quotedStart >= 0 ? quotedStart : prefix.Length;
+    }
+
+    private static Lunil.Core.Diagnostics.Diagnostic SelectLoadDiagnostic(
+        ImmutableArray<Lunil.Core.Diagnostics.Diagnostic> diagnostics)
+    {
+        var invalidStatements = diagnostics.Where(static diagnostic =>
+            diagnostic.Severity == Lunil.Core.Diagnostics.DiagnosticSeverity.Error &&
+            diagnostic.Code == "LUA2004").ToArray();
+        if (invalidStatements.Length > 1)
+        {
+            // Recovery reports the leading identifier as an invalid statement and
+            // then the token that made the statement impossible. Lua stops at that
+            // second token (for example, "syntax error" reports near 'error').
+            return invalidStatements[1];
+        }
+
+        foreach (var diagnostic in diagnostics)
+        {
+            if (diagnostic.Severity == Lunil.Core.Diagnostics.DiagnosticSeverity.Error &&
+                diagnostic.Code is not ("LUA1002" or "LUA1003" or "LUA1004" or "LUA1005"))
+            {
+                return diagnostic;
+            }
+        }
+
+        return diagnostics[0];
     }
 
     private static LuaTable CheckTable(

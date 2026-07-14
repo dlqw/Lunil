@@ -281,24 +281,11 @@ public sealed class SystemLuaOperatingSystem : ILuaOperatingSystem
 
     public string? SetLocale(string? locale, string category)
     {
-        if (locale is null)
-        {
-            return System.Globalization.CultureInfo.CurrentCulture.Name;
-        }
-
-        try
-        {
-            var culture = locale.Length == 0
-                ? System.Globalization.CultureInfo.InstalledUICulture
-                : System.Globalization.CultureInfo.GetCultureInfo(locale);
-            System.Globalization.CultureInfo.CurrentCulture = culture;
-            System.Globalization.CultureInfo.CurrentUICulture = culture;
-            return culture.Name;
-        }
-        catch (System.Globalization.CultureNotFoundException)
-        {
-            return null;
-        }
+        // The managed lexer, number conversion, collation, and formatting contracts are
+        // deliberately culture-invariant. Advertising an arbitrary CLR culture here would
+        // claim that every corresponding Lua locale category changed when none of them did,
+        // as well as mutate process-wide host state. Lua only requires the portable C locale.
+        return locale is null or "" or "C" ? "C" : null;
     }
 
     private static System.Diagnostics.Process StartShell(

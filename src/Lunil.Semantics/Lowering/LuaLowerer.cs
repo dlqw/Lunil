@@ -110,6 +110,8 @@ public static class LuaLowerer
 
         private sealed class FunctionBuilder
         {
+            private const int Lua54SetListFieldsPerFlush = 50;
+
             private readonly Implementation _owner;
             private readonly LuaFunctionInfo _info;
             private readonly FunctionBuilder? _parent;
@@ -119,6 +121,8 @@ public static class LuaLowerer
             private readonly Dictionary<int, int> _upvalueBySymbol = [];
             private readonly Dictionary<int, int> _symbolRegisters = [];
             private readonly List<int> _activeSymbolIds = [];
+            private readonly List<int> _activeSyntheticCloseRegisters = [];
+            private readonly List<int> _activeToBeClosedRegisters = [];
             private readonly List<Scope> _scopes = [];
             private readonly List<GotoPatch> _gotos = [];
             private readonly List<PendingLocal> _locals = [];
@@ -154,6 +158,15 @@ public static class LuaLowerer
             public LuaIrFunction Build()
             {
                 var code = _instructions.ToImmutableArray();
+                if (_maximumRegister > 255)
+                {
+                    _owner._diagnostics.Add(new Diagnostic(
+                        "LUA4003",
+                        DiagnosticSeverity.Error,
+                        _info.Span,
+                        "Function or expression needs too many registers."));
+                }
+
                 foreach (var local in _locals)
                 {
                     local.EndProgramCounter ??= code.Length;
@@ -234,7 +247,10 @@ public static class LuaLowerer
                 }
             }
 
-            private void LowerBlock(LuaSyntaxNode block, bool createScope = true)
+            private void LowerBlock(
+                LuaSyntaxNode block,
+                bool createScope = true,
+                bool terminalLabelsEndScope = true)
             {
                 if (createScope)
                 {
@@ -246,7 +262,8 @@ public static class LuaLowerer
                 for (var index = 0; index < statements.Length; index++)
                 {
                     var statement = statements[index];
-                    if (!terminalScopeClosed && statement.Kind == LuaSyntaxKind.LabelStatement &&
+                    if (terminalLabelsEndScope && !terminalScopeClosed &&
+                        statement.Kind == LuaSyntaxKind.LabelStatement &&
                         statements[index..].All(static following =>
                             following.Kind is LuaSyntaxKind.LabelStatement or LuaSyntaxKind.EmptyStatement))
                     {
@@ -335,10 +352,15 @@ public static class LuaLowerer
                 var variables = GetChild(statement, LuaSyntaxKind.VariableList).ChildNodes().ToArray();
                 var targets = variables.Select(PrepareTarget).ToArray();
                 var values = Reserve(variables.Length);
-                LowerExpressionList(GetChild(statement, LuaSyntaxKind.ExpressionList), values, variables.Length);
+                var expressionList = GetChild(statement, LuaSyntaxKind.ExpressionList);
+                LowerExpressionList(expressionList, values, variables.Length);
+                var finalExpression = expressionList.ChildNodes().Last();
+                var storeLine = SourceLineAt(finalExpression.Span.Length == 0
+                    ? finalExpression.Span.Start
+                    : finalExpression.Span.End - 1);
                 for (var index = 0; index < targets.Length; index++)
                 {
-                    StoreTarget(targets[index], values + index, statement.Span);
+                    StoreTarget(targets[index], values + index, statement.Span, storeLine);
                 }
             }
 
@@ -383,22 +405,42 @@ public static class LuaLowerer
 
             private AssignmentTarget PrepareGlobalTarget(LuaSymbol environment, LuaSyntaxToken token)
             {
+                var firstInstruction = _instructions.Count;
                 var table = Reserve(1);
                 LoadSymbol(environment, table, token.Span);
                 var key = Reserve(1);
                 LoadString(key, token, token.Span);
+                for (var index = firstInstruction; index < _instructions.Count; index++)
+                {
+                    _instructions[index] = _instructions[index] with { SourceLine = 0 };
+                }
+
                 return AssignmentTarget.Table(table, key);
             }
 
-            private void StoreTarget(AssignmentTarget target, int source, TextSpan span)
+            private void StoreTarget(
+                AssignmentTarget target,
+                int source,
+                TextSpan span,
+                int sourceLine = 0)
             {
                 switch (target.Kind)
                 {
                     case AssignmentTargetKind.Register:
-                        Emit(new LuaIrInstruction(LuaIrOpcode.Move, target.First, source, span: span));
+                        Emit(new LuaIrInstruction(
+                            LuaIrOpcode.Move,
+                            target.First,
+                            source,
+                            span: span,
+                            sourceLine: sourceLine));
                         break;
                     case AssignmentTargetKind.Upvalue:
-                        Emit(new LuaIrInstruction(LuaIrOpcode.SetUpvalue, target.First, source, span: span));
+                        Emit(new LuaIrInstruction(
+                            LuaIrOpcode.SetUpvalue,
+                            target.First,
+                            source,
+                            span: span,
+                            sourceLine: sourceLine));
                         break;
                     case AssignmentTargetKind.Table:
                         Emit(new LuaIrInstruction(
@@ -406,7 +448,8 @@ public static class LuaLowerer
                             target.First,
                             target.Second,
                             source,
-                            span: span));
+                            span: span,
+                            sourceLine: sourceLine));
                         break;
                 }
             }
@@ -509,6 +552,33 @@ public static class LuaLowerer
 
                 var expressions = expressionList.ChildNodes().ToArray();
                 var first = Reserve(Math.Max(expressions.Length, 1));
+                if (expressions.Length == 1 && expressions[0].Kind is
+                    LuaSyntaxKind.CallExpression or LuaSyntaxKind.MethodCallExpression)
+                {
+                    LowerExpression(expressions[0], first, -1);
+                    var call = _instructions[^1];
+                    if (call.Opcode != LuaIrOpcode.Call)
+                    {
+                        throw new InvalidOperationException(
+                            "A tail-call expression did not end in a call instruction.");
+                    }
+
+                    if (_activeToBeClosedRegisters.Count == 0)
+                    {
+                        _instructions[^1] = call with { Opcode = LuaIrOpcode.TailCall };
+                    }
+                    else
+                    {
+                        Emit(new LuaIrInstruction(
+                            LuaIrOpcode.Return,
+                            first,
+                            -1,
+                            span: statement.Span));
+                    }
+
+                    return;
+                }
+
                 var open = IsExpandable(expressions[^1]);
                 LowerExpressionList(expressionList, first, open ? -1 : expressions.Length);
                 Emit(new LuaIrInstruction(
@@ -599,7 +669,10 @@ public static class LuaLowerer
                 var loop = new LoopContext(_scopes[^1], ActiveRegisters());
                 _loops.Push(loop);
                 var nodes = statement.ChildNodes().ToArray();
-                LowerBlock(GetChild(statement, LuaSyntaxKind.Block), createScope: false);
+                LowerBlock(
+                    GetChild(statement, LuaSyntaxKind.Block),
+                    createScope: false,
+                    terminalLabelsEndScope: false);
                 var condition = Reserve(1);
                 LowerExpression(nodes[^1], condition, 1);
                 var exit = Emit(new LuaIrInstruction(
@@ -672,6 +745,8 @@ public static class LuaLowerer
             {
                 EnterScope();
                 var expressionList = GetChild(statement, LuaSyntaxKind.ExpressionList);
+                var iteratorExpression = expressionList.ChildNodes().First();
+                var iteratorLine = SourceLineAt(iteratorExpression.Span.Start);
                 var controlBase = Reserve(4);
                 LowerExpressionList(expressionList, controlBase, 4);
                 _nextRegister = controlBase + 4;
@@ -680,6 +755,11 @@ public static class LuaLowerer
                     LuaIrOpcode.MarkToBeClosed,
                     controlBase + 3,
                     span: statement.Span));
+                // The fourth generic-for control register is an implicit to-be-closed
+                // local. It has no bound symbol, but a goto leaving this loop must still
+                // close it (and every nested local) before reaching its label.
+                _activeSyntheticCloseRegisters.Add(controlBase + 3);
+                _activeToBeClosedRegisters.Add(controlBase + 3);
                 for (var index = 0; index < 4; index++)
                 {
                     AddSyntheticLocal("(for state)");
@@ -706,7 +786,9 @@ public static class LuaLowerer
                     call,
                     2,
                     nameTokens.Length,
-                    span: statement.Span));
+                    (int)LuaIrCallKind.ForIterator,
+                    span: statement.Span,
+                    sourceLine: iteratorLine));
                 for (var index = 0; index < nameTokens.Length; index++)
                 {
                     Emit(new LuaIrInstruction(
@@ -824,7 +906,11 @@ public static class LuaLowerer
             }
 
             private int[] ActiveRegisters() =>
-                _activeSymbolIds.Select(symbolId => _symbolRegisters[symbolId]).ToArray();
+                [
+                    .. _activeSymbolIds.Select(symbolId => _symbolRegisters[symbolId])
+                        .Concat(_activeSyntheticCloseRegisters)
+                        .Order(),
+                ];
 
             private void LowerExpressionList(LuaSyntaxNode list, int destination, int resultCount)
             {
@@ -960,17 +1046,37 @@ public static class LuaLowerer
                     return;
                 }
 
-                var left = Reserve(1);
+                var temporaryBase = _nextRegister;
+                var leftStart = _instructions.Count;
+                LowerExpression(nodes[0], destination, 1);
+                _nextRegister = temporaryBase;
+                var leftLine = SourceLineAt(nodes[0].Span.Start);
+                var operatorLine = SourceLineAt(token.Span.Start);
+                if (leftLine != operatorLine)
+                {
+                    for (var index = leftStart; index < _instructions.Count; index++)
+                    {
+                        if (_instructions[index].SourceLine == leftLine)
+                        {
+                            _instructions[index] = _instructions[index] with
+                            {
+                                SourceLine = operatorLine,
+                            };
+                        }
+                    }
+                }
+
                 var right = Reserve(1);
-                LowerExpression(nodes[0], left, 1);
                 LowerExpression(nodes[1], right, 1);
                 Emit(new LuaIrInstruction(
                     LuaIrOpcode.Binary,
                     destination,
-                    left,
+                    destination,
                     right,
                     (int)GetBinaryOperator(token.Kind),
-                    expression.Span));
+                    expression.Span,
+                    sourceLine: operatorLine));
+                _nextRegister = temporaryBase;
             }
 
             private static LuaIrBinaryOperator GetBinaryOperator(LuaTokenKind kind) => kind switch
@@ -1019,6 +1125,7 @@ public static class LuaLowerer
             {
                 var nodes = expression.ChildNodes().ToArray();
                 var argumentList = GetChild(expression, LuaSyntaxKind.ArgumentList);
+                var callLine = SourceLineAt(argumentList.Span.Start);
                 var arguments = argumentList.ChildNodes().FirstOrDefault(static node =>
                     node.Kind == LuaSyntaxKind.ExpressionList)?.ChildNodes().ToArray() ??
                     argumentList.ChildNodes().Where(static node =>
@@ -1060,7 +1167,8 @@ public static class LuaLowerer
                     baseRegister,
                     openArguments ? -1 : implicitArgumentCount + arguments.Length,
                     resultCount,
-                    span: expression.Span));
+                    span: expression.Span,
+                    sourceLine: callLine));
             }
 
             private void LowerTable(LuaSyntaxNode expression, int destination)
@@ -1069,6 +1177,7 @@ public static class LuaLowerer
                 var fields = expression.ChildNodes().Where(static node =>
                     node.Kind == LuaSyntaxKind.TableField).ToArray();
                 var arrayIndex = 1;
+                var fieldTemporaryBase = _nextRegister;
                 for (var index = 0; index < fields.Length; index++)
                 {
                     var field = fields[index];
@@ -1090,11 +1199,27 @@ public static class LuaLowerer
                         }
 
                         Emit(new LuaIrInstruction(LuaIrOpcode.SetTable, destination, key, value, span: field.Span));
+                        _nextRegister = fieldTemporaryBase;
                         continue;
                     }
 
-                    var source = Reserve(1);
                     var isOpen = index == fields.Length - 1 && IsExpandable(nodes[0]);
+                    int source;
+                    if (isOpen)
+                    {
+                        // Lua 5.4 SETLIST consumes open results from a register window
+                        // whose table is immediately before the current 50-field block.
+                        // Keep that scratch window above all live registers while still
+                        // reusing temporaries across arbitrarily large constructors.
+                        var offset = (arrayIndex - 1) % Lua54SetListFieldsPerFlush + 1;
+                        source = checked(fieldTemporaryBase + offset);
+                        EnsureRegisters(source, 1);
+                    }
+                    else
+                    {
+                        source = Reserve(1);
+                    }
+
                     LowerExpression(nodes[0], source, isOpen ? -1 : 1);
                     Emit(new LuaIrInstruction(
                         LuaIrOpcode.SetList,
@@ -1104,6 +1229,7 @@ public static class LuaLowerer
                         isOpen ? -1 : 1,
                         field.Span));
                     arrayIndex++;
+                    _nextRegister = fieldTemporaryBase;
                 }
             }
 
@@ -1178,6 +1304,7 @@ public static class LuaLowerer
                 _localTop = _nextRegister;
                 if (markToBeClosed)
                 {
+                    _activeToBeClosedRegisters.Add(register);
                     Emit(new LuaIrInstruction(LuaIrOpcode.MarkToBeClosed, register, span: span));
                 }
 
@@ -1189,7 +1316,9 @@ public static class LuaLowerer
                 _scopes.Add(new Scope(
                     _scopes.Count == 0 ? null : _scopes[^1],
                     _localTop,
-                    _activeSymbolIds.Count));
+                    _activeSymbolIds.Count,
+                    _activeSyntheticCloseRegisters.Count,
+                    _activeToBeClosedRegisters.Count));
             }
 
             private void AddSyntheticLocal(string name)
@@ -1236,6 +1365,22 @@ public static class LuaLowerer
                     _activeSymbolIds.RemoveRange(
                         scope.EntryActiveSymbolCount,
                         _activeSymbolIds.Count - scope.EntryActiveSymbolCount);
+                }
+
+                if (_activeSyntheticCloseRegisters.Count >
+                    scope.EntryActiveSyntheticCloseRegisterCount)
+                {
+                    _activeSyntheticCloseRegisters.RemoveRange(
+                        scope.EntryActiveSyntheticCloseRegisterCount,
+                        _activeSyntheticCloseRegisters.Count -
+                            scope.EntryActiveSyntheticCloseRegisterCount);
+                }
+
+                if (_activeToBeClosedRegisters.Count > scope.EntryActiveToBeClosedRegisterCount)
+                {
+                    _activeToBeClosedRegisters.RemoveRange(
+                        scope.EntryActiveToBeClosedRegisterCount,
+                        _activeToBeClosedRegisters.Count - scope.EntryActiveToBeClosedRegisterCount);
                 }
 
                 _localTop = scope.EntryRegister;
@@ -1288,6 +1433,12 @@ public static class LuaLowerer
                 return _instructions.Count - 1;
             }
 
+            private int SourceLineAt(int offset) =>
+                _owner._model.Syntax.Source.GetLocation(Math.Clamp(
+                    offset,
+                    0,
+                    _owner._model.Syntax.Source.Length)).Line + 1;
+
             private void PatchTarget(int programCounter, int target)
             {
                 _instructions[programCounter] = _instructions[programCounter] with { B = target };
@@ -1337,13 +1488,24 @@ public static class LuaLowerer
                     new(AssignmentTargetKind.Table, table, key);
             }
 
-            private sealed class Scope(Scope? parent, int entryRegister, int entryActiveSymbolCount)
+            private sealed class Scope(
+                Scope? parent,
+                int entryRegister,
+                int entryActiveSymbolCount,
+                int entryActiveSyntheticCloseRegisterCount,
+                int entryActiveToBeClosedRegisterCount)
             {
                 public Scope? Parent { get; } = parent;
 
                 public int EntryRegister { get; } = entryRegister;
 
                 public int EntryActiveSymbolCount { get; } = entryActiveSymbolCount;
+
+                public int EntryActiveSyntheticCloseRegisterCount { get; } =
+                    entryActiveSyntheticCloseRegisterCount;
+
+                public int EntryActiveToBeClosedRegisterCount { get; } =
+                    entryActiveToBeClosedRegisterCount;
 
                 public List<int> DeclaredSymbols { get; } = [];
 

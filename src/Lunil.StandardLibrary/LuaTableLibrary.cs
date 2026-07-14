@@ -16,7 +16,7 @@ internal static class LuaTableLibrary
         LuaLibraryHelpers.SetFunction(state, module, "move", Move);
         LuaLibraryHelpers.SetFunction(state, module, "pack", Pack);
         LuaLibraryHelpers.SetFunction(state, module, "remove", Remove);
-        LuaLibraryHelpers.SetFunction(state, module, "sort", Sort);
+        LuaLibraryHelpers.SetFunction(state, module, "sort", Sort, "table.sort");
         LuaLibraryHelpers.SetFunction(state, module, "unpack", Unpack);
         state.SetGlobal("table", LuaValue.FromTable(module));
         return module;
@@ -410,10 +410,12 @@ internal static class LuaTableLibrary
         if (continuationId == 0)
         {
             source = LuaLibraryHelpers.Required(values, 0, "move");
+            CheckTableAccess(context.State, source, 0, "move", "__index");
             first = LuaLibraryHelpers.CheckInteger(values, 1, "move");
             last = LuaLibraryHelpers.CheckInteger(values, 2, "move");
             target = LuaLibraryHelpers.CheckInteger(values, 3, "move");
             destination = values.Length >= 5 && !values[4].IsNil ? values[4] : source;
+            CheckTableAccess(context.State, destination, values.Length >= 5 ? 4 : 0, "move", "__newindex");
             if (last < first)
             {
                 return LuaNativeStep.Completed(destination);
@@ -540,6 +542,25 @@ internal static class LuaTableLibrary
         return LuaNativeStep.Completed(destination);
     }
 
+    private static void CheckTableAccess(
+        LuaState state,
+        LuaValue value,
+        int argumentIndex,
+        string function,
+        string metamethod)
+    {
+        if (value.Kind == LuaValueKind.Table ||
+            !LuaBasicLibrary.GetMetafield(state, value, metamethod).IsNil)
+        {
+            return;
+        }
+
+        throw LuaLibraryHelpers.BadArgument(
+            function,
+            argumentIndex,
+            $"table expected, got {LuaLibraryHelpers.TypeName(value)}");
+    }
+
     private static LuaNativeStep Unpack(
         LuaNativeCallContext context,
         int continuationId,
@@ -583,6 +604,11 @@ internal static class LuaTableLibrary
             index = state[1].AsInteger();
             last = state[2].AsInteger();
             results = state.Skip(3).Append(CallbackValue(values)).ToArray();
+            if (index == last)
+            {
+                return LuaNativeStep.Completed(results);
+            }
+
             index++;
         }
 
@@ -591,8 +617,7 @@ internal static class LuaTableLibrary
             return LuaNativeStep.Completed(results);
         }
 
-        var unsignedCount = unchecked((ulong)last - (ulong)index + 1);
-        if (unsignedCount >= int.MaxValue)
+        if (UnpackResultCountIsTooLarge(index, last))
         {
             throw new LuaRuntimeException("too many results to unpack");
         }
@@ -614,10 +639,30 @@ internal static class LuaTableLibrary
             }
 
             results = [.. results, get.Value];
+            if (index == last)
+            {
+                return LuaNativeStep.Completed(results);
+            }
+
             index++;
         }
 
         return LuaNativeStep.Completed(results);
+    }
+
+    private static bool UnpackResultCountIsTooLarge(long first, long last)
+    {
+        const ulong maximumResultCount = int.MaxValue - 1UL;
+        if (first < 0 && last >= 0)
+        {
+            var negativeCount = (ulong)(-(first + 1)) + 1;
+            var nonNegativeCount = (ulong)last + 1;
+            return negativeCount > maximumResultCount ||
+                nonNegativeCount > maximumResultCount ||
+                negativeCount + nonNegativeCount > maximumResultCount;
+        }
+
+        return (ulong)(last - first) + 1 > maximumResultCount;
     }
 
     private static LuaNativeStep Sort(
@@ -628,6 +673,17 @@ internal static class LuaTableLibrary
         if (continuationId == 0)
         {
             var target = LuaLibraryHelpers.Required(values, 0, "sort");
+            if (target.Kind != LuaValueKind.Table &&
+                (LuaBasicLibrary.GetMetafield(context.State, target, "__index").IsNil ||
+                 LuaBasicLibrary.GetMetafield(context.State, target, "__newindex").IsNil ||
+                 LuaBasicLibrary.GetMetafield(context.State, target, "__len").IsNil))
+            {
+                throw LuaLibraryHelpers.BadArgument(
+                    "sort",
+                    0,
+                    $"table expected, got {LuaLibraryHelpers.TypeName(target)}");
+            }
+
             var comparator = values.Length >= 2 ? values[1] : LuaValue.Nil;
             return ResolveLength(
                 context,

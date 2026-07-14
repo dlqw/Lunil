@@ -163,6 +163,17 @@ public sealed class LuaParserTests
     }
 
     [Fact]
+    public void MalformedTableFieldTerminatorAlwaysMakesProgress()
+    {
+        var result = LuaParser.Parse(SourceText.FromUtf8("return { ] }"));
+
+        Assert.NotEmpty(result.Diagnostics);
+        Assert.Equal(LuaTokenKind.EndOfFile, result.Root.DescendantTokens().Last().Kind);
+        Assert.Equal(1, result.Root.DescendantTokens().Count(static token =>
+            token.Kind == LuaTokenKind.CloseBracket && !token.IsMissing));
+    }
+
+    [Fact]
     public void RecursionBudgetStopsDeeplyNestedExpressions()
     {
         var source = new string('(', 300) + "1" + new string(')', 300);
@@ -188,6 +199,22 @@ public sealed class LuaParserTests
 
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "LUA2007");
         Assert.Equal(LuaTokenKind.EndOfFile, result.Root.DescendantTokens().Last().Kind);
+    }
+
+    [Fact]
+    public void ReportsOversizedLocalDeclarationBeforeMissingFunctionEnd()
+    {
+        var names = string.Join(", ", Enumerable.Range(1, 201).Select(index => $"a{index}"));
+        var source = SourceText.FromUtf8($"\nfunction foo ()\n  local {names}\n");
+
+        var result = LuaParser.Parse(source);
+
+        var diagnostic = Assert.Single(result.Diagnostics, static candidate =>
+            candidate.Code == "LUA2009");
+        Assert.Equal((byte)',', source.AsSpan()[diagnostic.Span.Start]);
+        Assert.Equal(
+            "too many local variables (limit is 200) in function at line 2",
+            diagnostic.Message);
     }
 
     private static LuaSyntaxNode GetReturnedExpression(LuaSyntaxNode root)

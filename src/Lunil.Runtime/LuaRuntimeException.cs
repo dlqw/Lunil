@@ -23,7 +23,15 @@ public sealed class LuaRuntimeException : Exception
     {
     }
 
+    internal LuaRuntimeException(string message, bool bypassProtectedNativeCallback)
+        : base(message)
+    {
+        BypassProtectedNativeCallback = bypassProtectedNativeCallback;
+    }
+
     public bool HasErrorValue { get; }
+
+    internal bool BypassProtectedNativeCallback { get; }
 
     public LuaValue ErrorValue => HasErrorValue
         ? _errorValue

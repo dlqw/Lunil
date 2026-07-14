@@ -31,10 +31,11 @@ public static class LuaRuntimeOperations
                     return LuaOperationResolution.Immediate(LuaValue.Nil);
                 }
 
-                throw new LuaRuntimeException($"Attempt to index a {target.Kind} value.");
+                throw new LuaRuntimeException(
+                    $"attempt to index a {LuaValueOperations.TypeName(target)} value");
             }
 
-            if (metamethod.Kind == LuaValueKind.Table)
+            if (metamethod.Kind != LuaValueKind.Function)
             {
                 target = metamethod;
                 continue;
@@ -73,10 +74,11 @@ public static class LuaRuntimeOperations
                     return LuaOperationResolution.Immediate(LuaValue.Nil);
                 }
 
-                throw new LuaRuntimeException($"Attempt to index a {target.Kind} value.");
+                throw new LuaRuntimeException(
+                    $"attempt to index a {LuaValueOperations.TypeName(target)} value");
             }
 
-            if (metamethod.Kind == LuaValueKind.Table)
+            if (metamethod.Kind != LuaValueKind.Function)
             {
                 target = metamethod;
                 continue;
@@ -100,6 +102,12 @@ public static class LuaRuntimeOperations
                 LuaValueOperations.Unary(operation, numericOperand));
         }
 
+        if (operation == LuaIrUnaryOperator.BitwiseNot && IsNumber(operand) &&
+            !operand.TryGetInteger(out _))
+        {
+            throw new LuaRuntimeException("number has no integer representation");
+        }
+
         if (CanExecutePrimitive(operation, operand))
         {
             return LuaOperationResolution.Immediate(LuaValueOperations.Unary(operation, operand));
@@ -114,10 +122,22 @@ public static class LuaRuntimeOperations
         });
         if (metamethod.IsNil)
         {
-            throw new LuaRuntimeException($"Cannot apply {operation} to {operand.Kind}.");
+            var type = LuaValueOperations.TypeName(operand);
+            var message = operation switch
+            {
+                LuaIrUnaryOperator.Negate => $"attempt to perform arithmetic on a {type} value",
+                LuaIrUnaryOperator.BitwiseNot =>
+                    $"attempt to perform bitwise operation on a {type} value",
+                LuaIrUnaryOperator.Length => $"attempt to get length of a {type} value",
+                _ => $"cannot apply {operation} to {type}",
+            };
+            throw new LuaRuntimeException(message);
         }
 
-        return LuaOperationResolution.Call(metamethod, operand);
+        // Lua 5.4 passes the operand twice to unary metamethods.  The second
+        // argument is intentionally redundant, but is observable by vararg
+        // metamethods and therefore part of the language contract.
+        return LuaOperationResolution.Call(metamethod, operand, operand);
     }
 
     public static LuaOperationResolution Binary(
@@ -194,8 +214,7 @@ public static class LuaRuntimeOperations
         var metamethod = GetBinaryMetamethod(state, left, right, metamethodName);
         if (metamethod.IsNil)
         {
-            throw new LuaRuntimeException(
-                $"Cannot apply {operation} to {left.Kind} and {right.Kind}.");
+            throw new LuaRuntimeException(BinaryTypeError(operation, left, right));
         }
 
         return LuaOperationResolution.Call(metamethod, left, right);
@@ -217,7 +236,8 @@ public static class LuaRuntimeOperations
             var metamethod = GetMetamethod(state, callable, LuaMetamethod.Call);
             if (metamethod.IsNil)
             {
-                throw new LuaRuntimeException($"Attempt to call a {callable.Kind} value.");
+                throw new LuaRuntimeException(
+                    $"attempt to call a {LuaValueOperations.TypeName(callable)} value");
             }
 
             var expanded = new LuaValue[resolvedArguments.Length + 1];
@@ -257,15 +277,14 @@ public static class LuaRuntimeOperations
             return LuaOperationResolution.Immediate(LuaValue.FromBoolean(negate ? !equal : equal));
         }
 
-        var leftMetamethod = GetMetamethod(state, left, LuaMetamethod.Equal);
-        var rightMetamethod = GetMetamethod(state, right, LuaMetamethod.Equal);
-        if (leftMetamethod.IsNil || leftMetamethod != rightMetamethod)
+        var metamethod = GetBinaryMetamethod(state, left, right, LuaMetamethod.Equal);
+        if (metamethod.IsNil)
         {
             return LuaOperationResolution.Immediate(LuaValue.FromBoolean(negate));
         }
 
         return LuaOperationResolution.Call(
-            leftMetamethod,
+            metamethod,
             left,
             right,
             negate ? LuaResultTransform.LogicalNot : LuaResultTransform.None);
@@ -280,6 +299,49 @@ public static class LuaRuntimeOperations
         var value = GetMetamethod(state, left, metamethod);
         return value.IsNil ? GetMetamethod(state, right, metamethod) : value;
     }
+
+    private static string BinaryTypeError(
+        LuaIrBinaryOperator operation,
+        LuaValue left,
+        LuaValue right)
+    {
+        if (operation is LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual)
+        {
+            var leftType = LuaValueOperations.TypeName(left);
+            var rightType = LuaValueOperations.TypeName(right);
+            return string.Equals(leftType, rightType, StringComparison.Ordinal)
+                ? $"attempt to compare two {leftType} values"
+                : $"attempt to compare {leftType} with {rightType}";
+        }
+
+        LuaValue offender;
+        string action;
+        if (IsArithmetic(operation))
+        {
+            offender = LuaValueOperations.TryToNumber(left, out _) ? right : left;
+            action = "perform arithmetic on";
+        }
+        else if (IsBitwise(operation))
+        {
+            offender = IsNumber(left) ? right : left;
+            action = "perform bitwise operation on";
+        }
+        else if (operation == LuaIrBinaryOperator.Concatenate)
+        {
+            offender = IsConcatenable(left) ? right : left;
+            action = "concatenate";
+        }
+        else
+        {
+            return $"cannot apply {operation} to {LuaValueOperations.TypeName(left)} and " +
+                LuaValueOperations.TypeName(right);
+        }
+
+        return $"attempt to {action} a {LuaValueOperations.TypeName(offender)} value";
+    }
+
+    private static bool IsConcatenable(LuaValue value) =>
+        value.Kind is LuaValueKind.String or LuaValueKind.Integer or LuaValueKind.Float;
 
     private static LuaMetamethod GetBinaryMetamethod(LuaIrBinaryOperator operation) => operation switch
     {

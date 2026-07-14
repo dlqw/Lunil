@@ -681,7 +681,7 @@ internal sealed partial class AnalysisEngine
     {
         if (expression.Kind == LuaSyntaxKind.ExpressionList)
         {
-            var only = expression.ChildNodes().SingleOrDefault();
+            var only = GetOnlyChildNodeOrDefault(expression);
             if (only is not null)
             {
                 return TryGetCalledIdentifier(only, out name);
@@ -709,7 +709,7 @@ internal sealed partial class AnalysisEngine
     {
         if (expression.Kind == LuaSyntaxKind.ExpressionList)
         {
-            var only = expression.ChildNodes().SingleOrDefault();
+            var only = GetOnlyChildNodeOrDefault(expression);
             if (only is not null)
             {
                 return TryGetCalledGlobalIdentifier(only, out name);
@@ -746,6 +746,22 @@ internal sealed partial class AnalysisEngine
         return expressionList is not null
             ? expressionList.ChildNodes()
             : argumentList.ChildNodes();
+    }
+
+    private static LuaSyntaxNode? GetOnlyChildNodeOrDefault(LuaSyntaxNode node)
+    {
+        LuaSyntaxNode? only = null;
+        foreach (var child in node.ChildNodes())
+        {
+            if (only is not null)
+            {
+                return null;
+            }
+
+            only = child;
+        }
+
+        return only;
     }
 
     private string GetTokenText(LuaSyntaxToken token) =>

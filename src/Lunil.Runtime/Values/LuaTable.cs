@@ -181,7 +181,7 @@ public sealed class LuaTable : LuaGcObject
                 var bucket = FindBucket(key);
                 if (bucket < 0)
                 {
-                    throw new LuaRuntimeException("Invalid key supplied to next.");
+                    throw new LuaRuntimeException("invalid key to 'next'");
                 }
 
                 arrayStart = _array.Count;

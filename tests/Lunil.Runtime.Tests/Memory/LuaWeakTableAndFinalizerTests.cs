@@ -88,6 +88,24 @@ public sealed class LuaWeakTableAndFinalizerTests
     }
 
     [Fact]
+    public void EqualNonInternedStringsAreRemovedFromTheHeapByIdentity()
+    {
+        var state = new LuaState();
+        var bytes = Enumerable.Repeat((byte)'x', 41).ToArray();
+        var retained = state.Strings.GetOrCreate(bytes);
+        var collectible = state.Strings.GetOrCreate(bytes);
+        using var handle = state.CreateHandle(LuaValue.FromString(retained));
+
+        state.Heap.CollectFull();
+
+        Assert.True(retained.IsAlive);
+        Assert.False(collectible.IsAlive);
+        handle.Dispose();
+        state.Heap.CollectFull();
+        Assert.False(retained.IsAlive);
+    }
+
+    [Fact]
     public void FinalizerRunsOnceAndCanResurrectItsTarget()
     {
         var state = new LuaState();
@@ -118,6 +136,38 @@ public sealed class LuaWeakTableAndFinalizerTests
         state.Heap.CollectFull();
         Assert.False(target.IsAlive);
         Assert.Equal(0, state.Heap.PendingFinalizerCount);
+    }
+
+    [Fact]
+    public void WeakValuesClearBeforeFinalizerGraphsResurrectWeakKeys()
+    {
+        var state = new LuaState();
+        var weakValues = CreateWeakTable(state, "v");
+        var weakKeys = CreateWeakTable(state, "k");
+        state.SetGlobal("weakValues", LuaValue.FromTable(weakValues));
+        state.SetGlobal("weakKeys", LuaValue.FromTable(weakKeys));
+
+        var referenced = state.CreateTable();
+        weakValues.Set(String(state, "key"), LuaValue.FromTable(referenced));
+        weakKeys.Set(LuaValue.FromTable(referenced), LuaValue.FromInteger(1));
+
+        var metatable = state.CreateTable();
+        metatable.Set(
+            String(state, "__gc"),
+            LuaValue.FromFunction(new LuaNativeFunction("__gc", static (_, _) => [])));
+        var finalizable = state.CreateTable();
+        finalizable.Set(String(state, "reference"), LuaValue.FromTable(referenced));
+        finalizable.SetMetatable(metatable);
+
+        state.Heap.CollectFull();
+
+        Assert.Equal(1, state.Heap.PendingFinalizerCount);
+        Assert.True(weakValues.Get(String(state, "key")).IsNil);
+        Assert.Equal(
+            LuaValue.FromInteger(1),
+            weakKeys.Get(LuaValue.FromTable(referenced)));
+        Assert.True(referenced.IsAlive);
+        GC.KeepAlive(finalizable);
     }
 
     [Fact]
@@ -160,6 +210,45 @@ public sealed class LuaWeakTableAndFinalizerTests
             state.CreateMainClosure(lowering.Module!));
 
         Assert.Equal("finalized", result.Values[0].AsString().ToString());
+    }
+
+    [Fact]
+    public void InterpreterDrainsLuaFinalizerBacklogBeforeResumingTheCaller()
+    {
+        const string source = """
+            local count = 0
+            local mt = { __gc = function () count = count + 1 end }
+            for i = 1, 10 do setmetatable({}, mt) end
+            collect()
+            return count
+            """;
+        var state = new LuaState();
+        state.SetGlobal(
+            "setmetatable",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "setmetatable",
+                static (_, arguments) =>
+                {
+                    arguments[0].AsTable().SetMetatable(arguments[1].AsTable());
+                    return [arguments[0]];
+                })));
+        state.SetGlobal(
+            "collect",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "collect",
+                static (runtime, _) =>
+                {
+                    runtime.Heap.CollectFull();
+                    return [];
+                })));
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+
+        var result = new LuaInterpreter().Execute(
+            state,
+            state.CreateMainClosure(lowering.Module!));
+
+        Assert.Equal(10, Assert.Single(result.Values).AsInteger());
     }
 
     private static LuaTable CreateWeakTable(LuaState state, string mode)

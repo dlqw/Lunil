@@ -84,7 +84,10 @@ public static class LuaBinder
                 _functions.OrderBy(static function => function.Id).ToImmutableArray());
         }
 
-        private void BindBlock(LuaSyntaxNode block, bool createScope = true)
+        private void BindBlock(
+            LuaSyntaxNode block,
+            bool createScope = true,
+            bool terminalLabelsEndScope = true)
         {
             ScopeFrame? previousScope = null;
             if (createScope)
@@ -98,7 +101,8 @@ public static class LuaBinder
                 for (var index = 0; index < statements.Length; index++)
                 {
                     var statement = statements[index];
-                    var terminalLabel = statement.Kind == LuaSyntaxKind.LabelStatement &&
+                    var terminalLabel = terminalLabelsEndScope &&
+                        statement.Kind == LuaSyntaxKind.LabelStatement &&
                         statements[(index + 1)..].All(static following =>
                             following.Kind is LuaSyntaxKind.LabelStatement or LuaSyntaxKind.EmptyStatement);
                     BindStatement(statement, terminalLabel);
@@ -246,7 +250,8 @@ public static class LuaBinder
                 {
                     BindBlock(
                         nodes.Single(static node => node.Kind == LuaSyntaxKind.Block),
-                        createScope: false);
+                        createScope: false,
+                        terminalLabelsEndScope: false);
                 }
                 finally
                 {
@@ -451,7 +456,7 @@ public static class LuaBinder
             AddDiagnostic(
                 "LUA3003",
                 token.Span,
-                $"Unknown local variable attribute '{name}'. Expected 'const' or 'close'.");
+                $"unknown attribute '{name}'");
             return LuaLocalAttributeKind.None;
         }
 
@@ -508,10 +513,12 @@ public static class LuaBinder
 
             if (symbol is not null)
             {
-                resolutionKind = symbol.FunctionId == _currentFunction.Id
-                    ? LuaNameResolutionKind.Local
-                    : LuaNameResolutionKind.Upvalue;
-                if (resolutionKind == LuaNameResolutionKind.Upvalue)
+                resolutionKind = symbol.Kind == LuaSymbolKind.Environment ||
+                    symbol.FunctionId != _currentFunction.Id
+                    ? LuaNameResolutionKind.Upvalue
+                    : LuaNameResolutionKind.Local;
+                if (resolutionKind == LuaNameResolutionKind.Upvalue &&
+                    symbol.FunctionId != _currentFunction.Id)
                 {
                     Capture(symbol);
                 }
@@ -521,7 +528,7 @@ public static class LuaBinder
                     AddDiagnostic(
                         "LUA3002",
                         token.Span,
-                        $"Cannot assign to read-only local variable '{name}'.");
+                        $"attempt to assign to const variable '{name}'");
                 }
             }
             else
@@ -614,13 +621,17 @@ public static class LuaBinder
             }
 
             var name = GetName(token);
-            if (_currentScope.Labels.ContainsKey(name))
+            for (var scope = _currentScope; scope is not null; scope = scope.Parent)
             {
-                AddDiagnostic(
-                    "LUA3006",
-                    token.Span,
-                    $"Label '{name}' is already defined in this block.");
-                return;
+                if (scope.Labels.TryGetValue(name, out var existing))
+                {
+                    var originalLine = _syntax.Source.GetLocation(existing.Span.Start).Line + 1;
+                    AddDiagnostic(
+                        "LUA3006",
+                        token.Span,
+                        $"label '{name}' already defined on line {originalLine}");
+                    return;
+                }
             }
 
             var active = terminalLabel
@@ -661,10 +672,11 @@ public static class LuaBinder
 
                 if (label is null)
                 {
+                    var gotoLine = _syntax.Source.GetLocation(@goto.Span.Start).Line + 1;
                     AddDiagnostic(
                         "LUA3007",
                         @goto.Span,
-                        $"No visible label '{@goto.Name}' for goto.");
+                        $"no visible label '{@goto.Name}' for <goto> at line {gotoLine}");
                     continue;
                 }
 
@@ -672,10 +684,12 @@ public static class LuaBinder
                 var entered = label.ActiveSymbols.FirstOrDefault(symbol => !gotoSymbols.Contains(symbol.Id));
                 if (entered is not null)
                 {
+                    var gotoLine = _syntax.Source.GetLocation(@goto.Span.Start).Line + 1;
                     AddDiagnostic(
                         "LUA3008",
                         @goto.Span,
-                        $"Goto '{@goto.Name}' jumps into the scope of local '{entered.Name}'.");
+                        $"<goto {@goto.Name}> at line {gotoLine} jumps into the scope of " +
+                        $"local '{entered.Name}'");
                 }
             }
         }
@@ -691,12 +705,14 @@ public static class LuaBinder
                 if (function.CaptureIds.Add(symbol.Id))
                 {
                     function.Captures.Add(symbol);
-                    if (function.Captures.Count > _options.MaximumUpvaluesPerFunction)
+                    if (function.Captures.Count == _options.MaximumUpvaluesPerFunction + 1)
                     {
+                        var functionLine = _syntax.Source.GetLocation(function.Span.Start).Line + 1;
                         AddDiagnostic(
                             "LUA3010",
-                            symbol.DeclaringSpan,
-                            $"Function exceeds the configured {_options.MaximumUpvaluesPerFunction} upvalue limit.");
+                            function.Span,
+                            $"too many upvalues (limit is {_options.MaximumUpvaluesPerFunction}) " +
+                            $"in function at line {functionLine}");
                     }
                 }
             }
@@ -742,12 +758,14 @@ public static class LuaBinder
             var activeInFunction = _activeSymbols.Count(candidate =>
                 candidate.FunctionId == _currentFunction.Id &&
                 candidate.Kind != LuaSymbolKind.Environment);
-            if (activeInFunction > _options.MaximumActiveLocalsPerFunction)
+            if (activeInFunction == _options.MaximumActiveLocalsPerFunction + 1)
             {
+                var functionLine = _syntax.Source.GetLocation(_currentFunction.Span.Start).Line + 1;
                 AddDiagnostic(
                     "LUA3009",
-                    symbol.DeclaringSpan,
-                    $"Function exceeds the configured {_options.MaximumActiveLocalsPerFunction} active-local limit.");
+                    _currentFunction.Span,
+                    $"too many local variables (limit is {_options.MaximumActiveLocalsPerFunction}) " +
+                    $"in function at line {functionLine}");
             }
         }
 

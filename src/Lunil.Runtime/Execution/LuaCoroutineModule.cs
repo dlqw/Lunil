@@ -97,8 +97,25 @@ internal static class LuaCoroutineModule
 
     private static LuaValue[] IsYieldable(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
-        _ = arguments;
-        return [LuaValue.FromBoolean(state.RunningThreadIsYieldable)];
+        if (arguments.Length == 0 || arguments[0].IsNil)
+        {
+            return [LuaValue.FromBoolean(state.RunningThreadIsYieldable)];
+        }
+
+        if (arguments[0].Kind != LuaValueKind.Thread)
+        {
+            throw new LuaRuntimeException("bad argument #1 to 'isyieldable' (thread expected)");
+        }
+
+        var thread = arguments[0].AsThread();
+        state.Heap.ValidateValue(arguments[0]);
+        var running = state.RunningThread ?? state.MainThread;
+        return
+        [
+            LuaValue.FromBoolean(ReferenceEquals(thread, running)
+                ? state.RunningThreadIsYieldable
+                : !ReferenceEquals(thread, state.MainThread)),
+        ];
     }
 
     private static LuaValue[] Wrap(LuaState state, ReadOnlySpan<LuaValue> arguments)
