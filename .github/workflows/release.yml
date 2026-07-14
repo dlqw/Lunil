@@ -85,9 +85,20 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: "**/*.csproj"
+      - name: Restore public API baseline tool
+        run: dotnet tool restore
       - name: Build packages
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ needs.validate.outputs.version }}'
+      - name: Verify frozen public APIs
+        shell: pwsh
+        run: ./scripts/Test-PublicApiBaselines.ps1 -Configuration Release -NoBuild -NoRestore
+      - name: Verify package compatibility and local consumers
+        shell: pwsh
+        run: >-
+          ./scripts/Test-PackageCompatibility.ps1
+          -Version '${{ needs.validate.outputs.version }}'
+          -PackageDirectory artifacts/packages -NoPack
       - uses: actions/upload-artifact@v7
         with:
           name: release-nuget

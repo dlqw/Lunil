@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "meziantou.framework.publicapigenerator.tool": {
+      "version": "2.0.2",
+      "commands": [
+        "Meziantou.Framework.PublicApiGenerator.Tool"
+      ],
+      "rollForward": false
+    }
+  }
+}

@@ -123,6 +123,23 @@ before `0.7.0-beta.1`.
 Beta accepts compatibility, diagnostics, documentation, reliability, and
 performance fixes. New planned features move to the next numeric milestone.
 
+## Beta 1 freeze status
+
+`0.7.0-beta.1` satisfies the Beta entry gate:
+
+- the Alpha 1-5 compiler, annotation, analysis, workspace, hosting, build, and CLI scope is complete
+  and Alpha 6 passes the unmodified official Lua 5.4.8 user-mode suite through `final OK !!!`;
+- all six release RIDs enforce the same PUC-Lua observable goldens, six backend catalog,
+  deterministic fuzz seeds, GC/coroutine soak contract, NativeAOT and publish-mode gates;
+- all 14 shipped assemblies have exact generated public API baselines and all 14 NuGet/symbol
+  packages have version-independent metadata, dependency, and asset baselines;
+- the SDK strict package validator, an all-library local consumer, the installed CLI tool smoke, and
+  both API/package baseline checks run in CI and the tag-triggered release workflow.
+
+The feature and API scope is therefore frozen. The next promotion is `0.7.0-rc.1` after Beta
+hardening confirms clean API/package compatibility, clean-checkout release evidence, and no open
+release blocker.
+
 ## RC and stable gate
 
 RC begins after all applicable conformance tests pass, no release-blocking defect

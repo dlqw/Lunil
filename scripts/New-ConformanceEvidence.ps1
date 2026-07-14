@@ -13,6 +13,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$version = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
+if ($version -notmatch '^0\.7\.0(?:-[0-9A-Za-z.-]+)?$') {
+    throw "Could not resolve the active 0.7.0 release version: $version"
+}
+$releaseGate = "$version-conformance"
 $detectedRid = [System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier.Trim().ToLowerInvariant()
 $effectiveRid = if ([string]::IsNullOrWhiteSpace($RuntimeIdentifier)) {
     $detectedRid
@@ -147,7 +152,7 @@ $backendNames = @(
 )
 $evidence = [ordered]@{
     SchemaVersion = 1
-    ReleaseGate = '0.7.0-alpha.6-conformance'
+    ReleaseGate = $releaseGate
     GeneratedAtUtc = [DateTime]::UtcNow.ToString('O')
     GitCommit = $gitCommit
     Rid = $effectiveRid

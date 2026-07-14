@@ -9,6 +9,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$version = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
+if ($version -notmatch '^0\.7\.0(?:-[0-9A-Za-z.-]+)?$') {
+    throw "Could not resolve the active 0.7.0 release version: $version"
+}
+$releaseGate = "$version-conformance"
 if ([string]::IsNullOrWhiteSpace($InputPath)) {
     $InputPath = Join-Path $repositoryRoot 'artifacts/conformance'
 }
@@ -47,7 +52,7 @@ foreach ($rid in $requiredRids) {
 
     $evidence = $match.Evidence
     if ($evidence.SchemaVersion -ne 1 -or
-        $evidence.ReleaseGate -ne '0.7.0-alpha.6-conformance' -or
+        $evidence.ReleaseGate -ne $releaseGate -or
         -not $evidence.AllPassed) {
         throw "RID $rid has invalid or failing conformance evidence: $($match.Path)"
     }
@@ -99,7 +104,7 @@ foreach ($evidence in $selected) {
 
 $result = [ordered]@{
     SchemaVersion = 1
-    ReleaseGate = '0.7.0-alpha.6-conformance-six-rid'
+    ReleaseGate = "$releaseGate-six-rid"
     GeneratedAtUtc = [DateTime]::UtcNow.ToString('O')
     RequiredRids = $requiredRids
     GitCommit = $first.GitCommit

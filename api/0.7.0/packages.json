@@ -1,0 +1,747 @@
+{
+  "SchemaVersion": 1,
+  "CompatibilityLine": "0.7.0",
+  "PackageCount": 14,
+  "VersionToken": "{version}",
+  "Packages": [
+    {
+      "Id": "Lunil.Analysis",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Budgeted annotation-aware type and control-flow analysis for Lunil.",
+      "Tags": "lua lua54 luals emmylua types analysis control-flow",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.EmmyLua",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Semantics",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Analysis.dll",
+        "LICENSE",
+        "Lunil.Analysis.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Analysis.pdb",
+        "Lunil.Analysis.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Build",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "MSBuild integration for ahead-of-time compilation of Lunil Lua modules.",
+      "Tags": "lua lua54 compiler msbuild nativeaot",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.CodeGen.Cil",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Compiler",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Workspace",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "build/Lunil.Build.props",
+        "build/Lunil.Build.targets",
+        "buildTransitive/Lunil.Build.props",
+        "buildTransitive/Lunil.Build.targets",
+        "lib/net10.0/_._",
+        "LICENSE",
+        "Lunil.Build.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md",
+        "tasks/net10.0/Lunil.Analysis.dll",
+        "tasks/net10.0/Lunil.Build.dll",
+        "tasks/net10.0/Lunil.CodeGen.Cil.dll",
+        "tasks/net10.0/Lunil.Compiler.dll",
+        "tasks/net10.0/Lunil.Core.dll",
+        "tasks/net10.0/Lunil.EmmyLua.dll",
+        "tasks/net10.0/Lunil.IR.dll",
+        "tasks/net10.0/Lunil.Runtime.dll",
+        "tasks/net10.0/Lunil.Semantics.dll",
+        "tasks/net10.0/Lunil.Syntax.dll",
+        "tasks/net10.0/Lunil.Workspace.dll"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "Lunil.Build.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "tasks/net10.0/Lunil.Build.pdb"
+      ]
+    },
+    {
+      "Id": "Lunil.Cli",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Command-line compiler, analyzer, runner, and artifact builder for Lunil.",
+      "Tags": "lua lua54 cli compiler analysis dotnet-tool",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [
+        "DotnetTool"
+      ],
+      "DependencyGroups": [],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "LICENSE",
+        "Lunil.Cli.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md",
+        "tools/net10.0/any/DotnetToolSettings.xml",
+        "tools/net10.0/any/Lunil.Analysis.dll",
+        "tools/net10.0/any/Lunil.Analysis.pdb",
+        "tools/net10.0/any/Lunil.CodeGen.Cil.dll",
+        "tools/net10.0/any/Lunil.CodeGen.Cil.pdb",
+        "tools/net10.0/any/Lunil.Compiler.dll",
+        "tools/net10.0/any/Lunil.Compiler.pdb",
+        "tools/net10.0/any/Lunil.Core.dll",
+        "tools/net10.0/any/Lunil.Core.pdb",
+        "tools/net10.0/any/lunil.deps.json",
+        "tools/net10.0/any/lunil.dll",
+        "tools/net10.0/any/Lunil.EmmyLua.dll",
+        "tools/net10.0/any/Lunil.EmmyLua.pdb",
+        "tools/net10.0/any/Lunil.Hosting.dll",
+        "tools/net10.0/any/Lunil.Hosting.pdb",
+        "tools/net10.0/any/Lunil.IR.dll",
+        "tools/net10.0/any/Lunil.IR.pdb",
+        "tools/net10.0/any/lunil.pdb",
+        "tools/net10.0/any/Lunil.Runtime.dll",
+        "tools/net10.0/any/Lunil.Runtime.pdb",
+        "tools/net10.0/any/lunil.runtimeconfig.json",
+        "tools/net10.0/any/Lunil.Semantics.dll",
+        "tools/net10.0/any/Lunil.Semantics.pdb",
+        "tools/net10.0/any/Lunil.StandardLibrary.dll",
+        "tools/net10.0/any/Lunil.StandardLibrary.pdb",
+        "tools/net10.0/any/Lunil.Syntax.dll",
+        "tools/net10.0/any/Lunil.Syntax.pdb",
+        "tools/net10.0/any/Lunil.Workspace.dll",
+        "tools/net10.0/any/Lunil.Workspace.pdb"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "Lunil.Cli.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "tools/net10.0/any/Lunil.Analysis.pdb",
+        "tools/net10.0/any/Lunil.CodeGen.Cil.pdb",
+        "tools/net10.0/any/Lunil.Compiler.pdb",
+        "tools/net10.0/any/Lunil.Core.pdb",
+        "tools/net10.0/any/Lunil.EmmyLua.pdb",
+        "tools/net10.0/any/Lunil.Hosting.pdb",
+        "tools/net10.0/any/Lunil.IR.pdb",
+        "tools/net10.0/any/lunil.pdb",
+        "tools/net10.0/any/Lunil.Runtime.pdb",
+        "tools/net10.0/any/Lunil.Semantics.pdb",
+        "tools/net10.0/any/Lunil.StandardLibrary.pdb",
+        "tools/net10.0/any/Lunil.Syntax.pdb",
+        "tools/net10.0/any/Lunil.Workspace.pdb"
+      ]
+    },
+    {
+      "Id": "Lunil.CodeGen.Cil",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.IR",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Runtime",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.CodeGen.Cil.dll",
+        "LICENSE",
+        "Lunil.CodeGen.Cil.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.CodeGen.Cil.pdb",
+        "Lunil.CodeGen.Cil.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Compiler",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Public bounded Lua source compilation pipeline for Lunil.",
+      "Tags": "lua lua54 compiler diagnostics ir",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Analysis",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.EmmyLua",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.IR",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Semantics",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Compiler.dll",
+        "LICENSE",
+        "Lunil.Compiler.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Compiler.pdb",
+        "Lunil.Compiler.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Core",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": []
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Core.dll",
+        "LICENSE",
+        "Lunil.Core.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Core.pdb",
+        "Lunil.Core.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.EmmyLua",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "LuaLS and legacy EmmyLua annotation front end for Lunil.",
+      "Tags": "lua lua54 luals emmylua annotations types",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.EmmyLua.dll",
+        "LICENSE",
+        "Lunil.EmmyLua.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.EmmyLua.pdb",
+        "Lunil.EmmyLua.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Hosting",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Reusable compiler, runtime, capability, and execution host for Lunil.",
+      "Tags": "lua lua54 hosting embedding sandbox",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Compiler",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.IR",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Runtime",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.StandardLibrary",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Workspace",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Hosting.dll",
+        "LICENSE",
+        "Lunil.Hosting.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Hosting.pdb",
+        "Lunil.Hosting.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.IR",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.IR.dll",
+        "LICENSE",
+        "Lunil.IR.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.IR.pdb",
+        "Lunil.IR.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Runtime",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.IR",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Runtime.dll",
+        "LICENSE",
+        "Lunil.Runtime.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Runtime.pdb",
+        "Lunil.Runtime.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Semantics",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.IR",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Semantics.dll",
+        "LICENSE",
+        "Lunil.Semantics.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Semantics.pdb",
+        "Lunil.Semantics.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.StandardLibrary",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Runtime",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Semantics",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.StandardLibrary.dll",
+        "LICENSE",
+        "Lunil.StandardLibrary.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.StandardLibrary.pdb",
+        "Lunil.StandardLibrary.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Syntax",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Lunil Lua 5.4 compiler and runtime component.",
+      "Tags": "lua lua54 compiler runtime dotnet",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Syntax.dll",
+        "LICENSE",
+        "Lunil.Syntax.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Syntax.pdb",
+        "Lunil.Syntax.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    },
+    {
+      "Id": "Lunil.Workspace",
+      "Authors": "rdququ",
+      "License": "MIT",
+      "Readme": "README.md",
+      "ProjectUrl": "https://github.com/dlqw/Lunil",
+      "Description": "Deterministic module graph and incremental analysis workspace for Lunil.",
+      "Tags": "lua lua54 workspace modules incremental analysis",
+      "Repository": "https://github.com/dlqw/Lunil",
+      "PackageTypes": [],
+      "DependencyGroups": [
+        {
+          "TargetFramework": "net10.0",
+          "Dependencies": [
+            {
+              "Id": "Lunil.Analysis",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Compiler",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Core",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Semantics",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            },
+            {
+              "Id": "Lunil.Syntax",
+              "Version": "{version}",
+              "Exclude": "Build,Analyzers"
+            }
+          ]
+        }
+      ],
+      "Assets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "assets/lunil-logo.svg",
+        "lib/net10.0/Lunil.Workspace.dll",
+        "LICENSE",
+        "Lunil.Workspace.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp",
+        "README.md",
+        "README.zh-CN.md"
+      ],
+      "SymbolAssets": [
+        "_rels/.rels",
+        "[Content_Types].xml",
+        "lib/net10.0/Lunil.Workspace.pdb",
+        "Lunil.Workspace.nuspec",
+        "package/services/metadata/core-properties/<generated>.psmdcp"
+      ]
+    }
+  ]
+}
