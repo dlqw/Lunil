@@ -28,11 +28,12 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.7.0-alpha.4`**. The `0.6.0` line ended at the
+> The current source version is **`0.7.0-alpha.5`**. The `0.6.0` line ended at the
 > immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
 > Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
-> bounded type/control-flow analysis and incremental module workspace are now available. The CLI
-> and complete conformance/API gates remain active alpha work; the `0.7.0` scope is not frozen yet.
+> bounded type/control-flow analysis, incremental module workspace, and the `lunil` CLI are now
+> available. Complete conformance/API gates remain active alpha work; the `0.7.0` scope is not
+> frozen yet.
 
 ## Table of contents
 
@@ -81,12 +82,12 @@ collector.
 | Annotation product API | Alpha foundation | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
 | Type and flow analysis API | Alpha foundation | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Alpha foundation | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
-| CLI | Planned for later 0.7 alpha | `run`/`check`/`build`/`dump`, configuration, response files, consistent diagnostics, and deterministic/sandbox options |
+| CLI | Alpha product | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
 | Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.4` |
+| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.5` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -159,6 +160,19 @@ hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0
 - GC-stress and ownership tests plus a runtime benchmark harness.
 - CI on Windows, Linux, and macOS with release bundles for x64 and Arm64.
 
+### Command-line product
+
+- `lunil run` preflights source workspaces or executes validated PUC Lua 5.4 chunks, publishes
+  main-chunk varargs and `arg`, and keeps program output separate from diagnostics.
+- `lunil check` analyzes one or more roots with cross-module types; `lunil build` emits portable
+  Lua 5.4 chunks or persisted CIL AOT assemblies/PDBs/manifests; `lunil dump` exposes summary,
+  syntax, annotations, analysis, IR, and chunk views as text or JSON.
+- Defaults, `lunil.json`, `LUNIL_*` environment variables, response files, and direct CLI options
+  have defined precedence. Trusted, root-confined read-only sandbox, and deterministic profiles
+  share explicit input, instruction, stack, call-depth, and heap budgets.
+- The `Lunil.Cli` .NET tool package and RID bundles are smoke-tested; NativeAOT, trimmed
+  single-file, and ReadyToRun CLI publications run parser/configuration/JSON/build checks in CI.
+
 ## Quick start
 
 ### Prerequisites
@@ -167,6 +181,26 @@ hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0
   compatible 10.0 patch release;
 - Git;
 - optional: PUC Lua 5.4.8 tools for interoperability fixtures.
+
+### Install and use the CLI
+
+Install the tagged tool package from the configured GitHub Packages source, or run the project
+directly from a checkout:
+
+```bash
+dotnet tool install --global Lunil.Cli --version 0.7.0-alpha.5
+lunil --version
+
+lunil run app.lua -- one two
+lunil check app.lua --module-root . --warnings-as-errors
+lunil build app.lua --target chunk --output app.luac
+lunil build app.lua --target aot --output artifacts/aot
+lunil dump app.lua --kind analysis --format json
+```
+
+Use `-` for source stdin, `@arguments.rsp` for UTF-8 response files, and `lunil.json` for project
+defaults. See the [CLI reference](docs/cli.md) for configuration, profiles, diagnostics, and exit
+codes.
 
 ### Build from source
 
@@ -193,7 +227,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.4" />
+<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.5" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through
@@ -322,7 +356,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.4" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.5" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -402,6 +436,7 @@ Lunil/
 │   ├── Lunil.Hosting/           # reusable host, capability profiles and execution boundary
 │   ├── Lunil.CodeGen.Cil/       # typed CIL plans, persisted AOT and tiered CoreCLR JIT
 │   ├── Lunil.Build/             # MSBuild task, build assets and NativeAOT registry generation
+│   ├── Lunil.Cli/               # packaged run/check/build/dump command-line product
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
 ├── benchmarks/                  # runtime benchmark harness
@@ -445,11 +480,11 @@ The `0.7.0` promotion sequence is:
 0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current development version is **`0.7.0-alpha.4`**. The `0.6.0` line was explicitly
+The current development version is **`0.7.0-alpha.5`**. The `0.6.0` line was explicitly
 superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
 `0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.4` is tagged,
-any follow-up change uses `0.7.0-alpha.5` or a later appropriate version.
+channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.5` is tagged,
+any follow-up change uses `0.7.0-alpha.6` or a later appropriate version.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
@@ -462,6 +497,7 @@ suffix are automatically marked as prereleases. See the
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
 | [0.7.0 roadmap](docs/roadmap-0.7.0.md) | Compiler/hosting foundation, annotations, analysis, workspace, CLI and promotion gates |
+| [CLI reference](docs/cli.md) | Commands, configuration precedence, profiles, diagnostics, artifacts, and exit codes |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
 | [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
 | [Loop OSR rollout evidence closure](docs/adr/0008-loop-osr-qualified-preparation-and-evidence.md) | Qualified lazy emitter preparation and balanced high-sample rollout evidence |

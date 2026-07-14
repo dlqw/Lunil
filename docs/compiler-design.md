@@ -655,11 +655,13 @@ Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Run
 
 `0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`；`0.7.0-alpha.2` 已落地
 `Lunil.EmmyLua`；`0.7.0-alpha.3` 已落地 `Lunil.Analysis`；`0.7.0-alpha.4` 已落地
-`Lunil.Workspace`。Analysis 依赖 Core/Syntax/EmmyLua/Semantics；Compiler 依赖
+`Lunil.Workspace`；`0.7.0-alpha.5` 已落地 `Lunil.Cli`。Analysis 依赖 Core/Syntax/EmmyLua/Semantics；Compiler 依赖
 Analysis/Core/Syntax/EmmyLua/Semantics/IR；Workspace 依赖 Compiler/Analysis；Hosting 依赖
-Workspace/Compiler/IR/Runtime/StandardLibrary；Build 复用 Workspace 与 Compiler。
-`Lunil.Runtime.Abstractions` 与 `Lunil.Cli` 仍在后续 Alpha 中按路线图拆分，
-在拆分前不得制造循环依赖，也不得为满足目录名称而提交无行为的空项目。
+Workspace/Compiler/IR/Runtime/StandardLibrary；Build 复用 Workspace 与 Compiler；CLI 组合
+Compiler/Workspace/Hosting/IR/CodeGen/Runtime/StandardLibrary，同时保持命令解析、配置、诊断、
+sandbox filesystem 与各命令执行器之间的单向依赖。
+`Lunil.Runtime.Abstractions` 只在确认能够减少公共依赖且不破坏 NativeAOT/包边界时再拆分，
+不得为满足目录名称而提交无行为的空项目。
 
 ## 14. 验证策略
 
