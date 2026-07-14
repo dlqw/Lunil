@@ -135,8 +135,7 @@ internal static class LunilCli
                 CancellationToken.None).ConfigureAwait(false);
             return (int)CliExitCode.Execution;
         }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or
-            IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception exception)
         {
             await WriteProblemAsync(
                 standardError,

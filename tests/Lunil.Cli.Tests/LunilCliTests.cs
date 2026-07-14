@@ -577,6 +577,27 @@ public sealed class LunilCliTests
         Assert.Contains("cancelled", result.StandardError, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task UnexpectedHostFailuresUseInternalExitCode()
+    {
+        await using var input = new MemoryStream();
+        await using var output = new MemoryStream();
+        await using var error = new MemoryStream();
+
+        var exitCode = await LunilCli.RunAsync(
+            ["--version"],
+            input,
+            output,
+            error,
+            Environment.CurrentDirectory,
+            _ => throw new KeyNotFoundException("host failure"));
+
+        Assert.Equal(5, exitCode);
+        var diagnostic = Encoding.UTF8.GetString(error.ToArray());
+        Assert.Contains("KeyNotFoundException", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("host failure", diagnostic, StringComparison.Ordinal);
+    }
+
     private sealed class CliFixture : IDisposable
     {
         public CliFixture()
