@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <VersionPrefix>0.7.0</VersionPrefix>
-    <VersionSuffix>alpha.6</VersionSuffix>
+    <VersionSuffix>beta.1</VersionSuffix>
     <Product>Lunil</Product>
     <Authors>rdququ</Authors>
     <Description>Lunil Lua 5.4 compiler and runtime component.</Description>
@@ -19,6 +19,9 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <EnableStrictModeForCompatibleTfms>true</EnableStrictModeForCompatibleTfms>
+    <EnableStrictModeForCompatibleFrameworksInPackage>true</EnableStrictModeForCompatibleFrameworksInPackage>
   </PropertyGroup>
 
   <ItemGroup>

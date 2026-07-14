@@ -163,6 +163,8 @@ jobs:
           cache-dependency-path: "**/*.csproj"
       - name: Restore
         run: dotnet restore Lunil.sln
+      - name: Restore public API baseline tool
+        run: dotnet tool restore
       - name: Verify formatting
         run: dotnet format Lunil.sln --verify-no-changes --no-restore
       - name: Read version
@@ -174,6 +176,15 @@ jobs:
       - name: Build NuGet packages
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ steps.version.outputs.value }}'
+      - name: Verify frozen public APIs
+        shell: pwsh
+        run: ./scripts/Test-PublicApiBaselines.ps1 -Configuration Release -NoBuild -NoRestore
+      - name: Verify package compatibility and local consumers
+        shell: pwsh
+        run: >-
+          ./scripts/Test-PackageCompatibility.ps1
+          -Version '${{ steps.version.outputs.value }}'
+          -PackageDirectory artifacts/packages -NoPack
       - name: Install and smoke-test CLI tool package
         shell: pwsh
         run: ./scripts/Test-LunilCliPackage.ps1 -Version '${{ steps.version.outputs.value }}'

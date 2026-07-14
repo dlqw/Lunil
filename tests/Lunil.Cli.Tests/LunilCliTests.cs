@@ -1,5 +1,6 @@
 using System.Text;
 using System.Collections.Immutable;
+using System.Reflection;
 using System.Text.Json;
 using Lunil.CodeGen.Cil.Loading;
 
@@ -18,7 +19,11 @@ public sealed class LunilCliTests
         Assert.Equal(0, help.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
-        Assert.StartsWith("0.7.0-alpha.6", version.StandardOutput, StringComparison.Ordinal);
+        var informationalVersion = typeof(LunilCli).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
+            .InformationalVersion;
+        var expectedVersion = informationalVersion.Split('+', 2)[0];
+        Assert.Equal(expectedVersion + "\n", version.StandardOutput);
     }
 
     [Fact]

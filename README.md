@@ -28,12 +28,12 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.7.0-alpha.5`**. The `0.6.0` line ended at the
+> The current source version is **`0.7.0-beta.1`**. The `0.6.0` line ended at the
 > immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
 > Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
 > bounded type/control-flow analysis, incremental module workspace, and the `lunil` CLI are now
-> available. Complete conformance/API gates remain active alpha work; the `0.7.0` scope is not
-> frozen yet.
+> available. The official Lua 5.4.8 user-mode suite and six-RID evidence pass, and all 14 public
+> assemblies/packages are frozen by compatibility baselines. Beta now accepts hardening only.
 
 ## Table of contents
 
@@ -76,18 +76,18 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Alpha-qualified | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
-| Compiler product API | Alpha foundation | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
-| Hosting product API | Alpha foundation | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
-| Annotation product API | Alpha foundation | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
-| Type and flow analysis API | Alpha foundation | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
-| Workspace product API | Alpha foundation | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
-| CLI | Alpha product | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Alpha prerelease | The current build is suitable for evaluation and integration testing; breaking API changes remain possible before `1.0.0` |
+| JIT / AOT backends | Beta-qualified | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
+| Compiler product API | Beta frozen | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
+| Hosting product API | Beta frozen | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
+| Annotation product API | Beta frozen | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
+| Type and flow analysis API | Beta frozen | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
+| Workspace product API | Beta frozen | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
+| CLI | Beta frozen | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
+| Stability contract | Beta prerelease | Feature/API scope is frozen; compatibility, diagnostics, documentation, reliability, and performance hardening continue before RC |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness carried into `0.7.0-alpha.5` |
+| Execution path | Release behavior | Readiness carried into `0.7.0-beta.1` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -97,8 +97,8 @@ collector.
 | Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
 
 These results closed the `0.6.0-alpha.14` JIT/AOT productionization milestone and remain
-regression gates for `0.7.0`. The current alpha series instead closes the compiler, analysis,
-hosting, and CLI product surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md).
+regression gates for `0.7.0`. Beta freezes the compiler, analysis, hosting, CLI, conformance,
+and package surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md).
 
 ## Features
 
@@ -188,7 +188,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.7.0-alpha.5
+dotnet tool install --global Lunil.Cli --version 0.7.0-beta.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -227,7 +227,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0-alpha.5" />
+<PackageReference Include="Lunil.Hosting" Version="0.7.0-beta.1" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through
@@ -356,7 +356,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.5" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0-beta.1" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -480,11 +480,11 @@ The `0.7.0` promotion sequence is:
 0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current development version is **`0.7.0-alpha.5`**. The `0.6.0` line was explicitly
+The current development version is **`0.7.0-beta.1`**. The `0.6.0` line was explicitly
 superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
 `0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. Once `0.7.0-alpha.5` is tagged,
-any follow-up change uses `0.7.0-alpha.6` or a later appropriate version.
+channel and restart at `1` when entering a new channel. Once `0.7.0-beta.1` is tagged,
+any follow-up fix uses `0.7.0-beta.2` or an appropriate RC promotion.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
@@ -497,6 +497,7 @@ suffix are automatically marked as prereleases. See the
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
 | [0.7.0 roadmap](docs/roadmap-0.7.0.md) | Compiler/hosting foundation, annotations, analysis, workspace, CLI and promotion gates |
+| [0.7.0 API/package compatibility](docs/api-compatibility.md) | Frozen assembly APIs, NuGet assets, validation policy, and update commands |
 | [CLI reference](docs/cli.md) | Commands, configuration precedence, profiles, diagnostics, artifacts, and exit codes |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
 | [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
