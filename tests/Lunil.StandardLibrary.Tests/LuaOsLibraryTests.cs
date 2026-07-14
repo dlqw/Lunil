@@ -11,6 +11,15 @@ namespace Lunil.StandardLibrary.Tests;
 public sealed class LuaOsLibraryTests
 {
     [Fact]
+    public void SystemOperatingSystemOnlyAdvertisesTheImplementedPortableLocale()
+    {
+        Assert.Equal("C", SystemLuaOperatingSystem.Instance.SetLocale(null, "all"));
+        Assert.Equal("C", SystemLuaOperatingSystem.Instance.SetLocale("", "numeric"));
+        Assert.Equal("C", SystemLuaOperatingSystem.Instance.SetLocale("C", "time"));
+        Assert.Null(SystemLuaOperatingSystem.Instance.SetLocale("pt_BR", "all"));
+    }
+
+    [Fact]
     public void TimeDateDifferenceAndLocaleUseInjectedOperatingSystem()
     {
         var operatingSystem = new MemoryOperatingSystem

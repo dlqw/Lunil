@@ -719,10 +719,22 @@ public static class Lua54CanonicalPrototypeWriter
                 _ => throw new InvalidDataException("Unknown canonical upvalue source kind."),
             };
 
-        private static Lua54String? ConvertUpvalueName(LuaIrUpvalue upvalue) =>
-            new(upvalue.DebugName.IsEmpty
+        private static Lua54String? ConvertUpvalueName(LuaIrUpvalue upvalue)
+        {
+            if (IsSyntheticUpvalueName(upvalue))
+            {
+                return null;
+            }
+
+            return new Lua54String(upvalue.DebugName.IsEmpty
                 ? Encoding.UTF8.GetBytes(upvalue.Name)
                 : upvalue.DebugName.AsSpan());
+        }
+
+        private static bool IsSyntheticUpvalueName(LuaIrUpvalue upvalue) =>
+            upvalue.DebugName.IsEmpty &&
+            upvalue.Name.StartsWith("(upvalue ", StringComparison.Ordinal) &&
+            upvalue.Name.EndsWith(')');
 
         private readonly record struct EmittedInstruction(
             Lua54Instruction Instruction,

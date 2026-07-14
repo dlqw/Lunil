@@ -356,6 +356,10 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV2),
             nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
             [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
+        "LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked" => Method(
+            typeof(LuaCodegenAbiV2),
+            nameof(LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
         "LuaCodegenAbiV2.CanSkipClose" => Method(
             typeof(LuaCodegenAbiV2),
             nameof(LuaCodegenAbiV2.CanSkipClose),

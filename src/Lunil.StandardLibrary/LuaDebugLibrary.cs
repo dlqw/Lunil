@@ -16,6 +16,11 @@ internal static class LuaDebugLibrary
     public static LuaTable Install(LuaState state)
     {
         var module = state.CreateTable();
+        var hooks = state.CreateTable();
+        var hooksMetatable = state.CreateTable();
+        LuaLibraryHelpers.Set(state, hooksMetatable, "__mode", LuaLibraryHelpers.String(state, "k"));
+        hooks.SetMetatable(hooksMetatable);
+        LuaLibraryHelpers.Set(state, state.Registry, "_HOOKKEY", LuaValue.FromTable(hooks));
         LuaLibraryHelpers.SetFunction(state, module, "debug", DebugConsole);
         LuaLibraryHelpers.SetFunction(state, module, "gethook", GetHook);
         LuaLibraryHelpers.SetFunction(state, module, "getinfo", GetInfo);
@@ -145,8 +150,8 @@ internal static class LuaDebugLibrary
         var userdata = CheckUserdata(arguments, 0, "getuservalue");
         var index = LuaLibraryHelpers.OptionalInteger(arguments, 1, 1, "getuservalue");
         return index >= 1 && index <= userdata.UserValueCount
-            ? [userdata.GetUserValue((int)index - 1)]
-            : [LuaValue.Nil];
+            ? [userdata.GetUserValue((int)index - 1), LuaValue.FromBoolean(true)]
+            : [LuaValue.Nil, LuaValue.FromBoolean(false)];
     }
 
     private static LuaValue[] SetUserValue(LuaState state, ReadOnlySpan<LuaValue> arguments)
@@ -156,7 +161,7 @@ internal static class LuaDebugLibrary
         var index = LuaLibraryHelpers.OptionalInteger(arguments, 2, 1, "setuservalue");
         if (index < 1 || index > userdata.UserValueCount)
         {
-            throw LuaLibraryHelpers.BadArgument("setuservalue", 2, "invalid user value index");
+            return [LuaValue.Nil];
         }
 
         userdata.SetUserValue((int)index - 1, value);
@@ -253,6 +258,24 @@ internal static class LuaDebugLibrary
             throw LuaLibraryHelpers.BadArgument("getlocal", offset, "level out of range");
         }
 
+        if (explicitThread && level == 0 && TryGetActiveNativeCall(thread, out _))
+        {
+            return [];
+        }
+
+        if (!explicitThread && level == 2 &&
+            LuaDebugApi.GetHookTransfer(state, thread, index) is { } transfer)
+        {
+            return [LuaLibraryHelpers.String(state, transfer.Name), transfer.Value];
+        }
+
+        if (!explicitThread && level == 0)
+        {
+            return index > 0 && index <= arguments.Length
+                ? [LuaLibraryHelpers.String(state, "(C temporary)"), arguments[index - 1]]
+                : [];
+        }
+
         var frame = ResolveFrame(state, thread, level, explicitThread);
         if (frame is null)
         {
@@ -272,6 +295,11 @@ internal static class LuaDebugLibrary
         var level = LuaLibraryHelpers.CheckInteger(arguments, offset, "setlocal");
         var index = checked((int)LuaLibraryHelpers.CheckInteger(arguments, offset + 1, "setlocal"));
         var value = LuaLibraryHelpers.Required(arguments, offset + 2, "setlocal");
+        if (explicitThread && level == 0 && TryGetActiveNativeCall(thread, out _))
+        {
+            return [];
+        }
+
         var frame = ResolveFrame(state, thread, level, explicitThread);
         if (frame is null)
         {
@@ -309,11 +337,26 @@ internal static class LuaDebugLibrary
                 return [LuaValue.Nil];
             }
 
+            if (!explicitThread && level == 2 &&
+                LuaDebugApi.TryGetHookSubject(state, thread, out var hookSubject))
+            {
+                function = hookSubject;
+                return [LuaValue.FromTable(CreateInfoTable(
+                    state, function, frame: null, options, thread))];
+            }
+
             if (!explicitThread && level == 0 && !state.RunningNativeFunction.IsNil)
             {
                 function = state.RunningNativeFunction;
                 return [LuaValue.FromTable(CreateInfoTable(
                     state, function, frame: null, options, thread))];
+            }
+
+            if (explicitThread && level == 0 &&
+                TryGetActiveNativeCall(thread, out var activeNative))
+            {
+                return [LuaValue.FromTable(CreateInfoTable(
+                    state, activeNative, frame: null, options, thread))];
             }
 
             frame = ResolveFrame(state, thread, level, explicitThread);
@@ -322,7 +365,7 @@ internal static class LuaDebugLibrary
                 return [LuaValue.Nil];
             }
 
-            function = LuaValue.FromFunction(frame.Closure);
+            function = LuaDebugApi.GetFunction(frame);
         }
         else
         {
@@ -340,6 +383,7 @@ internal static class LuaDebugLibrary
         if (hook.IsNil)
         {
             LuaDebugApi.SetHook(state, thread, LuaValue.Nil, LuaDebugHookMask.None, 0);
+            SetRegistryHook(state, thread, LuaValue.Nil);
             return [];
         }
 
@@ -357,7 +401,15 @@ internal static class LuaDebugLibrary
         if (maskText.Contains('l')) mask |= LuaDebugHookMask.Line;
         if (count > 0) mask |= LuaDebugHookMask.Count;
         LuaDebugApi.SetHook(state, thread, hook, mask, count);
+        SetRegistryHook(state, thread, hook);
         return [];
+    }
+
+    private static void SetRegistryHook(LuaState state, LuaThread thread, LuaValue hook)
+    {
+        var key = LuaLibraryHelpers.String(state, "_HOOKKEY");
+        var table = state.Registry.Get(key).AsTable();
+        table.Set(LuaValue.FromThread(thread), hook);
     }
 
     private static LuaValue[] GetHook(LuaState state, ReadOnlySpan<LuaValue> arguments)
@@ -403,33 +455,164 @@ internal static class LuaDebugLibrary
         }
 
         builder.Append("stack traceback:");
-        var skip = explicitThread ? level : Math.Max(0, level - 1);
-        var frames = thread.Frames.Where(static frame => !frame.IsDebugHook && !frame.IsHidden)
-            .Reverse().Skip((int)skip).ToArray();
-        foreach (var frame in frames)
+        var remainingSkip = level;
+        var renderedNativeFrames = 0;
+        if (!explicitThread)
         {
-            var source = ShortSource(frame.Closure.Function.SourceName);
-            var line = LuaDebugApi.GetCurrentLine(frame);
-            builder.Append("\n\t").Append(source);
-            if (line >= 0)
+            if (remainingSkip == 0)
             {
-                builder.Append(':').Append(line);
+                builder.Append("\n\t[C]: in function 'debug.traceback'");
+                renderedNativeFrames++;
+            }
+            else
+            {
+                remainingSkip--;
+            }
+        }
+
+        var activeNative = TryGetActiveNativeCallName(thread);
+        if (activeNative is not null && activeNative != "traceback")
+        {
+            if (remainingSkip == 0)
+            {
+                builder.Append("\n\t[C]: in function '").Append(activeNative).Append('\'');
+                renderedNativeFrames++;
+            }
+            else
+            {
+                remainingSkip--;
+            }
+        }
+
+        var frames = thread.Frames.Where(static frame => !frame.IsHidden)
+            .Reverse().Skip((int)Math.Min(remainingSkip, int.MaxValue)).ToArray();
+        var frameIndexes = new Dictionary<LuaFrame, int>(ReferenceEqualityComparer.Instance);
+        for (var index = 0; index < thread.Frames.Count; index++)
+        {
+            frameIndexes.Add(thread.Frames[index], index);
+        }
+
+        var totalFrames = renderedNativeFrames + frames.Length;
+        if (totalFrames > 21)
+        {
+            var firstLuaFrames = Math.Max(0, 10 - renderedNativeFrames);
+            for (var index = 0; index < firstLuaFrames; index++)
+            {
+                AppendTracebackFrame(
+                    builder,
+                    thread,
+                    frames[index],
+                    frameIndexes[frames[index]]);
             }
 
-            builder.Append(": in function <").Append(source);
-            if (frame.Closure.Function.LineDefined > 0)
+            builder.Append("\n\t...\t(skipping ")
+                .Append(totalFrames - 21)
+                .Append(" levels)");
+            for (var index = frames.Length - 11; index < frames.Length; index++)
             {
-                builder.Append(':').Append(frame.Closure.Function.LineDefined);
+                AppendTracebackFrame(
+                    builder,
+                    thread,
+                    frames[index],
+                    frameIndexes[frames[index]]);
             }
-
-            builder.Append('>');
-            if (frame.IsTailCall)
+        }
+        else
+        {
+            foreach (var frame in frames)
             {
-                builder.Append("\n\t(...tail calls...)");
+                AppendTracebackFrame(builder, thread, frame, frameIndexes[frame]);
             }
         }
 
         return [LuaLibraryHelpers.String(state, builder.ToString())];
+    }
+
+    private static void AppendTracebackFrame(
+        StringBuilder builder,
+        LuaThread thread,
+        LuaFrame frame,
+        int frameIndex)
+    {
+        var source = LuaLibraryHelpers.ShortSource(frame.Closure.Function.SourceName);
+        var line = LuaDebugApi.GetCurrentLine(thread, frame);
+        builder.Append("\n\t").Append(source);
+        if (line >= 0)
+        {
+            builder.Append(':').Append(line);
+        }
+
+        if (frame.IsDebugHook)
+        {
+            builder.Append(": in hook '?'");
+            return;
+        }
+
+        var inferred = InferFunctionName(thread, frame, frameIndex);
+        if (inferred is not null)
+        {
+            builder.Append(inferred.Value.Kind == "metamethod"
+                    ? ": in metamethod '"
+                    : ": in function '")
+                .Append(inferred.Value.Name)
+                .Append('\'');
+            if (frame.IsTailCall)
+            {
+                builder.Append("\n\t(...tail calls...)");
+            }
+
+            return;
+        }
+
+        builder.Append(": in function <").Append(source);
+        if (frame.Closure.Function.LineDefined > 0)
+        {
+            builder.Append(':').Append(frame.Closure.Function.LineDefined);
+        }
+
+        builder.Append('>');
+        if (frame.IsTailCall)
+        {
+            builder.Append("\n\t(...tail calls...)");
+        }
+    }
+
+    private static string? TryGetActiveNativeCallName(LuaThread thread)
+    {
+        return TryGetActiveNativeCall(thread, out var function)
+            ? function.TryGetNativeFunction()!.Name
+            : null;
+    }
+
+    private static bool TryGetActiveNativeCall(LuaThread thread, out LuaValue function)
+    {
+        var frame = thread.Frames.LastOrDefault(static frame => !frame.IsHidden);
+        if (frame is null || frame.ProgramCounter < 0 ||
+            frame.ProgramCounter >= frame.Closure.Function.Instructions.Length)
+        {
+            function = LuaValue.Nil;
+            return false;
+        }
+
+        var instruction = frame.Closure.Function.Instructions[frame.ProgramCounter];
+        if (instruction.Opcode is not (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
+            thread.Status == LuaThreadStatus.Suspended && frame.ProgramCounter > 0)
+        {
+            var previous = frame.Closure.Function.Instructions[frame.ProgramCounter - 1];
+            if (previous.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall)
+            {
+                instruction = previous;
+            }
+        }
+
+        if (instruction.Opcode is not (LuaIrOpcode.Call or LuaIrOpcode.TailCall))
+        {
+            function = LuaValue.Nil;
+            return false;
+        }
+
+        function = thread.Stack[frame.Base + instruction.A];
+        return function.TryGetNativeFunction() is not null;
     }
 
     private static LuaTable CreateInfoTable(
@@ -454,9 +637,13 @@ internal static class LuaDebugLibrary
             }
             else
             {
-                var source = Source(closure.Function.SourceName);
+                var source = LuaLibraryHelpers.Source(closure.Function.SourceName);
                 SetString(state, table, "source", source);
-                SetString(state, table, "short_src", ShortSource(closure.Function.SourceName));
+                SetString(
+                    state,
+                    table,
+                    "short_src",
+                    LuaLibraryHelpers.ShortSource(closure.Function.SourceName));
                 SetString(state, table, "what", closure.Function.LineDefined == 0 ? "main" : "Lua");
                 SetInteger(state, table, "linedefined", closure.Function.LineDefined);
                 SetInteger(state, table, "lastlinedefined", closure.Function.LastLineDefined);
@@ -465,7 +652,15 @@ internal static class LuaDebugLibrary
 
         if (options.Contains('l'))
         {
-            SetInteger(state, table, "currentline", frame is null ? -1 : LuaDebugApi.GetCurrentLine(frame));
+            SetInteger(
+                state,
+                table,
+                "currentline",
+                frame is null
+                    ? -1
+                    : thread is null
+                        ? LuaDebugApi.GetCurrentLine(frame)
+                        : LuaDebugApi.GetCurrentLine(thread, frame));
         }
 
         if (options.Contains('u'))
@@ -495,8 +690,17 @@ internal static class LuaDebugLibrary
 
         if (options.Contains('r'))
         {
-            SetInteger(state, table, "ftransfer", 0);
-            SetInteger(state, table, "ntransfer", 0);
+            if (thread is not null &&
+                LuaDebugApi.TryGetHookTransferRange(state, thread, out var start, out var count))
+            {
+                SetInteger(state, table, "ftransfer", start);
+                SetInteger(state, table, "ntransfer", count);
+            }
+            else
+            {
+                SetInteger(state, table, "ftransfer", 0);
+                SetInteger(state, table, "ntransfer", 0);
+            }
         }
 
         if (options.Contains('f'))
@@ -530,6 +734,24 @@ internal static class LuaDebugLibrary
             }
         }
 
+        return InferFunctionName(thread, frame, frameIndex);
+    }
+
+    private static (string Name, string Kind)? InferFunctionName(
+        LuaThread thread,
+        LuaFrame frame,
+        int frameIndex)
+    {
+        if (frame.IsDebugHook)
+        {
+            return ("?", "hook");
+        }
+
+        if (frame.DebugFunctionName is not null && frame.DebugFunctionNameWhat is not null)
+        {
+            return (frame.DebugFunctionName, frame.DebugFunctionNameWhat);
+        }
+
         if (frameIndex <= 0)
         {
             return null;
@@ -542,6 +764,13 @@ internal static class LuaDebugLibrary
         if (call.Opcode is not (LuaIrOpcode.Call or LuaIrOpcode.TailCall))
         {
             return null;
+        }
+
+        if (call.Opcode == LuaIrOpcode.Call &&
+            ((LuaIrCallKind)call.D == LuaIrCallKind.ForIterator ||
+                IsGenericForIteratorCall(caller.Closure.Function, callPc, call)))
+        {
+            return ("for iterator", "for iterator");
         }
 
         var local = LuaDebugApi.GetLocal(thread, caller, call.A + 1);
@@ -567,6 +796,16 @@ internal static class LuaDebugLibrary
                 }
             }
 
+            if (instruction.Opcode == LuaIrOpcode.GetUpvalue &&
+                instruction.B >= 0 && instruction.B < caller.Closure.Function.Upvalues.Length)
+            {
+                var upvalue = caller.Closure.Function.Upvalues[instruction.B];
+                if (!IsSyntheticUpvalueName(upvalue))
+                {
+                    return (upvalue.Name, "upvalue");
+                }
+            }
+
             if (instruction.Opcode == LuaIrOpcode.Move)
             {
                 var source = LuaDebugApi.GetLocal(thread, caller, instruction.B + 1);
@@ -580,6 +819,48 @@ internal static class LuaDebugLibrary
         }
 
         return null;
+    }
+
+    private static bool IsGenericForIteratorCall(
+        LuaIrFunction function,
+        int callPc,
+        LuaIrInstruction call)
+    {
+        var instructions = function.Instructions;
+        if (call.B != 2 || call.C <= 0 || callPc < 3 ||
+            callPc + call.C + 2 >= instructions.Length)
+        {
+            return false;
+        }
+
+        var firstSetup = instructions[callPc - 3];
+        var secondSetup = instructions[callPc - 2];
+        var thirdSetup = instructions[callPc - 1];
+        if (firstSetup.Opcode != LuaIrOpcode.Move || firstSetup.A != call.A ||
+            secondSetup.Opcode != LuaIrOpcode.Move || secondSetup.A != call.A + 1 ||
+            secondSetup.B != firstSetup.B + 1 ||
+            thirdSetup.Opcode != LuaIrOpcode.Move || thirdSetup.A != call.A + 2 ||
+            thirdSetup.B != firstSetup.B + 2)
+        {
+            return false;
+        }
+
+        var variableBase = instructions[callPc + 1].A;
+        for (var index = 0; index < call.C; index++)
+        {
+            var resultMove = instructions[callPc + 1 + index];
+            if (resultMove.Opcode != LuaIrOpcode.Move ||
+                resultMove.A != variableBase + index || resultMove.B != call.A + index)
+            {
+                return false;
+            }
+        }
+
+        var controlMove = instructions[callPc + 1 + call.C];
+        var exit = instructions[callPc + 2 + call.C];
+        return controlMove.Opcode == LuaIrOpcode.Move &&
+            controlMove.A == firstSetup.B + 2 && controlMove.B == variableBase &&
+            exit.Opcode == LuaIrOpcode.JumpIfFalse && exit.A == variableBase;
     }
 
     private static string? ResolveStringRegister(
@@ -629,7 +910,9 @@ internal static class LuaDebugLibrary
             return null;
         }
 
-        var adjusted = explicitThread ? (int)level : (int)level - 1;
+        var adjusted = explicitThread
+            ? (int)level - (TryGetActiveNativeCall(thread, out _) ? 1 : 0)
+            : (int)level - 1;
         return adjusted < 0 ? null : LuaDebugApi.GetFrame(state, thread, adjusted);
     }
 
@@ -678,10 +961,20 @@ internal static class LuaDebugLibrary
     private static string UpvalueName(LuaClosure closure, int index)
     {
         var upvalue = closure.Function.Upvalues[index];
+        if (IsSyntheticUpvalueName(upvalue))
+        {
+            return "(no name)";
+        }
+
         return upvalue.DebugName.IsEmpty
             ? upvalue.Name
             : Encoding.UTF8.GetString(upvalue.DebugName.AsSpan());
     }
+
+    private static bool IsSyntheticUpvalueName(LuaIrUpvalue upvalue) =>
+        upvalue.DebugName.IsEmpty &&
+        upvalue.Name.StartsWith("(upvalue ", StringComparison.Ordinal) &&
+        upvalue.Name.EndsWith(')');
 
     private static LuaValue CheckFunction(
         ReadOnlySpan<LuaValue> arguments,
@@ -704,50 +997,12 @@ internal static class LuaDebugLibrary
         return value.Kind == LuaValueKind.Userdata
             ? value.AsUserdata()
             : throw LuaLibraryHelpers.BadArgument(
-                function, index, $"userdata expected, got {LuaLibraryHelpers.TypeName(value)}");
-    }
-
-    private static string Source(IEnumerable<byte> bytes)
-    {
-        var source = Encoding.UTF8.GetString([.. bytes]);
-        if (source == "\u0001")
-        {
-            return string.Empty;
-        }
-
-        return source.Length == 0 ? "=?" : source;
-    }
-
-    private static string ShortSource(IEnumerable<byte> bytes)
-    {
-        const int maximumLength = 59;
-        var source = Source(bytes);
-        if (source.StartsWith('@'))
-        {
-            source = source[1..];
-            return source.Length <= maximumLength
-                ? source
-                : "..." + source[^(maximumLength - 3)..];
-        }
-
-        if (source.StartsWith('='))
-        {
-            source = source[1..];
-            return source.Length <= maximumLength ? source : source[..maximumLength];
-        }
-
-        const string prefix = "[string \"";
-        const string suffix = "\"]";
-        var available = maximumLength - prefix.Length - suffix.Length;
-        var newLine = source.IndexOf('\n');
-        var truncated = newLine >= 0 || source.Length > available;
-        if (truncated)
-        {
-            var end = newLine < 0 ? source.Length : newLine;
-            source = source[..Math.Min(end, available - 3)] + "...";
-        }
-
-        return prefix + source + suffix;
+                function,
+                index,
+                $"userdata expected, got " +
+                (value.Kind == LuaValueKind.LightUserdata
+                    ? "light userdata"
+                    : LuaLibraryHelpers.TypeName(value)));
     }
 
     private static void SetString(LuaState state, LuaTable table, string name, string value) =>

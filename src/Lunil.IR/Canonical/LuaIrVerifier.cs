@@ -233,8 +233,12 @@ public static class LuaIrVerifier
                 Register(instruction.C) && Enum.IsDefined((LuaIrBinaryOperator)instruction.D),
             LuaIrOpcode.Jump => Target(instruction.B) && CloseBase(instruction.C),
             LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue =>
-                Register(instruction.A) && Target(instruction.B),
+                Register(instruction.A) && Target(instruction.B) &&
+                (instruction.D == 0 && instruction.C == 0 ||
+                    instruction.D == 1 && instruction.C >= 0 &&
+                    instruction.C <= function.RegisterCount),
             LuaIrOpcode.Call => Register(instruction.A) && Count(instruction.B) && Count(instruction.C) &&
+                Enum.IsDefined((LuaIrCallKind)instruction.D) &&
                 (instruction.B < 0 || RegisterRange(instruction.A + 1, instruction.B)) &&
                 (instruction.C < 0 || instruction.C == 0 || RegisterRange(instruction.A, instruction.C)),
             LuaIrOpcode.TailCall => Register(instruction.A) && Count(instruction.B) &&

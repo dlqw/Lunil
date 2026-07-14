@@ -19,6 +19,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="PucLua54\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\..\src\Lunil.IR\Lunil.IR.csproj" />

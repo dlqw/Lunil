@@ -29,7 +29,7 @@ internal static class LuaIoLibrary
         var metatable = state.CreateTable();
         LuaLibraryHelpers.Set(state, metatable, "__index", LuaValue.FromTable(methods));
         LuaLibraryHelpers.Set(state, metatable, "__name", LuaLibraryHelpers.String(state, "FILE*"));
-        LuaLibraryHelpers.SetFunction(state, metatable, "__gc", GarbageCollect);
+        LuaLibraryHelpers.SetFunction(state, metatable, "__gc", GarbageCollect, "io.close");
         LuaLibraryHelpers.SetFunction(state, metatable, "__close", CloseMetamethod);
         LuaLibraryHelpers.SetFunction(state, metatable, "__tostring", ToStringValue);
 
@@ -53,17 +53,17 @@ internal static class LuaIoLibrary
 
     private static void AddModuleFunctions(LuaState state, LuaTable module)
     {
-        LuaLibraryHelpers.SetFunction(state, module, "close", IoClose);
-        LuaLibraryHelpers.SetFunction(state, module, "flush", IoFlush);
-        LuaLibraryHelpers.SetFunction(state, module, "input", IoInput);
-        LuaLibraryHelpers.SetFunction(state, module, "lines", IoLines);
-        LuaLibraryHelpers.SetFunction(state, module, "open", IoOpen);
-        LuaLibraryHelpers.SetFunction(state, module, "output", IoOutput);
-        LuaLibraryHelpers.SetFunction(state, module, "popen", IoPopen);
-        LuaLibraryHelpers.SetFunction(state, module, "read", IoRead);
-        LuaLibraryHelpers.SetFunction(state, module, "tmpfile", IoTemporaryFile);
-        LuaLibraryHelpers.SetFunction(state, module, "type", IoType);
-        LuaLibraryHelpers.SetFunction(state, module, "write", IoWrite);
+        LuaLibraryHelpers.SetFunction(state, module, "close", IoClose, "io.close");
+        LuaLibraryHelpers.SetFunction(state, module, "flush", IoFlush, "io.flush");
+        LuaLibraryHelpers.SetFunction(state, module, "input", IoInput, "io.input");
+        LuaLibraryHelpers.SetFunction(state, module, "lines", IoLines, "io.lines");
+        LuaLibraryHelpers.SetFunction(state, module, "open", IoOpen, "io.open");
+        LuaLibraryHelpers.SetFunction(state, module, "output", IoOutput, "io.output");
+        LuaLibraryHelpers.SetFunction(state, module, "popen", IoPopen, "io.popen");
+        LuaLibraryHelpers.SetFunction(state, module, "read", IoRead, "io.read");
+        LuaLibraryHelpers.SetFunction(state, module, "tmpfile", IoTemporaryFile, "io.tmpfile");
+        LuaLibraryHelpers.SetFunction(state, module, "type", IoType, "io.type");
+        LuaLibraryHelpers.SetFunction(state, module, "write", IoWrite, "io.write");
     }
 
     private static void AddFileMethods(LuaState state, LuaTable methods)
@@ -317,16 +317,31 @@ internal static class LuaIoLibrary
 
     private static LuaValue[] GarbageCollect(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
-        if (arguments.Length > 0 && arguments[0].Kind == LuaValueKind.Userdata &&
-            arguments[0].AsUserdata().Payload is LuaFileHandle file)
+        if (arguments.Length == 0)
         {
-            try
-            {
-                file.Dispose();
-            }
-            catch (Exception)
-            {
-            }
+            throw LuaLibraryHelpers.BadArgument("close", 0, "FILE* expected, got no value");
+        }
+
+        if (arguments[0].Kind != LuaValueKind.Userdata ||
+            arguments[0].AsUserdata().Payload is not LuaFileHandle file)
+        {
+            throw LuaLibraryHelpers.BadArgument(
+                "close",
+                0,
+                $"FILE* expected, got {LuaLibraryHelpers.TypeName(arguments[0])}");
+        }
+
+        if (file.IsClosed || file.IsStandard)
+        {
+            return [];
+        }
+
+        try
+        {
+            file.Dispose();
+        }
+        catch (Exception)
+        {
         }
 
         return [];

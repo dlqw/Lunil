@@ -40,6 +40,8 @@ public sealed class LuaState
 
     public LuaValue RunningNativeFunction { get; internal set; }
 
+    public bool IsRunningFinalizer { get; internal set; }
+
     internal bool RunningThreadIsYieldable { get; set; }
 
 
@@ -75,10 +77,11 @@ public sealed class LuaState
     public LuaHandle CreateHandle(LuaValue value) => Heap.CreateHandle(value);
 
     public LuaTable? GetTypeMetatable(LuaValueKind kind) =>
-        _typeMetatables.GetValueOrDefault(kind);
+        _typeMetatables.GetValueOrDefault(NormalizeTypeMetatableKind(kind));
 
     public void SetTypeMetatable(LuaValueKind kind, LuaTable? metatable)
     {
+        kind = NormalizeTypeMetatableKind(kind);
         if (_typeMetatables.Remove(kind, out var previous))
         {
             Heap.RemovePermanentRoot(previous);
@@ -93,6 +96,9 @@ public sealed class LuaState
         _typeMetatables[kind] = metatable;
         Heap.AddPermanentRoot(metatable);
     }
+
+    private static LuaValueKind NormalizeTypeMetatableKind(LuaValueKind kind) =>
+        kind == LuaValueKind.Float ? LuaValueKind.Integer : kind;
 
     internal void ReportWarning(LuaValue warning) => WarningRaised?.Invoke(warning);
 
@@ -156,7 +162,8 @@ public sealed class LuaState
             Heap,
             module,
             function,
-            upvalues);
+            upvalues,
+            new LuaModuleStringConstants());
     }
 
     public LuaClosure LoadBinaryChunk(

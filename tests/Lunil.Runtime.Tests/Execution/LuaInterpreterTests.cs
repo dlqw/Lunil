@@ -325,6 +325,14 @@ public sealed class LuaInterpreterTests
         Assert.InRange(allocated, 0, 16_384);
     }
 
+    [Fact]
+    public void MainChunkCanReadAndReplaceItsImplicitEnvironmentUpvalue()
+    {
+        Assert.Equal(
+            [LuaValue.FromBoolean(true), LuaValue.FromBoolean(true)],
+            Execute("local original = _ENV; _ENV = nil; return original ~= nil, _ENV == nil"));
+    }
+
     private static LuaValue[] Execute(string source, LuaState? state = null)
     {
         state ??= new LuaState();

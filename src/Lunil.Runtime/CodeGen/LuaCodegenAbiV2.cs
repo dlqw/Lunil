@@ -108,6 +108,18 @@ public static class LuaCodegenAbiV2
             frame,
             frame.Base + registerCount);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool ReadTruthyAndSetFrameTopUnchecked(
+        LuaThread thread,
+        LuaFrame frame,
+        int register,
+        int registerCount)
+    {
+        var truthy = ReadRegisterUnchecked(thread, frame, register).IsTruthy;
+        SetFrameTopUnchecked(thread, frame, registerCount);
+        return truthy;
+    }
+
     public static bool CanSkipClose(LuaFrame frame, int register)
     {
         ArgumentNullException.ThrowIfNull(frame);

@@ -30,6 +30,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             case LuaIrOpcode.LoadConstant:
                 LuaExecutionEngine.Write(thread, frame, instruction.A, LuaExecutionEngine.MaterializeConstant(
                     state,
+                    frame.Closure,
                     frame.Closure.Function.Constants[instruction.B]));
                 frame.ProgramCounter++;
                 break;
@@ -149,12 +150,24 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter = instruction.B;
                 break;
             case LuaIrOpcode.JumpIfFalse:
-                frame.ProgramCounter = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy
+                var falseCondition = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy;
+                if (instruction.D != 0)
+                {
+                    LuaExecutionEngine.SetFrameTop(thread, frame, frame.Base + instruction.C);
+                }
+
+                frame.ProgramCounter = falseCondition
                     ? frame.ProgramCounter + 1
                     : instruction.B;
                 break;
             case LuaIrOpcode.JumpIfTrue:
-                frame.ProgramCounter = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy
+                var trueCondition = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy;
+                if (instruction.D != 0)
+                {
+                    LuaExecutionEngine.SetFrameTop(thread, frame, frame.Base + instruction.C);
+                }
+
+                frame.ProgramCounter = trueCondition
                     ? instruction.B
                     : frame.ProgramCounter + 1;
                 break;
@@ -183,8 +196,12 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                             LuaMetamethod.Close);
                         if (close.IsNil)
                         {
+                            var local = LuaDebugApi.GetLocal(
+                                thread,
+                                frame,
+                                instruction.A + 1);
                             throw new LuaRuntimeException(
-                                $"To-be-closed value of kind {value.Kind} has no __close metamethod.");
+                                $"variable '{local?.Name ?? "?"}' got a non-closable value");
                         }
 
                         frame.ToBeClosedSlots.Add(frame.Base + instruction.A);

@@ -18,7 +18,7 @@ public sealed class LunilCliTests
         Assert.Equal(0, help.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
-        Assert.StartsWith("0.7.0-alpha.5", version.StandardOutput, StringComparison.Ordinal);
+        Assert.StartsWith("0.7.0-alpha.6", version.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public sealed class LunilCliTests
     }
 
     [Theory]
-    [InlineData("local function f() return f() end; return f()", "--maximum-call-depth", "8", "depth")]
+    [InlineData("local function f() local value = f(); return value end; return f()", "--maximum-call-depth", "8", "stack")]
     [InlineData("local a, b, c, d = 1, 2, 3, 4; return a + b + c + d", "--maximum-stack-slots", "1", "stack")]
     [InlineData("return 1", "--maximum-heap-bytes", "1", "quota")]
     public async Task RuntimeResourceBudgetsUseExecutionExitCode(

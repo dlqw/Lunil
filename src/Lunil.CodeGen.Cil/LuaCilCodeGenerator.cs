@@ -580,8 +580,18 @@ internal static class LuaCilMethodPlanner
                 LoadArgument(plan, ThreadArgument, pc);
                 LoadArgument(plan, FrameArgument, pc);
                 LoadInt32(plan, instruction.A, pc);
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
-                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.LuaValueIsTruthy, pc));
+                if (instruction.D != 0)
+                {
+                    LoadInt32(plan, instruction.C, pc);
+                    Emit(plan, CilPlanInstruction.Call(
+                        CilWellKnownCalls.ReadTruthyAndSetFrameTopUnchecked,
+                        pc));
+                }
+                else
+                {
+                    Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
+                    Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.LuaValueIsTruthy, pc));
+                }
                 if (IsInRange(instruction.B, startProgramCounter, endProgramCounter))
                 {
                     Emit(plan, CilPlanInstruction.WithLabel(

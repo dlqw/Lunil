@@ -72,6 +72,8 @@ public static class Lua54PrototypeConverter
         private readonly int[] _programCounterMap;
         private readonly int[] _sourceLines;
         private int _sourceProgramCounter;
+        private bool _usesScratchRegisters;
+        private bool _scratchLifetimeClosed;
 
         public FunctionConverter(
             PrototypeEntry entry,
@@ -104,7 +106,13 @@ public static class Lua54PrototypeConverter
                  _sourceProgramCounter++)
             {
                 _programCounterMap[_sourceProgramCounter] = _instructions.Count;
+                _usesScratchRegisters = false;
+                _scratchLifetimeClosed = false;
                 ConvertInstruction(Prototype.Code[_sourceProgramCounter]);
+                if (_usesScratchRegisters && !_scratchLifetimeClosed)
+                {
+                    Emit(LuaIrOpcode.SetTop, Prototype.MaximumStackSize);
+                }
             }
 
             _programCounterMap[Prototype.Code.Length] = _instructions.Count;
@@ -410,7 +418,12 @@ public static class Lua54PrototypeConverter
                     Emit(LuaIrOpcode.Move, instruction.A + 4, instruction.A);
                     Emit(LuaIrOpcode.Move, instruction.A + 5, instruction.A + 1);
                     Emit(LuaIrOpcode.Move, instruction.A + 6, instruction.A + 2);
-                    Emit(LuaIrOpcode.Call, instruction.A + 4, 2, instruction.C);
+                    Emit(
+                        LuaIrOpcode.Call,
+                        instruction.A + 4,
+                        2,
+                        instruction.C,
+                        (int)LuaIrCallKind.ForIterator);
                     break;
                 case Lua54Opcode.GenericForLoop:
                     EmitLoadConstant(Scratch0, LuaIrConstant.Nil);
@@ -520,14 +533,19 @@ public static class Lua54PrototypeConverter
         {
             var opcode = whenTrue ? LuaIrOpcode.JumpIfTrue : LuaIrOpcode.JumpIfFalse;
             var index = _instructions.Count;
-            Emit(opcode, register);
+            Emit(
+                opcode,
+                register,
+                c: register >= Scratch0 ? Prototype.MaximumStackSize : 0,
+                d: register >= Scratch0 ? 1 : 0);
+            _scratchLifetimeClosed |= register >= Scratch0;
             _patches.Add(new JumpPatch(index, rawTarget));
         }
 
         private void EmitJump(int rawTarget)
         {
             var index = _instructions.Count;
-            Emit(LuaIrOpcode.Jump);
+            Emit(LuaIrOpcode.Jump, c: -1);
             _patches.Add(new JumpPatch(index, rawTarget));
         }
 
@@ -579,15 +597,43 @@ public static class Lua54PrototypeConverter
             int c = 0,
             int d = 0)
         {
-            _instructions.Add(new LuaIrInstruction(
+            var instruction = new LuaIrInstruction(
                 opcode,
                 a,
                 b,
                 c,
                 d,
                 sourceLine: _sourceLines[_sourceProgramCounter],
-                logicalProgramCounter: _sourceProgramCounter));
+                logicalProgramCounter: _sourceProgramCounter);
+            _usesScratchRegisters |= TouchesScratchRegister(instruction);
+            _instructions.Add(instruction);
         }
+
+        private bool TouchesScratchRegister(LuaIrInstruction instruction) =>
+            instruction.Opcode switch
+            {
+                LuaIrOpcode.LoadConstant or LuaIrOpcode.NewTable or LuaIrOpcode.Closure =>
+                    instruction.A >= Scratch0,
+                LuaIrOpcode.LoadNil => instruction.A + instruction.B > Scratch0,
+                LuaIrOpcode.Move => instruction.A >= Scratch0 || instruction.B >= Scratch0,
+                LuaIrOpcode.GetUpvalue => instruction.A >= Scratch0,
+                LuaIrOpcode.SetUpvalue => instruction.B >= Scratch0,
+                LuaIrOpcode.GetTable or LuaIrOpcode.SetTable =>
+                    instruction.A >= Scratch0 || instruction.B >= Scratch0 ||
+                    instruction.C >= Scratch0,
+                LuaIrOpcode.SetList => instruction.A >= Scratch0 || instruction.C >= Scratch0,
+                LuaIrOpcode.VarArg or LuaIrOpcode.Unary =>
+                    instruction.A >= Scratch0 || instruction.B >= Scratch0,
+                LuaIrOpcode.Binary => instruction.A >= Scratch0 || instruction.B >= Scratch0 ||
+                    instruction.C >= Scratch0,
+                LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue => instruction.A >= Scratch0,
+                LuaIrOpcode.Call or LuaIrOpcode.TailCall or LuaIrOpcode.Return =>
+                    instruction.A >= Scratch0,
+                LuaIrOpcode.Close or LuaIrOpcode.MarkToBeClosed or
+                    LuaIrOpcode.NumericForPrepare or LuaIrOpcode.NumericForLoop =>
+                    instruction.A >= Scratch0,
+                _ => false,
+            };
 
         private void PatchJumps()
         {

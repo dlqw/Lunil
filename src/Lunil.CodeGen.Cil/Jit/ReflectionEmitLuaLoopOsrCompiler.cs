@@ -55,6 +55,10 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
         [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
+    private static readonly MethodInfo ReadTruthyAndSetFrameTop = Method(
+        typeof(LuaCodegenAbiV2),
+        nameof(LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
     private static readonly MethodInfo CanSkipClose = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanSkipClose),
@@ -387,10 +391,21 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
             case LuaIrOpcode.JumpIfFalse:
             case LuaIrOpcode.JumpIfTrue:
                 EmitReserve(generator, 1, budgetExit);
-                EmitReadRegister(generator, instruction.A);
-                generator.Emit(OpCodes.Stloc, firstValue);
-                generator.Emit(OpCodes.Ldloca, firstValue);
-                generator.Emit(OpCodes.Call, IsTruthy);
+                if (instruction.D != 0)
+                {
+                    generator.Emit(OpCodes.Ldarg_1);
+                    generator.Emit(OpCodes.Ldarg_2);
+                    EmitInt32(generator, instruction.A);
+                    EmitInt32(generator, instruction.C);
+                    generator.Emit(OpCodes.Call, ReadTruthyAndSetFrameTop);
+                }
+                else
+                {
+                    EmitReadRegister(generator, instruction.A);
+                    generator.Emit(OpCodes.Stloc, firstValue);
+                    generator.Emit(OpCodes.Ldloca, firstValue);
+                    generator.Emit(OpCodes.Call, IsTruthy);
+                }
                 var taken = generator.DefineLabel();
                 generator.Emit(
                     instruction.Opcode == LuaIrOpcode.JumpIfTrue

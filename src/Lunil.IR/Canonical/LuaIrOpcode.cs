@@ -63,6 +63,12 @@ public enum LuaIrBinaryOperator : byte
     ShiftRight,
 }
 
+public enum LuaIrCallKind : byte
+{
+    Regular,
+    ForIterator,
+}
+
 [Flags]
 public enum LuaIrInstructionEffects : byte
 {

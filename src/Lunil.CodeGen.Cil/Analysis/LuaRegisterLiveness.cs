@@ -179,6 +179,14 @@ public static class LuaRegisterLiveness
             case LuaIrOpcode.SetTop:
                 Kill(live, instruction.A, function.RegisterCount - instruction.A);
                 break;
+            case LuaIrOpcode.JumpIfFalse:
+            case LuaIrOpcode.JumpIfTrue:
+                if (instruction.D != 0)
+                {
+                    Kill(live, instruction.C, function.RegisterCount - instruction.C);
+                }
+
+                break;
             case LuaIrOpcode.VarArg:
                 Kill(
                     live,
@@ -223,10 +231,10 @@ public static class LuaRegisterLiveness
                 Use(live, instruction.A, 1);
                 Use(
                     live,
-                    instruction.A + 1,
-                    instruction.B < 0
-                        ? function.RegisterCount - instruction.A - 1
-                        : instruction.B);
+                    instruction.C,
+                    instruction.D < 0
+                        ? function.RegisterCount - instruction.C
+                        : instruction.D);
                 break;
             case LuaIrOpcode.Closure:
                 foreach (var upvalue in module.Functions[instruction.B].Upvalues)

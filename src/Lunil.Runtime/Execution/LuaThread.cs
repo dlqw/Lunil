@@ -68,6 +68,14 @@ public sealed class LuaThread : LuaGcObject
 
     internal bool IsRunningDebugHook { get; set; }
 
+    internal LuaValue DebugHookSubjectFunction { get; set; }
+
+    internal LuaValueWindow DebugHookTransferValues { get; } = new();
+
+    internal int DebugHookTransferStart { get; set; } = 1;
+
+    internal bool DebugHookTransferIsNative { get; set; }
+
     internal LuaFrame CurrentFrame => _frames[^1];
 
     internal int FrameCount => _frames.Count;
@@ -85,6 +93,7 @@ public sealed class LuaThread : LuaGcObject
         }
 
         Owner.WriteBarrier(this, frame.Continuation.ErrorHandler);
+        Owner.WriteBarrier(this, frame.Continuation.ProtectionFunction);
 
         _frames.Add(frame);
     }
@@ -140,6 +149,8 @@ public sealed class LuaThread : LuaGcObject
         _resumeValues.Clear();
         Status = LuaThreadStatus.New;
         IsRunningDebugHook = false;
+        DebugHookSubjectFunction = LuaValue.Nil;
+        ClearDebugHookTransfer();
     }
 
     internal void Initialize(LuaValue entry)
@@ -204,6 +215,8 @@ public sealed class LuaThread : LuaGcObject
         CloseHadError = false;
         _yieldedValues.Clear();
         _resumeValues.Clear();
+        DebugHookSubjectFunction = LuaValue.Nil;
+        ClearDebugHookTransfer();
         Status = LuaThreadStatus.Dead;
     }
 
@@ -212,6 +225,7 @@ public sealed class LuaThread : LuaGcObject
         visitor.Visit(Entry);
         visitor.Visit(TerminalError);
         visitor.Visit(DebugHook);
+        visitor.Visit(DebugHookSubjectFunction);
         if (Resumer is not null)
         {
             visitor.Visit(Resumer);
@@ -232,6 +246,11 @@ public sealed class LuaThread : LuaGcObject
             visitor.Visit(value);
         }
 
+        foreach (var value in DebugHookTransferValues)
+        {
+            visitor.Visit(value);
+        }
+
         foreach (var frame in _frames)
         {
             visitor.Visit(frame.Closure);
@@ -243,6 +262,7 @@ public sealed class LuaThread : LuaGcObject
 
             visitor.Visit(frame.Continuation.Value);
             visitor.Visit(frame.Continuation.ErrorHandler);
+            visitor.Visit(frame.Continuation.ProtectionFunction);
             foreach (var value in frame.Continuation.Values)
             {
                 visitor.Visit(value);
@@ -263,7 +283,26 @@ public sealed class LuaThread : LuaGcObject
         if (UnwindState is not null)
         {
             visitor.Visit(UnwindState.Error);
+            visitor.Visit(UnwindState.DebugBoundaryFunction);
+            visitor.Visit(UnwindState.ErrorHandler);
         }
+    }
+
+    internal void SetDebugHookTransfer(
+        ReadOnlySpan<LuaValue> values,
+        bool isNative,
+        int start = 1)
+    {
+        SetValueWindow(DebugHookTransferValues, values);
+        DebugHookTransferStart = start;
+        DebugHookTransferIsNative = isNative;
+    }
+
+    internal void ClearDebugHookTransfer()
+    {
+        DebugHookTransferValues.Clear();
+        DebugHookTransferStart = 1;
+        DebugHookTransferIsNative = false;
     }
 }
 
@@ -324,15 +363,34 @@ internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
 
 internal sealed class LuaUnwindState
 {
-    public LuaUnwindState(LuaFrame? boundary, LuaValue error)
+    public LuaUnwindState(
+        LuaFrame? boundary,
+        LuaValue error,
+        LuaValue debugBoundaryFunction,
+        LuaValue errorHandler,
+        bool skipProtectedNativeCallback = false)
     {
         Boundary = boundary;
         Error = error;
+        DebugBoundaryFunction = debugBoundaryFunction;
+        ErrorHandler = errorHandler;
+        ErrorHandlerPending = !errorHandler.IsNil;
+        SkipProtectedNativeCallback = skipProtectedNativeCallback;
     }
 
     public LuaFrame? Boundary { get; }
 
     public LuaValue Error { get; set; }
+
+    public LuaValue DebugBoundaryFunction { get; }
+
+    public LuaValue ErrorHandler { get; }
+
+    public bool ErrorHandlerPending { get; set; }
+
+    public LuaFrame? ActiveErrorHandler { get; set; }
+
+    public bool SkipProtectedNativeCallback { get; }
 
     public LuaFrame? ActiveCloseCall { get; set; }
 }

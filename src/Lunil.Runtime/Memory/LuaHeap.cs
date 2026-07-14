@@ -265,10 +265,16 @@ public sealed class LuaHeap
                 continue;
             }
 
+            if (!pending.Target.TryGetFinalizer(out var finalizer))
+            {
+                pending.Target.FinalizationState = LuaGcFinalizationState.Finalized;
+                continue;
+            }
+
             var completed = false;
             try
             {
-                completed = callback(pending.Target, pending.Finalizer);
+                completed = callback(pending.Target, finalizer);
             }
             finally
             {
@@ -343,6 +349,11 @@ public sealed class LuaHeap
         if (Phase == LuaGcPhase.Sweep)
         {
             PreserveDuringMutation(owner);
+            if (target is not null)
+            {
+                PreserveDuringMutation(target);
+            }
+
             return;
         }
 
@@ -430,8 +441,13 @@ public sealed class LuaHeap
             if (pending.Target.IsAlive &&
                 pending.Target.FinalizationState == LuaGcFinalizationState.Pending)
             {
+                if (!pending.Target.TryGetFinalizer(out finalizer))
+                {
+                    pending.Target.FinalizationState = LuaGcFinalizationState.Finalized;
+                    continue;
+                }
+
                 target = pending.Target;
-                finalizer = pending.Finalizer;
                 return true;
             }
         }
@@ -519,7 +535,6 @@ public sealed class LuaHeap
         foreach (var pending in _pendingFinalizers)
         {
             MarkObject(pending.Target);
-            MarkValue(pending.Finalizer);
         }
 
         Phase = LuaGcPhase.Propagate;
@@ -569,21 +584,45 @@ public sealed class LuaHeap
 
         if (!_finalizersSeparated)
         {
+            var unlockedBeforeFinalizers = false;
+            foreach (var pair in _weakTables)
+            {
+                if (pair.Value == LuaWeakMode.Keys && pair.Key.PropagateEphemerons(_visitor))
+                {
+                    unlockedBeforeFinalizers = true;
+                }
+            }
+
+            if (unlockedBeforeFinalizers || _gray.Count > 0)
+            {
+                return 1;
+            }
+
+            // Lua clears weak values before resurrecting objects that are waiting for
+            // finalization. References reachable only through a finalizable object must
+            // therefore disappear from weak-value tables, while weak keys can still be
+            // retained after that object's graph is marked for the finalizer.
+            foreach (var pair in _weakTables)
+            {
+                pair.Key.ClearUnreachableWeakEntries(
+                    pair.Value & LuaWeakMode.Values,
+                    _visitor);
+            }
+
             _finalizersSeparated = true;
             foreach (var value in _objects)
             {
                 if (!value.IsAlive || value.FinalizationState != LuaGcFinalizationState.None ||
                     value.Color != LuaGcColor.White ||
                     (_cycleKind == LuaGcCycleKind.Minor && IsOld(value)) ||
-                    !value.TryGetFinalizer(out var finalizer))
+                    !value.TryGetFinalizer(out _))
                 {
                     continue;
                 }
 
                 value.FinalizationState = LuaGcFinalizationState.Pending;
                 MarkObject(value);
-                MarkValue(finalizer);
-                _pendingFinalizers.Enqueue(new PendingFinalizer(value, finalizer));
+                _pendingFinalizers.Enqueue(new PendingFinalizer(value));
             }
 
             if (_gray.Count > 0)
@@ -632,17 +671,16 @@ public sealed class LuaHeap
         if (collect)
         {
             if (value.FinalizationState == LuaGcFinalizationState.None &&
-                value.TryGetFinalizer(out var finalizer))
+                value.TryGetFinalizer(out _))
             {
                 value.FinalizationState = LuaGcFinalizationState.Pending;
                 PreserveDuringMutation(value);
-                PreserveDuringMutation(finalizer);
-                _pendingFinalizers.Enqueue(new PendingFinalizer(value, finalizer));
+                _pendingFinalizers.Enqueue(new PendingFinalizer(value));
                 return 1;
             }
 
             value.IsAlive = false;
-            _objects.Remove(value);
+            RemoveObjectByReference(value);
             _permanentRoots.Remove(value);
             _remembered.Remove(value);
             LogicalBytes = checked(LogicalBytes - value.LogicalSize);
@@ -746,9 +784,21 @@ public sealed class LuaHeap
         };
     }
 
-    private readonly record struct PendingFinalizer(
-        LuaGcObject Target,
-        LuaValue Finalizer);
+    private void RemoveObjectByReference(LuaGcObject value)
+    {
+        for (var index = 0; index < _objects.Count; index++)
+        {
+            if (ReferenceEquals(_objects[index], value))
+            {
+                _objects.RemoveAt(index);
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("The collected object is not registered in the heap.");
+    }
+
+    private readonly record struct PendingFinalizer(LuaGcObject Target);
 
     private void ValidateObject(LuaGcObject value)
     {

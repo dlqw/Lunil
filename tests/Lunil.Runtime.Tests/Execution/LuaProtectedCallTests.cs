@@ -29,7 +29,10 @@ public sealed class LuaProtectedCallTests
         var values = Execute("return pcall(function() return nil + 1 end)");
 
         Assert.Equal(LuaValue.FromBoolean(false), values[0]);
-        Assert.Contains("Cannot apply Add", values[1].AsString().ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "attempt to perform arithmetic on a nil value",
+            values[1].AsString().ToString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -44,7 +47,10 @@ public sealed class LuaProtectedCallTests
         var values = Execute(source);
 
         Assert.Equal(LuaValue.FromBoolean(false), values[0]);
-        Assert.Contains("handled: Cannot apply Add", values[1].AsString().ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "handled: ?:-1: attempt to perform arithmetic on a nil value",
+            values[1].AsString().ToString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]

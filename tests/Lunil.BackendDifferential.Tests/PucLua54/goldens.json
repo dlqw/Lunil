@@ -1,0 +1,324 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "implementation": "PUC-Lua",
+    "version": "Lua 5.4.8",
+    "luaVersionGlobal": "Lua 5.4",
+    "executableSha256": "A50CA50353BD4FCFB26C5683F7B1059C2B9C6A59F2DDB0234CAF309B4807E9DB",
+    "sourceArchiveSha256": "9581D5A7C39FFBF29B8CCDE2709083C380F7BBDDBD968DCB15712D2F2E33F4E5"
+  },
+  "cases": [
+    {
+      "name": "close-finalizer",
+      "file": "close-finalizer.lua",
+      "sourceSha256": "96300A66AA953B414F7EED434DD6066A26689E76153DD12B8E36FDB08D195EB7",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "String",
+          "representation": "626F6F6D"
+        },
+        {
+          "kind": "String",
+          "representation": "7365636F6E643A737472696E672C66697273743A737472696E67"
+        },
+        {
+          "kind": "Integer",
+          "representation": "2"
+        }
+      ]
+    },
+    {
+      "name": "coroutine-close",
+      "file": "coroutine-close.lua",
+      "sourceSha256": "CCAAC36D7767A944191241B465426D21D5224B7AE1223E45D9D79BB57CEA5393",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Integer",
+          "representation": "7"
+        },
+        {
+          "kind": "String",
+          "representation": "7061757365"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Integer",
+          "representation": "42"
+        },
+        {
+          "kind": "String",
+          "representation": "64656164"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "String",
+          "representation": "6F70656E"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "String",
+          "representation": "64656164"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "String",
+          "representation": "636F726F7574696E65206661696C757265"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "String",
+          "representation": "636F726F7574696E65206661696C757265"
+        }
+      ]
+    },
+    {
+      "name": "debug-hooks",
+      "file": "debug-hooks.lua",
+      "sourceSha256": "6320C7E7391B3FE84E415CB65E57F185ED88A86DB76718EC7FDB483C7E1001D5",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Integer",
+          "representation": "5"
+        },
+        {
+          "kind": "String",
+          "representation": "72657475726E2C6C696E653A31372C63616C6C2C6C696E653A31322C6C696E653A31332C72657475726E2C6C696E653A31382C63616C6C"
+        }
+      ]
+    },
+    {
+      "name": "dump-load-roundtrip",
+      "file": "dump-load-roundtrip.lua",
+      "sourceSha256": "77BE74EC7C4E6F7D7C55C7722A6D44AF6EE784593216776ACFACF052FE2F8B19",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Integer",
+          "representation": "12"
+        },
+        {
+          "kind": "Integer",
+          "representation": "2"
+        },
+        {
+          "kind": "String",
+          "representation": "6C656674"
+        },
+        {
+          "kind": "String",
+          "representation": "7269676874"
+        }
+      ]
+    },
+    {
+      "name": "integer-boundaries",
+      "file": "integer-boundaries.lua",
+      "sourceSha256": "297655035DF064D0F82DA5EF188178DCC7BA63F9432FD7F88876D7FFE6B565A0",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Integer",
+          "representation": "-9223372036854775808"
+        },
+        {
+          "kind": "Integer",
+          "representation": "9223372036854775807"
+        },
+        {
+          "kind": "Integer",
+          "representation": "-9223372036854775808"
+        },
+        {
+          "kind": "Integer",
+          "representation": "9223372036854775807"
+        },
+        {
+          "kind": "Integer",
+          "representation": "9223372036854775807"
+        },
+        {
+          "kind": "Integer",
+          "representation": "-9223372036854775808"
+        },
+        {
+          "kind": "Integer",
+          "representation": "0"
+        },
+        {
+          "kind": "Integer",
+          "representation": "-9223372036854775807"
+        },
+        {
+          "kind": "Integer",
+          "representation": "-9223372036854775808"
+        },
+        {
+          "kind": "Integer",
+          "representation": "0"
+        }
+      ]
+    },
+    {
+      "name": "large-open-setlist",
+      "file": "large-open-setlist.lua",
+      "sourceSha256": "677BDC261F088444C1F90C9C15CE7258861BB794922EB88A61A6F2D2A8E4C521",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Integer",
+          "representation": "300"
+        },
+        {
+          "kind": "Integer",
+          "representation": "1"
+        },
+        {
+          "kind": "Integer",
+          "representation": "50"
+        },
+        {
+          "kind": "Integer",
+          "representation": "51"
+        },
+        {
+          "kind": "Integer",
+          "representation": "255"
+        },
+        {
+          "kind": "Integer",
+          "representation": "256"
+        },
+        {
+          "kind": "Integer",
+          "representation": "298"
+        },
+        {
+          "kind": "Integer",
+          "representation": "299"
+        },
+        {
+          "kind": "Integer",
+          "representation": "300"
+        }
+      ]
+    },
+    {
+      "name": "protected-errors",
+      "file": "protected-errors.lua",
+      "sourceSha256": "A441EF3386266931F565796BF475FB7DCE3A581801287582E89C963310F68F64",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "String",
+          "representation": "7461626C65"
+        },
+        {
+          "kind": "Integer",
+          "representation": "42"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "String",
+          "representation": "68616E646C65723A68616E646C6564"
+        }
+      ]
+    },
+    {
+      "name": "table-library-boundaries",
+      "file": "table-library-boundaries.lua",
+      "sourceSha256": "E20622854ED6B2D1ABFE642876AC9D72D932A1C1268B663F145A757A0BEE2309",
+      "installStandardLibrary": true,
+      "values": [
+        {
+          "kind": "Integer",
+          "representation": "10"
+        },
+        {
+          "kind": "Integer",
+          "representation": "20"
+        },
+        {
+          "kind": "Integer",
+          "representation": "30"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "false"
+        },
+        {
+          "kind": "Boolean",
+          "representation": "true"
+        }
+      ]
+    }
+  ]
+}

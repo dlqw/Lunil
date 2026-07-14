@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.CodeGen;
@@ -11,10 +12,13 @@ namespace Lunil.Runtime.Execution;
 /// <summary>Shared resumable scheduler and execution kernel used by all execution backends.</summary>
 internal sealed class LuaExecutionEngine
 {
+    private const int MaximumCStackDepth = 200;
+
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
     private readonly ILuaInstructionObserver? _instructionObserver;
     private readonly LuaInterpreterInstructionExecutor _referenceInstructionExecutor = new();
+    private int _schedulerNestingDepth;
 
     internal LuaExecutionEngine(
         LuaInterpreterOptions? options = null,
@@ -102,11 +106,7 @@ internal sealed class LuaExecutionEngine
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(thread);
         state.Heap.ValidateValue(LuaValue.FromThread(thread));
-        if (ReferenceEquals(thread, state.MainThread) ||
-            thread.Status is LuaThreadStatus.Running or LuaThreadStatus.Normal)
-        {
-            throw new LuaRuntimeException("cannot close a running coroutine");
-        }
+        ValidateClosableThread(state, thread);
 
         if (thread.Status is LuaThreadStatus.New or LuaThreadStatus.Dead)
         {
@@ -118,7 +118,11 @@ internal sealed class LuaExecutionEngine
         var error = failed ? thread.TerminalError : LuaValue.Nil;
         thread.IsClosing = true;
         thread.CloseHadError = failed;
-        thread.UnwindState = new LuaUnwindState(boundary: null, error);
+        thread.UnwindState = new LuaUnwindState(
+            boundary: null,
+            error,
+            debugBoundaryFunction: LuaValue.Nil,
+            errorHandler: LuaValue.Nil);
         var closeResult = RunScheduler(
             state,
             thread,
@@ -142,6 +146,12 @@ internal sealed class LuaExecutionEngine
         bool yieldableRoot,
         bool activateThread = true)
     {
+        if (_schedulerNestingDepth >= MaximumCStackDepth)
+        {
+            throw new LuaRuntimeException("C stack overflow");
+        }
+
+        _schedulerNestingDepth++;
         state.Heap.AddPermanentRoot(root);
         try
         {
@@ -177,10 +187,9 @@ internal sealed class LuaExecutionEngine
                     var pendingError = activation.PendingError;
                     activation.HasPendingError = false;
                     activation.PendingError = LuaValue.Nil;
-                    if (thread.UnwindState is not null)
+                    if (thread.UnwindState is { } unwind)
                     {
-                        thread.UnwindState.Error = pendingError;
-                        thread.UnwindState.ActiveCloseCall = null;
+                        RegisterUnwindError(state, thread, unwind, pendingError);
                         if (thread.IsClosing)
                         {
                             thread.CloseHadError = true;
@@ -203,11 +212,25 @@ internal sealed class LuaExecutionEngine
                     continue;
                 }
 
-                if (thread.UnwindState is { ActiveCloseCall: null })
+                if (thread.UnwindState is
+                    {
+                        ErrorHandlerPending: true,
+                        ActiveErrorHandler: null,
+                    } pendingHandlerUnwind)
+                {
+                    StartUnwindErrorHandler(state, thread, pendingHandlerUnwind);
+                    continue;
+                }
+
+                if (thread.UnwindState is
+                    {
+                        ActiveCloseCall: null,
+                        ActiveErrorHandler: null,
+                    })
                 {
                     try
                     {
-                        if (ContinueUnwind(state, thread, out var unprotectedError) &&
+                        if (ContinueUnwind(state, scheduler, thread, out var unprotectedError) &&
                             FailThread(
                                 state,
                                 scheduler,
@@ -235,7 +258,11 @@ internal sealed class LuaExecutionEngine
                             continue;
                         }
 
-                        thread.UnwindState.Error = MaterializeError(state, exception);
+                        RegisterUnwindError(
+                            state,
+                            thread,
+                            thread.UnwindState,
+                            MaterializeError(state, exception));
                         if (thread.IsClosing)
                         {
                             thread.CloseHadError = true;
@@ -399,11 +426,11 @@ internal sealed class LuaExecutionEngine
                             pendingInstructionContext.InstructionsConsumed);
                     }
 
-                    var error = MaterializeError(state, exception);
-                    if (thread.UnwindState is not null)
+                    var enrichedException = EnrichRuntimeException(thread, frame, exception);
+                    var error = MaterializeError(state, enrichedException);
+                    if (thread.UnwindState is { } unwind)
                     {
-                        thread.UnwindState.Error = error;
-                        thread.UnwindState.ActiveCloseCall = null;
+                        RegisterUnwindError(state, thread, unwind, error);
                         if (thread.IsClosing)
                         {
                             thread.CloseHadError = true;
@@ -412,9 +439,16 @@ internal sealed class LuaExecutionEngine
                         continue;
                     }
 
-                    if (HasProtectedBoundary(thread) || ReferenceEquals(thread, state.MainThread))
+                    var includeProtectedNativeCallbacks =
+                        !exception.BypassProtectedNativeCallback;
+                    if (HasProtectedBoundary(thread, includeProtectedNativeCallbacks) ||
+                        ReferenceEquals(thread, state.MainThread) ||
+                        IsResumedByWrap(thread))
                     {
-                        BeginUnwind(thread, error);
+                        BeginUnwind(
+                            thread,
+                            error,
+                            skipProtectedNativeCallback: !includeProtectedNativeCallbacks);
                         continue;
                     }
 
@@ -457,6 +491,8 @@ internal sealed class LuaExecutionEngine
                         return completedResult!;
                     }
 
+                    state.Heap.SafePoint();
+                    RunPendingFinalizer(state, thread);
                     continue;
                 }
 
@@ -468,9 +504,11 @@ internal sealed class LuaExecutionEngine
         }
         finally
         {
+            state.IsRunningFinalizer = false;
             state.RunningThread = null;
             state.RunningThreadIsYieldable = false;
             state.Heap.RemovePermanentRoot(root);
+            _schedulerNestingDepth--;
         }
     }
 
@@ -555,6 +593,11 @@ internal sealed class LuaExecutionEngine
         }
     }
 
+    private static LuaValue[] ProtectedNativeCallbackFailure(
+        LuaState state,
+        LuaRuntimeException exception) =>
+        [LuaValue.FromBoolean(false), MaterializeError(state, exception)];
+
     private bool TryInvokeDebugHook(
         LuaState state,
         LuaThread thread,
@@ -567,17 +610,44 @@ internal sealed class LuaExecutionEngine
             return false;
         }
 
+        var resumingHookedInstruction = false;
         if (frame.DebugHookCheckedProgramCounter == frame.ProgramCounter &&
             frame.PendingDebugHookEvent is null)
         {
             frame.DebugHookCheckedProgramCounter = -1;
-            return false;
+            var dispatchedEvent = frame.DispatchedDebugHookEvent;
+            frame.DispatchedDebugHookEvent = null;
+            var hasNativeSubject = !thread.DebugHookSubjectFunction.IsNil;
+            var completedLuaCallHook =
+                dispatchedEvent is "call" or "tail call" &&
+                !hasNativeSubject;
+            var completedNativeReturnAtNewLine =
+                dispatchedEvent == "return" && hasNativeSubject &&
+                frame.NativeCallSourceLine > 0 && instruction.SourceLine > 0 &&
+                frame.NativeCallSourceLine != instruction.SourceLine;
+            if (!completedLuaCallHook && !completedNativeReturnAtNewLine &&
+                (instruction.SourceLine > 0 || !frame.HasSourceLineInformation))
+            {
+                frame.LastDebugHookProgramCounter = frame.ProgramCounter;
+            }
+
+            if (dispatchedEvent == "return" && hasNativeSubject)
+            {
+                frame.NativeCallSourceLine = -1;
+            }
+
+            thread.DebugHookSubjectFunction = LuaValue.Nil;
+            thread.ClearDebugHookTransfer();
+            resumingHookedInstruction =
+                !completedLuaCallHook && !completedNativeReturnAtNewLine;
         }
 
         string? hookEvent = null;
         var line = instruction.SourceLine > 0 ? instruction.SourceLine : -1;
         var countDue = thread.DebugHookMask.HasFlag(LuaDebugHookMask.Count) &&
-            thread.DebugHookCount > 0 && --thread.DebugHookCounter <= 0;
+            thread.DebugHookCount > 0 && !resumingHookedInstruction &&
+            IsCountableDebugInstruction(instruction) &&
+            --thread.DebugHookCounter <= 0;
         if (countDue)
         {
             thread.DebugHookCounter = thread.DebugHookCount;
@@ -588,25 +658,26 @@ internal sealed class LuaExecutionEngine
             hookEvent = pending;
             frame.PendingDebugHookEvent = null;
         }
-        else if (instruction.Opcode == LuaIrOpcode.TailCall &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call) &&
-            frame.ReturnHookProgramCounter != frame.ProgramCounter)
-        {
-            hookEvent = "tail call";
-            frame.ReturnHookProgramCounter = frame.ProgramCounter;
-        }
         else if (instruction.Opcode == LuaIrOpcode.Return &&
             thread.DebugHookMask.HasFlag(LuaDebugHookMask.Return) &&
+            frame.ToBeClosedSlots.Count == 0 &&
             frame.ReturnHookProgramCounter != frame.ProgramCounter)
         {
             hookEvent = "return";
             frame.ReturnHookProgramCounter = frame.ProgramCounter;
         }
-        else if (thread.DebugHookMask.HasFlag(LuaDebugHookMask.Line) && line > 0 &&
-            line != frame.LastDebugHookLine)
+        else if (!resumingHookedInstruction &&
+            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Line) &&
+            (!frame.HasSourceLineInformation && frame.LastLineHookProgramCounter < 0 ||
+                line > 0 &&
+                (line != frame.LastDebugHookLine ||
+                    frame.LastDebugHookProgramCounter >= 0 &&
+                    frame.ProgramCounter <= frame.LastDebugHookProgramCounter &&
+                    !WasBackEdgeLineAlreadyReported(frame))))
         {
             hookEvent = "line";
             frame.LastDebugHookLine = line;
+            frame.LastLineHookProgramCounter = frame.ProgramCounter;
             if (countDue)
             {
                 frame.PendingDebugHookEvent = "count";
@@ -620,15 +691,44 @@ internal sealed class LuaExecutionEngine
 
         if (hookEvent is null)
         {
+            if (line > 0 || !frame.HasSourceLineInformation)
+            {
+                frame.LastDebugHookProgramCounter = frame.ProgramCounter;
+            }
+
             return false;
         }
 
-        if (hookEvent == "count")
+        if (hookEvent != "line")
         {
             line = -1;
         }
 
+        if (hookEvent == "return" && instruction.Opcode == LuaIrOpcode.Return &&
+            thread.DebugHookSubjectFunction.IsNil)
+        {
+            if (frame.Continuation.Kind == LuaContinuationKind.ReturnAndClose)
+            {
+                thread.SetDebugHookTransfer(
+                    frame.Continuation.Values,
+                    isNative: false);
+            }
+            else
+            {
+                var start = frame.Base + instruction.A;
+                var count = instruction.B < 0 ? Math.Max(0, frame.Top - start) : instruction.B;
+                thread.SetDebugHookTransfer(
+                    thread.Stack.AsReadOnlySpan(start, count),
+                    isNative: false);
+            }
+        }
+        else if (hookEvent is not ("call" or "tail call" or "return"))
+        {
+            thread.ClearDebugHookTransfer();
+        }
+
         frame.DebugHookCheckedProgramCounter = frame.ProgramCounter;
+        frame.DispatchedDebugHookEvent = hookEvent;
         var arguments = new[]
         {
             LuaValue.FromString(state.Strings.GetOrCreate(
@@ -643,7 +743,7 @@ internal sealed class LuaExecutionEngine
                 thread,
                 closure,
                 resolved.Arguments,
-                frame.Top,
+                Math.Max(frame.Top, frame.Base + frame.Closure.Function.RegisterCount),
                 expectedResults: 0,
                 isDebugHook: true);
             hookFrame.Continuation.IsYieldBarrier = true;
@@ -667,6 +767,30 @@ internal sealed class LuaExecutionEngine
             thread.IsRunningDebugHook = false;
         }
     }
+
+    private static bool WasBackEdgeLineAlreadyReported(LuaFrame frame)
+    {
+        var instructions = frame.Closure.Function.Instructions;
+        var previousPc = frame.LastDebugHookProgramCounter;
+        var hookPc = frame.LastLineHookProgramCounter;
+        if (previousPc < 0 || previousPc >= instructions.Length ||
+            hookPc < 0 || hookPc >= instructions.Length)
+        {
+            return false;
+        }
+
+        var previous = instructions[previousPc];
+        var reported = instructions[hookPc];
+        return previous.SourceLine == reported.SourceLine &&
+            previous.Span.Equals(reported.Span);
+    }
+
+    private static bool IsCountableDebugInstruction(LuaIrInstruction instruction) =>
+        instruction.Opcode is not (
+            LuaIrOpcode.Move or
+            LuaIrOpcode.SetTop or
+            LuaIrOpcode.GetUpvalue or
+            LuaIrOpcode.Close);
 
     private void ActivateThread(
         LuaState state,
@@ -700,7 +824,15 @@ internal sealed class LuaExecutionEngine
 
             if (native.Kind != LuaNativeFunctionKind.Normal)
             {
-                throw new LuaRuntimeException("This native intrinsic cannot be a coroutine entry.");
+                PushFrame(
+                    thread,
+                    CreateNativeCallbackTrampoline(state, thread.Entry),
+                    arguments,
+                    returnBase: 0,
+                    expectedResults: -1,
+                    isHidden: true);
+                thread.SetResumeValues([]);
+                return;
             }
 
             if (native.StepBody is not null)
@@ -816,6 +948,7 @@ internal sealed class LuaExecutionEngine
         var expectedResults = frame.Continuation.ExpectedResults;
         var tailCall = (frame.Continuation.State & 1) != 0;
         var protectedCall = (frame.Continuation.State & 8) != 0;
+        var yieldFunction = frame.Continuation.Value;
         if (protectedCall)
         {
             WriteProtectedResults(
@@ -836,6 +969,10 @@ internal sealed class LuaExecutionEngine
             frame.Continuation.Kind = LuaContinuationKind.ProtectedCall;
             frame.Continuation.Base = returnBase - frame.Base;
         }
+        else
+        {
+            ScheduleNativeReturnHook(thread, frame, yieldFunction, arguments);
+        }
 
         thread.SetResumeValues([]);
     }
@@ -854,6 +991,18 @@ internal sealed class LuaExecutionEngine
         try
         {
             ActivateThread(state, scheduler, target, arguments);
+        }
+        catch (LuaRuntimeException exception)
+        {
+            scheduler.Pop();
+            target.Resumer = null;
+            resumer.ActiveResumee = null;
+            resumer.Status = LuaThreadStatus.Running;
+            var error = MaterializeError(state, exception);
+            target.TerminalError = error;
+            target.Owner.WriteBarrier(target, error);
+            target.Status = LuaThreadStatus.Error;
+            InjectCoroutineResult(scheduler.Current, resumer, succeeded: false, [error]);
         }
         catch
         {
@@ -963,6 +1112,7 @@ internal sealed class LuaExecutionEngine
         var tailCall = (continuation.State & 1) != 0;
         var wrap = (continuation.State & 2) != 0;
         var protectedCall = (continuation.State & 8) != 0;
+        var function = continuation.Value;
         continuation.Reset();
         if (wrap && !succeeded && !protectedCall)
         {
@@ -1009,6 +1159,11 @@ internal sealed class LuaExecutionEngine
                 values);
         }
 
+        if (!wrap || succeeded)
+        {
+            ScheduleNativeReturnHook(resumer, frame, function, values);
+        }
+
         if (tailCall)
         {
             continuation.Kind = LuaContinuationKind.ProtectedCall;
@@ -1016,17 +1171,25 @@ internal sealed class LuaExecutionEngine
         }
     }
 
-    private static bool HasProtectedBoundary(LuaThread thread)
+    private static bool HasProtectedBoundary(
+        LuaThread thread,
+        bool includeProtectedNativeCallbacks = true)
     {
         for (var index = thread.Frames.Count - 1; index >= 0; index--)
         {
-            if (thread.Frames[index].Continuation.ProtectionKind != LuaProtectedCallKind.None)
+            var continuation = thread.Frames[index].Continuation;
+            if (continuation.ProtectionKind != LuaProtectedCallKind.None ||
+                includeProtectedNativeCallbacks &&
+                continuation.Kind == LuaContinuationKind.NativeCallLua &&
+                continuation.NativeCallbackIsProtected)
             {
                 return true;
             }
         }
 
-        return false;
+        return includeProtectedNativeCallbacks &&
+            thread.RootContinuation.Kind == LuaContinuationKind.NativeCallLua &&
+            thread.RootContinuation.NativeCallbackIsProtected;
     }
 
     private static bool IsAtNonYieldableBoundary(LuaThread thread)
@@ -1074,7 +1237,25 @@ internal sealed class LuaExecutionEngine
         if (ReferenceEquals(current, target) ||
             target.Status is not (LuaThreadStatus.New or LuaThreadStatus.Suspended))
         {
-            throw new LuaRuntimeException($"cannot resume {FormatStatus(target)} coroutine");
+            var status = target.Status is LuaThreadStatus.Dead or LuaThreadStatus.Error
+                ? "dead"
+                : "non-suspended";
+            throw new LuaRuntimeException($"cannot resume {status} coroutine");
+        }
+    }
+
+    private static void ValidateClosableThread(LuaState state, LuaThread thread)
+    {
+        state.Heap.ValidateValue(LuaValue.FromThread(thread));
+        if (thread.Status == LuaThreadStatus.Normal)
+        {
+            throw new LuaRuntimeException("cannot close a normal coroutine");
+        }
+
+        if (ReferenceEquals(thread, state.MainThread) ||
+            thread.Status == LuaThreadStatus.Running)
+        {
+            throw new LuaRuntimeException("cannot close a running coroutine");
         }
     }
 
@@ -1102,8 +1283,19 @@ internal sealed class LuaExecutionEngine
     {
         if (intrinsic.Kind == LuaNativeFunctionKind.CoroutineYield)
         {
-            if (!scheduler.Current.IsYieldable || IsAtNonYieldableBoundary(thread) ||
-                ReferenceEquals(thread, state.MainThread))
+            if (TryScheduleNativeCallHook(thread, frame, function, arguments))
+            {
+                return null;
+            }
+
+            if (IsAtNonYieldableBoundary(thread))
+            {
+                throw new LuaRuntimeException(
+                    "attempt to yield across a non-yieldable boundary",
+                    bypassProtectedNativeCallback: true);
+            }
+
+            if (!scheduler.Current.IsYieldable || ReferenceEquals(thread, state.MainThread))
             {
                 throw new LuaRuntimeException("attempt to yield from outside a coroutine");
             }
@@ -1112,6 +1304,8 @@ internal sealed class LuaExecutionEngine
             frame.Continuation.Base = returnBase;
             frame.Continuation.ExpectedResults = tailCall ? -1 : instruction.C;
             frame.Continuation.State = (tailCall ? 1 : 0) | (protectedCall ? 8 : 0);
+            frame.Continuation.Value = function;
+            thread.Owner.WriteBarrier(thread, function);
             if (!tailCall)
             {
                 frame.ProgramCounter++;
@@ -1196,6 +1390,8 @@ internal sealed class LuaExecutionEngine
         frame.Continuation.ExpectedResults = tailCall ? -1 : instruction.C;
         frame.Continuation.State = (tailCall ? 1 : 0) | (wrap ? 2 : 0) |
             (protectedCall ? 8 : 0);
+        frame.Continuation.Value = function;
+        thread.Owner.WriteBarrier(thread, function);
         if (!tailCall)
         {
             frame.ProgramCounter++;
@@ -1242,6 +1438,7 @@ internal sealed class LuaExecutionEngine
                     if (nativeProtected)
                     {
                         frame.Continuation.ProtectionKind = LuaProtectedCallKind.None;
+                        frame.Continuation.ProtectionFunction = LuaValue.Nil;
                         frame.Continuation.ErrorHandler = LuaValue.Nil;
                         frame.Continuation.IsNativeProtectedBoundary = false;
                         frame.Continuation.NativeProtectedReturnBase = 0;
@@ -1277,10 +1474,27 @@ internal sealed class LuaExecutionEngine
 
                 case LuaNativeStepKind.CallLua:
                     state.Heap.ValidateValue(step.Callable);
-                    var resolved = LuaRuntimeOperations.ResolveCall(
-                        state,
-                        step.Callable,
-                        step.Values);
+                    LuaOperationResolution resolved;
+                    try
+                    {
+                        resolved = LuaRuntimeOperations.ResolveCall(
+                            state,
+                            step.Callable,
+                            step.Values);
+                    }
+                    catch (LuaRuntimeException exception) when (step.CallIsProtected)
+                    {
+                        var failedContext = new LuaNativeCallContext(
+                            state,
+                            thread,
+                            nativeFunction.TryGetNativeClosure(),
+                            step.StateValues);
+                        step = descriptor.StepBody!(
+                            failedContext,
+                            step.ContinuationId,
+                            ProtectedNativeCallbackFailure(state, exception));
+                        continue;
+                    }
                     if (resolved.Callable.TryGetClosure() is { } closure)
                     {
                         frame.Continuation.Kind = LuaContinuationKind.NativeCallLua;
@@ -1290,6 +1504,7 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Count = tailCall ? 1 : 0;
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
+                        frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
                         SaveNativeInvocationState(thread, frame.Continuation, step.StateValues);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
@@ -1308,7 +1523,8 @@ internal sealed class LuaExecutionEngine
 
                     var callback = resolved.Callable.TryGetNativeFunction() ??
                         throw new InvalidOperationException("A native callback is not callable.");
-                    if (callback.StepBody is not null)
+                    if (callback.StepBody is not null ||
+                        callback.Kind != LuaNativeFunctionKind.Normal)
                     {
                         frame.Continuation.Kind = LuaContinuationKind.NativeCallLua;
                         frame.Continuation.State = step.ContinuationId;
@@ -1317,6 +1533,7 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Count = tailCall ? 1 : 0;
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
+                        frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
                         SaveNativeInvocationState(thread, frame.Continuation, step.StateValues);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
@@ -1334,7 +1551,23 @@ internal sealed class LuaExecutionEngine
                         return null;
                     }
 
-                    var callbackResults = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
+                    LuaValue[] callbackResults;
+                    try
+                    {
+                        callbackResults = InvokeNativeBody(
+                            state,
+                            resolved.Callable,
+                            resolved.Arguments);
+                        if (step.CallIsProtected)
+                        {
+                            callbackResults =
+                            [LuaValue.FromBoolean(true), .. callbackResults];
+                        }
+                    }
+                    catch (LuaRuntimeException exception) when (step.CallIsProtected)
+                    {
+                        callbackResults = ProtectedNativeCallbackFailure(state, exception);
+                    }
                     var context = new LuaNativeCallContext(
                         state,
                         thread,
@@ -1347,7 +1580,9 @@ internal sealed class LuaExecutionEngine
                     if (!scheduler.Current.IsYieldable || IsAtNonYieldableBoundary(thread) ||
                         ReferenceEquals(thread, state.MainThread))
                     {
-                        throw new LuaRuntimeException("attempt to yield across a non-yieldable boundary");
+                        throw new LuaRuntimeException(
+                            "attempt to yield across a non-yieldable boundary",
+                            bypassProtectedNativeCallback: true);
                     }
 
                     frame.Continuation.Kind = LuaContinuationKind.NativeYield;
@@ -1403,16 +1638,34 @@ internal sealed class LuaExecutionEngine
 
                 case LuaNativeStepKind.CallLua:
                     state.Heap.ValidateValue(step.Callable);
-                    var resolved = LuaRuntimeOperations.ResolveCall(
-                        state,
-                        step.Callable,
-                        step.Values);
+                    LuaOperationResolution resolved;
+                    try
+                    {
+                        resolved = LuaRuntimeOperations.ResolveCall(
+                            state,
+                            step.Callable,
+                            step.Values);
+                    }
+                    catch (LuaRuntimeException exception) when (step.CallIsProtected)
+                    {
+                        var failedContext = new LuaNativeCallContext(
+                            state,
+                            thread,
+                            nativeFunction.TryGetNativeClosure(),
+                            step.StateValues);
+                        step = descriptor.StepBody!(
+                            failedContext,
+                            step.ContinuationId,
+                            ProtectedNativeCallbackFailure(state, exception));
+                        continue;
+                    }
                     if (resolved.Callable.TryGetClosure() is { } closure)
                     {
                         thread.RootContinuation.Kind = LuaContinuationKind.NativeCallLua;
                         thread.RootContinuation.State = step.ContinuationId;
                         thread.RootContinuation.Value = nativeFunction;
                         thread.RootContinuation.IsYieldBarrier = !step.CallIsYieldable;
+                        thread.RootContinuation.NativeCallbackIsProtected = step.CallIsProtected;
                         SaveNativeInvocationState(
                             thread,
                             thread.RootContinuation,
@@ -1424,12 +1677,14 @@ internal sealed class LuaExecutionEngine
 
                     var callback = resolved.Callable.TryGetNativeFunction() ??
                         throw new InvalidOperationException("A root native callback is not callable.");
-                    if (callback.StepBody is not null)
+                    if (callback.StepBody is not null ||
+                        callback.Kind != LuaNativeFunctionKind.Normal)
                     {
                         thread.RootContinuation.Kind = LuaContinuationKind.NativeCallLua;
                         thread.RootContinuation.State = step.ContinuationId;
                         thread.RootContinuation.Value = nativeFunction;
                         thread.RootContinuation.IsYieldBarrier = !step.CallIsYieldable;
+                        thread.RootContinuation.NativeCallbackIsProtected = step.CallIsProtected;
                         SaveNativeInvocationState(
                             thread,
                             thread.RootContinuation,
@@ -1445,7 +1700,23 @@ internal sealed class LuaExecutionEngine
                         return;
                     }
 
-                    var callbackResults = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
+                    LuaValue[] callbackResults;
+                    try
+                    {
+                        callbackResults = InvokeNativeBody(
+                            state,
+                            resolved.Callable,
+                            resolved.Arguments);
+                        if (step.CallIsProtected)
+                        {
+                            callbackResults =
+                            [LuaValue.FromBoolean(true), .. callbackResults];
+                        }
+                    }
+                    catch (LuaRuntimeException exception) when (step.CallIsProtected)
+                    {
+                        callbackResults = ProtectedNativeCallbackFailure(state, exception);
+                    }
                     var callContext = new LuaNativeCallContext(
                         state,
                         thread,
@@ -1461,7 +1732,9 @@ internal sealed class LuaExecutionEngine
                     if (!scheduler.Current.IsYieldable || IsAtNonYieldableBoundary(thread) ||
                         ReferenceEquals(thread, state.MainThread))
                     {
-                        throw new LuaRuntimeException("attempt to yield across a non-yieldable boundary");
+                        throw new LuaRuntimeException(
+                            "attempt to yield across a non-yieldable boundary",
+                            bypassProtectedNativeCallback: true);
                     }
 
                     thread.RootContinuation.Kind = LuaContinuationKind.NativeYield;
@@ -1537,6 +1810,7 @@ internal sealed class LuaExecutionEngine
         LuaValue function;
         ReadOnlySpan<LuaValue> resolvedArguments;
         var argumentsInCallerStack = false;
+        var callMetamethod = false;
         if (tailCall && frame.Continuation.Kind == LuaContinuationKind.TailCall)
         {
             function = frame.Continuation.Value;
@@ -1564,6 +1838,7 @@ internal sealed class LuaExecutionEngine
         }
         else
         {
+            callMetamethod = true;
             var arguments = new LuaValue[argumentCount];
             for (var index = 0; index < argumentCount; index++)
             {
@@ -1602,10 +1877,12 @@ internal sealed class LuaExecutionEngine
                 throw new LuaRuntimeException("bad argument #1 to 'close' (thread expected)");
             }
 
+            var closeTarget = resolvedArguments[0].AsThread();
+            ValidateClosableThread(state, closeTarget);
             LuaValue[] closeValues;
             try
             {
-                var closeResult = Close(state, resolvedArguments[0].AsThread());
+                var closeResult = Close(state, closeTarget);
                 closeValues = closeResult.Signal == LuaVmSignal.Completed
                     ? [LuaValue.FromBoolean(true)]
                     : [LuaValue.FromBoolean(false), closeResult.Values[0]];
@@ -1699,6 +1976,7 @@ internal sealed class LuaExecutionEngine
             if (tailCall)
             {
                 var protectionKind = frame.Continuation.ProtectionKind;
+                var protectionFunction = frame.Continuation.ProtectionFunction;
                 var errorHandler = frame.Continuation.ErrorHandler;
                 var isCloseHandler = frame.Continuation.IsCloseHandler;
                 thread.PopFrame();
@@ -1712,8 +1990,25 @@ internal sealed class LuaExecutionEngine
                     errorHandler,
                     isCloseHandler,
                     frame.IsDebugHook,
-                    frame.IsHidden);
+                    frame.IsHidden,
+                    scheduleCallHook: false);
+                replacement.Continuation.ProtectionFunction = protectionFunction;
                 replacement.IsTailCall = true;
+                if (callMetamethod)
+                {
+                    SetDebugFunctionName(replacement, "call", "metamethod");
+                }
+                if (!replacement.IsDebugHook && !replacement.IsHidden &&
+                    !thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
+                    thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+                {
+                    replacement.PendingDebugHookEvent = "tail call";
+                    thread.SetDebugHookTransfer(
+                        thread.Stack.AsReadOnlySpan(
+                            replacement.Base,
+                            closure.Function.ParameterCount),
+                        isNative: false);
+                }
                 if (frame.IsDebugHook)
                 {
                     replacement.Continuation.IsYieldBarrier = true;
@@ -1721,6 +2016,10 @@ internal sealed class LuaExecutionEngine
                 if (ReferenceEquals(thread.UnwindState?.ActiveCloseCall, frame))
                 {
                     thread.UnwindState.ActiveCloseCall = replacement;
+                }
+                if (ReferenceEquals(thread.UnwindState?.ActiveErrorHandler, frame))
+                {
+                    thread.UnwindState.ActiveErrorHandler = replacement;
                 }
 
                 return null;
@@ -1739,7 +2038,16 @@ internal sealed class LuaExecutionEngine
             }
             else
             {
-                PushFrame(thread, closure, resolvedArguments, returnBase, expectedResults);
+                var callee = PushFrame(
+                    thread,
+                    closure,
+                    resolvedArguments,
+                    returnBase,
+                    expectedResults);
+                if (callMetamethod)
+                {
+                    SetDebugFunctionName(callee, "call", "metamethod");
+                }
             }
 
             return null;
@@ -1747,6 +2055,11 @@ internal sealed class LuaExecutionEngine
 
         var native = function.TryGetNativeFunction() ??
             throw new InvalidOperationException("Resolved callable is not a function.");
+        if (TryScheduleNativeCallHook(thread, frame, function, resolvedArguments))
+        {
+            return null;
+        }
+
         if (native.StepBody is not null)
         {
             var context = new LuaNativeCallContext(
@@ -1786,9 +2099,66 @@ internal sealed class LuaExecutionEngine
         {
             WriteCallResults(thread, frame, functionIndex, instruction.C, results);
             frame.ProgramCounter++;
+            ScheduleNativeReturnHook(thread, frame, function, results);
         }
 
         return null;
+    }
+
+    private static bool TryScheduleNativeCallHook(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaValue function,
+        ReadOnlySpan<LuaValue> arguments)
+    {
+        if (frame.NativeCallHookProgramCounter == frame.ProgramCounter)
+        {
+            frame.NativeCallHookProgramCounter = -1;
+            return false;
+        }
+
+        if (thread.DebugHook.IsNil || thread.IsRunningDebugHook ||
+            !thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+        {
+            return false;
+        }
+
+        frame.NativeCallHookProgramCounter = frame.ProgramCounter;
+        frame.NativeCallSourceLine = frame.Closure.Function
+            .Instructions[frame.ProgramCounter].SourceLine;
+        frame.PendingDebugHookEvent = "call";
+        thread.DebugHookSubjectFunction = function;
+        thread.Owner.WriteBarrier(thread, function);
+        thread.SetDebugHookTransfer(arguments, isNative: true);
+        return true;
+    }
+
+    private static void ScheduleNativeReturnHook(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaValue function,
+        ReadOnlySpan<LuaValue> results)
+    {
+        if (thread.DebugHook.IsNil || thread.IsRunningDebugHook ||
+            !thread.DebugHookMask.HasFlag(LuaDebugHookMask.Return))
+        {
+            return;
+        }
+
+        if (frame.NativeCallSourceLine <= 0)
+        {
+            var instructions = frame.Closure.Function.Instructions;
+            var callProgramCounter = Math.Clamp(
+                frame.ProgramCounter - 1,
+                0,
+                instructions.Length - 1);
+            frame.NativeCallSourceLine = instructions[callProgramCounter].SourceLine;
+        }
+
+        frame.PendingDebugHookEvent = "return";
+        thread.DebugHookSubjectFunction = function;
+        thread.Owner.WriteBarrier(thread, function);
+        thread.SetDebugHookTransfer(results, isNative: true);
     }
 
     internal void ExecuteOperation(
@@ -1831,16 +2201,21 @@ internal sealed class LuaExecutionEngine
         var closure = callable.TryGetClosure();
         if (closure is not null)
         {
+            var operation = frame.Closure.Function.Instructions[frame.ProgramCounter];
             frame.Continuation.Kind = LuaContinuationKind.LuaCall;
             frame.Continuation.Transform = resolution.Transform;
             frame.ProgramCounter++;
-            PushFrameFromStack(
+            var callee = PushFrameFromStack(
                 thread,
                 closure,
                 argumentStart,
                 argumentCount,
                 returnBase,
                 expectedResults);
+            SetDebugFunctionName(
+                callee,
+                GetOperationMetamethodName(operation),
+                "metamethod");
             return;
         }
 
@@ -1888,7 +2263,8 @@ internal sealed class LuaExecutionEngine
             handler.Kind != LuaValueKind.Function)
         {
             throw new LuaRuntimeException(
-                $"Bad argument #2 to '{intrinsic.Name}' (function expected, got {handler.Kind}).");
+                $"Bad argument #2 to '{intrinsic.Name}' (function expected, got " +
+                $"{LuaValueOperations.TypeName(handler)}).");
         }
 
         var targetArguments = arguments[required..].ToArray();
@@ -1912,26 +2288,112 @@ internal sealed class LuaExecutionEngine
             return;
         }
 
-        if (intrinsic.Kind == LuaNativeFunctionKind.ProtectedCall &&
-            resolved.Callable.TryGetNativeFunction() is
+        if (resolved.Callable.TryGetNativeFunction() is
             {
                 Kind: LuaNativeFunctionKind.CoroutineResume or
                     LuaNativeFunctionKind.CoroutineWrap or
                     LuaNativeFunctionKind.CoroutineYield,
             } coroutineIntrinsic)
         {
-            _ = ExecuteCoroutineIntrinsic(
-                state,
-                scheduler,
+            try
+            {
+                _ = ExecuteCoroutineIntrinsic(
+                    state,
+                    scheduler,
+                    thread,
+                    caller,
+                    instruction,
+                    resolved.Callable,
+                    coroutineIntrinsic,
+                    resolved.Arguments,
+                    returnBase,
+                    tailCall: caller.Continuation.Kind == LuaContinuationKind.ProtectedCall,
+                    protectedCall: true);
+            }
+            catch (LuaRuntimeException exception)
+            {
+                CompleteProtectedFailure(
+                    state,
+                    thread,
+                    caller,
+                    returnBase,
+                    instruction.C,
+                    intrinsic.Kind,
+                    handler,
+                    MaterializeError(state, exception));
+                caller.ProgramCounter++;
+            }
+
+            return;
+        }
+
+        if (resolved.Callable.TryGetNativeFunction() is
+            { Kind: LuaNativeFunctionKind.CoroutineClose })
+        {
+            if (resolved.Arguments.Length == 0 ||
+                resolved.Arguments[0].Kind != LuaValueKind.Thread)
+            {
+                CompleteProtectedFailure(
+                    state,
+                    thread,
+                    caller,
+                    returnBase,
+                    instruction.C,
+                    intrinsic.Kind,
+                    handler,
+                    MaterializeError(
+                        state,
+                        new LuaRuntimeException(
+                            "bad argument #1 to 'close' (thread expected)")));
+                caller.ProgramCounter++;
+                return;
+            }
+
+            var closeTarget = resolved.Arguments[0].AsThread();
+            try
+            {
+                ValidateClosableThread(state, closeTarget);
+            }
+            catch (LuaRuntimeException exception)
+            {
+                CompleteProtectedFailure(
+                    state,
+                    thread,
+                    caller,
+                    returnBase,
+                    instruction.C,
+                    intrinsic.Kind,
+                    handler,
+                    MaterializeError(state, exception));
+                caller.ProgramCounter++;
+                return;
+            }
+
+            LuaValue[] closeValues;
+            try
+            {
+                var closeResult = Close(state, closeTarget);
+                closeValues = closeResult.Signal == LuaVmSignal.Completed
+                    ? [LuaValue.FromBoolean(true)]
+                    : [LuaValue.FromBoolean(false), closeResult.Values[0]];
+            }
+            catch (LuaRuntimeException exception)
+            {
+                closeValues =
+                [
+                    LuaValue.FromBoolean(false),
+                    MaterializeError(state, exception),
+                ];
+            }
+
+            WriteProtectedResults(
                 thread,
                 caller,
-                instruction,
-                resolved.Callable,
-                coroutineIntrinsic,
-                resolved.Arguments,
                 returnBase,
-                tailCall: caller.Continuation.Kind == LuaContinuationKind.ProtectedCall,
-                protectedCall: true);
+                instruction.C,
+                succeeded: true,
+                closeValues);
+            caller.ProgramCounter++;
             return;
         }
 
@@ -1939,7 +2401,7 @@ internal sealed class LuaExecutionEngine
         if (closure is not null)
         {
             caller.ProgramCounter++;
-            PushFrame(
+            var protectedFrame = PushFrame(
                 thread,
                 closure,
                 resolved.Arguments,
@@ -1949,11 +2411,32 @@ internal sealed class LuaExecutionEngine
                     ? LuaProtectedCallKind.ProtectedCall
                     : LuaProtectedCallKind.ProtectedCallWithHandler,
                 handler);
+            protectedFrame.Continuation.ProtectionFunction = LuaValue.FromFunction(intrinsic);
+            thread.Owner.WriteBarrier(thread, protectedFrame.Continuation.ProtectionFunction);
             return;
         }
 
         var native = resolved.Callable.TryGetNativeFunction() ??
             throw new InvalidOperationException("Resolved protected target is not callable.");
+        if (native.Kind != LuaNativeFunctionKind.Normal)
+        {
+            caller.ProgramCounter++;
+            var protectedFrame = PushFrame(
+                thread,
+                CreateNativeCallbackTrampoline(state, resolved.Callable),
+                resolved.Arguments,
+                returnBase,
+                instruction.C,
+                intrinsic.Kind == LuaNativeFunctionKind.ProtectedCall
+                    ? LuaProtectedCallKind.ProtectedCall
+                    : LuaProtectedCallKind.ProtectedCallWithHandler,
+                handler,
+                isHidden: true);
+            protectedFrame.Continuation.ProtectionFunction = LuaValue.FromFunction(intrinsic);
+            thread.Owner.WriteBarrier(thread, protectedFrame.Continuation.ProtectionFunction);
+            return;
+        }
+
         if (native.StepBody is not null)
         {
             var tailCall = caller.Continuation.Kind == LuaContinuationKind.ProtectedCall;
@@ -1961,6 +2444,7 @@ internal sealed class LuaExecutionEngine
                 intrinsic.Kind == LuaNativeFunctionKind.ProtectedCall
                     ? LuaProtectedCallKind.ProtectedCall
                     : LuaProtectedCallKind.ProtectedCallWithHandler;
+            caller.Continuation.ProtectionFunction = LuaValue.FromFunction(intrinsic);
             caller.Continuation.ErrorHandler = handler;
             caller.Continuation.IsNativeProtectedBoundary = true;
             caller.Continuation.NativeProtectedReturnBase = returnBase;
@@ -2013,19 +2497,163 @@ internal sealed class LuaExecutionEngine
         caller.ProgramCounter++;
     }
 
-    private static void BeginUnwind(LuaThread thread, LuaValue error)
+    private static void BeginUnwind(
+        LuaThread thread,
+        LuaValue error,
+        bool skipProtectedNativeCallback = false)
     {
         LuaFrame? boundary = null;
+        var debugBoundaryFunction = LuaValue.Nil;
+        var errorHandler = LuaValue.Nil;
         for (var index = thread.Frames.Count - 1; index >= 0; index--)
         {
-            if (thread.Frames[index].Continuation.ProtectionKind != LuaProtectedCallKind.None)
+            var continuation = thread.Frames[index].Continuation;
+            if (continuation.ProtectionKind != LuaProtectedCallKind.None ||
+                !skipProtectedNativeCallback &&
+                continuation.Kind == LuaContinuationKind.NativeCallLua &&
+                continuation.NativeCallbackIsProtected)
             {
                 boundary = thread.Frames[index];
+                debugBoundaryFunction = continuation.ProtectionKind != LuaProtectedCallKind.None
+                    ? continuation.ProtectionFunction
+                    : continuation.Value;
+                if (continuation.ProtectionKind ==
+                    LuaProtectedCallKind.ProtectedCallWithHandler)
+                {
+                    errorHandler = continuation.ErrorHandler;
+                }
                 break;
             }
         }
 
-        thread.UnwindState = new LuaUnwindState(boundary, error);
+        if (boundary is null && !skipProtectedNativeCallback &&
+            thread.RootContinuation.Kind == LuaContinuationKind.NativeCallLua &&
+            thread.RootContinuation.NativeCallbackIsProtected)
+        {
+            debugBoundaryFunction = thread.RootContinuation.Value;
+        }
+        else if (boundary is null && TryGetWrapResumerFunction(thread, out var wrapper))
+        {
+            debugBoundaryFunction = wrapper;
+        }
+
+        thread.UnwindState = new LuaUnwindState(
+            boundary,
+            error,
+            debugBoundaryFunction,
+            errorHandler,
+            skipProtectedNativeCallback);
+        thread.Owner.WriteBarrier(thread, error);
+        thread.Owner.WriteBarrier(thread, debugBoundaryFunction);
+        thread.Owner.WriteBarrier(thread, errorHandler);
+    }
+
+    private static bool IsResumedByWrap(LuaThread thread) =>
+        TryGetWrapResumerFunction(thread, out _);
+
+    private static bool TryGetWrapResumerFunction(
+        LuaThread thread,
+        out LuaValue wrapper)
+    {
+        var resumer = thread.Resumer;
+        if (resumer is null || resumer.FrameCount == 0)
+        {
+            wrapper = LuaValue.Nil;
+            return false;
+        }
+
+        var continuation = resumer.CurrentFrame.Continuation;
+        if (continuation.Kind != LuaContinuationKind.CoroutineResume ||
+            (continuation.State & 2) == 0)
+        {
+            wrapper = LuaValue.Nil;
+            return false;
+        }
+
+        wrapper = continuation.Value;
+        return wrapper.TryGetNativeFunction() is { Kind: LuaNativeFunctionKind.CoroutineWrap };
+    }
+
+    private static void RegisterUnwindError(
+        LuaState state,
+        LuaThread thread,
+        LuaUnwindState unwind,
+        LuaValue error)
+    {
+        unwind.ActiveCloseCall = null;
+        if (unwind.ActiveErrorHandler is not null)
+        {
+            unwind.Error = CreateErrorInErrorHandling(state);
+            unwind.ActiveErrorHandler = null;
+            unwind.ErrorHandlerPending = false;
+            thread.Owner.WriteBarrier(thread, unwind.Error);
+            return;
+        }
+
+        unwind.Error = error;
+        unwind.ErrorHandlerPending = !unwind.ErrorHandler.IsNil;
+        thread.Owner.WriteBarrier(thread, unwind.Error);
+    }
+
+    private void StartUnwindErrorHandler(
+        LuaState state,
+        LuaThread thread,
+        LuaUnwindState unwind)
+    {
+        unwind.ErrorHandlerPending = false;
+        LuaOperationResolution resolved;
+        try
+        {
+            resolved = LuaRuntimeOperations.ResolveCall(
+                state,
+                unwind.ErrorHandler,
+                [unwind.Error]);
+        }
+        catch (LuaRuntimeException)
+        {
+            unwind.Error = CreateErrorInErrorHandling(state);
+            thread.Owner.WriteBarrier(thread, unwind.Error);
+            return;
+        }
+
+        LuaClosure? handlerClosure = resolved.Callable.TryGetClosure();
+        var hidden = false;
+        if (handlerClosure is null &&
+            resolved.Callable.TryGetNativeFunction() is { StepBody: not null })
+        {
+            handlerClosure = CreateNativeCallbackTrampoline(state, resolved.Callable);
+            hidden = true;
+        }
+
+        if (handlerClosure is not null)
+        {
+            var returnBase = thread.CurrentFrame.Top;
+            var handlerFrame = PushFrame(
+                thread,
+                handlerClosure,
+                resolved.Arguments,
+                returnBase,
+                expectedResults: 1,
+                protectionKind: LuaProtectedCallKind.ErrorHandler,
+                isHidden: hidden,
+                allowEmergencyCallDepth: true);
+            unwind.ActiveErrorHandler = handlerFrame;
+            return;
+        }
+
+        _ = resolved.Callable.TryGetNativeFunction() ??
+            throw new InvalidOperationException("Resolved error handler is not callable.");
+        try
+        {
+            var results = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
+            unwind.Error = results.Length == 0 ? LuaValue.Nil : results[0];
+            thread.Owner.WriteBarrier(thread, unwind.Error);
+        }
+        catch (LuaRuntimeException)
+        {
+            unwind.Error = CreateErrorInErrorHandling(state);
+            thread.Owner.WriteBarrier(thread, unwind.Error);
+        }
     }
 
     private void CompleteProtectedFailure(
@@ -2062,6 +2690,7 @@ internal sealed class LuaExecutionEngine
 
     private bool ContinueUnwind(
         LuaState state,
+        LuaScheduler scheduler,
         LuaThread thread,
         out LuaValue unprotectedError)
     {
@@ -2071,33 +2700,73 @@ internal sealed class LuaExecutionEngine
         {
             var frame = thread.CurrentFrame;
             if (ReferenceEquals(frame, unwind.Boundary) &&
+                !unwind.SkipProtectedNativeCallback &&
+                frame.Continuation.Kind == LuaContinuationKind.NativeCallLua &&
+                frame.Continuation.NativeCallbackIsProtected)
+            {
+                var continuation = frame.Continuation;
+                var nativeFunction = continuation.Value;
+                var returnBase = continuation.Base;
+                var expectedResults = continuation.ExpectedResults;
+                var tailCall = (continuation.Count & 1) != 0;
+                var continuationId = continuation.State;
+                var invocationState = continuation.Values;
+                continuation.Reset();
+                thread.UnwindState = null;
+                var descriptor = nativeFunction.TryGetNativeFunction() ??
+                    throw new InvalidOperationException(
+                        "A protected native callback lost its descriptor.");
+                var context = new LuaNativeCallContext(
+                    state,
+                    thread,
+                    nativeFunction.TryGetNativeClosure(),
+                    invocationState);
+                var completed = ContinueNative(
+                    state,
+                    scheduler,
+                    thread,
+                    frame,
+                    nativeFunction,
+                    returnBase,
+                    expectedResults,
+                    tailCall,
+                    programCounterAdvanced: !tailCall,
+                    descriptor.StepBody!(
+                        context,
+                        continuationId,
+                        [LuaValue.FromBoolean(false), unwind.Error]));
+                if (completed is { } values)
+                {
+                    scheduler.Current.ForcedResult = values;
+                }
+
+                unprotectedError = LuaValue.Nil;
+                return false;
+            }
+
+            if (ReferenceEquals(frame, unwind.Boundary) &&
                 frame.Continuation.IsNativeProtectedBoundary)
             {
                 var continuation = frame.Continuation;
-                var protectionKind = continuation.ProtectionKind;
                 var returnBase = continuation.NativeProtectedReturnBase;
                 var expectedResults = continuation.NativeProtectedExpectedResults;
-                var handler = continuation.ErrorHandler;
                 var tailCall = continuation.NativeProtectedTailCall;
                 continuation.Reset();
                 continuation.ProtectionKind = LuaProtectedCallKind.None;
+                continuation.ProtectionFunction = LuaValue.Nil;
                 continuation.ErrorHandler = LuaValue.Nil;
                 continuation.IsNativeProtectedBoundary = false;
                 continuation.NativeProtectedReturnBase = 0;
                 continuation.NativeProtectedExpectedResults = 0;
                 continuation.NativeProtectedTailCall = false;
                 thread.UnwindState = null;
-                CompleteProtectedFailure(
-                    state,
+                WriteProtectedResults(
                     thread,
                     frame,
                     returnBase,
                     expectedResults,
-                    protectionKind == LuaProtectedCallKind.ProtectedCall
-                        ? LuaNativeFunctionKind.ProtectedCall
-                        : LuaNativeFunctionKind.ProtectedCallWithHandler,
-                    handler,
-                    unwind.Error);
+                    succeeded: false,
+                    [unwind.Error]);
                 if (tailCall)
                 {
                     continuation.Kind = LuaContinuationKind.ProtectedCall;
@@ -2108,16 +2777,22 @@ internal sealed class LuaExecutionEngine
                 return false;
             }
 
+            PrepareFrameForErrorClose(frame, unwind.DebugBoundaryFunction);
             if (TryCloseFrom(state, thread, frame, 0, unwind.Error))
             {
                 unprotectedError = LuaValue.Nil;
                 return false;
             }
 
+            var wasActiveErrorHandler = ReferenceEquals(unwind.ActiveErrorHandler, frame);
             thread.PopFrame();
             if (frame.IsDebugHook)
             {
                 thread.IsRunningDebugHook = false;
+            }
+            if (wasActiveErrorHandler)
+            {
+                unwind.ActiveErrorHandler = null;
             }
             if (!ReferenceEquals(frame, unwind.Boundary))
             {
@@ -2134,18 +2809,18 @@ internal sealed class LuaExecutionEngine
             var caller = thread.CurrentFrame;
             if (frame.Continuation.ProtectionKind == LuaProtectedCallKind.ProtectedCallWithHandler)
             {
-                InvokeErrorHandler(
-                    state,
+                WriteProtectedResults(
                     thread,
                     caller,
                     frame.ReturnBase,
                     frame.ExpectedResults,
-                    frame.Continuation.ErrorHandler,
-                    unwind.Error);
+                    succeeded: false,
+                    [unwind.Error]);
             }
             else if (frame.Continuation.ProtectionKind == LuaProtectedCallKind.Finalizer)
             {
                 state.ReportWarning(unwind.Error);
+                state.IsRunningFinalizer = false;
             }
             else if (frame.Continuation.ProtectionKind == LuaProtectedCallKind.ErrorHandler)
             {
@@ -2172,6 +2847,37 @@ internal sealed class LuaExecutionEngine
             return false;
         }
 
+        if (!unwind.SkipProtectedNativeCallback &&
+            thread.RootContinuation.Kind == LuaContinuationKind.NativeCallLua &&
+            thread.RootContinuation.NativeCallbackIsProtected)
+        {
+            var continuation = thread.RootContinuation;
+            var nativeFunction = continuation.Value;
+            var continuationId = continuation.State;
+            var invocationState = continuation.Values;
+            continuation.Reset();
+            thread.UnwindState = null;
+            var descriptor = nativeFunction.TryGetNativeFunction() ??
+                throw new InvalidOperationException(
+                    "A protected root native callback lost its descriptor.");
+            var context = new LuaNativeCallContext(
+                state,
+                thread,
+                nativeFunction.TryGetNativeClosure(),
+                invocationState);
+            ContinueNativeRoot(
+                state,
+                scheduler,
+                thread,
+                nativeFunction,
+                descriptor.StepBody!(
+                    context,
+                    continuationId,
+                    [LuaValue.FromBoolean(false), unwind.Error]));
+            unprotectedError = LuaValue.Nil;
+            return false;
+        }
+
         thread.UnwindState = null;
         unprotectedError = unwind.Error;
         return true;
@@ -2179,6 +2885,15 @@ internal sealed class LuaExecutionEngine
 
     private void RunPendingFinalizer(LuaState state, LuaThread thread)
     {
+        for (var index = 0; index < thread.FrameCount; index++)
+        {
+            if (thread.Frames[index].Continuation.ProtectionKind ==
+                LuaProtectedCallKind.Finalizer)
+            {
+                return;
+            }
+        }
+
         while (state.Heap.TryTakePendingFinalizer(out var target, out var finalizer))
         {
             var targetValue = target switch
@@ -2212,23 +2927,30 @@ internal sealed class LuaExecutionEngine
             if (resolved.Callable.TryGetClosure() is { } closure)
             {
                 var caller = thread.CurrentFrame;
-                PushFrame(
+                state.IsRunningFinalizer = true;
+                var finalizerFrame = PushFrame(
                     thread,
                     closure,
                     resolved.Arguments,
-                    caller.Top,
+                    Math.Max(caller.Top, caller.Base + caller.Closure.Function.RegisterCount),
                     expectedResults: 0,
                     protectionKind: LuaProtectedCallKind.Finalizer);
+                SetDebugFunctionName(finalizerFrame, "__gc", "metamethod");
                 return;
             }
 
             try
             {
+                state.IsRunningFinalizer = true;
                 _ = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
             }
             catch (LuaRuntimeException exception)
             {
                 state.ReportWarning(MaterializeError(state, exception));
+            }
+            finally
+            {
+                state.IsRunningFinalizer = false;
             }
         }
     }
@@ -2321,6 +3043,7 @@ internal sealed class LuaExecutionEngine
         }
 
         var results = frame.Continuation.Values;
+        var protectionKind = frame.Continuation.ProtectionKind;
         frame.Continuation.Reset();
         thread.PopFrame();
         if (frame.IsDebugHook)
@@ -2331,6 +3054,14 @@ internal sealed class LuaExecutionEngine
         {
             thread.UnwindState.ActiveCloseCall = null;
         }
+        if (ReferenceEquals(thread.UnwindState?.ActiveErrorHandler, frame))
+        {
+            var unwind = thread.UnwindState!;
+            unwind.ActiveErrorHandler = null;
+            unwind.Error = results.Length == 0 ? LuaValue.Nil : results[0];
+            thread.Owner.WriteBarrier(thread, unwind.Error);
+            return null;
+        }
 
         if (thread.FrameCount == 0 &&
             thread.RootContinuation.Kind == LuaContinuationKind.NativeCallLua)
@@ -2338,6 +3069,7 @@ internal sealed class LuaExecutionEngine
             var nativeFunction = thread.RootContinuation.Value;
             var continuationId = thread.RootContinuation.State;
             var invocationState = thread.RootContinuation.Values;
+            var callbackWasProtected = thread.RootContinuation.NativeCallbackIsProtected;
             thread.RootContinuation.Reset();
             var descriptor = nativeFunction.TryGetNativeFunction() ??
                 throw new InvalidOperationException("A root native callback lost its descriptor.");
@@ -2351,7 +3083,12 @@ internal sealed class LuaExecutionEngine
                 scheduler,
                 thread,
                 nativeFunction,
-                descriptor.StepBody!(context, continuationId, results));
+                descriptor.StepBody!(
+                    context,
+                    continuationId,
+                    callbackWasProtected
+                        ? [LuaValue.FromBoolean(true), .. results]
+                        : results));
             return null;
         }
 
@@ -2370,6 +3107,7 @@ internal sealed class LuaExecutionEngine
             var tailCall = (continuation.Count & 1) != 0;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
+            var callbackWasProtected = continuation.NativeCallbackIsProtected;
             continuation.Reset();
             var descriptor = nativeFunction.TryGetNativeFunction() ??
                 throw new InvalidOperationException("A native continuation lost its descriptor.");
@@ -2378,7 +3116,12 @@ internal sealed class LuaExecutionEngine
                 thread,
                 nativeFunction.TryGetNativeClosure(),
                 invocationState);
-            var step = descriptor.StepBody!(context, continuationId, results);
+            var step = descriptor.StepBody!(
+                context,
+                continuationId,
+                callbackWasProtected
+                    ? [LuaValue.FromBoolean(true), .. results]
+                    : results);
             return ContinueNative(
                 state,
                 scheduler,
@@ -2392,14 +3135,19 @@ internal sealed class LuaExecutionEngine
                 step);
         }
 
-        if (frame.Continuation.ProtectionKind != LuaProtectedCallKind.None)
+        if (protectionKind != LuaProtectedCallKind.None)
         {
+            if (protectionKind == LuaProtectedCallKind.Finalizer)
+            {
+                state.IsRunningFinalizer = false;
+            }
+
             WriteProtectedResults(
                 thread,
                 thread.CurrentFrame,
                 frame.ReturnBase,
                 frame.ExpectedResults,
-                succeeded: frame.Continuation.ProtectionKind != LuaProtectedCallKind.ErrorHandler,
+                succeeded: protectionKind != LuaProtectedCallKind.ErrorHandler,
                 results);
             return null;
         }
@@ -2434,11 +3182,24 @@ internal sealed class LuaExecutionEngine
         LuaValue errorHandler = default,
         bool isCloseHandler = false,
         bool isDebugHook = false,
-        bool isHidden = false)
+        bool isHidden = false,
+        bool scheduleCallHook = true,
+        bool allowEmergencyCallDepth = false)
     {
-        if (thread.FrameCount >= _options.MaximumCallDepth)
+        const int emergencyCallDepth = 200;
+        var callDepthLimit = allowEmergencyCallDepth ||
+            thread.UnwindState?.ActiveErrorHandler is not null
+                ? (long)_options.MaximumCallDepth + emergencyCallDepth
+                : _options.MaximumCallDepth;
+        if (thread.FrameCount >= callDepthLimit)
         {
-            throw new LuaRuntimeException("The Lua call depth limit was exceeded.");
+            throw new LuaRuntimeException("stack overflow");
+        }
+
+        if (GetActiveCoroutineDepth(thread) >= MaximumCStackDepth ||
+            GetActiveCallDepth(thread) >= callDepthLimit)
+        {
+            throw new LuaRuntimeException("C stack overflow");
         }
 
         var function = closure.Function;
@@ -2472,10 +3233,14 @@ internal sealed class LuaExecutionEngine
             isCloseHandler,
             isDebugHook,
             isHidden);
-        if (!isDebugHook && !isHidden && !thread.DebugHook.IsNil &&
+        if (scheduleCallHook && !isDebugHook && !isHidden && !thread.IsRunningDebugHook &&
+            !thread.DebugHook.IsNil &&
             thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
         {
             frame.PendingDebugHookEvent = "call";
+            thread.SetDebugHookTransfer(
+                thread.Stack.AsReadOnlySpan(@base, function.ParameterCount),
+                isNative: false);
         }
         thread.PushFrame(frame);
         return frame;
@@ -2489,9 +3254,19 @@ internal sealed class LuaExecutionEngine
         int returnBase,
         int expectedResults)
     {
-        if (thread.FrameCount >= _options.MaximumCallDepth)
+        const int emergencyCallDepth = 200;
+        var callDepthLimit = thread.UnwindState?.ActiveErrorHandler is not null
+            ? (long)_options.MaximumCallDepth + emergencyCallDepth
+            : _options.MaximumCallDepth;
+        if (thread.FrameCount >= callDepthLimit)
         {
-            throw new LuaRuntimeException("The Lua call depth limit was exceeded.");
+            throw new LuaRuntimeException("stack overflow");
+        }
+
+        if (GetActiveCoroutineDepth(thread) >= MaximumCStackDepth ||
+            GetActiveCallDepth(thread) >= callDepthLimit)
+        {
+            throw new LuaRuntimeException("C stack overflow");
         }
 
         var function = closure.Function;
@@ -2551,13 +3326,39 @@ internal sealed class LuaExecutionEngine
             returnBase,
             expectedResults,
             varArgs);
-        if (!thread.DebugHook.IsNil && thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+        if (!thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
+            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
         {
             frame.PendingDebugHookEvent = "call";
+            thread.SetDebugHookTransfer(
+                thread.Stack.AsReadOnlySpan(@base, function.ParameterCount),
+                isNative: false);
         }
 
         thread.PushFrame(frame);
         return frame;
+    }
+
+    private static long GetActiveCallDepth(LuaThread thread)
+    {
+        long depth = 0;
+        for (var current = thread; current is not null; current = current.Resumer)
+        {
+            depth += current.FrameCount;
+        }
+
+        return depth;
+    }
+
+    private static int GetActiveCoroutineDepth(LuaThread thread)
+    {
+        var depth = 0;
+        for (var current = thread; current is not null; current = current.Resumer)
+        {
+            depth++;
+        }
+
+        return depth;
     }
 
     private void EnsureScratchWindow(LuaThread thread, int start, int count)
@@ -2581,6 +3382,50 @@ internal sealed class LuaExecutionEngine
             thread.Stack[start + index] = resolution.GetArgument(index);
         }
     }
+
+    private static void SetDebugFunctionName(LuaFrame frame, string name, string nameWhat)
+    {
+        frame.DebugFunctionName = name;
+        frame.DebugFunctionNameWhat = nameWhat;
+    }
+
+    private static string GetOperationMetamethodName(LuaIrInstruction instruction) =>
+        instruction.Opcode switch
+        {
+            LuaIrOpcode.GetTable => "index",
+            LuaIrOpcode.SetTable => "newindex",
+            LuaIrOpcode.Unary => (LuaIrUnaryOperator)instruction.C switch
+            {
+                LuaIrUnaryOperator.Negate => "unm",
+                LuaIrUnaryOperator.BitwiseNot => "bnot",
+                LuaIrUnaryOperator.Length => "len",
+                _ => throw new InvalidOperationException(
+                    "A non-metamethod unary operation requested a Lua call."),
+            },
+            LuaIrOpcode.Binary => (LuaIrBinaryOperator)instruction.D switch
+            {
+                LuaIrBinaryOperator.Add => "add",
+                LuaIrBinaryOperator.Subtract => "sub",
+                LuaIrBinaryOperator.Multiply => "mul",
+                LuaIrBinaryOperator.Divide => "div",
+                LuaIrBinaryOperator.FloorDivide => "idiv",
+                LuaIrBinaryOperator.Modulo => "mod",
+                LuaIrBinaryOperator.Power => "pow",
+                LuaIrBinaryOperator.Concatenate => "concat",
+                LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual => "eq",
+                LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.GreaterThan => "lt",
+                LuaIrBinaryOperator.LessThanOrEqual or LuaIrBinaryOperator.GreaterThanOrEqual => "le",
+                LuaIrBinaryOperator.BitwiseAnd => "band",
+                LuaIrBinaryOperator.BitwiseOr => "bor",
+                LuaIrBinaryOperator.BitwiseXor => "bxor",
+                LuaIrBinaryOperator.ShiftLeft => "shl",
+                LuaIrBinaryOperator.ShiftRight => "shr",
+                _ => throw new InvalidOperationException(
+                    "An unknown binary operation requested a metamethod call."),
+            },
+            _ => throw new InvalidOperationException(
+                $"Instruction {instruction.Opcode} is not a metamethod operation."),
+        };
 
     private static void WriteCallResults(
         LuaThread thread,
@@ -2654,7 +3499,12 @@ internal sealed class LuaExecutionEngine
             };
         }
 
-        return new LuaClosure(parent.Closure.Owner, parent.Closure.Module, function, upvalues);
+        return new LuaClosure(
+            parent.Closure.Owner,
+            parent.Closure.Module,
+            function,
+            upvalues,
+            parent.Closure.StringConstants);
     }
 
     internal static void ExecuteSetList(
@@ -2832,7 +3682,7 @@ internal sealed class LuaExecutionEngine
 
         if (!LuaValueOperations.TryToNumber(value, out var number))
         {
-            throw new LuaRuntimeException("Numeric for limit must be a number.");
+            throw NumericForTypeError("limit", value);
         }
 
         if (number.Kind == LuaValueKind.Integer)
@@ -2859,7 +3709,7 @@ internal sealed class LuaExecutionEngine
     {
         if (!LuaValueOperations.TryToNumber(value, out var number))
         {
-            throw new LuaRuntimeException("Numeric for limit must be a number.");
+            throw NumericForTypeError("limit", value);
         }
 
         var floatingPoint = number.AsFloat();
@@ -2877,11 +3727,14 @@ internal sealed class LuaExecutionEngine
     {
         if (!LuaValueOperations.TryToNumber(value, out var number))
         {
-            throw new LuaRuntimeException($"Numeric for {role} must be a number.");
+            throw NumericForTypeError(role, value);
         }
 
         return number.AsFloat();
     }
+
+    private static LuaRuntimeException NumericForTypeError(string role, LuaValue value) =>
+        new($"bad 'for' {role} (number expected, got {LuaValueOperations.TypeName(value)})");
 
     internal bool TryCloseFrom(
         LuaState state,
@@ -2913,10 +3766,20 @@ internal sealed class LuaExecutionEngine
             if (metamethod.IsNil)
             {
                 throw new LuaRuntimeException(
-                    $"To-be-closed value of kind {value.Kind} has no __close metamethod.");
+                    "attempt to call a nil value (metamethod 'close')");
             }
 
-            var resolved = LuaRuntimeOperations.ResolveCall(state, metamethod, [value, error]);
+            LuaOperationResolution resolved;
+            try
+            {
+                resolved = LuaRuntimeOperations.ResolveCall(state, metamethod, [value, error]);
+            }
+            catch (LuaRuntimeException)
+            {
+                throw new LuaRuntimeException(
+                    $"attempt to call a {LuaValueOperations.TypeName(metamethod)} value " +
+                    "(metamethod 'close')");
+            }
             if (resolved.Callable.TryGetClosure() is { } closure)
             {
                 var closeFrame = PushFrame(
@@ -2926,6 +3789,7 @@ internal sealed class LuaExecutionEngine
                     frame.Top,
                     expectedResults: 0,
                     isCloseHandler: true);
+                SetDebugFunctionName(closeFrame, "close", "metamethod");
                 if (thread.UnwindState is not null)
                 {
                     thread.UnwindState.ActiveCloseCall = closeFrame;
@@ -2934,16 +3798,46 @@ internal sealed class LuaExecutionEngine
                 return true;
             }
 
-            var native = resolved.Callable.TryGetNativeFunction() ??
+            _ = resolved.Callable.TryGetNativeFunction() ??
                 throw new InvalidOperationException("Resolved __close metamethod is not callable.");
-            _ = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
+            var nativeCloseFrame = PushFrame(
+                thread,
+                CreateNativeCallbackTrampoline(state, resolved.Callable),
+                resolved.Arguments,
+                frame.Top,
+                expectedResults: 0,
+                isCloseHandler: true,
+                isHidden: true);
+            SetDebugFunctionName(nativeCloseFrame, "close", "metamethod");
+            if (thread.UnwindState is not null)
+            {
+                thread.UnwindState.ActiveCloseCall = nativeCloseFrame;
+            }
+
+            return true;
         }
 
         thread.CloseUpvalues(absolute);
         return false;
     }
 
-    internal static LuaValue MaterializeConstant(LuaState state, LuaIrConstant constant) =>
+    private static void PrepareFrameForErrorClose(
+        LuaFrame frame,
+        LuaValue debugBoundaryFunction)
+    {
+        if (debugBoundaryFunction.TryGetNativeFunction() is not { } native)
+        {
+            return;
+        }
+
+        frame.DebugFunctionOverride = debugBoundaryFunction;
+        SetDebugFunctionName(frame, native.Name, "global");
+    }
+
+    internal static LuaValue MaterializeConstant(
+        LuaState state,
+        LuaClosure closure,
+        LuaIrConstant constant) =>
         constant.Kind switch
         {
             LuaIrConstantKind.Nil => LuaValue.Nil,
@@ -2951,9 +3845,449 @@ internal sealed class LuaExecutionEngine
             LuaIrConstantKind.Integer => LuaValue.FromInteger(constant.Integer),
             LuaIrConstantKind.Float => LuaValue.FromFloat(constant.Float),
             LuaIrConstantKind.String => LuaValue.FromString(
-                state.Strings.GetOrCreate(constant.Bytes.AsSpan())),
+                MaterializeStringConstant(state, closure, constant.Bytes.AsSpan())),
             _ => throw new InvalidOperationException("Unknown canonical constant kind."),
         };
+
+    private static LuaString MaterializeStringConstant(
+        LuaState state,
+        LuaClosure closure,
+        ReadOnlySpan<byte> bytes)
+    {
+        if (!ReferenceEquals(state.Heap, closure.Owner))
+        {
+            throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
+        }
+
+        var value = closure.StringConstants.GetOrCreate(state, bytes);
+        closure.Owner.WriteBarrier(closure, value);
+        return value;
+    }
+
+    private static LuaRuntimeException EnrichRuntimeException(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaRuntimeException exception)
+    {
+        if (exception.HasErrorValue)
+        {
+            return exception;
+        }
+
+        var isAttemptError = exception.Message.StartsWith("attempt to ", StringComparison.Ordinal);
+        var isIntegerConversionError = exception.Message.Contains(
+            "has no integer representation",
+            StringComparison.Ordinal);
+        var isNumericForError = exception.Message.StartsWith("bad 'for' ", StringComparison.Ordinal);
+        var isBadArgumentError = exception.Message.StartsWith("bad argument #", StringComparison.Ordinal);
+        var isAssertionError = string.Equals(exception.Message, "assertion failed!", StringComparison.Ordinal);
+        if (!isAttemptError && !isIntegerConversionError && !isNumericForError &&
+            !isBadArgumentError && !isAssertionError)
+        {
+            return exception;
+        }
+
+        var instructions = frame.Closure.Function.Instructions;
+        if (instructions.IsEmpty)
+        {
+            return exception;
+        }
+
+        var pc = Math.Clamp(frame.ProgramCounter, 0, instructions.Length - 1);
+        var instruction = instructions[pc];
+        var message = exception.Message;
+        if (isBadArgumentError &&
+            instruction.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall &&
+            Read(thread, frame, instruction.A).TryGetNativeFunction() is { } native &&
+            native.Name.Contains('.', StringComparison.Ordinal))
+        {
+            var marker = " to '";
+            var nameStart = message.IndexOf(marker, StringComparison.Ordinal);
+            if (nameStart >= 0)
+            {
+                nameStart += marker.Length;
+                var nameEnd = message.IndexOf('\'', nameStart);
+                if (nameEnd >= 0)
+                {
+                    message = message[..nameStart] + native.Name + message[nameEnd..];
+                }
+            }
+
+            return new LuaRuntimeException(FormatRuntimeErrorLocation(frame, instruction, message));
+        }
+
+        if (isAttemptError && !message.Contains(" (", StringComparison.Ordinal) &&
+            message.StartsWith("attempt to call ", StringComparison.Ordinal) &&
+            instruction.Opcode is LuaIrOpcode.GetTable or LuaIrOpcode.SetTable or
+                LuaIrOpcode.Unary or LuaIrOpcode.Binary)
+        {
+            message = $"{message} (metamethod '{GetOperationMetamethodName(instruction)}')";
+            return new LuaRuntimeException(FormatRuntimeErrorLocation(frame, instruction, message));
+        }
+
+        var register = isAssertionError
+            ? -1
+            : isIntegerConversionError && !isBadArgumentError
+                ? GetIntegerConversionOperandRegister(thread, frame, instruction)
+                : GetErrorOperandRegister(thread, frame, instruction);
+        if (register >= 0 &&
+            TryDescribeRegisterOrigin(frame, pc, register, depth: 0, out var origin))
+        {
+            if (instruction.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall &&
+                origin.Kind == LuaValueOriginKind.Field &&
+                origin.SourceRegister == instruction.A + 1)
+            {
+                origin = origin with { Kind = LuaValueOriginKind.Method };
+            }
+
+            const string badSelfPrefix = "bad argument #1 to '";
+            if (isBadArgumentError &&
+                origin.Kind == LuaValueOriginKind.Method &&
+                message.StartsWith(badSelfPrefix, StringComparison.Ordinal) &&
+                message.IndexOf('\'', badSelfPrefix.Length) is var functionNameEnd &&
+                functionNameEnd >= 0)
+            {
+                var functionName = message[badSelfPrefix.Length..functionNameEnd];
+                message = $"calling '{functionName}' on bad self" + message[(functionNameEnd + 1)..];
+            }
+            else if (isBadArgumentError && origin.Kind == LuaValueOriginKind.Method)
+            {
+                const string argumentPrefix = "bad argument #";
+                var numberEnd = message.IndexOf(' ', argumentPrefix.Length);
+                if (numberEnd > argumentPrefix.Length &&
+                    int.TryParse(message.AsSpan(argumentPrefix.Length, numberEnd - argumentPrefix.Length),
+                        out var argumentNumber) &&
+                    argumentNumber > 1)
+                {
+                    message = argumentPrefix + (argumentNumber - 1) + message[numberEnd..];
+                }
+            }
+            else if (!message.Contains(" (", StringComparison.Ordinal) &&
+                FormatOrigin(origin) is { } formattedOrigin)
+            {
+                message = isIntegerConversionError &&
+                    message.StartsWith("number has ", StringComparison.Ordinal)
+                        ? "number (" + formattedOrigin + ") " + message["number ".Length..]
+                        : $"{message} ({formattedOrigin})";
+            }
+        }
+
+        return new LuaRuntimeException(FormatRuntimeErrorLocation(frame, instruction, message));
+    }
+
+    private static int GetIntegerConversionOperandRegister(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        if (instruction.Opcode == LuaIrOpcode.Unary)
+        {
+            return instruction.B;
+        }
+
+        if (instruction.Opcode != LuaIrOpcode.Binary)
+        {
+            return -1;
+        }
+
+        return Read(thread, frame, instruction.B).TryGetInteger(out _)
+            ? instruction.C
+            : instruction.B;
+    }
+
+    private static string? FormatOrigin(LuaValueOrigin origin) => origin.Kind switch
+    {
+        LuaValueOriginKind.Local => $"local '{origin.Name}'",
+        LuaValueOriginKind.Upvalue => $"upvalue '{origin.Name}'",
+        LuaValueOriginKind.Global => $"global '{origin.Name}'",
+        LuaValueOriginKind.Field => $"field '{origin.Name}'",
+        LuaValueOriginKind.Method => $"method '{origin.Name}'",
+        _ => null,
+    };
+
+    private static string FormatRuntimeErrorLocation(
+        LuaFrame frame,
+        LuaIrInstruction instruction,
+        string message)
+    {
+        if (instruction.SourceLine <= 0 || frame.Closure.Function.SourceName.IsEmpty)
+        {
+            return $"?:-1: {message}";
+        }
+
+        const int maximumLength = 59;
+        var source = Encoding.UTF8.GetString(frame.Closure.Function.SourceName.AsSpan());
+        string shortSource;
+        if (source.StartsWith('@'))
+        {
+            source = source[1..];
+            shortSource = source.Length <= maximumLength
+                ? source
+                : "..." + source[^(maximumLength - 3)..];
+        }
+        else if (source.StartsWith('='))
+        {
+            source = source[1..];
+            shortSource = source.Length <= maximumLength ? source : source[..maximumLength];
+        }
+        else
+        {
+            const string prefix = "[string \"";
+            const string suffix = "\"]";
+            var available = maximumLength - prefix.Length - suffix.Length;
+            var newLine = source.IndexOf('\n');
+            if (newLine >= 0 || source.Length > available)
+            {
+                var end = newLine < 0 ? source.Length : newLine;
+                source = source[..Math.Min(end, available - 3)] + "...";
+            }
+
+            shortSource = prefix + source + suffix;
+        }
+
+        return $"{shortSource}:{instruction.SourceLine}: {message}";
+    }
+
+    private static int GetErrorOperandRegister(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        switch (instruction.Opcode)
+        {
+            case LuaIrOpcode.Call:
+            case LuaIrOpcode.TailCall:
+                return instruction.A;
+            case LuaIrOpcode.GetTable:
+                return instruction.B;
+            case LuaIrOpcode.SetTable:
+                return instruction.A;
+            case LuaIrOpcode.Unary:
+                return instruction.B;
+            case LuaIrOpcode.Binary:
+                var operation = (LuaIrBinaryOperator)instruction.D;
+                var left = Read(thread, frame, instruction.B);
+                if (IsArithmeticErrorOperation(operation))
+                {
+                    return LuaValueOperations.TryToNumber(left, out _)
+                        ? instruction.C
+                        : instruction.B;
+                }
+
+                if (IsBitwiseErrorOperation(operation))
+                {
+                    return left.Kind is LuaValueKind.Integer or LuaValueKind.Float
+                        ? instruction.C
+                        : instruction.B;
+                }
+
+                if (operation == LuaIrBinaryOperator.Concatenate)
+                {
+                    return left.Kind is LuaValueKind.String or LuaValueKind.Integer or LuaValueKind.Float
+                        ? instruction.C
+                        : instruction.B;
+                }
+
+                return -1;
+            default:
+                return -1;
+        }
+    }
+
+    private static bool TryDescribeRegisterOrigin(
+        LuaFrame frame,
+        int pc,
+        int register,
+        int depth,
+        out LuaValueOrigin origin)
+    {
+        origin = default;
+        if (depth >= 16 || register < 0 || register >= frame.Closure.Function.RegisterCount)
+        {
+            return false;
+        }
+
+        var function = frame.Closure.Function;
+        var activeLocals = function.LocalVariables.Where(local =>
+            local.StartProgramCounter <= pc && pc < local.EndProgramCounter).ToArray();
+        if (register < activeLocals.Length)
+        {
+            var name = Encoding.UTF8.GetString(activeLocals[register].Name.AsSpan());
+            origin = string.Equals(name, "_ENV", StringComparison.Ordinal)
+                ? new LuaValueOrigin(LuaValueOriginKind.Environment, name)
+                : new LuaValueOrigin(LuaValueOriginKind.Local, name);
+            return true;
+        }
+
+        for (var candidatePc = Math.Min(pc - 1, function.Instructions.Length - 1);
+             candidatePc >= 0;
+             candidatePc--)
+        {
+            var candidate = function.Instructions[candidatePc];
+            if (!WritesRegister(candidate, register))
+            {
+                continue;
+            }
+
+            if (IsShortCircuitMerge(function, candidatePc, pc, register))
+            {
+                // The producer belongs to an arm that a forward conditional jump can
+                // skip while preserving the same register. Lua deliberately omits a
+                // variable name because either arm may be the source. A producer at or
+                // after the jump target is instead an ordinary register reuse following
+                // a statement-level branch and must retain its origin.
+                return false;
+            }
+
+            switch (candidate.Opcode)
+            {
+                case LuaIrOpcode.Move:
+                    return TryDescribeRegisterOrigin(
+                        frame,
+                        candidatePc,
+                        candidate.B,
+                        depth + 1,
+                        out origin);
+                case LuaIrOpcode.GetUpvalue:
+                    if ((uint)candidate.B >= (uint)function.Upvalues.Length)
+                    {
+                        return false;
+                    }
+
+                    var upvalueName = function.Upvalues[candidate.B].Name;
+                    origin = string.Equals(upvalueName, "_ENV", StringComparison.Ordinal)
+                        ? new LuaValueOrigin(LuaValueOriginKind.Environment, upvalueName)
+                        : new LuaValueOrigin(LuaValueOriginKind.Upvalue, upvalueName);
+                    return true;
+                case LuaIrOpcode.GetTable:
+                    var hasKey = TryGetStringConstantProducer(
+                            function,
+                            candidatePc,
+                            candidate.C,
+                            out var key);
+                    if (!hasKey)
+                    {
+                        return false;
+                    }
+
+                    _ = TryDescribeRegisterOrigin(
+                        frame,
+                        candidatePc,
+                        candidate.B,
+                        depth + 1,
+                        out var tableOrigin);
+                    origin = tableOrigin.Kind == LuaValueOriginKind.Environment
+                        ? new LuaValueOrigin(LuaValueOriginKind.Global, key, candidate.B)
+                        : new LuaValueOrigin(LuaValueOriginKind.Field, key, candidate.B);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsShortCircuitMerge(
+        LuaIrFunction function,
+        int producerPc,
+        int consumerPc,
+        int register)
+    {
+        for (var branchPc = 0; branchPc < consumerPc; branchPc++)
+        {
+            var branch = function.Instructions[branchPc];
+            if (branch.Opcode is LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue &&
+                branch.A == register &&
+                branch.B > producerPc &&
+                branch.B <= consumerPc)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetStringConstantProducer(
+        LuaIrFunction function,
+        int pc,
+        int register,
+        out string value)
+    {
+        for (var candidatePc = Math.Min(pc - 1, function.Instructions.Length - 1);
+             candidatePc >= 0;
+             candidatePc--)
+        {
+            var candidate = function.Instructions[candidatePc];
+            if (!WritesRegister(candidate, register))
+            {
+                continue;
+            }
+
+            if (candidate.Opcode == LuaIrOpcode.Move)
+            {
+                return TryGetStringConstantProducer(function, candidatePc, candidate.B, out value);
+            }
+
+            if (candidate.Opcode == LuaIrOpcode.LoadConstant &&
+                (uint)candidate.B < (uint)function.Constants.Length &&
+                function.Constants[candidate.B] is { Kind: LuaIrConstantKind.String } constant)
+            {
+                value = Encoding.UTF8.GetString(constant.Bytes.AsSpan());
+                return true;
+            }
+
+            break;
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static bool WritesRegister(LuaIrInstruction instruction, int register) =>
+        instruction.Opcode switch
+        {
+            LuaIrOpcode.LoadNil => register >= instruction.A &&
+                register < instruction.A + Math.Max(instruction.B, 1),
+            LuaIrOpcode.VarArg => register == instruction.A ||
+                instruction.B > 1 && register >= instruction.A &&
+                register < instruction.A + instruction.B,
+            LuaIrOpcode.Call => register == instruction.A ||
+                instruction.C > 1 && register >= instruction.A &&
+                register < instruction.A + instruction.C,
+            LuaIrOpcode.LoadConstant or LuaIrOpcode.Move or LuaIrOpcode.GetUpvalue or
+                LuaIrOpcode.NewTable or LuaIrOpcode.GetTable or LuaIrOpcode.Closure or
+                LuaIrOpcode.Unary or LuaIrOpcode.Binary => register == instruction.A,
+            _ => false,
+        };
+
+    private static bool IsArithmeticErrorOperation(LuaIrBinaryOperator operation) =>
+        operation is LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or
+            LuaIrBinaryOperator.Multiply or LuaIrBinaryOperator.Divide or
+            LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
+            LuaIrBinaryOperator.Power;
+
+    private static bool IsBitwiseErrorOperation(LuaIrBinaryOperator operation) =>
+        operation is LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
+            LuaIrBinaryOperator.BitwiseXor or LuaIrBinaryOperator.ShiftLeft or
+            LuaIrBinaryOperator.ShiftRight;
+
+    private enum LuaValueOriginKind : byte
+    {
+        None,
+        Environment,
+        Local,
+        Upvalue,
+        Global,
+        Field,
+        Method,
+    }
+
+    private readonly record struct LuaValueOrigin(
+        LuaValueOriginKind Kind,
+        string Name,
+        int SourceRegister = -1);
 
     private static LuaValue MaterializeError(LuaState state, LuaRuntimeException exception) =>
         exception.HasErrorValue
@@ -3023,7 +4357,8 @@ internal sealed class LuaExecutionEngine
             state.Heap,
             module,
             function,
-            [new LuaUpvalue(state.Heap, callable)]);
+            [new LuaUpvalue(state.Heap, callable)],
+            new LuaModuleStringConstants());
     }
 
 }

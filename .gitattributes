@@ -8,3 +8,7 @@
 *.dll binary
 *.exe binary
 *.luac binary
+*.gz binary
+
+# Preserve the byte-exact upstream PUC-Lua fixture, including its original whitespace.
+tests/Lunil.Conformance.Tests/Fixtures/lua-5.4.8-tests/** -whitespace

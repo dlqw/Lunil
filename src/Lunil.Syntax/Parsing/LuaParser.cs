@@ -33,9 +33,12 @@ public static class LuaParser
 
     private sealed class Implementation
     {
+        private const int MaximumLocalsPerDeclaration = 200;
+
         private readonly LuaLexResult _lexResult;
         private readonly LuaParserOptions _options;
         private readonly ImmutableArray<Diagnostic>.Builder _diagnostics;
+        private readonly Stack<int> _functionStartPositions = [];
         private int _position;
         private int _recursionDepth;
         private int _nodeCount;
@@ -304,11 +307,12 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseFunctionDeclarationStatement()
         {
+            var functionKeyword = Consume();
             var children = new List<LuaSyntaxElement>
             {
-                Consume(),
+                functionKeyword,
                 ParseFunctionName(),
-                ParseFunctionBody(),
+                ParseFunctionBody(functionKeyword.Span.Start),
             };
             return CreateNode(LuaSyntaxKind.FunctionDeclarationStatement, children);
         }
@@ -340,12 +344,13 @@ public static class LuaParser
             var localKeyword = Consume();
             if (Current.Kind == LuaTokenKind.FunctionKeyword)
             {
+                var functionKeyword = Consume();
                 var functionChildren = new List<LuaSyntaxElement>
                 {
                     localKeyword,
-                    Consume(),
+                    functionKeyword,
                     Match(LuaTokenKind.Identifier),
-                    ParseFunctionBody(),
+                    ParseFunctionBody(functionKeyword.Span.Start),
                 };
                 return CreateNode(
                     LuaSyntaxKind.LocalFunctionDeclarationStatement,
@@ -353,9 +358,20 @@ public static class LuaParser
             }
 
             var children = new List<LuaSyntaxElement> { localKeyword, ParseAttributedName() };
+            var localCount = 1;
             while (Current.Kind == LuaTokenKind.Comma)
             {
-                children.Add(Consume());
+                var comma = Consume();
+                children.Add(comma);
+                localCount++;
+                if (localCount == MaximumLocalsPerDeclaration + 1)
+                {
+                    AddDiagnostic(
+                        "LUA2009",
+                        comma.Span,
+                        GetTooManyLocalsMessage());
+                }
+
                 children.Add(ParseAttributedName());
             }
 
@@ -438,8 +454,16 @@ public static class LuaParser
             return CreateNode(LuaSyntaxKind.Error, [first]);
         }
 
-        private LuaSyntaxNode ParseReturnExpressionError() =>
-            CreateNode(LuaSyntaxKind.Error, [CreateMissingToken(LuaTokenKind.BadToken)]);
+        private LuaSyntaxNode ParseReturnExpressionError()
+        {
+            // Recursion-limit recovery must make progress. In particular, a deeply
+            // nested table constructor otherwise re-enters its field loop at the same
+            // opening brace forever. Keep EOF synthetic, but consume one real token so
+            // enclosing productions can unwind deterministically.
+            return Current.Kind == LuaTokenKind.EndOfFile
+                ? CreateNode(LuaSyntaxKind.Error, [CreateMissingToken(LuaTokenKind.BadToken)])
+                : CreateNode(LuaSyntaxKind.Error, [Consume()]);
+        }
 
         private LuaSyntaxNode ParseUnexpectedStatement()
         {
@@ -533,10 +557,11 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseFunctionExpression()
         {
+            var functionKeyword = Consume();
             var children = new List<LuaSyntaxElement>
             {
-                Consume(),
-                ParseFunctionBody(),
+                functionKeyword,
+                ParseFunctionBody(functionKeyword.Span.Start),
             };
             return CreateNode(LuaSyntaxKind.FunctionExpression, children);
         }
@@ -645,6 +670,7 @@ public static class LuaParser
             var children = new List<LuaSyntaxElement> { Consume() };
             while (Current.Kind is not (LuaTokenKind.CloseBrace or LuaTokenKind.EndOfFile))
             {
+                var previous = _position;
                 children.Add(ParseTableField());
                 if (Current.Kind is LuaTokenKind.Comma or LuaTokenKind.Semicolon)
                 {
@@ -654,6 +680,12 @@ public static class LuaParser
                 {
                     AddExpectedDiagnostic(LuaTokenKind.Comma);
                     children.Add(CreateMissingToken(LuaTokenKind.Comma));
+                }
+
+                if (_position == previous &&
+                    Current.Kind is not (LuaTokenKind.CloseBrace or LuaTokenKind.EndOfFile))
+                {
+                    children.Add(CreateNode(LuaSyntaxKind.Error, [Consume()]));
                 }
             }
 
@@ -686,17 +718,39 @@ public static class LuaParser
             return CreateNode(LuaSyntaxKind.TableField, children);
         }
 
-        private LuaSyntaxNode ParseFunctionBody()
+        private LuaSyntaxNode ParseFunctionBody(int functionStartPosition)
         {
-            var children = new List<LuaSyntaxElement>
+            _functionStartPositions.Push(functionStartPosition);
+            try
             {
-                Match(LuaTokenKind.OpenParenthesis),
-                ParseParameterList(),
-                Match(LuaTokenKind.CloseParenthesis),
-                ParseBlock(LuaTokenKind.EndKeyword),
-                Match(LuaTokenKind.EndKeyword),
-            };
-            return CreateNode(LuaSyntaxKind.FunctionBody, children);
+                var children = new List<LuaSyntaxElement>
+                {
+                    Match(LuaTokenKind.OpenParenthesis),
+                    ParseParameterList(),
+                    Match(LuaTokenKind.CloseParenthesis),
+                    ParseBlock(LuaTokenKind.EndKeyword),
+                    Match(LuaTokenKind.EndKeyword),
+                };
+                return CreateNode(LuaSyntaxKind.FunctionBody, children);
+            }
+            finally
+            {
+                _functionStartPositions.Pop();
+            }
+        }
+
+        private string GetTooManyLocalsMessage()
+        {
+            const string prefix =
+                "too many local variables (limit is 200) in ";
+            if (_functionStartPositions.Count == 0)
+            {
+                return prefix + "main function";
+            }
+
+            var functionLine = _lexResult.Source
+                .GetLocation(_functionStartPositions.Peek()).Line + 1;
+            return $"{prefix}function at line {functionLine}";
         }
 
         private LuaSyntaxNode ParseParameterList()

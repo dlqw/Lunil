@@ -64,7 +64,8 @@ public sealed class BackendContractTests
             LuaIrOpcode.JumpIfTrue);
         var tailCall = RewriteFirstOpcode(
             LuaBackendSession.Compile(
-                "local function identity(value) return value end; return identity(7)"),
+                "local function identity(value) return value end; " +
+                "local result = identity(7); return result"),
             LuaIrOpcode.Call,
             LuaIrOpcode.TailCall);
         modules.Add(jumpIfTrue);

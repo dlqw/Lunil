@@ -42,11 +42,15 @@ internal sealed class LuaContinuation
 
     public LuaProtectedCallKind ProtectionKind { get; set; }
 
+    public LuaValue ProtectionFunction { get; set; }
+
     public LuaValue ErrorHandler { get; set; }
 
     public bool IsCloseHandler { get; set; }
 
     public bool IsYieldBarrier { get; set; }
+
+    public bool NativeCallbackIsProtected { get; set; }
 
     public bool IsNativeProtectedBoundary { get; set; }
 
@@ -69,5 +73,6 @@ internal sealed class LuaContinuation
         Value = LuaValue.Nil;
         Values = [];
         IsYieldBarrier = false;
+        NativeCallbackIsProtected = false;
     }
 }

@@ -12,12 +12,15 @@ public sealed class LuaClosure : LuaGcObject
         LuaHeap owner,
         LuaIrModule module,
         LuaIrFunction function,
-        IReadOnlyList<LuaUpvalue> upvalues)
+        IReadOnlyList<LuaUpvalue> upvalues,
+        LuaModuleStringConstants stringConstants)
         : base(Validate(owner, module, function, upvalues), checked(64 + upvalues.Count * 8L))
     {
+        ArgumentNullException.ThrowIfNull(stringConstants);
         Module = module;
         Function = function;
         _upvalues = [.. upvalues];
+        StringConstants = stringConstants;
     }
 
     public LuaIrModule Module { get; }
@@ -25,6 +28,8 @@ public sealed class LuaClosure : LuaGcObject
     public LuaIrFunction Function { get; }
 
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
+
+    internal LuaModuleStringConstants StringConstants { get; }
 
     public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
 
@@ -47,6 +52,8 @@ public sealed class LuaClosure : LuaGcObject
         {
             visitor.Visit(upvalue);
         }
+
+        StringConstants.Traverse(visitor);
     }
 
     private static LuaHeap Validate(
@@ -76,6 +83,57 @@ public sealed class LuaClosure : LuaGcObject
     }
 }
 
+/// <summary>
+/// Materialized string constants shared by every closure from one loaded module. Lua keeps
+/// identical long-string literals in a prototype graph as the same object while still allowing
+/// equal long strings produced at runtime to have distinct identities.
+/// </summary>
+internal sealed class LuaModuleStringConstants
+{
+    private readonly Dictionary<int, List<LuaString>> _strings = [];
+
+    public LuaString GetOrCreate(LuaState state, ReadOnlySpan<byte> bytes)
+    {
+        var hashCode = LuaString.ComputeHashCode(bytes);
+        if (!_strings.TryGetValue(hashCode, out var bucket))
+        {
+            bucket = [];
+            _strings.Add(hashCode, bucket);
+        }
+
+        for (var index = bucket.Count - 1; index >= 0; index--)
+        {
+            var existing = bucket[index];
+            if (!existing.IsAlive)
+            {
+                bucket.RemoveAt(index);
+            }
+            else if (existing.AsSpan().SequenceEqual(bytes))
+            {
+                return existing;
+            }
+        }
+
+        var candidate = state.Strings.GetOrCreate(bytes);
+        bucket.Add(candidate);
+        return candidate;
+    }
+
+    public void Traverse(LuaGcVisitor visitor)
+    {
+        foreach (var bucket in _strings.Values)
+        {
+            foreach (var value in bucket)
+            {
+                if (value.IsAlive)
+                {
+                    visitor.Visit(value);
+                }
+            }
+        }
+    }
+}
+
 public delegate LuaValue[] LuaNativeFunctionBody(
     LuaState state,
     ReadOnlySpan<LuaValue> arguments);
@@ -101,7 +159,8 @@ public readonly struct LuaNativeStep
         LuaValue[] values,
         int continuationId,
         LuaValue[] stateValues,
-        bool callIsYieldable)
+        bool callIsYieldable,
+        bool callIsProtected)
     {
         Kind = kind;
         Callable = callable;
@@ -109,6 +168,7 @@ public readonly struct LuaNativeStep
         ContinuationId = continuationId;
         StateValues = stateValues;
         CallIsYieldable = callIsYieldable;
+        CallIsProtected = callIsProtected;
     }
 
     public LuaNativeStepKind Kind { get; }
@@ -129,22 +189,30 @@ public readonly struct LuaNativeStep
     /// <summary>Whether a Lua callback may yield across this native call boundary.</summary>
     public bool CallIsYieldable { get; }
 
+    /// <summary>
+    /// Whether callback completion is reported as <c>true, ...</c> and callback errors as
+    /// <c>false, error</c> instead of unwinding the native activation.
+    /// </summary>
+    public bool CallIsProtected { get; }
+
     public static LuaNativeStep Completed(params LuaValue[] values) =>
-        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true);
+        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false);
 
     public static LuaNativeStep CallLua(
         LuaValue callable,
         LuaValue[] arguments,
         int continuationId,
         LuaValue[]? stateValues = null,
-        bool callIsYieldable = true) =>
+        bool callIsYieldable = true,
+        bool callIsProtected = false) =>
         new(
             LuaNativeStepKind.CallLua,
             callable,
             arguments,
             continuationId,
             stateValues ?? [],
-            callIsYieldable);
+            callIsYieldable,
+            callIsProtected);
 
     public static LuaNativeStep Yielded(
         LuaValue[] values,
@@ -156,7 +224,8 @@ public readonly struct LuaNativeStep
             values,
             continuationId,
             stateValues ?? [],
-            true);
+            true,
+            false);
 }
 
 /// <summary>Owner-aware context supplied to a resumable native descriptor.</summary>

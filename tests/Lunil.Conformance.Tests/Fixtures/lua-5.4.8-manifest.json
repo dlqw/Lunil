@@ -1,0 +1,255 @@
+{
+  "schema": "lunil.lua-conformance-manifest.v1",
+  "upstreamVersion": "Lua 5.4.8",
+  "upstreamUrl": "https://www.lua.org/tests/lua-5.4.8-tests.tar.gz",
+  "archiveSha256": "9581D5A7C39FFBF29B8CCDE2709083C380F7BBDDBD968DCB15712D2F2E33F4E5",
+  "mode": "_U=true (_soft=true, _port=true, _nomsg=true, T=nil)",
+  "files": [
+    {
+      "path": "all.lua",
+      "sha256": "3E296DD2B26AC6891CCBA1EBAA62D40F1816AC93C7EFDEADDC05AAA064E7311C",
+      "classification": "driver-or-helper",
+      "reason": "Official suite driver; executed unchanged with _U=true."
+    },
+    {
+      "path": "api.lua",
+      "sha256": "38E248F069B253DA6734096BFE8D38F6DEB41AA54EE78577B5DFB8873FE2F7AF",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "attrib.lua",
+      "sha256": "2A6E9D4FEA68F64EABF2FC5C46FB10309E473D5F70AC4EFC2879355600996EDF",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "big.lua",
+      "sha256": "AD1248361B3FE8132A91FA01F588FFECE6A2F01CF231CF124FD18C74B6742E64",
+      "classification": "excluded-user-mode",
+      "reason": "Upstream all.lua skips this excessive large-program test when _soft=true, which _U=true sets."
+    },
+    {
+      "path": "bitwise.lua",
+      "sha256": "D918D3030F85A6DEBCA13C0A7E5E4E4931B43E53D61843970011A51A125537D4",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "bwcoercion.lua",
+      "sha256": "73F7AE0E1295C4500E1D76A2BBEBECEA9B5298247E2D8EA1A29432CDFACC0232",
+      "classification": "excluded-user-mode",
+      "reason": "Standalone compatibility fixture for nonstandard numeric-string coercion builds; official all.lua does not invoke it."
+    },
+    {
+      "path": "calls.lua",
+      "sha256": "1EE37317C7E5BF10D9DB2F74D0A449DE3D6FF4B38C6CDFD8A657928138CF8D66",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "closure.lua",
+      "sha256": "A4F42A13133EDEE412D181664BDB19FC73164EE81AC2FC4847A42CEC1D6DA8E6",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "code.lua",
+      "sha256": "2ED2B5A4AEF2AA0470BBD1B13C613E2AB7F0EC9BA24CF38118EC6AD99C6A3412",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "constructs.lua",
+      "sha256": "0B29658544AB38367ED487BD75803EBD7131DF981D972A2C8A40AC4D51579F6B",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "coroutine.lua",
+      "sha256": "7B6E486D147D6ED20424DB73E27690AD532AB7D3AA232D1BF6D2AD07D3139E8E",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "cstack.lua",
+      "sha256": "626ADC09F79218D3265C57CAE83B54ECECD693C77F84B09CF28E9A016C63ABCE",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "db.lua",
+      "sha256": "7DA82387FDFD8431A51884741BB64C25705E8F62C25D2FD16340E9EF5D50D36C",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "errors.lua",
+      "sha256": "A8BA7EA89A3CDD713BA26D36DA216ECCF8F536ECE26741C0B1AA056005C8C67D",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "events.lua",
+      "sha256": "3AB291CFC2B4A91F14486A9F3E5103763BC114F58901163734758BC09B1ADABB",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "files.lua",
+      "sha256": "330858905D6518D97640BE82687255C2B48C1F0F84F1EA1878672912A24109D5",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "gc.lua",
+      "sha256": "0250FBE29B6C0200CB6A03BF2AD0CD4D41F28B07218859BF7B2DD62544E40FE6",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "gengc.lua",
+      "sha256": "F591EABA4922FEE792E49D725FE3BD34C8E8AF20B3383EAA2BE34A1B9C4B54E6",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "goto.lua",
+      "sha256": "A082E103D195F097F9C38B518ECA90D7142D3B5C8EB269A3325BB927EF164C77",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "heavy.lua",
+      "sha256": "519BB3F13BB516185B4102A53D4A4D60E5537CD94EBC2363FA276EEE0B0947F0",
+      "classification": "excluded-user-mode",
+      "reason": "Standalone excessive stress driver; official user-mode all.lua does not invoke it."
+    },
+    {
+      "path": "libs/lib1.c",
+      "sha256": "9C33618EE10C5415A1BA3472DDA923C10D3E3A1FCFF82DA596AB0D0502C0E13A",
+      "classification": "excluded-user-mode",
+      "reason": "Native C dynamic-module fixture; outside the managed _U host contract."
+    },
+    {
+      "path": "libs/lib11.c",
+      "sha256": "3B6440C3EABD307C18F3A72366C19547F0955A769248E6688C251AEA6E6EFCE2",
+      "classification": "excluded-user-mode",
+      "reason": "Native C dynamic-module fixture; outside the managed _U host contract."
+    },
+    {
+      "path": "libs/lib2.c",
+      "sha256": "4066F55AC4944015D2C3139CCBC51E7AEF897FF81BB694223A568880DEBC925B",
+      "classification": "excluded-user-mode",
+      "reason": "Native C dynamic-module fixture; outside the managed _U host contract."
+    },
+    {
+      "path": "libs/lib21.c",
+      "sha256": "29F15BE9DDA895DBD70F4BD6CE489CF704C23A7305DDEC6550E72858C2708F24",
+      "classification": "excluded-user-mode",
+      "reason": "Native C dynamic-module fixture; outside the managed _U host contract."
+    },
+    {
+      "path": "libs/lib22.c",
+      "sha256": "5DD947A39929AC1419F5177E7245A6872FE059417299167CC94A612E075A0AA5",
+      "classification": "excluded-user-mode",
+      "reason": "Native C dynamic-module fixture; outside the managed _U host contract."
+    },
+    {
+      "path": "libs/makefile",
+      "sha256": "396DDB1BEB21CBCC32C5AFF094AA7CCDE3679983F5BFC627A8A46F302EEDFBDC",
+      "classification": "excluded-user-mode",
+      "reason": "Build recipe for native C dynamic-module fixtures; outside the managed _U host contract."
+    },
+    {
+      "path": "literals.lua",
+      "sha256": "51C324DF341E5E37634846E5DB35B3EAC6A5062FB98DA2023E08D295E3D09058",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "locals.lua",
+      "sha256": "89FF0912073780CA8068D16A006377825873BDD77C1A91A24317A1EA1CD2DBAD",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "ltests/ltests.c",
+      "sha256": "69837ABB3ADBDC1CC6E7D2A0BAC5FA94D53FB1A811FBD5BEDC0214D2D045B6CB",
+      "classification": "excluded-user-mode",
+      "reason": "PUC internal C test module backing global T; upstream _U=true sets T=nil."
+    },
+    {
+      "path": "ltests/ltests.h",
+      "sha256": "1477D1A70CE07F5C645379924B20E6264C5F273AC39D9339421D3C29667BC725",
+      "classification": "excluded-user-mode",
+      "reason": "Header for the PUC internal C test module; upstream _U=true sets T=nil."
+    },
+    {
+      "path": "main.lua",
+      "sha256": "E6E04E11A418CAE2B7D54567FD473E00D6151D6158B2068C3258E59882D4E92D",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "math.lua",
+      "sha256": "9435888672E75DF06965DC81D47428053A135F3ACBC546FB24E9D5FA20A0CFB6",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "nextvar.lua",
+      "sha256": "035B70531B3E33E318E5F75C0434608164A2D4DD67EFB11B22529DC745FFA425",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "pm.lua",
+      "sha256": "58DF0DC9FAA82786AAFF6801EC6C5D20943BF7E99D60AF55B59F3205D3C04D04",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "sort.lua",
+      "sha256": "009808B850722D39511143D33DC67A75387B1176544C5E8D26BB4A0976B5C780",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "strings.lua",
+      "sha256": "4CE64311C4B5399577889B0E122CE6236AF59FA1CC56BCB1B0C9E1ED91E6CC01",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "tpack.lua",
+      "sha256": "30A8EF71DD4F78CFA3B2A60BBC7C7A4478E305A533C00AA50351500DA32195D5",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "tracegc.lua",
+      "sha256": "CAB25CDE8D0C3C944C583383AD9B1C10E1D4F023F547F84239421BCC567EDD55",
+      "classification": "driver-or-helper",
+      "reason": "Official garbage-collection tracing helper required by all.lua."
+    },
+    {
+      "path": "utf8.lua",
+      "sha256": "0C0D78F84C8B3F77135C5D4F1CF5EC961D67A3C204AF58C031388BA356EABF46",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "vararg.lua",
+      "sha256": "D2285D422F084C52763CF2777C49178E06D9CD7DFF05E9F64481BB22709D7F83",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    },
+    {
+      "path": "verybig.lua",
+      "sha256": "64BCEF945CDFBD149A1C4437CE369D35B3D62D85A50F78C9A40B846D4BDA4A9D",
+      "classification": "executed-user-mode",
+      "reason": "Invoked by the unchanged all.lua driver under _U=true."
+    }
+  ]
+}

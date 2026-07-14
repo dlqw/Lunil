@@ -11,6 +11,49 @@ internal static class LuaLibraryHelpers
     public static LuaValue String(LuaState state, string value) =>
         LuaValue.FromString(state.Strings.GetOrCreate(Encoding.UTF8.GetBytes(value)));
 
+    public static string Source(IEnumerable<byte> bytes)
+    {
+        var source = Encoding.UTF8.GetString([.. bytes]);
+        if (source == "\u0001")
+        {
+            return string.Empty;
+        }
+
+        return source.Length == 0 ? "=?" : source;
+    }
+
+    public static string ShortSource(IEnumerable<byte> bytes)
+    {
+        const int maximumLength = 59;
+        var source = Source(bytes);
+        if (source.StartsWith('@'))
+        {
+            source = source[1..];
+            return source.Length <= maximumLength
+                ? source
+                : "..." + source[^(maximumLength - 3)..];
+        }
+
+        if (source.StartsWith('='))
+        {
+            source = source[1..];
+            return source.Length <= maximumLength ? source : source[..maximumLength];
+        }
+
+        const string prefix = "[string \"";
+        const string suffix = "\"]";
+        var available = maximumLength - prefix.Length - suffix.Length;
+        var newLine = source.IndexOf('\n');
+        var truncated = newLine >= 0 || source.Length > available;
+        if (truncated)
+        {
+            var end = newLine < 0 ? source.Length : newLine;
+            source = source[..Math.Min(end, available - 3)] + "...";
+        }
+
+        return prefix + source + suffix;
+    }
+
     public static void Set(LuaState state, LuaTable table, string name, LuaValue value) =>
         table.Set(String(state, name), value);
 
@@ -18,15 +61,17 @@ internal static class LuaLibraryHelpers
         LuaState state,
         LuaTable table,
         string name,
-        LuaNativeFunctionBody body) =>
-        Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(name, body)));
+        LuaNativeFunctionBody body,
+        string? debugName = null) =>
+        Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(debugName ?? name, body)));
 
     public static void SetFunction(
         LuaState state,
         LuaTable table,
         string name,
-        LuaNativeFunctionStepBody body) =>
-        Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(name, body)));
+        LuaNativeFunctionStepBody body,
+        string? debugName = null) =>
+        Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(debugName ?? name, body)));
 
     public static LuaValue Required(ReadOnlySpan<LuaValue> arguments, int index, string function)
     {
@@ -85,12 +130,7 @@ internal static class LuaLibraryHelpers
             ? defaultValue
             : CheckInteger(arguments, index, function);
 
-    public static string TypeName(LuaValue value) => value.Kind switch
-    {
-        LuaValueKind.Integer or LuaValueKind.Float => "number",
-        LuaValueKind.LightUserdata => "userdata",
-        _ => value.Kind.ToString().ToLowerInvariant(),
-    };
+    public static string TypeName(LuaValue value) => LuaValueOperations.TypeName(value);
 
     public static byte[] CheckStringBytes(
         ReadOnlySpan<LuaValue> arguments,

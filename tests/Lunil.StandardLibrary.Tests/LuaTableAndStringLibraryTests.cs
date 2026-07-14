@@ -12,6 +12,21 @@ namespace Lunil.StandardLibrary.Tests;
 public sealed class LuaTableAndStringLibraryTests
 {
     [Fact]
+    public void StringConstantsShareModuleIdentityWithoutInterningRuntimeLongStrings()
+    {
+        var values = Execute(
+            "local s1='01234567890123456789012345678901234567890123456789' " +
+            "local s2='01234567890123456789012345678901234567890123456789' " +
+            "local function nested() return '01234567890123456789012345678901234567890123456789' end " +
+            "local dynamic='0123456789'..'0123456789012345678901234567890123456789' " +
+            "return string.format('%p',s1)==string.format('%p',s2)," +
+            "string.format('%p',s1)==string.format('%p',nested())," +
+            "dynamic==s1,string.format('%p',dynamic)~=string.format('%p',s1)");
+
+        Assert.All(values, value => Assert.True(value.AsBoolean()));
+    }
+
+    [Fact]
     public void CallbackStateMachinesSurviveDeterministicGcStressFuzz()
     {
         var state = new LuaState(new LuaStateOptions
@@ -48,13 +63,38 @@ public sealed class LuaTableAndStringLibraryTests
         var values = Execute(
             "local t=table.pack('a','b',nil,'d'); table.insert(t,2,'x'); " +
             "local removed=table.remove(t,4); table.move(t,1,3,2,t); " +
-            "return t.n,removed,table.concat(t,',',1,4),table.unpack({7,8,9},2,3)");
+            "local u,v=table.unpack({7,8,9},2,3); " +
+            "local ok,e=pcall(table.move,1,2,3,4); " +
+            "return t.n,removed,table.concat(t,',',1,4),u,v,ok,e");
 
         Assert.Equal(4, values[0].AsInteger());
         Assert.True(values[1].IsNil);
         Assert.Equal("a,a,x,b", values[2].AsString().ToString());
         Assert.Equal(8, values[3].AsInteger());
         Assert.Equal(9, values[4].AsInteger());
+        Assert.False(values[5].AsBoolean());
+        Assert.Contains("table expected", values[6].AsString().ToString());
+    }
+
+    [Fact]
+    public void TableUnpackHandlesIntegerBoundariesAndRejectsFullRange()
+    {
+        var values = Execute(
+            "local min=-9223372036854775807-1 local max=9223372036854775807 " +
+            "local t={[min]=12,[min+1]=23,[max-1]=34,[max]=45} " +
+            "local a,b=table.unpack(t,min,min+1) local c,d=table.unpack(t,max-1,max) " +
+            "local e,f=table.unpack(t,max,max) " +
+            "local ok,message=pcall(table.unpack,{},min,max) " +
+            "return a,b,c,d,e,f,ok,message");
+
+        Assert.Equal(12, values[0].AsInteger());
+        Assert.Equal(23, values[1].AsInteger());
+        Assert.Equal(34, values[2].AsInteger());
+        Assert.Equal(45, values[3].AsInteger());
+        Assert.Equal(45, values[4].AsInteger());
+        Assert.True(values[5].IsNil);
+        Assert.False(values[6].AsBoolean());
+        Assert.Contains("too many results", values[7].AsString().ToString());
     }
 
     [Fact]
@@ -318,6 +358,72 @@ public sealed class LuaTableAndStringLibraryTests
         Assert.Equal("unable to dump given function", values[11].AsString().ToString());
         Assert.False(values[12].AsBoolean());
         Assert.Contains("function expected, got number", values[13].AsString().ToString());
+    }
+
+    [Fact]
+    public void StringDumpPreservesOpenCapturedLocalsAcrossBackwardJumps()
+    {
+        var values = Execute(
+            "local function f() local value=0 local function increment() value=value+1 end " +
+            "repeat local temporary={} increment() until value==2 return value end " +
+            "local copy=assert(load(string.dump(f))) return copy()");
+
+        Assert.Equal(2, Assert.Single(values).AsInteger());
+    }
+
+    [Fact]
+    public void LoadedBinaryChunkDoesNotRootWeakValuesInConverterScratchRegisters()
+    {
+        var values = Execute(
+            "local function f() collectgarbage('generational') " +
+            "local t=setmetatable({}, {__mode='kv'}) collectgarbage() " +
+            "t[1]={10} collectgarbage('step',0) collectgarbage('step',0) " +
+            "t[1]={10} collectgarbage('step',0) return t[1] end " +
+            "local copy=assert(load(string.dump(f))) return copy()");
+
+        Assert.True(Assert.Single(values).IsNil);
+    }
+
+    [Fact]
+    public void StringDumpedClosureObservesAutomaticFinalizerWritesDuringRepeatLoop()
+    {
+        var values = Execute(
+            "local function f() local finalized=false " +
+            "setmetatable({}, {__gc=function() finalized=true end}) " +
+            "repeat local temporary={} until finalized return finalized end " +
+            "local copy=assert(load(string.dump(f))) return copy()");
+
+        Assert.True(Assert.Single(values).AsBoolean());
+    }
+
+    [Fact]
+    public void StringDumpSupportsFunctionsWithTwoHundredUpvalues()
+    {
+        const int count = 200;
+        var declarations = "local a1" + string.Concat(
+            Enumerable.Range(2, count - 1).Select(static index => $",a{index}"));
+        var initializers = "=1" + string.Concat(
+            Enumerable.Range(2, count - 1).Select(static index => $",{index}"));
+        var expression = "a1" + string.Concat(
+            Enumerable.Range(2, count - 1).Select(static index => $"+a{index}"));
+        var generated =
+            $"{declarations}{initializers}; return function() return {expression} end";
+        var source =
+            $"local f=assert(load([=[{generated}]=]))() " +
+            "f=assert(load(string.dump(f))) " +
+            "local value=10 local h=function() return value end " +
+            $"for i=1,{count} do debug.upvaluejoin(f,i,h,1) end return f()";
+        var state = new LuaState();
+        LuaStandardLibrary.InstallAll(state);
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        var values = new LuaInterpreter()
+            .Execute(state, state.CreateMainClosure(lowering.Module!))
+            .Values
+            .ToArray();
+
+        Assert.Equal(2_000, Assert.Single(values).AsInteger());
     }
 
     [Fact]

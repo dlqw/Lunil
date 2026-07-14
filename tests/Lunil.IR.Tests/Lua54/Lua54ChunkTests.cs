@@ -184,6 +184,51 @@ public sealed class Lua54ChunkTests
     }
 
     [Fact]
+    public void PrototypeConverterDoesNotCloseUpvaluesForPlainLua54Jumps()
+    {
+        var prototype = new Lua54Prototype
+        {
+            MaximumStackSize = 2,
+            Code =
+            [
+                Lua54Instruction.CreateSignedJump(Lua54Opcode.Jump, 0),
+                Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0),
+            ],
+        };
+        var module = Lua54PrototypeConverter.Convert(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype));
+
+        var jump = Assert.Single(
+            module.Functions[0].Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.Jump);
+
+        Assert.Equal(-1, jump.C);
+    }
+
+    [Fact]
+    public void CanonicalWriterPreservesMissingUpvalueDebugNames()
+    {
+        var prototype = new Lua54Prototype
+        {
+            MaximumStackSize = 2,
+            Upvalues = [new Lua54UpvalueDescriptor(0, 0, 0)],
+            Code = [Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0)],
+            UpvalueNames = [],
+        };
+        var module = Lua54PrototypeConverter.Convert(
+            new Lua54Chunk(Lua54ChunkTarget.Host, 1, prototype));
+
+        var bytes = Lua54CanonicalPrototypeWriter.Write(
+            module,
+            module.MainFunctionId,
+            stripDebugInformation: false);
+        var roundTripped = Lua54ChunkReader.Read(bytes);
+
+        Assert.Single(roundTripped.MainPrototype.UpvalueNames);
+        Assert.Null(roundTripped.MainPrototype.UpvalueNames[0]);
+    }
+
+    [Fact]
     public void StrippingRemovesSourceAndDebugTables()
     {
         var chunk = new Lua54Chunk(Lua54ChunkTarget.Host, 0, CreatePrototype());

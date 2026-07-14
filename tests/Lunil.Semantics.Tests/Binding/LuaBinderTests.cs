@@ -85,6 +85,23 @@ public sealed class LuaBinderTests
     }
 
     [Fact]
+    public void ResolvesImplicitEnvironmentAsAnUpvalueEvenInTheMainChunk()
+    {
+        var model = Bind("local original = _ENV; _ENV = nil; return original, _ENV");
+        var environment = model.Symbols.Single(static symbol =>
+            symbol.Kind == LuaSymbolKind.Environment);
+        var references = model.References.Where(static reference =>
+            reference.Name == "_ENV").ToArray();
+
+        Assert.Empty(model.Diagnostics);
+        Assert.Equal(3, references.Length);
+        Assert.All(references, reference => Assert.Same(environment, reference.Symbol));
+        Assert.All(references, reference =>
+            Assert.Equal(LuaNameResolutionKind.Upvalue, reference.ResolutionKind));
+        Assert.True(references[1].IsWrite);
+    }
+
+    [Fact]
     public void EnforcesConstCloseAndAttributeRules()
     {
         const string source = """
@@ -124,6 +141,9 @@ public sealed class LuaBinderTests
     [InlineData("do goto L end; ::L::", null)]
     [InlineData("goto L; do ::L:: end", "LUA3007")]
     [InlineData("::L:: ::L::", "LUA3006")]
+    [InlineData("::L:: do ::L:: end", "LUA3006")]
+    [InlineData("do ::L:: end ::L::", null)]
+    [InlineData("repeat goto L; local x; ::L:: until x", "LUA3008")]
     public void ImplementsLuaLabelAndGotoScopeRules(string source, string? expectedCode)
     {
         var model = Bind(source);

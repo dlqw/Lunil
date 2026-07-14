@@ -51,6 +51,30 @@ public sealed class LuaBasicLibraryTests
     }
 
     [Fact]
+    public void RuntimeErrorsUseLuaTypeNamesForNumericValues()
+    {
+        var values = Execute(
+            "local ok,e=pcall(function() local _ENV <const> = 11 X='hi' end) " +
+            "return ok,e");
+
+        Assert.False(values[0].AsBoolean());
+        Assert.Contains("number", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void TypeIgnoresMetatableNameWhileErrorsUseIt()
+    {
+        var values = Execute(
+            "local value=setmetatable({}, {__name='custom'}) " +
+            "local ok,e=pcall(function() return value + 1 end) " +
+            "return type(value),ok,e");
+
+        Assert.Equal("table", values[0].AsString().ToString());
+        Assert.False(values[1].AsBoolean());
+        Assert.Contains("custom", values[2].AsString().ToString());
+    }
+
+    [Fact]
     public void PairsAndIpairsHonorLua54MetamethodRules()
     {
         var values = Execute(
@@ -140,6 +164,93 @@ public sealed class LuaBasicLibraryTests
     }
 
     [Fact]
+    public void LoadReaderTreatsAnEmptyStringAsEndOfInput()
+    {
+        var values = Execute(
+            "local parts={'return 6*7',''} local calls=0 " +
+            "local f,e=load(function() calls=calls+1 assert(calls<=2) return parts[calls] end) " +
+            "return f(),e,calls");
+
+        Assert.Equal(42, values[0].AsInteger());
+        Assert.True(values[1].IsNil);
+        Assert.Equal(2, values[2].AsInteger());
+    }
+
+    [Fact]
+    public void LoadReaderFailuresAreReturnedWithoutUnwindingTheCaller()
+    {
+        var values = Execute(
+            "local f,e=load(function() error('reader failed') end) " +
+            "local g,ge=load(function() return true end) " +
+            "return f,e,g,ge");
+
+        Assert.True(values[0].IsNil);
+        Assert.Contains("reader failed", values[1].AsString().ToString());
+        Assert.True(values[2].IsNil);
+        Assert.Contains("string expected", values[3].AsString().ToString());
+    }
+
+    [Fact]
+    public void LoadUsesLuaCompatibleUnexpectedSymbolDiagnostics()
+    {
+        var values = Execute("local f,e=load('*a=123') return f,e");
+
+        Assert.True(values[0].IsNil);
+        Assert.Contains("unexpected symbol", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void LoadUsesLuaCompatibleConstAssignmentDiagnostics()
+    {
+        var values = Execute(
+            "local f,e=load(\"local value <const> = 1; value = 2\") return f,e");
+
+        Assert.True(values[0].IsNil);
+        Assert.Contains(
+            "attempt to assign to const variable 'value'",
+            values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void LoadDiagnosticsIncludeLuaCompatibleNearContext()
+    {
+        var values = Execute("local _,e=load('return \"abc\\\\x\"') return e");
+
+        var message = Assert.Single(values).AsString().ToString();
+        Assert.Contains("near", message);
+        Assert.Contains("\\x\"'", message);
+    }
+
+    [Theory]
+    [InlineData("\"\\xr\"", "\\xr'")]
+    [InlineData("\"\\x5\"", "\\x5\"'")]
+    [InlineData("\"\\g\"", "\\g'")]
+    [InlineData("\"abc\\u11r\"", "abc\\u1'")]
+    [InlineData("\"abc\\u{11r\"", "abc\\u{11r'")]
+    [InlineData("\"abc\\u{100000000}\"", "abc\\u{100000000'")]
+    public void LoadDiagnosticsUseLuaCompatibleMalformedEscapeTokenBoundaries(
+        string literal,
+        string expectedNearSuffix)
+    {
+        var source = "local _,e=load(" + ToLuaString("return " + literal) + ") return e";
+        var message = Assert.Single(Execute(source)).AsString().ToString();
+
+        Assert.Contains(expectedNearSuffix, message);
+    }
+
+    [Fact]
+    public void LoadReportsLocalLimitBeforeMissingFunctionEnd()
+    {
+        var names = string.Join(", ", Enumerable.Range(1, 201).Select(index => $"a{index}"));
+        var chunk = $"\nfunction foo ()\n  local {names}\n";
+        var values = Execute($"local _,e=load({ToLuaString(chunk)}) return e");
+
+        var message = Assert.Single(values).AsString().ToString();
+        Assert.Contains(":3: too many local variables (limit is 200) ", message);
+        Assert.Contains("in function at line 2 near ','", message);
+    }
+
+    [Fact]
     public void LoadReaderCannotYieldAcrossNativeReaderBoundary()
     {
         var state = CreateState();
@@ -194,7 +305,38 @@ public sealed class LuaBasicLibraryTests
         Assert.Equal("incremental", values[2].AsString().ToString());
     }
 
+    [Fact]
+    public void CollectGarbageReportsFalseWhenCalledReentrantlyFromAFinalizer()
+    {
+        var values = Execute(
+            "local result=true; " +
+            "setmetatable({}, {__gc=function() result=collectgarbage() end}); " +
+            "collectgarbage(); return result");
+
+        Assert.False(Assert.Single(values).AsBoolean());
+    }
+
+    [Fact]
+    public void ZeroSizedGenerationalStepCompletesAYoungCollection()
+    {
+        var values = Execute(
+            "collectgarbage('generational') " +
+            "local t=setmetatable({}, {__mode='kv'}) collectgarbage() " +
+            "t[1]={10} collectgarbage('step',0) collectgarbage('step',0) " +
+            "t[1]={10} local completed=collectgarbage('step',0) " +
+            "return completed,t[1]");
+
+        Assert.True(values[0].AsBoolean());
+        Assert.True(values[1].IsNil);
+    }
+
     private static LuaValue[] Execute(string source) => Execute(CreateState(), source);
+
+    private static string ToLuaString(string value) =>
+        "'" + value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("'", "\\'", StringComparison.Ordinal) + "'";
 
     private static LuaState CreateState(
         ILuaFileSystem? fileSystem = null,

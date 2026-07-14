@@ -739,6 +739,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                             return BudgetPoll(context, frame.ProgramCounter);
                         }
 
+                        if (instruction.D != 0)
+                        {
+                            LuaCodegenAbiV2.SetFrameTopUnchecked(
+                                thread,
+                                frame,
+                                instruction.C);
+                        }
+
                         frame.ProgramCounter = taken ? instruction.B : frame.ProgramCounter + 1;
                         return null;
                     }
@@ -900,10 +908,16 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, pc);
                     }
 
-                    var truthy = LuaCodegenAbiV2.ReadRegisterUnchecked(
-                        thread,
-                        frame,
-                        instruction.A).IsTruthy;
+                    var truthy = instruction.D != 0
+                        ? LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked(
+                            thread,
+                            frame,
+                            instruction.A,
+                            instruction.C)
+                        : LuaCodegenAbiV2.ReadRegisterUnchecked(
+                            thread,
+                            frame,
+                            instruction.A).IsTruthy;
                     var taken = instruction.Opcode == LuaIrOpcode.JumpIfTrue
                         ? truthy
                         : !truthy;

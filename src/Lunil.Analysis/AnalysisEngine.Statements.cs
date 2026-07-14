@@ -452,7 +452,7 @@ internal sealed partial class AnalysisEngine
     {
         if (TryGetCalledGlobalIdentifier(expressions, out var iteratorName))
         {
-            var call = expressions.ChildNodes().SingleOrDefault();
+            var call = GetOnlyChildNodeOrDefault(expressions);
             var argument = call is null ? null : GetCallArguments(call).FirstOrDefault();
             var source = argument is null ? LuaTypes.Any : InferExpression(argument, state);
             if (string.Equals(iteratorName, "ipairs", StringComparison.Ordinal))

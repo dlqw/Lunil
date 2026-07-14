@@ -51,7 +51,15 @@ jobs:
       - name: Build
         run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Test
-        run: dotnet test Lunil.sln --configuration Release --no-build --no-restore
+        run: >-
+          dotnet test Lunil.sln --configuration Release --no-build --no-restore
+          --filter "FullyQualifiedName!~Lunil.Conformance.Tests&FullyQualifiedName!~Lunil.BackendDifferential.Tests&FullyQualifiedName!~Lunil.Stability.Tests"
+      - name: Run conformance, six-backend differential, and deterministic stability gates
+        shell: pwsh
+        run: >-
+          ./scripts/New-ConformanceEvidence.ps1
+          -RuntimeIdentifier '${{ matrix.rid }}'
+          -Configuration Release -NoBuild -NoRestore
       - name: Publish and run NativeAOT fixture
         shell: pwsh
         run: ./scripts/Test-NativeAotFixture.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
@@ -88,6 +96,11 @@ jobs:
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
+          name: conformance-evidence-${{ matrix.rid }}
+          path: artifacts/conformance/**
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
           name: lunil-${{ matrix.rid }}
           path: |
             artifacts/*.zip
@@ -113,6 +126,26 @@ jobs:
         with:
           name: backend-performance-six-rid-decision
           path: artifacts/backend-performance/*-six-rid-decision.json
+          if-no-files-found: error
+
+  conformance-evidence-decision:
+    name: Aggregate conformance and stability six-RID evidence
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: conformance-evidence-*
+          path: artifacts/conformance
+          merge-multiple: true
+      - name: Require all six RIDs to satisfy the same pinned contracts
+        shell: pwsh
+        run: ./scripts/Merge-ConformanceEvidence.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conformance-six-rid-evidence
+          path: artifacts/conformance/conformance-six-rid-evidence.json
           if-no-files-found: error
 
   formatting-and-packages:

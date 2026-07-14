@@ -19,7 +19,12 @@ $testGroups = @(
     @{
         Name = 'backend-differential'
         Project = 'tests/Lunil.BackendDifferential.Tests/Lunil.BackendDifferential.Tests.csproj'
-        Filter = 'FullyQualifiedName~BackendContractTests'
+        Filter = 'FullyQualifiedName~Lunil.BackendDifferential.Tests'
+    },
+    @{
+        Name = 'deterministic-fuzz-gc-coroutine'
+        Project = 'tests/Lunil.Stability.Tests/Lunil.Stability.Tests.csproj'
+        Filter = 'FullyQualifiedName~Lunil.Stability.Tests'
     },
     @{
         Name = 'jit-tier-cache-profile-osr'

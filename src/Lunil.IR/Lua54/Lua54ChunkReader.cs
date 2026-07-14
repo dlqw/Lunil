@@ -401,7 +401,7 @@ public static class Lua54ChunkReader
         {
             if (count > (_data.Length - _offset) / minimumBytesPerEntry)
             {
-                Fail($"{description} cannot fit in the remaining chunk data");
+                Fail($"truncated chunk: {description} cannot fit in the remaining chunk data");
             }
         }
 
