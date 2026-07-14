@@ -83,12 +83,28 @@ for the next Alpha rather than hidden global state inside the single-document an
 - `LuaHost` workspace access, `Lunil.Build` multi-source workspace preflight, and NativeAOT/trimming
   coverage while leaving runtime package loaders and canonical IR unchanged.
 
-### Later Alpha: CLI and command-line build integration
+### Alpha 5: CLI and command-line build integration
 
-- `lunil run`, `lunil check`, `lunil build`, and `lunil dump`;
-- consistent exit codes and text/machine-readable diagnostics;
-- stdin, response-file, configuration, sandbox, deterministic, and build-time AOT
-  integration.
+`0.7.0-alpha.5` delivers:
+
+- the packaged `Lunil.Cli` .NET tool and RID apphost with `lunil run`, `lunil check`,
+  `lunil build`, and `lunil dump`;
+- stable exit codes, stdout/stderr separation, text and `lunil.diagnostics.v1` JSON diagnostics,
+  warnings-as-errors, stdin source, script varargs/`arg`, cancellation, and command-specific option
+  validation;
+- bounded nested UTF-8 response files, `lunil.json`, `LUNIL_*` environment variables, and the
+  precedence defaults < config < environment < CLI;
+- trusted, root-confined read-only sandbox, and deterministic capability profiles with explicit
+  input, instruction, stack, call-depth, and heap budgets;
+- workspace-aware source preflight and module resolution, canonical PUC Lua 5.4 chunk emission,
+  persisted CIL AOT assembly/PDB/canonical payload/manifest emission, and source/annotation/
+  analysis/IR/chunk dumps;
+- tool-package installation smoke tests, RID bundle apphosts, and NativeAOT, trimmed single-file,
+  and ReadyToRun CLI publication gates.
+
+Alpha 5 completes the planned product feature surface. Complete applicable Lua 5.4.8 conformance,
+API/package baselines, six-RID differential/stress evidence, and scope-freeze review remain required
+before `0.7.0-beta.1`.
 
 ## Beta entry gate
 

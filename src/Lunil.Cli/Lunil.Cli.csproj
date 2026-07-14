@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>lunil</AssemblyName>
+    <RootNamespace>Lunil.Cli</RootNamespace>
+    <PackageId>Lunil.Cli</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>lunil</ToolCommandName>
+    <Description>Command-line compiler, analyzer, runner, and artifact builder for Lunil.</Description>
+    <PackageTags>lua;lua54;cli;compiler;analysis;dotnet-tool</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
+    <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />
+    <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
+    <ProjectReference Include="..\Lunil.EmmyLua\Lunil.EmmyLua.csproj" />
+    <ProjectReference Include="..\Lunil.Hosting\Lunil.Hosting.csproj" />
+    <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
+    <ProjectReference Include="..\Lunil.Runtime\Lunil.Runtime.csproj" />
+    <ProjectReference Include="..\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
+    <ProjectReference Include="..\Lunil.Syntax\Lunil.Syntax.csproj" />
+    <ProjectReference Include="..\Lunil.Workspace\Lunil.Workspace.csproj" />
+  </ItemGroup>
+
+</Project>

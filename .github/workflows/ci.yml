@@ -55,6 +55,9 @@ jobs:
       - name: Publish and run NativeAOT fixture
         shell: pwsh
         run: ./scripts/Test-NativeAotFixture.ps1 -RuntimeIdentifier '${{ matrix.rid }}'
+      - name: Publish and run NativeAOT CLI
+        shell: pwsh
+        run: ./scripts/Test-LunilCliPublish.ps1 -RuntimeIdentifier '${{ matrix.rid }}' -Modes NativeAot
       - name: Verify single-file, trimming, and ReadyToRun modes
         if: matrix.rid == 'win-x64'
         shell: pwsh
@@ -138,6 +141,9 @@ jobs:
       - name: Build NuGet packages
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ steps.version.outputs.value }}'
+      - name: Install and smoke-test CLI tool package
+        shell: pwsh
+        run: ./scripts/Test-LunilCliPackage.ps1 -Version '${{ steps.version.outputs.value }}'
       - uses: actions/upload-artifact@v7
         with:
           name: lunil-nuget

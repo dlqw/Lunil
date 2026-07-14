@@ -6,10 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.7.0</VersionPrefix>
-<VersionSuffix>alpha.4</VersionSuffix>
+  <VersionSuffix>alpha.5</VersionSuffix>
 ```
 
-The resulting version is `0.7.0-alpha.4` and its tag is `v0.7.0-alpha.4`.
+The resulting version is `0.7.0-alpha.5` and its tag is `v0.7.0-alpha.5`.
 `VersionSuffix` is removed for a stable release.
 
 The three numeric fields select the compatibility line; the optional suffix selects
@@ -45,8 +45,8 @@ actual maturity and allowed-change policy.
 | Begin the next feature/API milestone after `0.7.0` | Start `0.8.0-alpha.1` |
 
 Documentation-only release preparation does not consume a new prerelease number when the
-current number has not been published. Once `v0.7.0-alpha.4` exists, every code or release
-metadata correction must use `0.7.0-alpha.5` or a later appropriate version.
+current number has not been published. Once `v0.7.0-alpha.5` exists, every code or release
+metadata correction must use `0.7.0-alpha.6` or a later appropriate version.
 
 ## Compatibility while below 1.0
 
@@ -95,15 +95,18 @@ New compiler, analysis, hosting, and package-boundary work starts at
 `0.7.0-alpha.1`. Its scope and promotion gates are defined in the
 [`0.7.0` roadmap](roadmap-0.7.0.md).
 
-## Current `0.7.0-alpha.4` decision
+## Current `0.7.0-alpha.5` decision
 
 `0.7.0-alpha.1` established the public compiler and hosting boundaries, `0.7.0-alpha.2` added the
 bounded LuaLS/legacy EmmyLua annotation syntax front end, and `0.7.0-alpha.3` added immutable
-budgeted type/control-flow analysis. The current `0.7.0-alpha.4` milestone adds stable module/source
-identities, resolvers, a deterministic dependency graph, cyclic fixed points, conservative dynamic
-require boundaries, content-addressed incremental analysis, minimal invalidation, globally bounded
-parallel scheduling, Hosting/Build integration, and NativeAOT coverage. CLI, complete conformance,
-and public API/package freeze are still open, so beta promotion is not yet justified.
+budgeted type/control-flow analysis, and `0.7.0-alpha.4` added stable module/source identities,
+resolvers, a deterministic dependency graph, cyclic fixed points, content-addressed incremental
+analysis, minimal invalidation, globally bounded parallel scheduling, and Hosting/Build integration.
+The current `0.7.0-alpha.5` milestone packages these layers as the `lunil` run/check/build/dump
+product with configuration, response files, deterministic/sandbox profiles, portable chunks,
+persisted AOT artifacts, machine-readable dumps, and publish/package gates. Complete conformance,
+public API/package baselines, and six-RID stabilization are still open, so beta promotion is not yet
+justified.
 
 ## Release procedure
 

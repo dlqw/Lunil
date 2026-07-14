@@ -63,3 +63,9 @@ foreach ($mode in $modes) {
         throw "$($mode.Name) fixture did not report conformance success for $RuntimeIdentifier."
     }
 }
+
+& (Join-Path $PSScriptRoot 'Test-LunilCliPublish.ps1') `
+    -RuntimeIdentifier $RuntimeIdentifier `
+    -Configuration $Configuration `
+    -Modes SingleFileTrimmed, ReadyToRun
+if ($LASTEXITCODE -ne 0) { throw "CLI publish-mode verification failed for $RuntimeIdentifier." }

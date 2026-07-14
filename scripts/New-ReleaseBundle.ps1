@@ -49,11 +49,35 @@ New-Item -ItemType Directory -Path $stagingRoot | Out-Null
 foreach ($project in $projects) {
     $projectName = [System.IO.Path]::GetFileNameWithoutExtension($project.Name)
     $buildDirectory = Join-Path $project.Directory.FullName "bin/$Configuration/net10.0/$RuntimeIdentifier"
+    if ($projectName -eq 'Lunil.Cli') {
+        foreach ($fileName in @(
+            'lunil.dll',
+            'lunil.pdb',
+            'lunil.deps.json',
+            'lunil.runtimeconfig.json',
+            $(if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Ordinal)) { 'lunil.exe' } else { 'lunil' })
+        )) {
+            $source = Join-Path $buildDirectory $fileName
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Copy-Item -LiteralPath $source -Destination $stagingRoot
+            }
+        }
+
+        continue
+    }
+
     foreach ($extension in @('dll', 'pdb', 'xml')) {
         $source = Join-Path $buildDirectory "$projectName.$extension"
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination $stagingRoot
         }
+    }
+}
+
+$cliExecutable = Join-Path $stagingRoot $(if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Ordinal)) { 'lunil.exe' } else { 'lunil' })
+foreach ($requiredCliFile in @($cliExecutable, (Join-Path $stagingRoot 'lunil.dll'), (Join-Path $stagingRoot 'lunil.runtimeconfig.json'))) {
+    if (-not (Test-Path -LiteralPath $requiredCliFile -PathType Leaf)) {
+        throw "Release bundle is missing CLI artifact: $requiredCliFile"
     }
 }
 
