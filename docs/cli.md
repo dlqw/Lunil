@@ -56,6 +56,7 @@ Supported JSON properties are:
 ```json
 {
   "profile": "deterministic",
+  "execution": "auto",
   "diagnosticFormat": "json",
   "buildTarget": "chunk",
   "dumpKind": "analysis",
@@ -73,8 +74,9 @@ Supported JSON properties are:
 ```
 
 Relative `moduleRoots` in a configuration file are resolved relative to that file. The equivalent
-environment variables are `LUNIL_PROFILE`, `LUNIL_DIAGNOSTIC_FORMAT`, `LUNIL_BUILD_TARGET`,
-`LUNIL_DUMP_KIND`, `LUNIL_DUMP_FORMAT`, `LUNIL_MODULE_ROOTS`, `LUNIL_PATH_PATTERNS`,
+environment variables are `LUNIL_PROFILE`, `LUNIL_EXECUTION`, `LUNIL_DIAGNOSTIC_FORMAT`,
+`LUNIL_BUILD_TARGET`, `LUNIL_DUMP_KIND`, `LUNIL_DUMP_FORMAT`, `LUNIL_MODULE_ROOTS`,
+`LUNIL_PATH_PATTERNS`,
 `LUNIL_WARNINGS_AS_ERRORS`, `LUNIL_STRIP_DEBUG`, `LUNIL_MAXIMUM_INPUT_BYTES`,
 `LUNIL_MAXIMUM_INSTRUCTIONS`, `LUNIL_MAXIMUM_STACK_SLOTS`, `LUNIL_MAXIMUM_CALL_DEPTH`, and
 `LUNIL_MAXIMUM_HEAP_BYTES`.
@@ -90,6 +92,13 @@ budgets before command parsing. Windows path separators are preserved unless the
 a quote, backslash, whitespace, or `#`.
 
 ## Capability profiles and budgets
+
+`--execution auto|interpreter|jit` selects the runtime backend used by `run`. `auto` is the
+default: it uses the qualified tiered JIT when the current .NET runtime supports compiled dynamic
+code and otherwise uses the reference interpreter. `interpreter` is a deterministic opt-out;
+`jit` requires dynamic-code support and still uses the reference interpreter for functions the
+JIT rejects. The same selection is available through the JSON `execution` property and
+`LUNIL_EXECUTION`. Build, check, and dump commands validate the option but do not execute Lua code.
 
 - `--trusted` uses the host's normal filesystem, environment, process, clock, locale, and related
   capabilities.
