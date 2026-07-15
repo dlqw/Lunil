@@ -175,6 +175,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         LoopOsrEligibilityReason = $values.loop_osr_eligibility_reason
         LoopOsrGuardFailures = [long]$values.loop_osr_guard_failures
         CompiledInvocations = [long]$values.compiled_invocations
+        InterpreterFallbacks = [long]$values.interpreter_fallbacks
+        FallbackEvents = [long]$values.fallback_events
+        FunctionEntries = [long]$values.function_entries
         CompiledInstructions = [long]$values.compiled_instructions
         SchedulerExits = [long]$values.scheduler_exits
         InstructionsPerSchedulerExit = [double]::Parse($values.instructions_per_scheduler_exit, [Globalization.CultureInfo]::InvariantCulture)
@@ -256,11 +259,11 @@ finally {
     Pop-Location
 }
 
-$expectedRecords = $Rounds * 6 * 6
+$expectedRecords = $Rounds * 8 * 6
 if ($records.Count -ne $expectedRecords) {
     throw "Expected $expectedRecords backend evidence records, found $($records.Count)."
 }
-$expectedEligibilityRecords = $Rounds * 6
+$expectedEligibilityRecords = $Rounds * 8
 if ($eligibilityRecords.Count -ne $expectedEligibilityRecords) {
     throw "Expected $expectedEligibilityRecords eligibility records, found $($eligibilityRecords.Count)."
 }
@@ -353,6 +356,12 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
             $group.Group.AotDebugModeDeoptimizations | Measure-Object -Maximum).Maximum
         AotUnexpectedDeoptimizations = (
             $group.Group.AotUnexpectedDeoptimizations | Measure-Object -Maximum).Maximum
+        InterpreterFallbacks = (
+            $group.Group.InterpreterFallbacks | Measure-Object -Maximum).Maximum
+        FallbackEvents = (
+            $group.Group.FallbackEvents | Measure-Object -Maximum).Maximum
+        FunctionEntries = (
+            $group.Group.FunctionEntries | Measure-Object -Maximum).Maximum
         InstructionsPerSchedulerExit = Get-Median @($group.Group.InstructionsPerSchedulerExit)
         RssPeakDeltaBytes = Get-Median @($group.Group.RssPeakDeltaBytes)
         EstimatedCodeBytes = Get-Median @($group.Group.EstimatedCodeBytes)
@@ -407,17 +416,37 @@ $aotRows = @($summary | Where-Object { $_.Name -eq 'persisted_aot' })
 $negativeGateFailures = [Collections.Generic.List[string]]::new()
 $tier2NegativeGateFailures = [Collections.Generic.List[string]]::new()
 $tier2NegativeComparisons = [Collections.Generic.List[object]]::new()
-foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
+foreach ($workload in @(
+    'fib_recursive',
+    'sieve',
+    'lua_calls',
+    'table_access',
+    'metamethod',
+    'coroutine_error_hook')) {
     $eligibility = $eligibilityRecords | Where-Object { $_.Workload -eq $workload } |
         Select-Object -First 1
     $tier1 = $summary | Where-Object {
         $_.Workload -eq $workload -and $_.Name -eq 'tier1'
     } | Select-Object -First 1
+    if ($tier1.SpeedupVsInterpreterMedian -lt 0.90) {
+        $negativeGateFailures.Add(
+            "$workload Tier 1/interpreter median speedup is $($tier1.SpeedupVsInterpreterMedian).")
+    }
+    if ($tier1.AllocationRatioVsInterpreterMedian -gt 1.10) {
+        $negativeGateFailures.Add(
+            "$workload Tier 1/interpreter allocation ratio is $($tier1.AllocationRatioVsInterpreterMedian).")
+    }
+    if ($tier1.FallbackEvents -gt 16) {
+        $negativeGateFailures.Add(
+            "$workload emitted $($tier1.FallbackEvents) fallback events; expected a bounded function-state transition count.")
+    }
     if ($eligibility.AutoEligible -and $tier1.SpeedupVsInterpreterCi95Lower -lt 0.95) {
         $negativeGateFailures.Add(
             "$workload is Auto-eligible with speedup CI lower $($tier1.SpeedupVsInterpreterCi95Lower).")
     }
+}
 
+foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
     $tier2 = $summary | Where-Object {
         $_.Workload -eq $workload -and $_.Name -eq 'tier2'
     } | Select-Object -First 1

@@ -16,6 +16,7 @@ internal sealed class LuaExecutionEngine
 
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
+    private readonly ILuaFrameInstructionRouter? _frameInstructionRouter;
     private readonly ILuaInstructionObserver? _instructionObserver;
     private readonly LuaInterpreterInstructionExecutor _referenceInstructionExecutor = new();
     private int _schedulerNestingDepth;
@@ -26,6 +27,7 @@ internal sealed class LuaExecutionEngine
     {
         _options = options ?? LuaInterpreterOptions.Default;
         _instructionExecutor = instructionExecutor ?? _referenceInstructionExecutor;
+        _frameInstructionRouter = _instructionExecutor as ILuaFrameInstructionRouter;
         _instructionObserver = _instructionExecutor as ILuaInstructionObserver;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumInstructionCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumStackSlots);
@@ -326,7 +328,10 @@ internal sealed class LuaExecutionEngine
                                 _options.MaximumInstructionCount - activation.InstructionCount);
                         }
                         pendingInstructionContext = executionContext;
-                        var exit = _instructionExecutor.Execute(
+                        var executor = ShouldUseReferenceInterpreter(frame, instruction)
+                            ? _referenceInstructionExecutor
+                            : _instructionExecutor;
+                        var exit = executor.Execute(
                             this,
                             executionContext,
                             state,
@@ -3298,6 +3303,7 @@ internal sealed class LuaExecutionEngine
             isCloseHandler,
             isDebugHook,
             isHidden);
+        frame.InstructionRoute = GetInitialFrameInstructionRoute(closure);
         if (scheduleCallHook && !isDebugHook && !isHidden && !thread.IsRunningDebugHook &&
             !thread.DebugHook.IsNil &&
             thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
@@ -3392,6 +3398,7 @@ internal sealed class LuaExecutionEngine
             returnBase,
             expectedResults,
             varArgs);
+        frame.InstructionRoute = GetInitialFrameInstructionRoute(closure);
         if (!thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
             thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
         {
@@ -3404,6 +3411,20 @@ internal sealed class LuaExecutionEngine
         thread.PushFrame(frame);
         return frame;
     }
+
+    private LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaClosure closure) =>
+        _frameInstructionRouter?.GetInitialFrameInstructionRoute(closure) ??
+        LuaFrameInstructionRoute.Backend;
+
+    private static bool ShouldUseReferenceInterpreter(
+        LuaFrame frame,
+        LuaIrInstruction instruction) => frame.InstructionRoute switch
+        {
+            LuaFrameInstructionRoute.Interpreter => true,
+            LuaFrameInstructionRoute.InterpreterWithBackedgeProbes =>
+                !LuaInstructionRouting.IsBackedge(frame.ProgramCounter, instruction),
+            _ => false,
+        };
 
     private static long GetActiveCallDepth(LuaThread thread)
     {

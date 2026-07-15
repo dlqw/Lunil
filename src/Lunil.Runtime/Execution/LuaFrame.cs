@@ -85,6 +85,10 @@ public sealed class LuaFrame
 
     internal LuaContinuation Continuation { get; } = new();
 
+    internal LuaFrameInstructionRoute InstructionRoute { get; set; }
+
+    internal bool BackendEntryObserved { get; set; }
+
 }
 
 internal enum LuaProtectedCallKind : byte

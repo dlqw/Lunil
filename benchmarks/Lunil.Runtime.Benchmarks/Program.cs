@@ -258,6 +258,30 @@ BackendEvidenceWorkload[] backendWorkloads =
         until total > 6247501
         return total
         """),
+    new("fib_recursive", """
+        local function fib(n)
+            if n < 2 then return n end
+            return fib(n - 1) + fib(n - 2)
+        end
+        return fib(20)
+        """),
+    new("sieve", """
+        local limit = 20000
+        local sieve = {}
+        for index = 2, limit do sieve[index] = true end
+        for index = 2, math.floor(math.sqrt(limit)) do
+            if sieve[index] then
+                for composite = index * index, limit, index do
+                    sieve[composite] = false
+                end
+            end
+        end
+        local count = 0
+        for index = 2, limit do
+            if sieve[index] then count = count + 1 end
+        end
+        return count
+        """, InstallStandardLibrary: true),
     new("lua_calls", """
         local function add(a, b) return a + b end
         local function values(a, ...) return a, ... end
@@ -839,6 +863,9 @@ static void RunBackendEvidence(
         $"loop_osr_eligibility_reason={warmed.LoopOsrEligibilityReason}, " +
         $"loop_osr_guard_failures={statistics?.LoopOsrGuardFailures ?? 0}, " +
         $"compiled_invocations={statistics?.CompiledInvocations ?? 0}, " +
+        $"interpreter_fallbacks={statistics?.InterpreterFallbacks ?? 0}, " +
+        $"fallback_events={warmed.FallbackEventCount}, " +
+        $"function_entries={statistics?.FunctionEntries ?? 0}, " +
         $"compiled_instructions={compiledCanonicalInstructions}, " +
         $"scheduler_exits={schedulerExits}, " +
         $"instructions_per_scheduler_exit={canonicalInstructionsPerSchedulerExit:F3}, " +
@@ -1091,6 +1118,9 @@ sealed class BackendEvidenceRunner : IDisposable
     public long EstimatedCodeBytes => _executor?.Statistics.EstimatedCodeBytes ?? 0;
 
     public LuaJitStatistics? Statistics => _executor?.Statistics;
+
+    public int FallbackEventCount => _compilationEvents.Count(static jitEvent =>
+        jitEvent.Kind == LuaJitEventKind.Fallback);
 
     public LuaJitTier2CodeKind? Tier2CodeKind =>
         _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?.CodeKind;

@@ -1,5 +1,6 @@
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
+using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Execution;
 
@@ -13,4 +14,28 @@ internal interface ILuaInstructionExecutor
         LuaThread thread,
         LuaFrame frame,
         LuaIrInstruction instruction);
+}
+
+/// <summary>
+/// Supplies the initial execution route for a newly-created Lua frame. Implementations must not
+/// retain the closure, its owner state, or the module through this call.
+/// </summary>
+internal interface ILuaFrameInstructionRouter
+{
+    LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaClosure closure);
+}
+
+internal enum LuaFrameInstructionRoute : byte
+{
+    Backend,
+    Interpreter,
+    InterpreterWithBackedgeProbes,
+}
+
+internal static class LuaInstructionRouting
+{
+    public static bool IsBackedge(int programCounter, LuaIrInstruction instruction) =>
+        instruction.B <= programCounter && instruction.Opcode is
+            LuaIrOpcode.Jump or LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
+            LuaIrOpcode.NumericForPrepare or LuaIrOpcode.NumericForLoop;
 }

@@ -60,7 +60,8 @@ internal static class LuaTier1EligibilityEvaluator
     public static LuaJitFunctionEligibility Evaluate(
         LuaIrModule module,
         int functionId,
-        bool includeInstructionObservation)
+        bool includeInstructionObservation,
+        bool repeatedInvocationObserved = false)
     {
         var planning = LuaCilCodeGenerator.PlanFunction(
             module,
@@ -122,7 +123,9 @@ internal static class LuaTier1EligibilityEvaluator
                 "JIT1006");
         }
 
-        if (backedgeCount == 0 && instructionCount < MinimumRepeatedInstructionCount)
+        if (!repeatedInvocationObserved &&
+            backedgeCount == 0 &&
+            instructionCount < MinimumRepeatedInstructionCount)
         {
             return Result(
                 isCompilable: true,
