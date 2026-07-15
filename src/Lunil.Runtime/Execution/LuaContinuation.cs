@@ -40,6 +40,9 @@ internal sealed class LuaContinuation
 
     public LuaValue[] Values { get; set; } = [];
 
+    /// <summary>Byte-only native state; it never contains Lua values or CLR continuations.</summary>
+    public LuaNativeByteBuffer? NativeByteBuffer { get; set; }
+
     public LuaProtectedCallKind ProtectionKind { get; set; }
 
     public LuaValue ProtectionFunction { get; set; }
@@ -72,6 +75,7 @@ internal sealed class LuaContinuation
         Transform = LuaResultTransform.None;
         Value = LuaValue.Nil;
         Values = [];
+        NativeByteBuffer = null;
         IsYieldBarrier = false;
         NativeCallbackIsProtected = false;
     }

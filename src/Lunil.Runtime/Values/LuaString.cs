@@ -6,11 +6,13 @@ namespace Lunil.Runtime.Values;
 /// <summary>An immutable binary Lua string. UTF-16 is only a diagnostic view.</summary>
 public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
 {
+    internal const int LogicalOverhead = 32;
+
     private readonly byte[] _bytes;
     private readonly int _hashCode;
 
     internal LuaString(LuaHeap owner, ReadOnlySpan<byte> bytes)
-        : base(owner, checked(32 + bytes.Length))
+        : base(owner, CalculateLogicalSize(bytes.Length))
     {
         _bytes = bytes.ToArray();
         _hashCode = ComputeHashCode(_bytes);
@@ -41,6 +43,9 @@ public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
         hash.AddBytes(bytes);
         return hash.ToHashCode();
     }
+
+    internal static long CalculateLogicalSize(long byteLength) =>
+        checked(LogicalOverhead + byteLength);
 }
 
 public sealed class LuaStringPool

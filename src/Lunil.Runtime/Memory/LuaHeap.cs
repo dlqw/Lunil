@@ -9,6 +9,8 @@ namespace Lunil.Runtime.Memory;
 /// </summary>
 public sealed class LuaHeap
 {
+    private static long s_nextHeapIdentity;
+
     private readonly LuaHeapOptions _options;
     private readonly List<LuaGcObject> _objects = [];
     private readonly Dictionary<LuaGcObject, int> _permanentRoots =
@@ -35,6 +37,7 @@ public sealed class LuaHeap
 
     public LuaHeap(LuaHeapOptions? options = null)
     {
+        Identity = Interlocked.Increment(ref s_nextHeapIdentity);
         _options = options ?? LuaHeapOptions.Default;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumLogicalBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.StepSizeBytes);
@@ -76,6 +79,8 @@ public sealed class LuaHeap
     public int StepMultiplier { get; private set; } = 100;
 
     internal IReadOnlyList<LuaGcObject> Objects => _objects;
+
+    internal long Identity { get; }
 
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
 

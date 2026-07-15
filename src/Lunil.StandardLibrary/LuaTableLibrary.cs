@@ -29,7 +29,7 @@ internal static class LuaTableLibrary
     {
         LuaValue target;
         LuaValue separator;
-        LuaValue accumulator;
+        LuaNativeByteBuffer output;
         long index;
         long last;
 
@@ -62,7 +62,7 @@ internal static class LuaTableLibrary
                     LengthContinuation.Concat);
             }
 
-            accumulator = EmptyString(context.State);
+            output = context.CreateByteBuffer();
         }
         else if (continuationId == 1)
         {
@@ -71,7 +71,7 @@ internal static class LuaTableLibrary
             separator = state[1];
             index = state[2].AsInteger();
             last = CallbackInteger(values, "object length is not an integer");
-            accumulator = EmptyString(context.State);
+            output = context.CreateByteBuffer();
         }
         else
         {
@@ -80,25 +80,14 @@ internal static class LuaTableLibrary
             separator = state[1];
             index = state[2].AsInteger();
             last = state[3].AsInteger();
-            accumulator = state[4];
+            output = context.ByteBuffer ??
+                throw new InvalidOperationException("table.concat lost its byte buffer.");
             var item = CallbackValue(values);
-            var itemBytes = ToConcatBytes(item, index);
-            var output = new byte[checked(accumulator.AsString().Length +
-                itemBytes.Length + (index < last ? separator.AsString().Length : 0))];
-            var offset = 0;
-            accumulator.AsString().AsSpan().CopyTo(output);
-            offset += accumulator.AsString().Length;
-            itemBytes.CopyTo(output.AsSpan(offset));
-            offset += itemBytes.Length;
-            if (index < last)
-            {
-                separator.AsString().AsSpan().CopyTo(output.AsSpan(offset));
-            }
-
-            accumulator = LuaValue.FromString(context.State.Strings.GetOrCreate(output));
+            AppendConcatValue(output, item, separator.AsString().AsSpan(), index, last);
             if (index == last)
             {
-                return LuaNativeStep.Completed(accumulator);
+                return LuaNativeStep.Completed(LuaValue.FromString(
+                    context.State.Strings.GetOrCreate(output.WrittenSpan)));
             }
 
             index++;
@@ -112,37 +101,32 @@ internal static class LuaTableLibrary
                 LuaValue.FromInteger(index));
             if (resolution.RequiresCall)
             {
-                return LuaNativeStep.CallLua(
+                return LuaNativeStep.CallLuaWithByteBuffer(
                     resolution.Callable,
                     resolution.Arguments,
                     2,
-                    [target, separator, LuaValue.FromInteger(index), LuaValue.FromInteger(last), accumulator],
-                    callIsYieldable: false);
+                    [target, separator, LuaValue.FromInteger(index), LuaValue.FromInteger(last)],
+                    callIsYieldable: false,
+                    byteBuffer: output);
             }
 
-            var itemBytes = ToConcatBytes(resolution.Value, index);
-            var output = new byte[checked(accumulator.AsString().Length +
-                itemBytes.Length + (index < last ? separator.AsString().Length : 0))];
-            var offset = 0;
-            accumulator.AsString().AsSpan().CopyTo(output);
-            offset += accumulator.AsString().Length;
-            itemBytes.CopyTo(output.AsSpan(offset));
-            offset += itemBytes.Length;
-            if (index < last)
-            {
-                separator.AsString().AsSpan().CopyTo(output.AsSpan(offset));
-            }
-
-            accumulator = LuaValue.FromString(context.State.Strings.GetOrCreate(output));
+            AppendConcatValue(
+                output,
+                resolution.Value,
+                separator.AsString().AsSpan(),
+                index,
+                last);
             if (index == last)
             {
-                return LuaNativeStep.Completed(accumulator);
+                return LuaNativeStep.Completed(LuaValue.FromString(
+                    context.State.Strings.GetOrCreate(output.WrittenSpan)));
             }
 
             index++;
         }
 
-        return LuaNativeStep.Completed(accumulator);
+        return LuaNativeStep.Completed(LuaValue.FromString(
+            context.State.Strings.GetOrCreate(output.WrittenSpan)));
     }
 
     private static LuaNativeStep Insert(
@@ -1506,19 +1490,37 @@ internal static class LuaTableLibrary
     private static LuaValue CallbackValue(ReadOnlySpan<LuaValue> values) =>
         values.Length == 0 ? LuaValue.Nil : values[0];
 
-    private static LuaValue EmptyString(LuaState state) =>
-        LuaValue.FromString(state.Strings.GetOrCreate([]));
-
-    private static byte[] ToConcatBytes(LuaValue value, long index) => value.Kind switch
+    private static void AppendConcatValue(
+        LuaNativeByteBuffer output,
+        LuaValue value,
+        ReadOnlySpan<byte> separator,
+        long index,
+        long last)
     {
-        LuaValueKind.String => value.AsString().ToArray(),
-        LuaValueKind.Integer => System.Text.Encoding.ASCII.GetBytes(
-            value.AsInteger().ToString(System.Globalization.CultureInfo.InvariantCulture)),
-        LuaValueKind.Float => System.Text.Encoding.ASCII.GetBytes(
-            LuaValueOperations.FormatFloat(value.AsFloat())),
-        _ => throw new LuaRuntimeException(
-            $"invalid value ({LuaLibraryHelpers.TypeName(value)}) at index {index} in table for 'concat'"),
-    };
+        switch (value.Kind)
+        {
+            case LuaValueKind.String:
+                output.Append(value.AsString().AsSpan());
+                break;
+            case LuaValueKind.Integer:
+                output.Append(System.Text.Encoding.ASCII.GetBytes(
+                    value.AsInteger().ToString(
+                        System.Globalization.CultureInfo.InvariantCulture)));
+                break;
+            case LuaValueKind.Float:
+                output.Append(System.Text.Encoding.ASCII.GetBytes(
+                    LuaValueOperations.FormatFloat(value.AsFloat())));
+                break;
+            default:
+                throw new LuaRuntimeException(
+                    $"invalid value ({LuaLibraryHelpers.TypeName(value)}) at index {index} in table for 'concat'");
+        }
+
+        if (index < last)
+        {
+            output.Append(separator);
+        }
+    }
 
     private enum LengthContinuation : byte
     {

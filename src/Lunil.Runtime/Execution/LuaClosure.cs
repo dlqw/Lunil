@@ -160,7 +160,8 @@ public readonly struct LuaNativeStep
         int continuationId,
         LuaValue[] stateValues,
         bool callIsYieldable,
-        bool callIsProtected)
+        bool callIsProtected,
+        LuaNativeByteBuffer? byteBuffer)
     {
         Kind = kind;
         Callable = callable;
@@ -169,6 +170,7 @@ public readonly struct LuaNativeStep
         StateValues = stateValues;
         CallIsYieldable = callIsYieldable;
         CallIsProtected = callIsProtected;
+        ByteBuffer = byteBuffer;
     }
 
     public LuaNativeStepKind Kind { get; }
@@ -195,8 +197,14 @@ public readonly struct LuaNativeStep
     /// </summary>
     public bool CallIsProtected { get; }
 
+    /// <summary>
+    /// Optional byte-only state retained across a Lua callback or yield. Unlike
+    /// <see cref="StateValues"/>, it cannot hide logically collectable Lua objects.
+    /// </summary>
+    internal LuaNativeByteBuffer? ByteBuffer { get; }
+
     public static LuaNativeStep Completed(params LuaValue[] values) =>
-        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false);
+        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false, null);
 
     public static LuaNativeStep CallLua(
         LuaValue callable,
@@ -212,7 +220,26 @@ public readonly struct LuaNativeStep
             continuationId,
             stateValues ?? [],
             callIsYieldable,
-            callIsProtected);
+            callIsProtected,
+            null);
+
+    internal static LuaNativeStep CallLuaWithByteBuffer(
+        LuaValue callable,
+        LuaValue[] arguments,
+        int continuationId,
+        LuaValue[] stateValues,
+        bool callIsYieldable,
+        LuaNativeByteBuffer byteBuffer,
+        bool callIsProtected = false) =>
+        new(
+            LuaNativeStepKind.CallLua,
+            callable,
+            arguments,
+            continuationId,
+            stateValues,
+            callIsYieldable,
+            callIsProtected,
+            byteBuffer);
 
     public static LuaNativeStep Yielded(
         LuaValue[] values,
@@ -225,7 +252,23 @@ public readonly struct LuaNativeStep
             continuationId,
             stateValues ?? [],
             true,
-            false);
+            false,
+            null);
+
+    internal static LuaNativeStep YieldedWithByteBuffer(
+        LuaValue[] values,
+        int continuationId,
+        LuaValue[] stateValues,
+        LuaNativeByteBuffer byteBuffer) =>
+        new(
+            LuaNativeStepKind.Yielded,
+            LuaValue.Nil,
+            values,
+            continuationId,
+            stateValues,
+            true,
+            false,
+            byteBuffer);
 }
 
 /// <summary>Owner-aware context supplied to a resumable native descriptor.</summary>
@@ -235,12 +278,14 @@ public readonly struct LuaNativeCallContext
         LuaState state,
         LuaThread thread,
         LuaNativeClosure? closure,
-        IReadOnlyList<LuaValue>? invocationState = null)
+        IReadOnlyList<LuaValue>? invocationState = null,
+        LuaNativeByteBuffer? byteBuffer = null)
     {
         State = state;
         Thread = thread;
         Closure = closure;
         InvocationState = invocationState ?? [];
+        ByteBuffer = byteBuffer;
     }
 
     public LuaState State { get; }
@@ -254,13 +299,20 @@ public readonly struct LuaNativeCallContext
     /// <summary>Per-invocation values preserved by the preceding resumable native step.</summary>
     public IReadOnlyList<LuaValue> InvocationState { get; }
 
+    /// <summary>Byte-only state preserved by the preceding resumable native step.</summary>
+    internal LuaNativeByteBuffer? ByteBuffer { get; }
+
+    /// <summary>Creates owner-bound byte-only state for a resumable native operation.</summary>
+    internal LuaNativeByteBuffer CreateByteBuffer(int initialCapacity = 0) =>
+        new(State.Heap, initialCapacity);
+
     /// <summary>
     /// Creates a context for an immediate continuation of the same native activation.
     /// This keeps state-machine code identical whether a runtime operation completed
     /// immediately or required a Lua callback.
     /// </summary>
     public LuaNativeCallContext WithInvocationState(IReadOnlyList<LuaValue> invocationState) =>
-        new(State, Thread, Closure, invocationState);
+        new(State, Thread, Closure, invocationState, ByteBuffer);
 }
 
 public sealed class LuaNativeFunction

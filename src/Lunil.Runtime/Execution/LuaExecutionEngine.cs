@@ -880,6 +880,7 @@ internal sealed class LuaExecutionEngine
                 var nativeFunction = thread.RootContinuation.Value;
                 var continuationId = thread.RootContinuation.State;
                 var invocationState = thread.RootContinuation.Values;
+                var byteBuffer = thread.RootContinuation.NativeByteBuffer;
                 thread.RootContinuation.Reset();
                 var descriptor = nativeFunction.TryGetNativeFunction() ??
                     throw new InvalidOperationException("A root native yield lost its descriptor.");
@@ -887,7 +888,8 @@ internal sealed class LuaExecutionEngine
                     state,
                     thread,
                     nativeFunction.TryGetNativeClosure(),
-                    invocationState);
+                    invocationState,
+                    byteBuffer);
                 ContinueNativeRoot(
                     state,
                     scheduler,
@@ -911,6 +913,7 @@ internal sealed class LuaExecutionEngine
             var nativeTailCall = (continuation.Count & 1) != 0;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
+            var byteBuffer = continuation.NativeByteBuffer;
             continuation.Reset();
             var descriptor = nativeFunction.TryGetNativeFunction() ??
                 throw new InvalidOperationException("A native yield lost its descriptor.");
@@ -918,7 +921,8 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 nativeFunction.TryGetNativeClosure(),
-                invocationState);
+                invocationState,
+                byteBuffer);
             var step = descriptor.StepBody!(context, continuationId, arguments);
             var forcedResult = ContinueNative(
                 state,
@@ -1427,6 +1431,8 @@ internal sealed class LuaExecutionEngine
                 state.Heap.ValidateValue(value);
             }
 
+            step.ByteBuffer?.ValidateOwner(state.Heap);
+
             switch (step.Kind)
             {
                 case LuaNativeStepKind.Completed:
@@ -1488,7 +1494,8 @@ internal sealed class LuaExecutionEngine
                             state,
                             thread,
                             nativeFunction.TryGetNativeClosure(),
-                            step.StateValues);
+                            step.StateValues,
+                            step.ByteBuffer);
                         step = descriptor.StepBody!(
                             failedContext,
                             step.ContinuationId,
@@ -1505,7 +1512,11 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
                         frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
-                        SaveNativeInvocationState(thread, frame.Continuation, step.StateValues);
+                        SaveNativeInvocationState(
+                            thread,
+                            frame.Continuation,
+                            step.StateValues,
+                            step.ByteBuffer);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
                         {
@@ -1534,7 +1545,11 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
                         frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
-                        SaveNativeInvocationState(thread, frame.Continuation, step.StateValues);
+                        SaveNativeInvocationState(
+                            thread,
+                            frame.Continuation,
+                            step.StateValues,
+                            step.ByteBuffer);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
                         {
@@ -1572,7 +1587,8 @@ internal sealed class LuaExecutionEngine
                         state,
                         thread,
                         nativeFunction.TryGetNativeClosure(),
-                        step.StateValues);
+                        step.StateValues,
+                        step.ByteBuffer);
                     step = descriptor.StepBody!(context, step.ContinuationId, callbackResults);
                     continue;
 
@@ -1591,7 +1607,11 @@ internal sealed class LuaExecutionEngine
                     frame.Continuation.ExpectedResults = expectedResults;
                     frame.Continuation.Count = tailCall ? 1 : 0;
                     frame.Continuation.Value = nativeFunction;
-                    SaveNativeInvocationState(thread, frame.Continuation, step.StateValues);
+                    SaveNativeInvocationState(
+                        thread,
+                        frame.Continuation,
+                        step.StateValues,
+                        step.ByteBuffer);
                     thread.Owner.WriteBarrier(thread, nativeFunction);
                     if (!tailCall && !programCounterAdvanced)
                     {
@@ -1629,6 +1649,8 @@ internal sealed class LuaExecutionEngine
                 state.Heap.ValidateValue(value);
             }
 
+            step.ByteBuffer?.ValidateOwner(state.Heap);
+
             switch (step.Kind)
             {
                 case LuaNativeStepKind.Completed:
@@ -1652,7 +1674,8 @@ internal sealed class LuaExecutionEngine
                             state,
                             thread,
                             nativeFunction.TryGetNativeClosure(),
-                            step.StateValues);
+                            step.StateValues,
+                            step.ByteBuffer);
                         step = descriptor.StepBody!(
                             failedContext,
                             step.ContinuationId,
@@ -1669,7 +1692,8 @@ internal sealed class LuaExecutionEngine
                         SaveNativeInvocationState(
                             thread,
                             thread.RootContinuation,
-                            step.StateValues);
+                            step.StateValues,
+                            step.ByteBuffer);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         PushFrame(thread, closure, resolved.Arguments, 0, expectedResults: -1);
                         return;
@@ -1688,7 +1712,8 @@ internal sealed class LuaExecutionEngine
                         SaveNativeInvocationState(
                             thread,
                             thread.RootContinuation,
-                            step.StateValues);
+                            step.StateValues,
+                            step.ByteBuffer);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         PushFrame(
                             thread,
@@ -1721,7 +1746,8 @@ internal sealed class LuaExecutionEngine
                         state,
                         thread,
                         nativeFunction.TryGetNativeClosure(),
-                        step.StateValues);
+                        step.StateValues,
+                        step.ByteBuffer);
                     step = descriptor.StepBody!(
                         callContext,
                         step.ContinuationId,
@@ -1743,7 +1769,8 @@ internal sealed class LuaExecutionEngine
                     SaveNativeInvocationState(
                         thread,
                         thread.RootContinuation,
-                        step.StateValues);
+                        step.StateValues,
+                        step.ByteBuffer);
                     thread.Owner.WriteBarrier(thread, nativeFunction);
                     thread.SetYieldedValues(step.Values);
                     scheduler.RequestYield();
@@ -1758,9 +1785,12 @@ internal sealed class LuaExecutionEngine
     private static void SaveNativeInvocationState(
         LuaThread thread,
         LuaContinuation continuation,
-        ReadOnlySpan<LuaValue> stateValues)
+        ReadOnlySpan<LuaValue> stateValues,
+        LuaNativeByteBuffer? byteBuffer)
     {
+        byteBuffer?.ValidateOwner(thread.Owner);
         continuation.Values = stateValues.ToArray();
+        continuation.NativeByteBuffer = byteBuffer;
         foreach (var value in continuation.Values)
         {
             thread.Owner.WriteBarrier(thread, value);
@@ -2722,6 +2752,7 @@ internal sealed class LuaExecutionEngine
                 var tailCall = (continuation.Count & 1) != 0;
                 var continuationId = continuation.State;
                 var invocationState = continuation.Values;
+                var byteBuffer = continuation.NativeByteBuffer;
                 continuation.Reset();
                 thread.UnwindState = null;
                 var descriptor = nativeFunction.TryGetNativeFunction() ??
@@ -2731,7 +2762,8 @@ internal sealed class LuaExecutionEngine
                     state,
                     thread,
                     nativeFunction.TryGetNativeClosure(),
-                    invocationState);
+                    invocationState,
+                    byteBuffer);
                 var completed = ContinueNative(
                     state,
                     scheduler,
@@ -2866,6 +2898,7 @@ internal sealed class LuaExecutionEngine
             var nativeFunction = continuation.Value;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
+            var byteBuffer = continuation.NativeByteBuffer;
             continuation.Reset();
             thread.UnwindState = null;
             var descriptor = nativeFunction.TryGetNativeFunction() ??
@@ -2875,7 +2908,8 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 nativeFunction.TryGetNativeClosure(),
-                invocationState);
+                invocationState,
+                byteBuffer);
             ContinueNativeRoot(
                 state,
                 scheduler,
@@ -3080,6 +3114,7 @@ internal sealed class LuaExecutionEngine
             var nativeFunction = thread.RootContinuation.Value;
             var continuationId = thread.RootContinuation.State;
             var invocationState = thread.RootContinuation.Values;
+            var byteBuffer = thread.RootContinuation.NativeByteBuffer;
             var callbackWasProtected = thread.RootContinuation.NativeCallbackIsProtected;
             thread.RootContinuation.Reset();
             var descriptor = nativeFunction.TryGetNativeFunction() ??
@@ -3088,7 +3123,8 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 nativeFunction.TryGetNativeClosure(),
-                invocationState);
+                invocationState,
+                byteBuffer);
             ContinueNativeRoot(
                 state,
                 scheduler,
@@ -3118,6 +3154,7 @@ internal sealed class LuaExecutionEngine
             var tailCall = (continuation.Count & 1) != 0;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
+            var byteBuffer = continuation.NativeByteBuffer;
             var callbackWasProtected = continuation.NativeCallbackIsProtected;
             continuation.Reset();
             var descriptor = nativeFunction.TryGetNativeFunction() ??
@@ -3126,7 +3163,8 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 nativeFunction.TryGetNativeClosure(),
-                invocationState);
+                invocationState,
+                byteBuffer);
             var step = descriptor.StepBody!(
                 context,
                 continuationId,

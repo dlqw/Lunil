@@ -216,6 +216,23 @@ if (!backendOnly)
             state.Heap.CollectFull();
         }
     });
+
+    RunStringGrowthEvidence(
+        "table_concat",
+        10_000,
+        static count => $$"""
+            local parts = {}
+            for i = 1, {{count}} do parts[i] = "item" .. i end
+            return #table.concat(parts, ",")
+            """);
+    RunStringGrowthEvidence(
+        "string_gsub",
+        10_000,
+        static count => $$"""
+            local source = string.rep("abc123def456 ", {{count}})
+            local output, matches = string.gsub(source, "%d+", "X")
+            return #output + matches
+            """);
 }
 
 const int MinimumBackendEvidenceOperations = 30;
@@ -545,6 +562,53 @@ static void Run(string name, int operationCount, Action<int> action)
     Console.WriteLine(
         $"{name}: operations={operationCount}, ns/op={nanoseconds:F2}, " +
         $"allocated={allocated}, allocated/op={allocatedPerOperation:F2}");
+}
+
+static void RunStringGrowthEvidence(
+    string name,
+    int elementCount,
+    Func<int, string> sourceFactory)
+{
+    var smallModule = Compile(sourceFactory(elementCount));
+    var largeModule = Compile(sourceFactory(checked(elementCount * 2)));
+    _ = MeasureStringGrowth(smallModule);
+    var small = MeasureStringGrowth(smallModule);
+    var large = MeasureStringGrowth(largeModule);
+    Console.WriteLine(
+        $"string_growth name={name}, n={elementCount}, two_n={elementCount * 2}, " +
+        $"n_ms={small.Elapsed.TotalMilliseconds:F3}, " +
+        $"two_n_ms={large.Elapsed.TotalMilliseconds:F3}, " +
+        $"time_ratio={large.Elapsed.TotalMilliseconds / small.Elapsed.TotalMilliseconds:F3}, " +
+        $"n_allocated_bytes={small.AllocatedBytes}, " +
+        $"two_n_allocated_bytes={large.AllocatedBytes}, " +
+        $"allocation_ratio={(double)large.AllocatedBytes / small.AllocatedBytes:F3}, " +
+        $"n_logical_bytes={small.LogicalBytes}, " +
+        $"two_n_logical_bytes={large.LogicalBytes}");
+}
+
+static StringGrowthMeasurement MeasureStringGrowth(LuaIrModule module)
+{
+    var state = new LuaState();
+    LuaStandardLibrary.InstallAll(state);
+    var closure = state.CreateMainClosure(module);
+    state.Heap.Stop();
+    var logicalBefore = state.Heap.LogicalBytes;
+    var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+    var stopwatch = Stopwatch.StartNew();
+    var result = new LuaInterpreter(LuaInterpreterOptions.Default with
+    {
+        MaximumInstructionCount = long.MaxValue,
+    }).Execute(state, closure);
+    stopwatch.Stop();
+    if (result.Signal != LuaVmSignal.Completed || result.Values.Length == 0)
+    {
+        throw new InvalidOperationException("String growth workload did not complete.");
+    }
+
+    return new StringGrowthMeasurement(
+        stopwatch.Elapsed,
+        GC.GetAllocatedBytesForCurrentThread() - allocatedBefore,
+        state.Heap.LogicalBytes - logicalBefore);
 }
 
 static void RunBackendEvidence(
@@ -1168,3 +1232,8 @@ sealed record BackendEvidenceWorkload(
     string Name,
     string Source,
     bool InstallStandardLibrary = false);
+
+sealed record StringGrowthMeasurement(
+    TimeSpan Elapsed,
+    long AllocatedBytes,
+    long LogicalBytes);
