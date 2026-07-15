@@ -269,14 +269,17 @@ public sealed class LuaFramePoolTests
     }
 
     [Fact]
-    public void WarmFixedArityCallsDoNotAllocateOneManagedFramePerInvocation()
+    public void WarmFixedArityCallsAndReturnsDoNotAllocatePerInvocation()
     {
         var state = new LuaState();
         var closure = state.CreateMainClosure(Compile(
             """
-            local function add(left, right) return left + right end
+            local function values(first, second, third) return first, second, third end
             local total = 0
-            for i = 1, 5000 do total = total + add(i, 1) end
+            for i = 1, 5000 do
+                local first, second, third = values(i, i + 1, i + 2)
+                total = total + first + second + third
+            end
             return total
             """));
         var interpreter = new LuaInterpreter();
@@ -287,8 +290,8 @@ public sealed class LuaFramePoolTests
         var result = interpreter.Execute(state, closure);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
 
-        Assert.Equal(LuaValue.FromInteger(12_507_500), Assert.Single(result.Values));
-        Assert.InRange(allocated, 0, 512 * 1024);
+        Assert.Equal(LuaValue.FromInteger(37_522_500), Assert.Single(result.Values));
+        Assert.InRange(allocated, 0, 128 * 1024);
     }
 
     private static LuaClosure CreateClosure(

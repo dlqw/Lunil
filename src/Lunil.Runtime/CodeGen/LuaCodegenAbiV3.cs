@@ -13,6 +13,9 @@ namespace Lunil.Runtime.CodeGen;
 public static class LuaCodegenAbiV3
 {
     public const int RuntimeAbiVersion = 3;
+    internal const int CompiledBackedgeSafepointQuantum = 256;
+    private const int CompiledSafepointObjectBudget =
+        CompiledBackedgeSafepointQuantum * 8;
 
     public static void ExecuteNewTable(
         LuaExecutionContext context,
@@ -23,13 +26,16 @@ public static class LuaCodegenAbiV3
         int arrayCapacity)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var allocationHint = frame.Closure.GetOrCreateTableAllocationHint(
+            frame.ProgramCounter);
         WriteRegisterAndExtendTop(
             thread,
             frame,
             destinationRegister,
-            LuaValue.FromTable(context.State.CreateTable(
+            LuaValue.FromTable(context.State.CreateTableForAllocationSite(
                 arrayCapacity,
-                hashCapacityBits == 0 ? 0 : 1 << (hashCapacityBits - 1))));
+                hashCapacityBits == 0 ? 0 : 1 << (hashCapacityBits - 1),
+                allocationHint)));
         frame.ProgramCounter++;
     }
 
@@ -41,6 +47,24 @@ public static class LuaCodegenAbiV3
         int targetRegister,
         int keyRegister)
     {
+        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
+        if (target.Kind == LuaValueKind.Table && target.AsTable().Metatable is null)
+        {
+            var table = target.AsTable();
+            var value = key.TryGetInteger(out var integer) &&
+                table.TryGetArrayValue(integer, out var arrayValue)
+                    ? arrayValue
+                    : table.Get(key);
+            WriteRegisterAndExtendTop(
+                thread,
+                frame,
+                destinationRegister,
+                value);
+            frame.ProgramCounter++;
+            return true;
+        }
+
         var engine = RequireEngine(context, thread);
         engine.ExecuteOperation(
             context.State,
@@ -50,8 +74,8 @@ public static class LuaCodegenAbiV3
             frame,
             LuaRuntimeOperations.GetIndex(
                 context.State,
-                LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister),
-                LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister)),
+                target,
+                key),
             frame.Base + destinationRegister,
             expectedResults: 1);
         return ReferenceEquals(thread.CurrentFrame, frame);
@@ -65,6 +89,23 @@ public static class LuaCodegenAbiV3
         int keyRegister,
         int valueRegister)
     {
+        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
+        var value = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, valueRegister);
+        if (target.Kind == LuaValueKind.Table && target.AsTable().Metatable is null)
+        {
+            var table = target.AsTable();
+            if (!key.TryGetInteger(out var integer) ||
+                !table.TrySetArrayValue(integer, value) &&
+                !table.TryAppendArray(integer, value))
+            {
+                table.Set(key, value);
+            }
+
+            frame.ProgramCounter++;
+            return true;
+        }
+
         var engine = RequireEngine(context, thread);
         engine.ExecuteOperation(
             context.State,
@@ -74,9 +115,9 @@ public static class LuaCodegenAbiV3
             frame,
             LuaRuntimeOperations.SetIndex(
                 context.State,
-                LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister),
-                LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister),
-                LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, valueRegister)),
+                target,
+                key,
+                value),
             frame.Top,
             expectedResults: 0);
         return ReferenceEquals(thread.CurrentFrame, frame);
@@ -210,7 +251,12 @@ public static class LuaCodegenAbiV3
         }
         else
         {
-            table.Set(key, value);
+            if (!key.TryGetInteger(out var integer) ||
+                !table.TrySetArrayValue(integer, value) &&
+                !table.TryAppendArray(integer, value))
+            {
+                table.Set(key, value);
+            }
         }
 
         frame.ProgramCounter++;
@@ -231,6 +277,78 @@ public static class LuaCodegenAbiV3
             cache.TryMatchOrAdd(closure);
     }
 
+    public static int TryExecuteFramelessCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int functionRegister,
+        int argumentCount,
+        int expectedResults)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var closure = LuaCodegenAbiV2.ReadRegisterUnchecked(
+            thread,
+            frame,
+            functionRegister).TryGetClosure();
+        if (closure is null)
+        {
+            return 0;
+        }
+
+        var argumentStart = checked(frame.Base + functionRegister + 1);
+        var actualArgumentCount = argumentCount < 0
+            ? Math.Max(0, frame.Top - argumentStart)
+            : argumentCount;
+        if (!RequireEngine(context, thread).TryExecuteFramelessCall(
+                context.State,
+                context,
+                context.Scheduler,
+                thread,
+                frame,
+                closure,
+                argumentStart,
+                actualArgumentCount,
+                frame.Base + functionRegister,
+                expectedResults))
+        {
+            return 0;
+        }
+
+        frame.ProgramCounter++;
+        return closure.FramelessInstructionCount;
+    }
+
+    public static bool CanContinueAfterFramelessCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return ReferenceEquals(thread.CurrentFrame, frame) &&
+            context.State.Heap.PendingFinalizerCount == 0;
+    }
+
+    public static bool PollGcSafepoint(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(frame);
+        if (!ReferenceEquals(context.Thread, thread) ||
+            !ReferenceEquals(thread.CurrentFrame, frame))
+        {
+            return false;
+        }
+
+        // One compiled quantum can allocate substantially more objects than one scheduler turn.
+        // Advance enough bounded GC work to keep allocation debt from outpacing collection.
+        context.State.Heap.SafePoint(CompiledSafepointObjectBudget);
+        return ReferenceEquals(thread.CurrentFrame, frame) &&
+            context.State.Heap.PendingFinalizerCount == 0;
+    }
+
     public static void ExecuteKnownClosureCall(
         LuaExecutionContext context,
         LuaThread thread,
@@ -245,6 +363,7 @@ public static class LuaCodegenAbiV3
             functionRegister).TryGetClosure() ?? throw new InvalidOperationException(
                 "Known-closure call execution lost its guarded target.");
         RequireEngine(context, thread).ExecuteKnownClosureCall(
+            context,
             thread,
             frame,
             closure,

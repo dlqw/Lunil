@@ -1327,7 +1327,7 @@ public sealed class LuaJitExecutorTests
         Assert.True(loop.Functions[0].Instructions.Length < 16);
         Assert.Contains(Enumerable.Range(0, loop.Functions[0].Instructions.Length), pc =>
             loop.Functions[0].Instructions[pc] is
-                { Opcode: LuaIrOpcode.Jump, B: var target } && target <= pc);
+            { Opcode: LuaIrOpcode.Jump, B: var target } && target <= pc);
 
         AssertValues(
             ExecuteFresh(executor, loop, LuaValue.FromInteger(3)),
@@ -1343,7 +1343,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void DefaultTier2KeepsHotLoopCallsOnTier1WithoutUnsupportedExits()
+    public void DefaultTier2PromotesMonomorphicHotLoopCallsWithoutUnsupportedExits()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -1381,23 +1381,340 @@ public sealed class LuaJitExecutorTests
 
         AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
         AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
-        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
-        Assert.Null(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, 0));
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization =>
+                optimization.Kind == LuaJitOptimizationKind.KnownClosureCall);
         var eligibility = executor.GetTier2PromotionEligibility(module, 0);
-        Assert.False(eligibility.IsAutoEligible);
-        Assert.Equal(LuaJitTier2EligibilityReason.HotLoopCallBoundary, eligibility.Reason);
-        Assert.Equal(LuaJitTier2DiagnosticCodes.HotLoopCallBoundary, eligibility.DiagnosticCode);
+        Assert.True(eligibility.IsAutoEligible);
+        Assert.Equal(LuaJitTier2EligibilityReason.Eligible, eligibility.Reason);
+        Assert.Null(eligibility.DiagnosticCode);
         var escaped = Assert.Single(module.Functions.Where(static function => function.Id != 0));
         Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, escaped.Id));
-        var samplesAfterRejection = executor.GetFunctionProfile(module, 0).Samples;
-
         for (var execution = 0; execution < 5; execution++)
         {
             AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
         }
 
-        Assert.Equal(samplesAfterRejection, executor.GetFunctionProfile(module, 0).Samples);
+        Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, 0));
         Assert.Equal(0, executor.Statistics.Tier2UnsupportedExits);
+    }
+
+    [Fact]
+    public void Tier1ContinuesThroughWarmFramelessLeafCallsInsideTheCompiledMethod()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = false,
+            EnableLoopOsr = false,
+        });
+        var module = Compile("""
+            local function add(left, right) return left + right end
+            local total = 0
+            for index = 1, 200 do total = total + add(index, 1) end
+            return total
+            """);
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+
+        AssertValues(
+            executor.Execute(state, closure),
+            LuaValue.FromInteger(20_300));
+        var callExits = executor.Statistics.CallExits;
+        var schedulerExits = executor.Statistics.SchedulerExits;
+
+        AssertValues(
+            executor.Execute(state, closure),
+            LuaValue.FromInteger(20_300));
+
+        Assert.InRange(executor.Statistics.CallExits - callExits, 0, 2);
+        Assert.InRange(executor.Statistics.SchedulerExits - schedulerExits, 1, 8);
+    }
+
+    [Fact]
+    public void FramelessLeafCallsPreserveLogicalGcSafepointsInsideCompiledMethods()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = false,
+            EnableLoopOsr = false,
+        });
+        var module = Compile("""
+            local limit = ...
+            local function identity(value) return value end
+            local keep = {}
+            local cycle_baseline = 0
+            for index = 1, limit do
+                keep[index] = { identity(index) }
+                if limit > 1000 and index == 2 then
+                    completed_cycles()
+                    cycle_baseline = completed_cycles()
+                end
+            end
+            if limit > 1000 then return completed_cycles() - cycle_baseline end
+            return #keep
+            """);
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(2));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(2));
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StressEveryAllocation = true },
+        });
+        var baseline = state.Heap.CompletedCycleCount;
+        state.SetGlobal(
+            "completed_cycles",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "completed_cycles",
+                (_, _) =>
+                [
+                    LuaValue.FromInteger(
+                        state.Heap.CompletedCycleCount - baseline),
+                ])));
+
+        var result = executor.Execute(
+            state,
+            state.CreateMainClosure(module),
+            [LuaValue.FromInteger(1_100)]);
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.InRange(Assert.Single(result.Values).AsInteger(), 1, long.MaxValue);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CompiledBackedgesRunLogicalGcAndDispatchPendingFinalizers(bool enableTier2)
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = enableTier2,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local finalized = false
+            local counter = 0
+            local value = setmetatable({}, {__gc = function() finalized = true end})
+            repeat
+                counter = counter + 1
+                value = {}
+            until finalized
+            return finalized, counter
+            """);
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StressEveryAllocation = true },
+        });
+        state.SetGlobal(
+            "setmetatable",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "setmetatable",
+                static (_, arguments) =>
+                {
+                    arguments[0].AsTable().SetMetatable(arguments[1].AsTable());
+                    return [arguments[0]];
+                })));
+        var closure = state.CreateMainClosure(module);
+
+        var first = executor.Execute(state, closure);
+        Assert.Equal(LuaVmSignal.Completed, first.Signal);
+        Assert.True(first.Values[0].AsBoolean());
+        Assert.InRange(
+            first.Values[1].AsInteger(),
+            LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum,
+            long.MaxValue);
+        var baselineCycles = state.Heap.CompletedCycleCount;
+
+        var second = executor.Execute(state, closure);
+        Assert.Equal(LuaVmSignal.Completed, second.Signal);
+        Assert.True(second.Values[0].AsBoolean());
+        Assert.InRange(
+            second.Values[1].AsInteger(),
+            LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum,
+            long.MaxValue);
+        Assert.True(state.Heap.CompletedCycleCount > baselineCycles);
+        if (enableTier2)
+        {
+            Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, 0));
+            var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+            Assert.Contains(
+                plan.Optimizations,
+                static optimization =>
+                    optimization.Kind == LuaJitOptimizationKind.DeadMove);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FramelessSafepointRunsFinalizerBeforeContinuingCaller(bool enableTier2)
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = enableTier2,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local run = ...
+            local events = {}
+            local metatable = {__gc = function() events[#events + 1] = "gc" end}
+            local function leaf(value) return value end
+            leaf(0); leaf(0); leaf(0)
+            if not run then return 0 end
+            local dead = setmetatable({}, metatable)
+            dead = nil
+            local trigger = {}
+            local result = leaf(7)
+            events[#events + 1] = "after"
+            return result, events[1], events[2]
+            """);
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StressEveryAllocation = true },
+        });
+        state.SetGlobal(
+            "setmetatable",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "setmetatable",
+                static (_, arguments) =>
+                {
+                    arguments[0].AsTable().SetMetatable(arguments[1].AsTable());
+                    return [arguments[0]];
+                })));
+        var closure = state.CreateMainClosure(module);
+
+        AssertValues(
+            executor.Execute(state, closure, [LuaValue.FromBoolean(false)]),
+            LuaValue.FromInteger(0));
+        AssertValues(
+            executor.Execute(state, closure, [LuaValue.FromBoolean(true)]),
+            LuaValue.FromInteger(7),
+            LuaValue.FromString(state.Strings.GetOrCreate("gc"u8)),
+            LuaValue.FromString(state.Strings.GetOrCreate("after"u8)));
+    }
+
+    [Fact]
+    public void Tier1CloseFallbackClosesCapturedLoopLocalsBeforeRegisterReuse()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = false,
+            EnableLoopOsr = false,
+        });
+        var module = Compile("""
+            local functions = {}
+            for index = 1, 200 do
+                local captured = index
+                functions[index] = function() return captured end
+            end
+            return functions[1](), functions[100](), functions[200]()
+            """);
+
+        AssertValues(
+            ExecuteFresh(executor, module),
+            LuaValue.FromInteger(1),
+            LuaValue.FromInteger(100),
+            LuaValue.FromInteger(200));
+        AssertValues(
+            ExecuteFresh(executor, module),
+            LuaValue.FromInteger(1),
+            LuaValue.FromInteger(100),
+            LuaValue.FromInteger(200));
+    }
+
+    [Fact]
+    public void Tier2ContinuesThroughKnownFramelessLeafCallsInsideTheCompiledMethod()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function add(left, right) return left + right end
+            local total = 0
+            for index = 1, 200 do total = total + add(index, 1) end
+            return total
+            """);
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+
+        AssertValues(
+            executor.Execute(state, closure),
+            LuaValue.FromInteger(20_300));
+        AssertValues(
+            executor.Execute(state, closure),
+            LuaValue.FromInteger(20_300));
+        Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, 0));
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization =>
+                optimization.Kind == LuaJitOptimizationKind.KnownClosureCall);
+        var callExits = executor.Statistics.CallExits;
+        var schedulerExits = executor.Statistics.SchedulerExits;
+
+        AssertValues(
+            executor.Execute(state, closure),
+            LuaValue.FromInteger(20_300));
+
+        Assert.Equal(callExits, executor.Statistics.CallExits);
+        Assert.InRange(executor.Statistics.SchedulerExits - schedulerExits, 1, 8);
+
+        var hookEvents = new List<string>();
+        var debugState = new LuaState();
+        LuaDebugApi.SetHook(
+            debugState,
+            debugState.MainThread,
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "hook",
+                (_, arguments) =>
+                {
+                    hookEvents.Add(arguments[0].AsString().ToString());
+                    return [];
+                })),
+            LuaDebugHookMask.Call | LuaDebugHookMask.Return,
+            count: 0);
+
+        AssertValues(
+            executor.Execute(debugState, debugState.CreateMainClosure(module)),
+            LuaValue.FromInteger(20_300));
+        Assert.Contains("call", hookEvents);
+        Assert.Contains("return", hookEvents);
     }
 
     [Fact]

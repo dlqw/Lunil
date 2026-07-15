@@ -76,6 +76,122 @@ public sealed class LuaTableTests
     }
 
     [Fact]
+    public void SequentialArrayAppendFastPathPreservesTableAndGcContracts()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        var value = state.CreateTable();
+        var initialLogicalSize = table.LogicalSize;
+        var initialShapeVersion = table.ShapeVersion;
+        var initialContentVersion = table.ContentVersion;
+        var initialStorageVersion = table.StorageVersion;
+
+        Assert.False(table.TryAppendArray(2, LuaValue.FromInteger(20)));
+        Assert.False(table.TryAppendArray(1, LuaValue.Nil));
+        Assert.Equal(initialLogicalSize, table.LogicalSize);
+        Assert.Equal(initialShapeVersion, table.ShapeVersion);
+        Assert.Equal(initialContentVersion, table.ContentVersion);
+        Assert.Equal(initialStorageVersion, table.StorageVersion);
+
+        Assert.True(table.TryAppendArray(1, LuaValue.FromTable(value)));
+        Assert.Equal(initialLogicalSize + 16, table.LogicalSize);
+        Assert.True(table.ShapeVersion > initialShapeVersion);
+        Assert.True(table.ContentVersion > initialContentVersion);
+        Assert.True(table.StorageVersion > initialStorageVersion);
+        Assert.Equal(LuaValue.FromTable(value), table.Get(LuaValue.FromInteger(1)));
+
+        state.SetGlobal("table", LuaValue.FromTable(table));
+        state.Heap.CollectFull();
+        Assert.True(value.IsAlive);
+
+        var foreignState = CreateDeterministicState();
+        Assert.Throws<LuaRuntimeException>(() =>
+            table.TryAppendArray(2, LuaValue.FromTable(foreignState.CreateTable())));
+    }
+
+    [Fact]
+    public void ExistingArrayUpdateFastPathPreservesMutationAndOwnerContracts()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        Assert.True(table.TryAppendArray(1, LuaValue.FromInteger(10)));
+        var initialShapeVersion = table.ShapeVersion;
+        var initialContentVersion = table.ContentVersion;
+
+        Assert.True(table.TrySetArrayValue(1, LuaValue.FromInteger(20)));
+        Assert.Equal(LuaValue.FromInteger(20), table.Get(LuaValue.FromInteger(1)));
+        Assert.Equal(initialShapeVersion, table.ShapeVersion);
+        Assert.True(table.ContentVersion > initialContentVersion);
+
+        var foreignState = CreateDeterministicState();
+        var foreign = LuaValue.FromTable(foreignState.CreateTable());
+        Assert.Throws<LuaRuntimeException>(() => table.TrySetArrayValue(1, foreign));
+        Assert.False(table.TrySetArrayValue(2, foreign));
+        Assert.Equal(1, table.ArrayCapacity);
+
+        Assert.True(table.TrySetArrayValue(1, LuaValue.Nil));
+        Assert.True(table.Get(LuaValue.FromInteger(1)).IsNil);
+        Assert.True(table.ShapeVersion > initialShapeVersion);
+    }
+
+    [Fact]
+    public void SequentialArrayAppendFastPathMigratesTheContiguousHashTail()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        table.Set(LuaValue.FromInteger(3), LuaValue.FromInteger(30));
+        table.Set(LuaValue.FromInteger(2), LuaValue.FromInteger(20));
+
+        Assert.True(table.TryAppendArray(1, LuaValue.FromInteger(10)));
+
+        Assert.Equal(3, table.ArrayCapacity);
+        Assert.Equal(0, table.HashCount);
+        Assert.Equal(LuaValue.FromInteger(10), table.Get(LuaValue.FromInteger(1)));
+        Assert.Equal(LuaValue.FromInteger(20), table.Get(LuaValue.FromInteger(2)));
+        Assert.Equal(LuaValue.FromInteger(30), table.Get(LuaValue.FromInteger(3)));
+    }
+
+    [Fact]
+    public void RawArrayReadDistinguishesDenseSlotsFromHashAndOutOfRangeIndices()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        table.Set(LuaValue.FromInteger(1), LuaValue.FromInteger(10));
+        table.Set(LuaValue.FromInteger(3), LuaValue.FromInteger(30));
+
+        Assert.True(table.TryGetArrayValue(1, out var first));
+        Assert.Equal(LuaValue.FromInteger(10), first);
+        Assert.False(table.TryGetArrayValue(0, out var zero));
+        Assert.True(zero.IsNil);
+        Assert.False(table.TryGetArrayValue(3, out var hashValue));
+        Assert.True(hashValue.IsNil);
+        Assert.False(table.TryGetArrayValue(long.MaxValue, out var high));
+        Assert.True(high.IsNil);
+    }
+
+    [Fact]
+    public void AllocationSiteHintReusesOnlyPhysicalArrayCapacity()
+    {
+        var state = CreateDeterministicState();
+        var hint = new LuaTableAllocationHint();
+        var previous = new LuaTable(state.Heap, allocationHint: hint);
+        for (var index = 1; index <= 1_000; index++)
+        {
+            previous.Set(LuaValue.FromInteger(index), LuaValue.FromInteger(index));
+        }
+
+        Assert.True(hint.ArrayCapacity >= 1_000);
+        var logicalBytes = state.Heap.LogicalBytes;
+        var replacement = state.CreateTableForAllocationSite(0, 0, hint);
+
+        Assert.Equal(0, replacement.ArrayCapacity);
+        Assert.True(replacement.ArrayStorageCapacity >= 1_000);
+        Assert.Equal(logicalBytes + 64, state.Heap.LogicalBytes);
+        Assert.True(replacement.TryAppendArray(1, LuaValue.FromInteger(1)));
+        Assert.Equal(1, replacement.ArrayCapacity);
+    }
+
+    [Fact]
     public void SeparatesShapeStorageAndMetatableVersions()
     {
         var state = CreateDeterministicState();

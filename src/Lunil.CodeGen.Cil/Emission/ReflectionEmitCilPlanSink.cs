@@ -363,7 +363,7 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         "LuaCodegenAbiV2.CanSkipClose" => Method(
             typeof(LuaCodegenAbiV2),
             nameof(LuaCodegenAbiV2.CanSkipClose),
-            [typeof(LuaFrame), typeof(int)]),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
         "LuaCodegenAbiV1.ObserveCanonicalInstruction" => Method(
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.ObserveCanonicalInstruction),
@@ -466,6 +466,25 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV3),
             nameof(LuaCodegenAbiV3.ExecuteVarArg),
             [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV3.TryExecuteFramelessCall" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.TryExecuteFramelessCall),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV3.CanContinueAfterFramelessCall" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.CanContinueAfterFramelessCall),
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
+        "LuaCodegenAbiV3.PollGcSafepoint" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.PollGcSafepoint),
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
         "LuaCompiledExit.Poll" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Poll),

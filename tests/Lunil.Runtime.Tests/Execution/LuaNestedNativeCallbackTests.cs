@@ -131,6 +131,33 @@ public sealed class LuaNestedNativeCallbackTests
         }
     }
 
+    [Fact]
+    public void NativeByteBufferTransfersPooledLongStringsAndPreservesShortInterning()
+    {
+        var state = new LuaState();
+        var bytes = Enumerable.Range(0, 1_024)
+            .Select(static index => (byte)(index * 31))
+            .ToArray();
+        var buffer = new LuaNativeByteBuffer(state.Heap, initialCapacity: 0);
+        buffer.ReserveCapacityHint(bytes.Length);
+        buffer.AppendPair(bytes.AsSpan(0, 700), bytes.AsSpan(700));
+
+        var text = buffer.MoveToString(state.Strings);
+
+        Assert.Equal(bytes.Length, text.Length);
+        Assert.Equal(bytes, text.ToArray());
+        Assert.Equal(
+            state.Strings.GetOrCreate(bytes),
+            text);
+        state.Heap.CollectFull();
+        Assert.False(text.IsAlive);
+
+        var interned = state.Strings.GetOrCreate("short"u8);
+        var shortBuffer = new LuaNativeByteBuffer(state.Heap, initialCapacity: 0);
+        shortBuffer.Append("short"u8);
+        Assert.Same(interned, shortBuffer.MoveToString(state.Strings));
+    }
+
     private static LuaNativeStep CallbackStep(
         LuaNativeCallContext context,
         int continuation,

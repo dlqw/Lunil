@@ -178,6 +178,9 @@ public sealed class LuaThread : LuaGcObject
         return upvalue;
     }
 
+    internal bool HasOpenUpvalueAtOrAbove(int stackIndex) =>
+        _openUpvalues.Count != 0 && _openUpvalues.Keys[^1] >= stackIndex;
+
     internal void CloseUpvalues(int fromStackIndex)
     {
         for (var index = _openUpvalues.Count - 1; index >= 0; index--)

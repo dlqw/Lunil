@@ -65,6 +65,12 @@ public static class LuaCodegenAbiV1
         ArgumentOutOfRangeException.ThrowIfNegative(constant);
         var constants = frame.Closure.Function.Constants;
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(constant, constants.Length);
+        if (constants[constant].Kind == LuaIrConstantKind.String)
+        {
+            return LuaValue.FromString(
+                frame.Closure.GetOrCreateStringConstant(context.State, constant));
+        }
+
         return LuaExecutionEngine.MaterializeConstant(
             context.State,
             frame.Closure,

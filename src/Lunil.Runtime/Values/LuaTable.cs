@@ -1,3 +1,4 @@
+using System.Buffers;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Operations;
 
@@ -12,7 +13,8 @@ public sealed class LuaTable : LuaGcObject
     private const int InitialHashCapacity = 8;
     private const long BucketLogicalSize = 40;
 
-    private readonly List<LuaValue> _array = [];
+    private PooledArrayPart _array;
+    private readonly LuaTableAllocationHint? _allocationHint;
     private Bucket[] _buckets = [];
     private int _hashCount;
     private int _tombstoneCount;
@@ -20,13 +22,19 @@ public sealed class LuaTable : LuaGcObject
     private long _absentMetamethodMask;
     private long _contentVersion;
 
-    internal LuaTable(LuaHeap owner, int arrayCapacity = 0, int hashCapacity = 0)
+    internal LuaTable(
+        LuaHeap owner,
+        int arrayCapacity = 0,
+        int hashCapacity = 0,
+        int physicalArrayCapacity = 0,
+        LuaTableAllocationHint? allocationHint = null)
         : base(owner, CalculateLogicalSize(arrayCapacity, hashCapacity))
     {
-        if (arrayCapacity != 0)
-        {
-            _array.AddRange(Enumerable.Repeat(LuaValue.Nil, arrayCapacity));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegative(physicalArrayCapacity);
+        _array = new PooledArrayPart(
+            arrayCapacity,
+            Math.Max(arrayCapacity, physicalArrayCapacity));
+        _allocationHint = allocationHint;
 
         if (hashCapacity != 0)
         {
@@ -68,6 +76,8 @@ public sealed class LuaTable : LuaGcObject
 
     public int ArrayCapacity => _array.Count;
 
+    internal int ArrayStorageCapacity => _array.Capacity;
+
     public int HashCount => _hashCount;
 
     public int TombstoneCount => _tombstoneCount;
@@ -104,6 +114,42 @@ public sealed class LuaTable : LuaGcObject
     public LuaValue Get(LuaValue key)
     {
         return TryGetExistingEntry(key, out var value, out _) ? value : LuaValue.Nil;
+    }
+
+    /// <summary>
+    /// Reads an index already known to address the dense array part without materializing or
+    /// validating a generic Lua key. Callers must perform any surrounding metatable checks.
+    /// </summary>
+    internal bool TryGetArrayValue(long index, out LuaValue value)
+    {
+        var offset = index - 1;
+        if ((ulong)offset >= (ulong)_array.Count)
+        {
+            value = LuaValue.Nil;
+            return false;
+        }
+
+        value = _array[(int)offset];
+        return true;
+    }
+
+    /// <summary>
+    /// Updates an index already known to address the allocated dense array part. The index
+    /// check deliberately precedes owner validation so a caller can cheaply fall through to
+    /// append or hash handling without validating the value twice.
+    /// </summary>
+    internal bool TrySetArrayValue(long index, LuaValue value)
+    {
+        var offset = index - 1;
+        if ((ulong)offset >= (ulong)_array.Count)
+        {
+            return false;
+        }
+
+        Owner.ValidateValue(value);
+        Owner.WriteBarrierBack(this, value);
+        SetArray((int)offset, value);
+        return true;
     }
 
     /// <summary>
@@ -223,6 +269,7 @@ public sealed class LuaTable : LuaGcObject
             if (index == _array.Count + 1 && !value.IsNil)
             {
                 Owner.AdjustLogicalSize(this, 16);
+                EnsureArrayAppendCapacity();
                 _array.Add(value);
                 IncrementShapeVersion();
                 IncrementContentVersion();
@@ -233,6 +280,47 @@ public sealed class LuaTable : LuaGcObject
         }
 
         SetHash(key, value);
+    }
+
+    /// <summary>
+    /// Appends a non-nil value to the next dense array slot without routing an already
+    /// normalized integer key through the general table-key machinery. This is an internal
+    /// runtime fast path; callers must retain the normal metatable checks around it.
+    /// </summary>
+    internal bool TryAppendArray(long index, LuaValue value)
+    {
+        Owner.ValidateValue(value);
+        if (value.IsNil || index != _array.Count + 1L)
+        {
+            return false;
+        }
+
+        Owner.WriteBarrierBack(this, value);
+        Owner.AdjustLogicalSize(this, 16);
+        EnsureArrayAppendCapacity();
+        _array.Add(value);
+        IncrementShapeVersion();
+        IncrementContentVersion();
+        IncrementStorageVersion();
+        MigrateArrayTail();
+        return true;
+    }
+
+    private void EnsureArrayAppendCapacity()
+    {
+        if (_array.Count < _array.Capacity)
+        {
+            return;
+        }
+
+        const int widerGrowthLimit = 512;
+        var capacity = _array.Count == 0
+            ? 8
+            : _array.Count <= widerGrowthLimit
+                ? checked(_array.Count * 4)
+                : checked(_array.Count * 2);
+        _array.EnsureCapacity(capacity);
+        _allocationHint?.ObserveArrayCapacity(_array.Capacity);
     }
 
     public void SetMetatable(LuaTable? metatable)
@@ -321,8 +409,9 @@ public sealed class LuaTable : LuaGcObject
             visitor.Visit(_metatable);
         }
 
-        foreach (var value in _array)
+        for (var index = 0; index < _array.Count; index++)
         {
+            var value = _array[index];
             if ((weakMode & LuaWeakMode.Values) == 0)
             {
                 visitor.Visit(value);
@@ -366,6 +455,8 @@ public sealed class LuaTable : LuaGcObject
             visitor.VisitWeakTable(this, weakMode);
         }
     }
+
+    internal override void OnCollected() => _array.Dispose();
 
     internal bool PropagateEphemerons(LuaGcVisitor visitor)
     {
@@ -758,6 +849,74 @@ public sealed class LuaTable : LuaGcObject
         Tombstone,
     }
 
+    private struct PooledArrayPart
+    {
+        private LuaValue[] _items;
+
+        public PooledArrayPart(int count, int capacity)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            ArgumentOutOfRangeException.ThrowIfLessThan(capacity, count);
+            Count = count;
+            if (capacity == 0)
+            {
+                _items = [];
+                return;
+            }
+
+            _items = ArrayPool<LuaValue>.Shared.Rent(capacity);
+            _items.AsSpan(0, count).Clear();
+        }
+
+        public int Count { get; private set; }
+
+        public int Capacity => _items.Length;
+
+        public LuaValue this[int index]
+        {
+            get => _items[index];
+            set => _items[index] = value;
+        }
+
+        public void Add(LuaValue value)
+        {
+            if (Count == _items.Length)
+            {
+                EnsureCapacity(Count == 0 ? 8 : checked(Count * 2));
+            }
+
+            _items[Count++] = value;
+        }
+
+        public void EnsureCapacity(int capacity)
+        {
+            if (capacity <= _items.Length)
+            {
+                return;
+            }
+
+            var replacement = ArrayPool<LuaValue>.Shared.Rent(capacity);
+            _items.AsSpan(0, Count).CopyTo(replacement);
+            ReturnItems();
+            _items = replacement;
+        }
+
+        public void Dispose()
+        {
+            ReturnItems();
+            _items = [];
+            Count = 0;
+        }
+
+        private void ReturnItems()
+        {
+            if (_items.Length != 0)
+            {
+                ArrayPool<LuaValue>.Shared.Return(_items, clearArray: true);
+            }
+        }
+    }
+
     private struct Bucket
     {
         public Bucket(LuaValue key, LuaValue value, int hash, BucketState state)
@@ -775,6 +934,33 @@ public sealed class LuaTable : LuaGcObject
         public int Hash;
 
         public BucketState State;
+    }
+}
+
+internal sealed class LuaTableAllocationHint
+{
+    private const int MaximumArrayCapacity = 4096;
+    private int _arrayCapacity;
+
+    public int ArrayCapacity => Volatile.Read(ref _arrayCapacity);
+
+    public void ObserveArrayCapacity(int capacity)
+    {
+        capacity = Math.Min(capacity, MaximumArrayCapacity);
+        var observed = Volatile.Read(ref _arrayCapacity);
+        while (capacity > observed)
+        {
+            var previous = Interlocked.CompareExchange(
+                ref _arrayCapacity,
+                capacity,
+                observed);
+            if (previous == observed)
+            {
+                return;
+            }
+
+            observed = previous;
+        }
     }
 }
 

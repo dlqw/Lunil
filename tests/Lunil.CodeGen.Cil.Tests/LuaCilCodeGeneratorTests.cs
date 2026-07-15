@@ -88,6 +88,25 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
+    public void LowersOrdinaryCallsThroughTheInMethodFramelessFastPath()
+    {
+        var module = CreateModule(
+            registerCount: 2,
+            constants: [],
+            new LuaIrInstruction(LuaIrOpcode.Call, a: 0, b: 1, c: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1));
+
+        var result = LuaCilCodeGenerator.PlanFunction(module, 0);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Diagnostics.Select(static d => d.Message)));
+        Assert.Contains(result.Plan!.Instructions, instruction =>
+            instruction.CallTarget?.Id == "LuaCodegenAbiV3.TryExecuteFramelessCall");
+        Assert.Contains(result.Plan.Instructions, instruction =>
+            instruction.CallTarget?.Id == "LuaCompiledExit.Call");
+        Assert.Contains(result.Plan.Locals, local => local.Name == "framelessConsumed");
+    }
+
+    [Fact]
     public void EmitsDeterministicManagedPeAndPortablePdbArtifacts()
     {
         var module = CreateModule(

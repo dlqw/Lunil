@@ -140,8 +140,11 @@ public sealed class LuaHeap
         }
     }
 
-    public void SafePoint()
+    public void SafePoint() => SafePoint(_options.StepObjectBudget);
+
+    internal void SafePoint(int stepObjectBudget)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepObjectBudget);
         if (!IsRunning)
         {
             return;
@@ -159,7 +162,7 @@ public sealed class LuaHeap
         }
         else if (Phase != LuaGcPhase.Paused || _allocationDebt >= _options.StepSizeBytes)
         {
-            Step(_options.StepObjectBudget);
+            Step(stepObjectBudget);
         }
 
         _allocatedSinceSafePoint = false;

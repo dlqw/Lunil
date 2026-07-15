@@ -2048,6 +2048,23 @@ internal sealed class LuaExecutionEngine
         {
             var returnBase = tailCall ? frame.ReturnBase : functionIndex;
             var expectedResults = tailCall ? frame.ExpectedResults : instruction.C;
+            if (!tailCall && argumentsInCallerStack &&
+                TryExecuteFramelessCall(
+                    state,
+                    null,
+                    scheduler,
+                    thread,
+                    frame,
+                    closure,
+                    argumentStart,
+                    argumentCount,
+                    returnBase,
+                    expectedResults))
+            {
+                frame.ProgramCounter++;
+                return null;
+            }
+
             if (tailCall)
             {
                 var protectionKind = frame.Continuation.ProtectionKind;
@@ -2180,7 +2197,189 @@ internal sealed class LuaExecutionEngine
         return null;
     }
 
+    internal bool TryExecuteFramelessCall(
+        LuaState state,
+        LuaExecutionContext? context,
+        LuaScheduler? scheduler,
+        LuaThread thread,
+        LuaFrame caller,
+        LuaClosure closure,
+        int argumentStart,
+        int argumentCount,
+        int returnBase,
+        int expectedResults)
+    {
+        if (!closure.TryEnterFramelessCall() || !thread.DebugHook.IsNil ||
+            thread.IsRunningDebugHook || thread.UnwindState is not null ||
+            state.IsRunningFinalizer)
+        {
+            return false;
+        }
+
+        var function = closure.Function;
+        var instructionCost = closure.FramelessInstructionCount;
+        var remainingInstructions = context?.RemainingInstructionCount ??
+            _options.MaximumInstructionCount - scheduler!.Current.InstructionCount;
+        if (remainingInstructions < instructionCost)
+        {
+            // Enter the ordinary frame so a short remaining budget retains the exact callee PC.
+            return false;
+        }
+
+        // A preceding variable-arity call can lower frame.Top while canonical registers above
+        // it remain live. Frameless scratch must stay outside the caller's entire register file,
+        // not merely outside its current result window, or clearing scratch can corrupt locals.
+        var callerRegisterEnd = checked(
+            caller.Base + caller.Closure.Function.RegisterCount);
+        var scratchBase = Math.Max(
+            Math.Max(caller.Top, callerRegisterEnd),
+            checked(argumentStart + argumentCount));
+        var registerCount = function.RegisterCount;
+        var scratchEnd = checked(scratchBase + registerCount);
+        if (scratchEnd > _options.MaximumStackSlots)
+        {
+            return false;
+        }
+
+        thread.Stack.EnsureCapacity(scratchEnd);
+        thread.Stack.Clear(scratchBase, registerCount);
+        var fixedArguments = Math.Min(argumentCount, function.ParameterCount);
+        for (var index = 0; index < fixedArguments; index++)
+        {
+            thread.Stack.WriteUnchecked(
+                scratchBase + index,
+                thread.Stack.ReadUnchecked(argumentStart + index));
+        }
+
+        for (var programCounter = 0; programCounter < instructionCost; programCounter++)
+        {
+            var instruction = function.Instructions[programCounter];
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.Move:
+                    thread.Stack.WriteUnchecked(
+                        scratchBase + instruction.A,
+                        thread.Stack.ReadUnchecked(scratchBase + instruction.B));
+                    break;
+                case LuaIrOpcode.LoadNil:
+                    for (var register = instruction.A; register <= instruction.B; register++)
+                    {
+                        thread.Stack.WriteUnchecked(scratchBase + register, LuaValue.Nil);
+                    }
+
+                    break;
+                case LuaIrOpcode.Unary:
+                    {
+                        var operand = thread.Stack.ReadUnchecked(scratchBase + instruction.B);
+                        var operation = (LuaIrUnaryOperator)instruction.C;
+                        LuaValue result;
+                        if (operation == LuaIrUnaryOperator.LogicalNot)
+                        {
+                            result = LuaValue.FromBoolean(!operand.IsTruthy);
+                        }
+                        else if (operand.IsInteger)
+                        {
+                            result = LuaValueOperations.UnaryIntegerSpecialized(operation, operand);
+                        }
+                        else if (operand.IsFloat && operation == LuaIrUnaryOperator.Negate)
+                        {
+                            result = LuaValueOperations.UnaryFloatSpecialized(operation, operand);
+                        }
+                        else
+                        {
+                            thread.Stack.Clear(scratchBase, registerCount);
+                            return false;
+                        }
+
+                        thread.Stack.WriteUnchecked(scratchBase + instruction.A, result);
+                        break;
+                    }
+                case LuaIrOpcode.Binary:
+                    {
+                        var left = thread.Stack.ReadUnchecked(scratchBase + instruction.B);
+                        var right = thread.Stack.ReadUnchecked(scratchBase + instruction.C);
+                        var operation = (LuaIrBinaryOperator)instruction.D;
+                        LuaValue result;
+                        if (left.IsInteger && right.IsInteger)
+                        {
+                            result = LuaValueOperations.BinaryIntegerSpecialized(
+                                operation,
+                                left,
+                                right);
+                        }
+                        else if (left.IsFloat && right.IsFloat && !IsIntegerOnly(operation))
+                        {
+                            result = LuaValueOperations.BinaryFloatSpecialized(
+                                operation,
+                                left,
+                                right);
+                        }
+                        else if (left.Kind is LuaValueKind.Integer or LuaValueKind.Float &&
+                                 right.Kind is LuaValueKind.Integer or LuaValueKind.Float &&
+                                 !IsIntegerOnly(operation))
+                        {
+                            result = LuaValueOperations.BinaryMixedNumericSpecialized(
+                                operation,
+                                left,
+                                right);
+                        }
+                        else
+                        {
+                            thread.Stack.Clear(scratchBase, registerCount);
+                            return false;
+                        }
+
+                        thread.Stack.WriteUnchecked(scratchBase + instruction.A, result);
+                        break;
+                    }
+                case LuaIrOpcode.Return:
+                    {
+                        var results = thread.Stack.AsReadOnlySpan(
+                            scratchBase + instruction.A,
+                            instruction.B);
+                        WriteCallResults(
+                            thread,
+                            caller,
+                            returnBase,
+                            expectedResults,
+                            results);
+                        if (context is not null)
+                        {
+                            if (!context.TryReserveInstructions(instructionCost))
+                            {
+                                throw new InvalidOperationException(
+                                    "The prechecked frameless instruction budget changed.");
+                            }
+                        }
+                        else
+                        {
+                            scheduler!.Current.InstructionCount = checked(
+                                scheduler.Current.InstructionCount + instructionCost);
+                        }
+                        thread.Stack.Clear(scratchBase, registerCount);
+                        // This call replaced a scheduler turn, so preserve its logical-GC poll.
+                        // The result window and caller top are materialized and scratch no longer
+                        // contains the only reference to a Lua object before collection starts.
+                        state.Heap.SafePoint();
+
+                        return true;
+                    }
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported frameless instruction {instruction.Opcode}.");
+            }
+        }
+
+        throw new InvalidOperationException("A frameless leaf function did not return.");
+
+        static bool IsIntegerOnly(LuaIrBinaryOperator operation) => operation is
+            LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
+            LuaIrBinaryOperator.BitwiseXor or LuaIrBinaryOperator.ShiftLeft or
+            LuaIrBinaryOperator.ShiftRight;
+    }
+
     internal void ExecuteKnownClosureCall(
+        LuaExecutionContext context,
         LuaThread thread,
         LuaFrame frame,
         LuaClosure closure,
@@ -2207,6 +2406,22 @@ internal sealed class LuaExecutionEngine
         var actualArgumentCount = argumentCount < 0
             ? Math.Max(0, frame.Top - argumentStart)
             : argumentCount;
+        if (TryExecuteFramelessCall(
+                context.State,
+                context,
+                context.Scheduler,
+                thread,
+                frame,
+                closure,
+                argumentStart,
+                actualArgumentCount,
+                functionIndex,
+                expectedResults))
+        {
+            frame.ProgramCounter++;
+            return;
+        }
+
         frame.ProgramCounter++;
         PushFrameFromStack(
             thread,
@@ -3297,6 +3512,32 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
+        if (frame.Continuation.Kind == LuaContinuationKind.None &&
+            frame.Continuation.ProtectionKind == LuaProtectedCallKind.None &&
+            !frame.Continuation.IsCloseHandler &&
+            frame.ToBeClosedSlots.Count == 0 &&
+            !frame.IsDebugHook &&
+            thread.UnwindState is null &&
+            thread.FrameCount > 1 &&
+            thread.Frames[^2].Continuation.Kind == LuaContinuationKind.None)
+        {
+            var start = frame.Base + instruction.A;
+            var count = instruction.B < 0 ? Math.Max(0, frame.Top - start) : instruction.B;
+            var returnBase = frame.ReturnBase;
+            var expectedResults = frame.ExpectedResults;
+            var fastCallerFrame = thread.Frames[^2];
+
+            // An ordinary Lua-to-Lua return always moves results towards lower stack slots. The
+            // source window therefore remains readable while WriteCallResults copies forward,
+            // and the retired frame is deliberately not reset until the next scheduler turn.
+            // Keep the resumable close/protection/debug paths on the snapshot-based slow path.
+            thread.CloseUpvalues(frame.Base);
+            var fastResults = thread.Stack.AsReadOnlySpan(start, count);
+            thread.PopFrame();
+            WriteCallResults(thread, fastCallerFrame, returnBase, expectedResults, fastResults);
+            return null;
+        }
+
         if (frame.Continuation.Kind != LuaContinuationKind.ReturnAndClose)
         {
             var start = frame.Base + instruction.A;
@@ -4620,14 +4861,44 @@ internal sealed class LuaExecutionEngine
         string Name,
         int SourceRegister = -1);
 
-    private static LuaValue MaterializeError(LuaState state, LuaRuntimeException exception) =>
-        exception.HasErrorValue
-            ? exception.ErrorValue
-            : LuaValue.FromString(state.Strings.GetOrCreate(
-                System.Text.Encoding.UTF8.GetBytes(exception.Message)));
+    private static LuaValue MaterializeError(LuaState state, LuaRuntimeException exception)
+    {
+        if (exception.HasErrorValue)
+        {
+            return exception.ErrorValue;
+        }
 
-    private static LuaValue CreateErrorInErrorHandling(LuaState state) =>
-        LuaValue.FromString(state.Strings.GetOrCreate("error in error handling"u8));
+        try
+        {
+            return LuaValue.FromString(state.Strings.GetOrCreate(
+                System.Text.Encoding.UTF8.GetBytes(exception.Message)));
+        }
+        catch (LuaRuntimeException materializationFailure) when (
+            materializationFailure.Message.StartsWith(
+                "Lua heap quota exceeded",
+                StringComparison.Ordinal))
+        {
+            // A Lua memory error must itself remain catchable when every quota byte is live.
+            // Keep one canonical message permanently rooted per state, matching Lua's emergency
+            // memory-error object instead of recursively trying to allocate another error value.
+            return LuaValue.FromString(state.MemoryErrorString);
+        }
+    }
+
+    private static LuaValue CreateErrorInErrorHandling(LuaState state)
+    {
+        try
+        {
+            return LuaValue.FromString(state.Strings.GetOrCreate("error in error handling"u8));
+        }
+        catch (LuaRuntimeException materializationFailure) when (
+            materializationFailure.Message.StartsWith(
+                "Lua heap quota exceeded",
+                StringComparison.Ordinal))
+        {
+            return LuaValue.FromString(state.MemoryErrorString);
+        }
+    }
 
     internal static LuaValue Read(LuaThread thread, LuaFrame frame, int register) =>
         thread.Stack[frame.Base + register];

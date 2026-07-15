@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Buffers;
+using System.Buffers.Text;
+using System.Text;
 using Lunil.Core.Numerics;
 using Lunil.IR.Canonical;
 using System.Runtime.CompilerServices;
@@ -7,6 +10,8 @@ namespace Lunil.Runtime.Values;
 
 public static class LuaValueOperations
 {
+    internal const int MaximumFormattedNumberByteCount = 32;
+
     public static string TypeName(LuaValue value)
     {
         var metatable = value.Kind switch
@@ -146,25 +151,89 @@ public static class LuaValueOperations
     }
     public static string FormatFloat(double value)
     {
-        if (double.IsPositiveInfinity(value))
+        Span<byte> bytes = stackalloc byte[MaximumFormattedNumberByteCount];
+        var length = FormatFloatUtf8(value, bytes);
+        return Encoding.ASCII.GetString(bytes[..length]);
+    }
+
+    internal static int FormatNumberUtf8(LuaValue value, Span<byte> destination) =>
+        value.Kind switch
         {
-            return "inf";
+            LuaValueKind.Integer => FormatIntegerUtf8(value.AsInteger(), destination),
+            LuaValueKind.Float => FormatFloatUtf8(value.AsFloat(), destination),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(value),
+                "Only Lua numbers have a canonical numeric string representation."),
+        };
+
+    private static int FormatIntegerUtf8(long value, Span<byte> destination)
+    {
+        if (!Utf8Formatter.TryFormat(value, destination, out var written))
+        {
+            throw new ArgumentException("The numeric formatting destination is too small.", nameof(destination));
         }
 
-        if (double.IsNegativeInfinity(value))
+        return written;
+    }
+
+    private static int FormatFloatUtf8(double value, Span<byte> destination)
+    {
+        ReadOnlySpan<byte> special = double.IsPositiveInfinity(value)
+            ? "inf"u8
+            : double.IsNegativeInfinity(value)
+                ? "-inf"u8
+                : double.IsNaN(value)
+                    ? "nan"u8
+                    : default;
+        if (!special.IsEmpty)
         {
-            return "-inf";
+            if (!special.TryCopyTo(destination))
+            {
+                throw new ArgumentException(
+                    "The numeric formatting destination is too small.",
+                    nameof(destination));
+            }
+
+            return special.Length;
         }
 
-        if (double.IsNaN(value))
+        if (!Utf8Formatter.TryFormat(
+                value,
+                destination,
+                out var written,
+                new StandardFormat('G', 14)))
         {
-            return "nan";
+            throw new ArgumentException("The numeric formatting destination is too small.", nameof(destination));
         }
 
-        var text = value.ToString("G14", CultureInfo.InvariantCulture).ToLowerInvariant();
-        return double.IsFinite(value) && !text.Contains('.') && !text.Contains('e')
-            ? text + ".0"
-            : text;
+        var hasDecimalOrExponent = false;
+        for (var index = 0; index < written; index++)
+        {
+            if (destination[index] == (byte)'E')
+            {
+                destination[index] = (byte)'e';
+                hasDecimalOrExponent = true;
+            }
+            else if (destination[index] is (byte)'.' or (byte)'e')
+            {
+                hasDecimalOrExponent = true;
+            }
+        }
+
+        if (!hasDecimalOrExponent)
+        {
+            if (destination.Length - written < 2)
+            {
+                throw new ArgumentException(
+                    "The numeric formatting destination is too small.",
+                    nameof(destination));
+            }
+
+            destination[written++] = (byte)'.';
+            destination[written++] = (byte)'0';
+        }
+
+        return written;
     }
 
     public static bool NumberEquals(LuaValue left, LuaValue right)
@@ -295,25 +364,97 @@ public static class LuaValueOperations
         return LuaValue.FromFloat(floatingRemainder);
     }
 
-    private static LuaValue Concatenate(LuaState state, LuaValue left, LuaValue right)
+    internal static LuaValue Concatenate(LuaState state, LuaValue left, LuaValue right)
     {
-        var leftBytes = ToStringBytes(left);
-        var rightBytes = ToStringBytes(right);
-        var bytes = new byte[checked(leftBytes.Length + rightBytes.Length)];
-        leftBytes.CopyTo(bytes);
-        rightBytes.CopyTo(bytes.AsSpan(leftBytes.Length));
-        return LuaValue.FromString(state.Strings.GetOrCreate(bytes));
-    }
+        if (left.Kind == LuaValueKind.String &&
+            right.Kind == LuaValueKind.Integer &&
+            state.Strings.TryGetOrCreateIntegerConcat(
+                left.AsString(),
+                right.AsInteger(),
+                textFirst: true,
+                out var cachedRight))
+        {
+            return LuaValue.FromString(cachedRight);
+        }
 
-    private static byte[] ToStringBytes(LuaValue value) => value.Kind switch
-    {
-        LuaValueKind.String => value.AsString().ToArray(),
-        LuaValueKind.Integer => System.Text.Encoding.ASCII.GetBytes(
-            value.AsInteger().ToString(CultureInfo.InvariantCulture)),
-        LuaValueKind.Float => System.Text.Encoding.ASCII.GetBytes(
-            FormatFloat(value.AsFloat())),
-        _ => throw new LuaRuntimeException($"Cannot concatenate a {TypeName(value)} value."),
-    };
+        if (left.Kind == LuaValueKind.Integer &&
+            right.Kind == LuaValueKind.String &&
+            state.Strings.TryGetOrCreateIntegerConcat(
+                right.AsString(),
+                left.AsInteger(),
+                textFirst: false,
+                out var cachedLeft))
+        {
+            return LuaValue.FromString(cachedLeft);
+        }
+
+        Span<byte> leftNumber = stackalloc byte[MaximumFormattedNumberByteCount];
+        Span<byte> rightNumber = stackalloc byte[MaximumFormattedNumberByteCount];
+        int leftLength;
+        if (left.Kind == LuaValueKind.String)
+        {
+            leftLength = left.AsString().Length;
+        }
+        else if (left.Kind is LuaValueKind.Integer or LuaValueKind.Float)
+        {
+            leftLength = FormatNumberUtf8(left, leftNumber);
+        }
+        else
+        {
+            throw new LuaRuntimeException($"Cannot concatenate a {TypeName(left)} value.");
+        }
+
+        int rightLength;
+        if (right.Kind == LuaValueKind.String)
+        {
+            rightLength = right.AsString().Length;
+        }
+        else if (right.Kind is LuaValueKind.Integer or LuaValueKind.Float)
+        {
+            rightLength = FormatNumberUtf8(right, rightNumber);
+        }
+        else
+        {
+            throw new LuaRuntimeException($"Cannot concatenate a {TypeName(right)} value.");
+        }
+
+        const int maximumStackBytes = 256;
+        var length = checked(leftLength + rightLength);
+        byte[]? rented = null;
+        Span<byte> bytes = length <= maximumStackBytes
+            ? stackalloc byte[length]
+            : (rented = ArrayPool<byte>.Shared.Rent(length));
+        try
+        {
+            var result = bytes[..length];
+            if (left.Kind == LuaValueKind.String)
+            {
+                left.AsString().AsSpan().CopyTo(result);
+            }
+            else
+            {
+                leftNumber[..leftLength].CopyTo(result);
+            }
+
+            if (right.Kind == LuaValueKind.String)
+            {
+                right.AsString().AsSpan().CopyTo(result[leftLength..]);
+            }
+            else
+            {
+                rightNumber[..rightLength].CopyTo(result[leftLength..]);
+            }
+
+            return LuaValue.FromString(state.Strings.GetOrCreate(result));
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
+    }
 
     private static bool LessThan(LuaValue left, LuaValue right)
     {

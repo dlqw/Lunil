@@ -17,9 +17,11 @@ public sealed class LuaState
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
         Heap = new LuaHeap(options.Heap);
         Strings = new LuaStringPool(Heap);
+        MemoryErrorString = Strings.GetOrCreate("not enough memory"u8);
         Globals = new LuaTable(Heap);
         Registry = new LuaTable(Heap);
         MainThread = new LuaThread(Heap, options.MainThreadInitialStackCapacity);
+        Heap.AddPermanentRoot(MemoryErrorString);
         Heap.AddPermanentRoot(Globals);
         Heap.AddPermanentRoot(Registry);
         Heap.AddPermanentRoot(MainThread);
@@ -28,6 +30,8 @@ public sealed class LuaState
     public LuaHeap Heap { get; }
 
     public LuaStringPool Strings { get; }
+
+    internal LuaString MemoryErrorString { get; }
 
     public LuaTable Globals { get; }
 
@@ -49,6 +53,17 @@ public sealed class LuaState
 
     public LuaTable CreateTable(int arrayCapacity = 0, int hashCapacity = 0) =>
         new(Heap, arrayCapacity, hashCapacity);
+
+    internal LuaTable CreateTableForAllocationSite(
+        int arrayCapacity,
+        int hashCapacity,
+        LuaTableAllocationHint allocationHint) =>
+        new(
+            Heap,
+            arrayCapacity,
+            hashCapacity,
+            Math.Max(arrayCapacity, allocationHint.ArrayCapacity),
+            allocationHint);
 
     public LuaThread CreateThread(int initialStackCapacity = 128) =>
         new(Heap, initialStackCapacity);

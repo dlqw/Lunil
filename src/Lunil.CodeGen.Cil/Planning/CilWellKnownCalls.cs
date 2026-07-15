@@ -131,7 +131,7 @@ public static class CilWellKnownCalls
 
     public static CilCallTarget CanSkipClose { get; } = Call(
         "LuaCodegenAbiV2.CanSkipClose",
-        [CilStackValueKind.Frame, CilStackValueKind.Int32],
+        [CilStackValueKind.Thread, CilStackValueKind.Frame, CilStackValueKind.Int32],
         CilStackValueKind.Int32);
 
     public static CilCallTarget ObserveCanonicalInstruction { get; } = Call(
@@ -294,6 +294,38 @@ public static class CilWellKnownCalls
         ],
         CilStackValueKind.Void);
 
+    public static CilCallTarget TryExecuteFramelessCall { get; } = Call(
+        "LuaCodegenAbiV3.TryExecuteFramelessCall",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
+    public static CilCallTarget CanContinueAfterFramelessCall { get; } = Call(
+        "LuaCodegenAbiV3.CanContinueAfterFramelessCall",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+        ],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget PollGcSafepoint { get; } = Call(
+        "LuaCodegenAbiV3.PollGcSafepoint",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
     public static CilCallTarget ExitPoll { get; } = Call(
         "LuaCompiledExit.Poll",
         [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
@@ -359,6 +391,9 @@ public static class CilWellKnownCalls
             ExecuteSetList,
             ExecuteClosure,
             ExecuteVarArg,
+            TryExecuteFramelessCall,
+            CanContinueAfterFramelessCall,
+            PollGcSafepoint,
             ExitContinue,
             ExitPoll,
             ExitCall,

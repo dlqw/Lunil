@@ -7,6 +7,10 @@ namespace Lunil.Runtime.Execution;
 public sealed class LuaClosure : LuaGcObject
 {
     private readonly LuaUpvalue[] _upvalues;
+    private readonly LuaString?[] _materializedStringConstants;
+    private readonly LuaTableAllocationHint?[] _tableAllocationHints;
+    private readonly object _constantGate = new();
+    private int _framelessCallEntries;
 
     internal LuaClosure(
         LuaHeap owner,
@@ -22,7 +26,10 @@ public sealed class LuaClosure : LuaGcObject
         HasSourceLineInformation = function.Instructions.Any(
             static instruction => instruction.SourceLine > 0);
         _upvalues = [.. upvalues];
+        _materializedStringConstants = new LuaString?[function.Constants.Length];
+        _tableAllocationHints = new LuaTableAllocationHint?[function.Instructions.Length];
         StringConstants = stringConstants;
+        FramelessInstructionCount = GetFramelessInstructionCount(function);
     }
 
     public LuaIrModule Module { get; }
@@ -31,9 +38,81 @@ public sealed class LuaClosure : LuaGcObject
 
     internal bool HasSourceLineInformation { get; }
 
+    internal int FramelessInstructionCount { get; }
+
+    internal bool SupportsFramelessCall => FramelessInstructionCount != 0;
+
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
 
     internal LuaModuleStringConstants StringConstants { get; }
+
+    internal LuaString GetOrCreateStringConstant(LuaState state, int constantIndex)
+    {
+        var existing = Volatile.Read(ref _materializedStringConstants[constantIndex]);
+        if (existing is not null && existing.IsAlive)
+        {
+            return existing;
+        }
+
+        lock (_constantGate)
+        {
+            existing = _materializedStringConstants[constantIndex];
+            if (existing is not null && existing.IsAlive)
+            {
+                return existing;
+            }
+
+            var constant = Function.Constants[constantIndex];
+            if (constant.Kind != LuaIrConstantKind.String)
+            {
+                throw new InvalidOperationException("The cached constant is not a string.");
+            }
+
+            if (!ReferenceEquals(state.Heap, Owner))
+            {
+                throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
+            }
+
+            existing = StringConstants.GetOrCreate(state, constant.Bytes.AsSpan());
+            Owner.WriteBarrier(this, existing);
+            Volatile.Write(ref _materializedStringConstants[constantIndex], existing);
+            return existing;
+        }
+    }
+
+    internal bool TryEnterFramelessCall()
+    {
+        if (!SupportsFramelessCall)
+        {
+            return false;
+        }
+
+        // Preserve the normal frame/backend entry for the first two invocations so profiling,
+        // tier installation, and diagnostics observe the function before the leaf fast path
+        // starts bypassing scheduler frames. Once warm, avoid an atomic write on every leaf call
+        // and keep the counter from wrapping in a long-lived state.
+        if (Volatile.Read(ref _framelessCallEntries) > 2)
+        {
+            return true;
+        }
+
+        return Interlocked.Increment(ref _framelessCallEntries) > 2;
+    }
+
+    internal LuaTableAllocationHint GetOrCreateTableAllocationHint(int programCounter)
+    {
+        var existing = Volatile.Read(ref _tableAllocationHints[programCounter]);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var candidate = new LuaTableAllocationHint();
+        return Interlocked.CompareExchange(
+            ref _tableAllocationHints[programCounter],
+            candidate,
+            null) ?? candidate;
+    }
 
     public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
 
@@ -58,6 +137,13 @@ public sealed class LuaClosure : LuaGcObject
         }
 
         StringConstants.Traverse(visitor);
+        foreach (var constant in _materializedStringConstants)
+        {
+            if (constant is not null && constant.IsAlive)
+            {
+                visitor.Visit(constant);
+            }
+        }
     }
 
     private static LuaHeap Validate(
@@ -84,6 +170,45 @@ public sealed class LuaClosure : LuaGcObject
         }
 
         return owner;
+    }
+
+    private static int GetFramelessInstructionCount(LuaIrFunction function)
+    {
+        const int maximumInstructions = 16;
+        const int maximumRegisters = 32;
+        if (function.IsVarArg || function.Upvalues.Length != 0 ||
+            function.Instructions.Length is 0 or > maximumInstructions ||
+            function.RegisterCount > maximumRegisters)
+        {
+            return 0;
+        }
+
+        for (var programCounter = 0; programCounter < function.Instructions.Length;
+             programCounter++)
+        {
+            var instruction = function.Instructions[programCounter];
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.Move:
+                case LuaIrOpcode.LoadNil:
+                    break;
+                case LuaIrOpcode.Unary when
+                    (LuaIrUnaryOperator)instruction.C is LuaIrUnaryOperator.Negate or
+                        LuaIrUnaryOperator.BitwiseNot or LuaIrUnaryOperator.LogicalNot:
+                    break;
+                case LuaIrOpcode.Binary when
+                    (LuaIrBinaryOperator)instruction.D is not
+                        (LuaIrBinaryOperator.Concatenate or LuaIrBinaryOperator.FloorDivide or
+                            LuaIrBinaryOperator.Modulo):
+                    break;
+                case LuaIrOpcode.Return when instruction.B >= 0:
+                    return programCounter + 1;
+                default:
+                    return 0;
+            }
+        }
+
+        return 0;
     }
 }
 

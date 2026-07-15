@@ -1,3 +1,4 @@
+using System.Buffers;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
 
@@ -13,6 +14,7 @@ internal sealed class LuaNativeByteBuffer
     private readonly long _maximumLogicalBytes;
     private readonly int _maximumLength;
     private byte[] _bytes;
+    private bool _bytesArePooled;
 
     internal LuaNativeByteBuffer(LuaHeap owner, int initialCapacity)
     {
@@ -29,7 +31,10 @@ internal sealed class LuaNativeByteBuffer
             ThrowQuotaExceeded(initialCapacity);
         }
 
-        _bytes = initialCapacity == 0 ? [] : new byte[initialCapacity];
+        _bytes = initialCapacity == 0
+            ? []
+            : ArrayPool<byte>.Shared.Rent(initialCapacity);
+        _bytesArePooled = initialCapacity != 0;
     }
 
     /// <summary>The number of bytes written to the buffer.</summary>
@@ -52,6 +57,41 @@ internal sealed class LuaNativeByteBuffer
         Length = (int)requiredLength;
     }
 
+    /// <summary>
+    /// Appends two adjacent spans with one capacity probe while preserving the quota failure
+    /// point and requested length of two individual appends.
+    /// </summary>
+    internal void AppendPair(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
+    {
+        var firstRequiredLength = (long)Length + first.Length;
+        if (firstRequiredLength > _maximumLength)
+        {
+            ThrowQuotaExceeded(firstRequiredLength);
+        }
+
+        var requiredLength = firstRequiredLength + second.Length;
+        if (requiredLength > _maximumLength)
+        {
+            ThrowQuotaExceeded(requiredLength);
+        }
+
+        EnsureCapacity((int)requiredLength);
+        first.CopyTo(_bytes.AsSpan(Length));
+        second.CopyTo(_bytes.AsSpan(Length + first.Length));
+        Length = (int)requiredLength;
+    }
+
+    /// <summary>
+    /// Reserves physical builder storage without committing logical string bytes. Hints are
+    /// clamped to the largest string permitted by the owner, so a conservative estimate cannot
+    /// change the error order of the append operation that follows.
+    /// </summary>
+    internal void ReserveCapacityHint(int capacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(capacity);
+        EnsureCapacity(Math.Min(capacity, _maximumLength));
+    }
+
     internal void ValidateOwner(LuaHeap owner)
     {
         if (_ownerIdentity != owner.Identity)
@@ -59,6 +99,28 @@ internal sealed class LuaNativeByteBuffer
             throw new LuaRuntimeException(
                 "Cannot move native continuation state between different LuaState instances.");
         }
+    }
+
+    /// <summary>
+    /// Transfers the backing array into an immutable Lua string. Long strings take ownership
+    /// without a second managed copy; short strings retain normal pool interning semantics.
+    /// </summary>
+    internal LuaString MoveToString(LuaStringPool pool)
+    {
+        ArgumentNullException.ThrowIfNull(pool);
+        if (pool.OwnerIdentity != _ownerIdentity)
+        {
+            throw new LuaRuntimeException(
+                "Cannot move native continuation state between different LuaState instances.");
+        }
+
+        var bytes = _bytes;
+        var length = Length;
+        var bytesArePooled = _bytesArePooled;
+        _bytes = [];
+        _bytesArePooled = false;
+        Length = 0;
+        return pool.GetOrCreateOwned(bytes, length, bytesArePooled);
     }
 
     private void EnsureCapacity(int requiredLength)
@@ -79,7 +141,15 @@ internal sealed class LuaNativeByteBuffer
             }
         }
 
-        Array.Resize(ref _bytes, capacity);
+        var replacement = ArrayPool<byte>.Shared.Rent(capacity);
+        _bytes.AsSpan(0, Length).CopyTo(replacement);
+        if (_bytesArePooled)
+        {
+            ArrayPool<byte>.Shared.Return(_bytes);
+        }
+
+        _bytes = replacement;
+        _bytesArePooled = true;
     }
 
     private void ThrowQuotaExceeded(long byteLength)

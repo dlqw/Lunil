@@ -241,7 +241,9 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         {
             var hasLoopCall = Enumerable.Range(0, function.Instructions.Length).Any(pc =>
                 function.Instructions[pc].Opcode is (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
-                IsInsideLoop(function, pc));
+                IsInsideLoop(function, pc) &&
+                (!optimized.TryGetValue(pc, out var optimization) ||
+                 optimization.Kind != LuaJitOptimizationKind.KnownClosureCall));
             var hasTablePic = optimized.Values.Any(static optimization =>
                 optimization.Kind is LuaJitOptimizationKind.TableGetPic or
                     LuaJitOptimizationKind.TableSetPic);
@@ -649,6 +651,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     LuaCompiledExitReason.DebugModeChanged);
             }
 
+            var safepointCountdown = LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum;
             while ((uint)frame.ProgramCounter < (uint)_function.Instructions.Length)
             {
                 var pc = frame.ProgramCounter;
@@ -667,6 +670,18 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return optimizedResult;
                     }
 
+                    if (frame.ProgramCounter <= pc && --safepointCountdown == 0)
+                    {
+                        safepointCountdown = LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum;
+                        if (!LuaCodegenAbiV3.PollGcSafepoint(context, thread, frame))
+                        {
+                            return LuaCompiledExit.Poll(
+                                frame.ProgramCounter,
+                                context.InstructionsConsumed,
+                                LuaCompiledExitReason.GarbageCollection);
+                        }
+                    }
+
                     continue;
                 }
 
@@ -674,6 +689,18 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 if (directExit is { } directResult)
                 {
                     return directResult;
+                }
+
+                if (frame.ProgramCounter <= pc && --safepointCountdown == 0)
+                {
+                    safepointCountdown = LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum;
+                    if (!LuaCodegenAbiV3.PollGcSafepoint(context, thread, frame))
+                    {
+                        return LuaCompiledExit.Poll(
+                            frame.ProgramCounter,
+                            context.InstructionsConsumed,
+                            LuaCompiledExitReason.GarbageCollection);
+                    }
                 }
             }
 
@@ -713,6 +740,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return BudgetPoll(context, frame.ProgramCounter);
                     }
 
+                    // Dead SSA use does not remove the physical Lua stack slot from
+                    // the heap root set. Clear it so a skipped copy cannot retain the
+                    // previous object across a compiled GC safepoint.
+                    LuaCodegenAbiV2.ClearRegistersUnchecked(
+                        thread,
+                        frame,
+                        instruction.A,
+                        1);
                     frame.ProgramCounter++;
                     return null;
                 case LuaJitOptimizationKind.NumericUnary:
@@ -872,6 +907,24 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         }
                         else
                         {
+                            if (LuaCodegenAbiV3.TryExecuteFramelessCall(
+                                    context,
+                                    thread,
+                                    frame,
+                                    instruction.A,
+                                    instruction.B,
+                                    instruction.C) != 0)
+                            {
+                                return LuaCodegenAbiV3.CanContinueAfterFramelessCall(
+                                    context,
+                                    thread,
+                                    frame)
+                                        ? null
+                                        : LuaCompiledExit.Continue(
+                                            frame.ProgramCounter,
+                                            context.InstructionsConsumed);
+                            }
+
                             LuaCodegenAbiV3.ExecuteKnownClosureCall(
                                 context,
                                 thread,
@@ -1055,7 +1108,10 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     LuaCodegenAbiV2.SetFrameTopUnchecked(thread, frame, instruction.A);
                     frame.ProgramCounter++;
                     return null;
-                case LuaIrOpcode.Close when LuaCodegenAbiV2.CanSkipClose(frame, instruction.A):
+                case LuaIrOpcode.Close when LuaCodegenAbiV2.CanSkipClose(
+                    thread,
+                    frame,
+                    instruction.A):
                     if (!Reserve(context, pc))
                     {
                         return BudgetPoll(context, pc);

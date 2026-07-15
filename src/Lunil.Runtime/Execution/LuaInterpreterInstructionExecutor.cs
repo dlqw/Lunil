@@ -68,13 +68,16 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.NewTable:
+                var allocationHint = frame.Closure.GetOrCreateTableAllocationHint(
+                    frame.ProgramCounter);
                 LuaExecutionEngine.Write(
                     thread,
                     frame,
                     instruction.A,
-                    LuaValue.FromTable(state.CreateTable(
+                    LuaValue.FromTable(state.CreateTableForAllocationSite(
                         instruction.C,
-                        instruction.B == 0 ? 0 : 1 << (instruction.B - 1))));
+                        instruction.B == 0 ? 0 : 1 << (instruction.B - 1),
+                        allocationHint)));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.GetTable:

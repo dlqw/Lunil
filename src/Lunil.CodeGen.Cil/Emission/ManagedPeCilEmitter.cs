@@ -424,7 +424,9 @@ internal static class ManagedPeCilEmitter
             "LuaCodegenAbiV2.CanExecuteUnaryPrimitive" or
             "LuaCodegenAbiV2.CanExecuteBinaryPrimitive" or
             "LuaCodegenAbiV3.ExecuteGetTable" or
-            "LuaCodegenAbiV3.ExecuteSetTable")
+            "LuaCodegenAbiV3.ExecuteSetTable" or
+            "LuaCodegenAbiV3.CanContinueAfterFramelessCall" or
+            "LuaCodegenAbiV3.PollGcSafepoint")
         {
             encoder.Type().Boolean();
             return;

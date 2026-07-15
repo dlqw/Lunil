@@ -197,6 +197,8 @@ internal static class LuaCilMethodPlanner
     private const int FrameArgument = 2;
     private const int ConsumedLocal = 0;
     private const int ProgramCounterLocal = 1;
+    private const int FramelessConsumedLocal = 2;
+    private const int SafepointCountdownLocal = 3;
 
     public static CilMethodPlan Build(
         LuaIrFunction function,
@@ -232,6 +234,12 @@ internal static class LuaCilMethodPlanner
 
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadInt32, 0));
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.StoreLocal, ConsumedLocal));
+        Emit(instructions, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadInt32,
+            LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum));
+        Emit(instructions, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.StoreLocal,
+            SafepointCountdownLocal));
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadArgument, FrameArgument));
         Emit(instructions, CilPlanInstruction.Call(CilWellKnownCalls.FrameGetProgramCounter));
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.StoreLocal, ProgramCounterLocal));
@@ -361,6 +369,7 @@ internal static class LuaCilMethodPlanner
         }
 
         var gcMaps = ImmutableArray.CreateBuilder<CilGcMap>();
+        var gcMapProgramCounters = new HashSet<int>();
         foreach (var map in liveness.GcMaps)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -368,6 +377,23 @@ internal static class LuaCilMethodPlanner
                 map.CanonicalProgramCounter < endProgramCounter)
             {
                 gcMaps.Add(map);
+                gcMapProgramCounters.Add(map.CanonicalProgramCounter);
+            }
+        }
+
+        // Bounded backedge polls are injected after the canonical instruction has
+        // completed, so they are not represented by the IR instruction's effects.
+        // Preserve their post-instruction roots in the same canonical GC-map table.
+        foreach (var safePoint in instructions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pc = safePoint.CanonicalProgramCounter;
+            if (safePoint.CallTarget is { IsGcSafePoint: true } &&
+                pc >= startProgramCounter &&
+                pc < endProgramCounter &&
+                gcMapProgramCounters.Add(pc))
+            {
+                gcMaps.Add(new CilGcMap(pc, liveness.LiveAfter[pc]));
             }
         }
 
@@ -399,6 +425,14 @@ internal static class LuaCilMethodPlanner
             [
                 new CilLocal(ConsumedLocal, CilStackValueKind.Int32, "consumed"),
                 new CilLocal(ProgramCounterLocal, CilStackValueKind.Int32, "pc"),
+                new CilLocal(
+                    FramelessConsumedLocal,
+                    CilStackValueKind.Int32,
+                    "framelessConsumed"),
+                new CilLocal(
+                    SafepointCountdownLocal,
+                    CilStackValueKind.Int32,
+                    "safepointCountdown"),
             ],
             Instructions = instructions.ToImmutable(),
             GcMaps = gcMaps.ToImmutable(),
@@ -699,16 +733,26 @@ internal static class LuaCilMethodPlanner
                 }
                 if (IsInRange(instruction.B, startProgramCounter, endProgramCounter))
                 {
+                    var takenLabel = new CilLabel(nextLabel++);
                     Emit(plan, CilPlanInstruction.WithLabel(
                         instruction.Opcode == LuaIrOpcode.JumpIfTrue
                             ? CilPlanOpCode.BranchTrue
                             : CilPlanOpCode.BranchFalse,
-                        LabelFor(instruction.B, startProgramCounter, pcLabels),
+                        takenLabel,
                         pc));
                     BranchToNext(
                         plan,
                         pc,
                         function,
+                        startProgramCounter,
+                        endProgramCounter,
+                        pcLabels,
+                        consumedLocal);
+                    Emit(plan, CilPlanInstruction.MarkLabel(takenLabel, pc));
+                    BranchOrContinue(
+                        plan,
+                        instruction.B,
+                        pc,
                         startProgramCounter,
                         endProgramCounter,
                         pcLabels,
@@ -745,8 +789,77 @@ internal static class LuaCilMethodPlanner
                 EmitExit(plan, CilWellKnownCalls.ExitReturn, pc, consumedLocal, reason: null);
                 break;
             case LuaIrOpcode.Call:
-                EmitExit(plan, CilWellKnownCalls.ExitCall, pc, consumedLocal, reason: null);
-                break;
+                {
+                    var slowCall = new CilLabel(nextLabel++);
+                    LoadArgument(plan, ContextArgument, pc);
+                    LoadArgument(plan, ThreadArgument, pc);
+                    LoadArgument(plan, FrameArgument, pc);
+                    LoadInt32(plan, instruction.A, pc);
+                    LoadInt32(plan, instruction.B, pc);
+                    LoadInt32(plan, instruction.C, pc);
+                    Emit(plan, CilPlanInstruction.Call(
+                        CilWellKnownCalls.TryExecuteFramelessCall,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithInt32(
+                        CilPlanOpCode.StoreLocal,
+                        FramelessConsumedLocal,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithInt32(
+                        CilPlanOpCode.LoadLocal,
+                        FramelessConsumedLocal,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithLabel(
+                        CilPlanOpCode.BranchFalse,
+                        slowCall,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithInt32(
+                        CilPlanOpCode.LoadLocal,
+                        consumedLocal,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithInt32(
+                        CilPlanOpCode.LoadLocal,
+                        FramelessConsumedLocal,
+                        pc));
+                    Emit(plan, CilPlanInstruction.Simple(CilPlanOpCode.Add, pc));
+                    Emit(plan, CilPlanInstruction.WithInt32(
+                        CilPlanOpCode.StoreLocal,
+                        consumedLocal,
+                        pc));
+                    var continueInMethod = new CilLabel(nextLabel++);
+                    LoadArgument(plan, ContextArgument, pc);
+                    LoadArgument(plan, ThreadArgument, pc);
+                    LoadArgument(plan, FrameArgument, pc);
+                    Emit(plan, CilPlanInstruction.Call(
+                        CilWellKnownCalls.CanContinueAfterFramelessCall,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithLabel(
+                        CilPlanOpCode.BranchTrue,
+                        continueInMethod,
+                        pc));
+                    EmitExit(
+                        plan,
+                        CilWellKnownCalls.ExitContinue,
+                        pc + 1,
+                        consumedLocal,
+                        reason: null);
+                    Emit(plan, CilPlanInstruction.MarkLabel(continueInMethod, pc));
+                    BranchToNext(
+                        plan,
+                        pc,
+                        function,
+                        startProgramCounter,
+                        endProgramCounter,
+                        pcLabels,
+                        consumedLocal);
+                    Emit(plan, CilPlanInstruction.MarkLabel(slowCall, pc));
+                    EmitExit(
+                        plan,
+                        CilWellKnownCalls.ExitCall,
+                        pc,
+                        consumedLocal,
+                        reason: null);
+                    break;
+                }
             case LuaIrOpcode.TailCall:
                 EmitExit(plan, CilWellKnownCalls.ExitTailCall, pc, consumedLocal, reason: null);
                 break;
@@ -779,6 +892,17 @@ internal static class LuaCilMethodPlanner
                 LoadInt32(plan, instruction.A, pc);
                 LoadInt32(plan, instruction.B, pc);
                 Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteNumericForLoop, pc));
+                if (IsInRange(instruction.B, startProgramCounter, endProgramCounter))
+                {
+                    var dispatchLabel = new CilLabel(nextLabel++);
+                    EmitBoundedGcSafepoint(
+                        plan,
+                        pc,
+                        targetProgramCounter: null,
+                        continueLabel: dispatchLabel,
+                        consumedLocal: consumedLocal);
+                    Emit(plan, CilPlanInstruction.MarkLabel(dispatchLabel, pc));
+                }
                 BranchToFrameProgramCounter(
                     plan,
                     pc,
@@ -802,6 +926,7 @@ internal static class LuaCilMethodPlanner
     {
         if (instruction.Opcode == LuaIrOpcode.Close)
         {
+            LoadArgument(plan, ThreadArgument, pc);
             LoadArgument(plan, FrameArgument, pc);
             LoadInt32(plan, instruction.A, pc);
             Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.CanSkipClose, pc));
@@ -905,6 +1030,17 @@ internal static class LuaCilMethodPlanner
     {
         if (IsInRange(targetProgramCounter, startProgramCounter, endProgramCounter))
         {
+            if (targetProgramCounter <= sourceProgramCounter)
+            {
+                EmitBoundedGcSafepoint(
+                    plan,
+                    sourceProgramCounter,
+                    targetProgramCounter,
+                    LabelFor(targetProgramCounter, startProgramCounter, labels),
+                    consumedLocal);
+                return;
+            }
+
             Emit(plan, CilPlanInstruction.WithLabel(
                 CilPlanOpCode.Branch,
                 LabelFor(targetProgramCounter, startProgramCounter, labels),
@@ -918,6 +1054,88 @@ internal static class LuaCilMethodPlanner
             targetProgramCounter,
             consumedLocal,
             reason: null);
+    }
+
+    private static void EmitBoundedGcSafepoint(
+        ImmutableArray<CilPlanInstruction>.Builder plan,
+        int sourceProgramCounter,
+        int? targetProgramCounter,
+        CilLabel continueLabel,
+        int consumedLocal)
+    {
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            SafepointCountdownLocal,
+            sourceProgramCounter));
+        LoadInt32(plan, 1, sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Simple(CilPlanOpCode.Subtract, sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.StoreLocal,
+            SafepointCountdownLocal,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            SafepointCountdownLocal,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithLabel(
+            CilPlanOpCode.BranchTrue,
+            continueLabel,
+            sourceProgramCounter));
+        LoadInt32(
+            plan,
+            LuaCodegenAbiV3.CompiledBackedgeSafepointQuantum,
+            sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.StoreLocal,
+            SafepointCountdownLocal,
+            sourceProgramCounter));
+        LoadArgument(plan, ContextArgument, sourceProgramCounter);
+        LoadArgument(plan, ThreadArgument, sourceProgramCounter);
+        LoadArgument(plan, FrameArgument, sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Call(
+            CilWellKnownCalls.PollGcSafepoint,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithLabel(
+            CilPlanOpCode.BranchTrue,
+            continueLabel,
+            sourceProgramCounter));
+        if (targetProgramCounter is int staticTargetProgramCounter)
+        {
+            EmitExit(
+                plan,
+                CilWellKnownCalls.ExitPoll,
+                staticTargetProgramCounter,
+                consumedLocal,
+                LuaCompiledExitReason.GarbageCollection);
+            return;
+        }
+
+        EmitPollFromFrameProgramCounter(plan, sourceProgramCounter, consumedLocal);
+    }
+
+    private static void EmitPollFromFrameProgramCounter(
+        ImmutableArray<CilPlanInstruction>.Builder plan,
+        int sourceProgramCounter,
+        int consumedLocal)
+    {
+        LoadArgument(plan, FrameArgument, sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Call(
+            CilWellKnownCalls.FrameGetProgramCounter,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.WithInt32(
+            CilPlanOpCode.LoadLocal,
+            consumedLocal,
+            sourceProgramCounter));
+        LoadInt32(
+            plan,
+            (int)LuaCompiledExitReason.GarbageCollection,
+            sourceProgramCounter);
+        Emit(plan, CilPlanInstruction.Call(
+            CilWellKnownCalls.ExitPoll,
+            sourceProgramCounter));
+        Emit(plan, CilPlanInstruction.Simple(
+            CilPlanOpCode.Return,
+            sourceProgramCounter));
     }
 
     private static bool IsInRange(
