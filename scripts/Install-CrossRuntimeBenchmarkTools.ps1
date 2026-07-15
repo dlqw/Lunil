@@ -158,8 +158,16 @@ popd
     Invoke-NativeCommand 'make' @(
         '-C', (Join-Path $luaSource 'src'), $luaTarget,
         "-j$jobs", 'MYCFLAGS=-O3 -DNDEBUG')
-    Invoke-NativeCommand 'make' @(
+    $luaJitMakeArguments = @(
         '-C', $luaJitSource, "-j$jobs", 'BUILDMODE=static', 'XCFLAGS=-O3 -DNDEBUG')
+    if ($IsMacOS) {
+        # Current LuaJIT requires an explicit deployment target when building for Darwin.
+        # Match the oldest supported OS for each architecture instead of inheriting an
+        # Xcode-runner-specific default into the benchmark executable.
+        $deploymentTarget = if ($RuntimeIdentifier -eq 'osx-arm64') { '11.0' } else { '10.15' }
+        $luaJitMakeArguments += "MACOSX_DEPLOYMENT_TARGET=$deploymentTarget"
+    }
+    Invoke-NativeCommand 'make' $luaJitMakeArguments
     $luaExecutable = Join-Path $binDirectory 'lua'
     $luaJitExecutable = Join-Path $binDirectory 'luajit'
     Copy-Item -LiteralPath (Join-Path $luaSource 'src/lua') -Destination $luaExecutable
