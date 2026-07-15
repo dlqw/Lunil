@@ -250,7 +250,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void SieveFallbackUsesOneReferenceRouteTransition()
+    public void TableAccessFallbackUsesOneReferenceRouteTransition()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -264,25 +264,18 @@ public sealed class LuaJitExecutorTests
         var events = new ConcurrentQueue<LuaJitEvent>();
         executor.EventOccurred += (_, jitEvent) => events.Enqueue(jitEvent);
         var module = Compile("""
-            local limit = 500
-            local sieve = {}
-            for index = 2, limit do sieve[index] = true end
-            for index = 2, 22 do
-                if sieve[index] then
-                    for composite = index * index, limit, index do
-                        sieve[composite] = false
-                    end
-                end
+            local values = {}
+            local total = 0
+            for index = 1, 500 do
+                values[index] = index
+                values.field = index
+                total = total + values[index] + values.field
             end
-            local count = 0
-            for index = 2, limit do
-                if sieve[index] then count = count + 1 end
-            end
-            return count
+            return total
             """);
 
-        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(95));
-        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(95));
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(250_500));
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(250_500));
 
         Assert.Equal(0, executor.Statistics.CompiledInvocations);
         Assert.Equal(1, executor.Statistics.InterpreterFallbacks);
