@@ -9,6 +9,8 @@ These Lunil-internal qualification measurements are intentionally separate from 
 5.4.8 as the per-RID baseline and compares LuaJIT, MoonSharp, and all Lunil configurations using
 the same portable source, balanced rounds, correctness validation, raw CSV/JSON evidence, and a
 six-RID aggregate report.
+Unlike the internal hosted-runner timing evidence, the cross-runtime workflow applies a hard
+MoonSharp-relative product gate to Auto and Tier 2 on every workload and RID.
 
 ## M0 Windows x64 baseline
 
@@ -640,3 +642,47 @@ fib_iter at least 0.95x, Mandelbrot at least 0.90x, completed-entry parity, and 
 exits. Each paired allocation median must remain within 1.10x of Tier 1. These local measurements
 are smoke evidence; the protected six-RID run remains the rollout
 authority.
+
+## M19 cross-runtime table, call, and string throughput
+
+M19 adds a separate common-source comparison against native Lua 5.4.8, LuaJIT, and MoonSharp.
+Native Lua is always normalized to `1.000x`; MoonSharp is the hard managed product reference.
+Auto and Tier 2 must exceed MoonSharp by at least 1.05x median on every workload, with a paired
+bootstrap CI95 lower bound of at least 1.00x, one stable route, and clean timed-region fallback and
+deoptimization telemetry.
+
+Targeted sampled-CPU traces, rather than repeated full-suite runs, identified three dominant
+non-numeric costs:
+
+1. sieve spent most compiled time routing existing integer array slots through generic table-key
+   normalization and probing;
+2. string construction repeated numeric parsing/conversion after the primitive guard had already
+   established exact numeric kinds; and
+3. Tier 2 known-closure calls returned to the scheduler even after a frameless leaf completed,
+   while Tier 1 already continued inside its emitted method.
+
+The runtime now updates/reads proven dense slots directly, uses exact numeric operations after the
+primitive guard, pools table/string backing storage with allocation-site capacity feedback, and
+continues successful known frameless calls inside the same Tier 2 method. Table ownership, logical
+quota, mutation versions, write barriers, exact instruction budget, GC/debug/finalizer, and
+fallback contracts remain covered by focused tests.
+
+The final complete win-x64 Release record at
+`artifacts/cross-runtime-performance/win-x64/final-full-v20` ran nine engines, eight workloads, and
+six balanced rounds (432 validated samples). Auto/Tier 2 achieved a 1.655x/1.691x geometric mean
+versus MoonSharp. Their per-workload paired medians were:
+
+| Workload | Auto / MoonSharp | Tier 2 / MoonSharp |
+|---|---:|---:|
+| arithmetic | 2.388x | 2.372x |
+| fib_iter | 1.463x | 1.484x |
+| mandelbrot | 1.352x | 1.339x |
+| control_flow | 1.960x | 1.918x |
+| function_calls | 1.970x | 2.198x |
+| table_access | 1.915x | 2.015x |
+| sieve | 1.304x | 1.352x |
+| string_build | 1.233x | 1.233x |
+
+Every paired CI95 lower bound exceeded 1.00x; `string_build` was the narrowest at 1.126x for Auto
+and 1.145x for Tier 2. See [cross-runtime-performance.md](cross-runtime-performance.md) for the
+pinned supply chain, paired estimator, raw report schema, and six-RID fail-closed aggregation.

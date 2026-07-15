@@ -222,6 +222,21 @@ dotnet run --configuration Release \
   --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
 ```
 
+The cross-runtime workflow builds pinned native Lua 5.4.8 and LuaJIT, then compares them with
+MoonSharp and all Lunil configurations using identical Lua source. Native Lua is always the
+`1.000x` baseline. Lunil Auto and Tier 2 are release-gated per workload at a median of at least
+`1.05x` versus MoonSharp with a paired CI95 lower bound of at least `1.00x`:
+
+```powershell
+./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier win-x64
+./scripts/Measure-CrossRuntimePerformance.ps1 `
+  -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
+```
+
+The qualified Windows x64 matrix passes all eight workloads; six-RID CI rejects any missing,
+incomplete, or failed RID report. See the
+[cross-runtime performance workflow](docs/cross-runtime-performance.md) for results and evidence.
+
 ## Using Lunil as a library
 
 Tagged releases provide six RID bundles and publish the corresponding `Lunil.*`

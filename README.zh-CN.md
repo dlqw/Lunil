@@ -211,6 +211,20 @@ dotnet run --configuration Release \
   --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
 ```
 
+跨运行时工作流会构建固定版本的原生 Lua 5.4.8 与 LuaJIT，并用完全相同的 Lua 源码对比
+MoonSharp 和 Lunil 全部配置。原生 Lua 始终是 `1.000x` 基准；Lunil Auto 与 Tier 2 的发布门禁
+要求每个 workload 相对 MoonSharp 的中位加速至少为 `1.05x`，配对 CI95 下界至少为 `1.00x`：
+
+```powershell
+./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier win-x64
+./scripts/Measure-CrossRuntimePerformance.ps1 `
+  -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
+```
+
+已验收的 Windows x64 矩阵八项 workload 全部通过；六 RID CI 会拒绝任何缺失、不完整或门禁
+失败的 RID 报告。完整结果与证据契约见
+[跨运行时性能工作流](docs/cross-runtime-performance.md)。
+
 ## 将 Lunil 用作库
 
 Tag 发布提供六 RID bundle，并将对应的 `Lunil.*` NuGet package 和 symbol package
