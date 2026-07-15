@@ -19,6 +19,8 @@ public sealed class LuaClosure : LuaGcObject
         ArgumentNullException.ThrowIfNull(stringConstants);
         Module = module;
         Function = function;
+        HasSourceLineInformation = function.Instructions.Any(
+            static instruction => instruction.SourceLine > 0);
         _upvalues = [.. upvalues];
         StringConstants = stringConstants;
     }
@@ -26,6 +28,8 @@ public sealed class LuaClosure : LuaGcObject
     public LuaIrModule Module { get; }
 
     public LuaIrFunction Function { get; }
+
+    internal bool HasSourceLineInformation { get; }
 
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
 

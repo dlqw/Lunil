@@ -375,7 +375,7 @@ public static class LuaAotArtifactLoader
         if (manifest.Magic != LuaAotArtifactManifest.CurrentMagic ||
             manifest.ArtifactSchemaVersion != LuaAotArtifactManifest.CurrentArtifactSchemaVersion ||
             manifest.IrFormatVersion != LuaIrModule.CurrentFormatVersion ||
-            manifest.RuntimeAbiVersion != LuaCodegenAbiV2.RuntimeAbiVersion ||
+            manifest.RuntimeAbiVersion != LuaCodegenAbiV3.RuntimeAbiVersion ||
             manifest.CodegenVersion != LuaAotArtifactManifest.CurrentCodegenVersion)
         {
             return new LuaAotDiagnostic(

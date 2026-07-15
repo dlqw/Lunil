@@ -23,15 +23,24 @@ internal enum LuaTier2NumericSpecializationStatus : byte
     PolymorphicNumericProfile,
     ManagedOptimizationRequired,
     UnsupportedInstruction,
+    InsufficientTier2Work,
+    HotLoopCallBoundary,
 }
 
 internal static class ReflectionEmitLuaTier2Compiler
 {
+    private delegate LuaCompiledExit LuaCompiledMethodWithSites(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaTier2RuntimeSites sites);
+
     private static readonly Type[] CompiledMethodParameters =
     [
         typeof(LuaExecutionContext),
         typeof(LuaThread),
         typeof(LuaFrame),
+        typeof(LuaTier2RuntimeSites),
     ];
 
     private static readonly MethodInfo CanExecuteCompiledFrame = Method(
@@ -66,14 +75,124 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
         [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteVarArg = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ExecuteVarArg),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
     private static readonly MethodInfo MaterializeConstant = Method(
         typeof(LuaCodegenAbiV1),
         nameof(LuaCodegenAbiV1.MaterializeConstant),
         [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int)]);
+    private static readonly MethodInfo ReadUpvalue = Method(
+        typeof(LuaCodegenAbiV1),
+        nameof(LuaCodegenAbiV1.ReadUpvalue),
+        [typeof(LuaFrame), typeof(int)]);
+    private static readonly MethodInfo WriteUpvalue = Method(
+        typeof(LuaCodegenAbiV1),
+        nameof(LuaCodegenAbiV1.WriteUpvalue),
+        [typeof(LuaFrame), typeof(int), typeof(LuaValue)]);
+    private static readonly MethodInfo ExecuteNewTable = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteNewTable),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo ExecuteGetTable = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteGetTable),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo ExecuteSetTable = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteSetTable),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo ExecuteSetList = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteSetList),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int), typeof(int)]);
+    private static readonly MethodInfo ExecuteClosure = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteClosure),
+        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
+    private static readonly MethodInfo ExecuteVarArg = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteVarArg),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
+    private static readonly MethodInfo TryExecuteTableGetPic = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.TryExecuteTableGetPic),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo TryExecuteTableSetPic = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.TryExecuteTableSetPic),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo CanExecuteKnownClosureCall = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.CanExecuteKnownClosureCall),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(LuaCodegenCallSiteCache), typeof(int), typeof(int)]);
+    private static readonly MethodInfo ExecuteKnownClosureCall = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteKnownClosureCall),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo ExecuteKnownClosureTailCall = Method(
+        typeof(LuaCodegenAbiV3),
+        nameof(LuaCodegenAbiV3.ExecuteKnownClosureTailCall),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(int),
+            typeof(int),
+        ]);
+    private static readonly MethodInfo GetTableSite = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.GetTableSite),
+        [typeof(int)]);
+    private static readonly MethodInfo GetCallSite = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.GetCallSite),
+        [typeof(int)]);
+    private static readonly MethodInfo CanSkipClose = Method(
+        typeof(LuaCodegenAbiV2),
+        nameof(LuaCodegenAbiV2.CanSkipClose),
+        [typeof(LuaFrame), typeof(int)]);
     private static readonly MethodInfo ReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
@@ -128,6 +247,18 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Return),
         [typeof(int), typeof(int)]);
+    private static readonly MethodInfo ContinueExit = Method(
+        typeof(LuaCompiledExit),
+        nameof(LuaCompiledExit.Continue),
+        [typeof(int), typeof(int)]);
+    private static readonly MethodInfo CallExit = Method(
+        typeof(LuaCompiledExit),
+        nameof(LuaCompiledExit.Call),
+        [typeof(int), typeof(int)]);
+    private static readonly MethodInfo TailCallExit = Method(
+        typeof(LuaCompiledExit),
+        nameof(LuaCompiledExit.TailCall),
+        [typeof(int), typeof(int)]);
     private static readonly MethodInfo DeoptExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
@@ -167,6 +298,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         var generator = dynamicMethod.GetILGenerator();
         var firstValue = generator.DeclareLocal(typeof(LuaValue));
         var secondValue = generator.DeclareLocal(typeof(LuaValue));
+        var picExecutionResult = generator.DeclareLocal(typeof(LuaCodegenPicExecutionResult));
         var labels = new Label[function.Instructions.Length];
         var budgetExits = new Label[function.Instructions.Length];
         var guardExits = new Label[function.Instructions.Length];
@@ -210,7 +342,8 @@ internal static class ReflectionEmitLuaTier2Compiler
                     slowPathExits[pc],
                     invalidatedExit,
                     firstValue,
-                    secondValue);
+                    secondValue,
+                    picExecutionResult);
             }
             else
             {
@@ -251,7 +384,11 @@ internal static class ReflectionEmitLuaTier2Compiler
         cancellationToken.ThrowIfCancellationRequested();
         var cilEmissionDuration = Stopwatch.GetElapsedTime(emissionStarted);
         var delegateStarted = Stopwatch.GetTimestamp();
-        method = (LuaCompiledMethod)dynamicMethod.CreateDelegate(typeof(LuaCompiledMethod));
+        var compiledWithSites = (LuaCompiledMethodWithSites)dynamicMethod.CreateDelegate(
+            typeof(LuaCompiledMethodWithSites));
+        var runtimeSites = new LuaTier2RuntimeSites(function.Instructions.Length);
+        method = (context, thread, frame) =>
+            compiledWithSites(context, thread, frame, runtimeSites);
         var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
         estimatedCodeBytes = checked(
             function.Instructions.Length * 32L + optimized.Count * 48L);
@@ -265,7 +402,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         LuaIrFunction function,
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized)
     {
-        var hasNumericHotspot = false;
+        var hasSpecializableHotspot = false;
         foreach (var pair in optimized)
         {
             var pc = pair.Key;
@@ -285,7 +422,7 @@ internal static class ReflectionEmitLuaTier2Compiler
                         return LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile;
                     }
 
-                    hasNumericHotspot = true;
+                    hasSpecializableHotspot = true;
                     break;
                 case LuaJitOptimizationKind.NumericBinary:
                     if (!IsExactNumericKind(optimization.FirstKinds) ||
@@ -294,7 +431,12 @@ internal static class ReflectionEmitLuaTier2Compiler
                         return LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile;
                     }
 
-                    hasNumericHotspot = true;
+                    hasSpecializableHotspot = true;
+                    break;
+                case LuaJitOptimizationKind.TableGetPic:
+                case LuaJitOptimizationKind.TableSetPic:
+                case LuaJitOptimizationKind.KnownClosureCall:
+                    hasSpecializableHotspot = true;
                     break;
                 default:
                     return LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired;
@@ -309,7 +451,7 @@ internal static class ReflectionEmitLuaTier2Compiler
             }
         }
 
-        return hasNumericHotspot
+        return hasSpecializableHotspot
             ? LuaTier2NumericSpecializationStatus.Eligible
             : LuaTier2NumericSpecializationStatus.NoNumericHotspot;
     }
@@ -320,10 +462,19 @@ internal static class ReflectionEmitLuaTier2Compiler
             LuaIrOpcode.LoadConstant or
             LuaIrOpcode.LoadNil or
             LuaIrOpcode.Move or
+            LuaIrOpcode.GetUpvalue or
+            LuaIrOpcode.SetUpvalue or
+            LuaIrOpcode.NewTable or
+            LuaIrOpcode.GetTable or
+            LuaIrOpcode.SetTable or
+            LuaIrOpcode.SetList or
+            LuaIrOpcode.Closure or
             LuaIrOpcode.SetTop or
             LuaIrOpcode.Close or
             LuaIrOpcode.JumpIfFalse or
             LuaIrOpcode.JumpIfTrue or
+            LuaIrOpcode.Call or
+            LuaIrOpcode.TailCall or
             LuaIrOpcode.Return or
             LuaIrOpcode.NumericForPrepare or
             LuaIrOpcode.NumericForLoop or
@@ -360,7 +511,8 @@ internal static class ReflectionEmitLuaTier2Compiler
         Label slowPathExit,
         Label invalidatedExit,
         LocalBuilder firstValue,
-        LocalBuilder secondValue)
+        LocalBuilder secondValue,
+        LocalBuilder picExecutionResult)
     {
         switch (optimization.Kind)
         {
@@ -435,6 +587,66 @@ internal static class ReflectionEmitLuaTier2Compiler
                     labels,
                     invalidatedExit);
                 break;
+            case LuaJitOptimizationKind.TableGetPic:
+            case LuaJitOptimizationKind.TableSetPic:
+                {
+                    var isGet = optimization.Kind == LuaJitOptimizationKind.TableGetPic;
+                    generator.Emit(OpCodes.Ldarg_0);
+                    generator.Emit(OpCodes.Ldarg_1);
+                    generator.Emit(OpCodes.Ldarg_2);
+                    generator.Emit(OpCodes.Ldarg_3);
+                    EmitInt32(generator, pc);
+                    generator.Emit(OpCodes.Callvirt, GetTableSite);
+                    EmitInt32(generator, instruction.A);
+                    EmitInt32(generator, instruction.B);
+                    EmitInt32(generator, instruction.C);
+                    generator.Emit(
+                        OpCodes.Call,
+                        isGet ? TryExecuteTableGetPic : TryExecuteTableSetPic);
+                    generator.Emit(OpCodes.Stloc, picExecutionResult);
+                    generator.Emit(OpCodes.Ldloc, picExecutionResult);
+                    EmitInt32(generator, (int)LuaCodegenPicExecutionResult.GuardFailure);
+                    generator.Emit(OpCodes.Beq, guardExit);
+                    generator.Emit(OpCodes.Ldloc, picExecutionResult);
+                    EmitInt32(generator, (int)LuaCodegenPicExecutionResult.InstructionBudget);
+                    generator.Emit(OpCodes.Beq, budgetExit);
+
+                    EmitNext(generator, pc + 1, labels, invalidatedExit);
+                    break;
+                }
+            case LuaJitOptimizationKind.KnownClosureCall:
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                generator.Emit(OpCodes.Ldarg_3);
+                EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Callvirt, GetCallSite);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, optimization.CallTarget!.FunctionId);
+                generator.Emit(OpCodes.Call, CanExecuteKnownClosureCall);
+                generator.Emit(OpCodes.Brfalse, guardExit);
+                EmitReserve(generator, optimization.InstructionCount, budgetExit);
+                generator.Emit(OpCodes.Ldarg_0);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                if (instruction.Opcode == LuaIrOpcode.TailCall)
+                {
+                    generator.Emit(OpCodes.Call, ExecuteKnownClosureTailCall);
+                }
+                else
+                {
+                    EmitInt32(generator, instruction.C);
+                    generator.Emit(OpCodes.Call, ExecuteKnownClosureCall);
+                }
+
+                EmitInt32(
+                    generator,
+                    instruction.Opcode == LuaIrOpcode.TailCall ? pc : pc + 1);
+                EmitInstructionsConsumed(generator);
+                generator.Emit(OpCodes.Call, ContinueExit);
+                generator.Emit(OpCodes.Ret);
+                break;
             default:
                 generator.Emit(OpCodes.Br, slowPathExit);
                 break;
@@ -484,6 +696,91 @@ internal static class ReflectionEmitLuaTier2Compiler
                 generator.Emit(OpCodes.Call, WriteRegister);
                 EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
+            case LuaIrOpcode.GetUpvalue:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ReadUpvalue);
+                generator.Emit(OpCodes.Call, WriteRegister);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.SetUpvalue:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitReadRegister(generator, instruction.B);
+                generator.Emit(OpCodes.Call, WriteUpvalue);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.NewTable:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_0);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                EmitInt32(generator, instruction.C);
+                generator.Emit(OpCodes.Call, ExecuteNewTable);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.GetTable:
+            case LuaIrOpcode.SetTable:
+                {
+                    EmitReserve(generator, 1, budgetExit);
+                    generator.Emit(OpCodes.Ldarg_0);
+                    generator.Emit(OpCodes.Ldarg_1);
+                    generator.Emit(OpCodes.Ldarg_2);
+                    EmitInt32(generator, instruction.A);
+                    EmitInt32(generator, instruction.B);
+                    EmitInt32(generator, instruction.C);
+                    generator.Emit(
+                        OpCodes.Call,
+                        instruction.Opcode == LuaIrOpcode.GetTable
+                            ? ExecuteGetTable
+                            : ExecuteSetTable);
+                    var completed = generator.DefineLabel();
+                    generator.Emit(OpCodes.Brtrue, completed);
+                    EmitInt32(generator, pc + 1);
+                    EmitInstructionsConsumed(generator);
+                    generator.Emit(OpCodes.Call, ContinueExit);
+                    generator.Emit(OpCodes.Ret);
+                    generator.MarkLabel(completed);
+                    EmitNext(generator, pc + 1, labels, invalidatedExit);
+                    break;
+                }
+            case LuaIrOpcode.SetList:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                EmitInt32(generator, instruction.C);
+                EmitInt32(generator, instruction.D);
+                generator.Emit(OpCodes.Call, ExecuteSetList);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.Closure:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_0);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ExecuteClosure);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.VarArg:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ExecuteVarArg);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                break;
             case LuaIrOpcode.SetTop:
                 EmitReserve(generator, 1, budgetExit);
                 generator.Emit(OpCodes.Ldarg_1);
@@ -493,9 +790,10 @@ internal static class ReflectionEmitLuaTier2Compiler
                 EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
             case LuaIrOpcode.Close:
-                // Exact-numeric Tier 2 is admitted only when every instruction has native
-                // coverage. In particular, Closure and MarkToBeClosed are rejected, so a Close
-                // in an admitted function cannot own an open upvalue or a __close slot.
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                generator.Emit(OpCodes.Call, CanSkipClose);
+                generator.Emit(OpCodes.Brfalse, slowPathExit);
                 EmitReserve(generator, 1, budgetExit);
                 EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
@@ -556,14 +854,15 @@ internal static class ReflectionEmitLuaTier2Compiler
                 generator.Emit(OpCodes.Call, ExecuteNumericForLoop);
                 EmitFrameProgramCounterDispatch(generator, labels, invalidatedExit);
                 break;
-            case LuaIrOpcode.VarArg:
+            case LuaIrOpcode.Call:
+            case LuaIrOpcode.TailCall:
                 EmitReserve(generator, 1, budgetExit);
-                generator.Emit(OpCodes.Ldarg_1);
-                generator.Emit(OpCodes.Ldarg_2);
-                EmitInt32(generator, instruction.A);
-                EmitInt32(generator, instruction.B);
-                generator.Emit(OpCodes.Call, ExecuteVarArg);
-                EmitNext(generator, pc + 1, labels, invalidatedExit);
+                EmitInt32(generator, pc);
+                EmitInstructionsConsumed(generator);
+                generator.Emit(
+                    OpCodes.Call,
+                    instruction.Opcode == LuaIrOpcode.Call ? CallExit : TailCallExit);
+                generator.Emit(OpCodes.Ret);
                 break;
             default:
                 generator.Emit(OpCodes.Br, slowPathExit);

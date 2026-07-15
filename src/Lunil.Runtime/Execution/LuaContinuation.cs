@@ -86,4 +86,18 @@ internal sealed class LuaContinuation
         IsYieldBarrier = false;
         NativeCallbackIsProtected = false;
     }
+
+    /// <summary>Clears both transient continuation state and frame-lifetime protection state.</summary>
+    internal void ResetForFrameReuse()
+    {
+        Reset();
+        ProtectionKind = LuaProtectedCallKind.None;
+        ProtectionFunction = LuaValue.Nil;
+        ErrorHandler = LuaValue.Nil;
+        IsCloseHandler = false;
+        IsNativeProtectedBoundary = false;
+        NativeProtectedReturnBase = 0;
+        NativeProtectedExpectedResults = 0;
+        NativeProtectedTailCall = false;
+    }
 }

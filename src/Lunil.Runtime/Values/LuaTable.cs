@@ -1,4 +1,5 @@
 using Lunil.Runtime.Memory;
+using Lunil.Runtime.Operations;
 
 namespace Lunil.Runtime.Values;
 
@@ -16,6 +17,8 @@ public sealed class LuaTable : LuaGcObject
     private int _hashCount;
     private int _tombstoneCount;
     private LuaTable? _metatable;
+    private long _absentMetamethodMask;
+    private long _contentVersion;
 
     internal LuaTable(LuaHeap owner, int arrayCapacity = 0, int hashCapacity = 0)
         : base(owner, CalculateLogicalSize(arrayCapacity, hashCapacity))
@@ -75,6 +78,13 @@ public sealed class LuaTable : LuaGcObject
 
     public ulong MetatableVersion { get; private set; }
 
+    /// <summary>
+    /// Monotonic version of the table's logical key/value content. This is an internal
+    /// code-generation contract used to invalidate metatable caches without exposing the
+    /// hash buckets or their storage layout.
+    /// </summary>
+    internal ulong ContentVersion => unchecked((ulong)Volatile.Read(ref _contentVersion));
+
     public LuaTable? Metatable => _metatable;
 
     public int ArrayLength
@@ -93,21 +103,105 @@ public sealed class LuaTable : LuaGcObject
 
     public LuaValue Get(LuaValue key)
     {
+        return TryGetExistingEntry(key, out var value, out _) ? value : LuaValue.Nil;
+    }
+
+    /// <summary>
+    /// Performs one raw lookup and, when the key is present, returns an opaque handle that can
+    /// update that exact entry without probing the table again. The handle never exposes array
+    /// or hash storage to code-generation consumers and is valid only until the next table
+    /// mutation.
+    /// </summary>
+    internal bool TryGetExistingEntry(
+        LuaValue key,
+        out LuaValue value,
+        out LuaTableExistingEntry entry)
+    {
         Owner.ValidateValue(key);
         if (key.IsNil || key.Kind == LuaValueKind.Float && double.IsNaN(key.AsFloat()))
         {
-            return LuaValue.Nil;
+            value = LuaValue.Nil;
+            entry = default;
+            return false;
         }
 
-        if (TryGetArrayIndex(key, out var index) && index <= _array.Count)
+        if (TryGetArrayIndex(key, out var arrayIndex) && arrayIndex <= _array.Count)
         {
-            return _array[index - 1];
+            value = _array[arrayIndex - 1];
+            if (!value.IsNil)
+            {
+                entry = LuaTableExistingEntry.Array(arrayIndex - 1);
+                return true;
+            }
+
+            entry = default;
+            return false;
         }
 
-        var bucket = FindBucket(key);
-        return bucket >= 0 && _buckets[bucket].State == BucketState.Occupied
-            ? _buckets[bucket].Value
-            : LuaValue.Nil;
+        var bucketIndex = FindBucket(key);
+        if (bucketIndex >= 0 && _buckets[bucketIndex].State == BucketState.Occupied)
+        {
+            value = _buckets[bucketIndex].Value;
+            entry = LuaTableExistingEntry.Hash(bucketIndex);
+            return true;
+        }
+
+        value = LuaValue.Nil;
+        entry = default;
+        return false;
+    }
+
+    /// <summary>Updates an entry returned by the immediately preceding raw lookup.</summary>
+    internal void SetExistingEntry(
+        LuaTableExistingEntry entry,
+        LuaValue key,
+        LuaValue value)
+    {
+        ValidateKey(key);
+        Owner.ValidateValue(key);
+        Owner.ValidateValue(value);
+        Owner.WriteBarrierBack(this, key);
+        Owner.WriteBarrierBack(this, value);
+
+        if (entry.IsArray)
+        {
+            if ((uint)entry.Index >= (uint)_array.Count ||
+                _array[entry.Index].IsNil ||
+                !TryGetArrayIndex(key, out var arrayIndex) ||
+                arrayIndex - 1 != entry.Index)
+            {
+                throw new InvalidOperationException("A stale Lua table entry handle was used.");
+            }
+
+            SetArray(entry.Index, value);
+            return;
+        }
+
+        if ((uint)entry.Index >= (uint)_buckets.Length)
+        {
+            throw new InvalidOperationException("A stale Lua table entry handle was used.");
+        }
+
+        ref var bucket = ref _buckets[entry.Index];
+        if (bucket.State != BucketState.Occupied || !KeysMatch(bucket, key))
+        {
+            throw new InvalidOperationException("A stale Lua table entry handle was used.");
+        }
+
+        if (value.IsNil)
+        {
+            bucket.State = BucketState.Tombstone;
+            bucket.Value = LuaValue.Nil;
+            _hashCount--;
+            _tombstoneCount++;
+            IncrementShapeVersion();
+            IncrementContentVersion();
+        }
+        else if (bucket.Value != value)
+        {
+            bucket.Value = value;
+            IncrementContentVersion();
+        }
     }
 
     public void Set(LuaValue key, LuaValue value)
@@ -131,6 +225,7 @@ public sealed class LuaTable : LuaGcObject
                 Owner.AdjustLogicalSize(this, 16);
                 _array.Add(value);
                 IncrementShapeVersion();
+                IncrementContentVersion();
                 IncrementStorageVersion();
                 MigrateArrayTail();
                 return;
@@ -300,6 +395,7 @@ public sealed class LuaTable : LuaGcObject
                 {
                     _array[index] = LuaValue.Nil;
                     IncrementShapeVersion();
+                    IncrementContentVersion();
                 }
             }
         }
@@ -326,18 +422,19 @@ public sealed class LuaTable : LuaGcObject
             _hashCount--;
             _tombstoneCount++;
             IncrementShapeVersion();
+            IncrementContentVersion();
         }
     }
 
     internal override bool TryGetFinalizer(out LuaValue finalizer)
     {
-        finalizer = _metatable?.GetStringField("__gc"u8) ?? LuaValue.Nil;
+        finalizer = _metatable?.GetMetamethodField(LuaMetamethod.GarbageCollect) ?? LuaValue.Nil;
         return !finalizer.IsNil;
     }
 
     private LuaWeakMode GetWeakMode()
     {
-        var modeValue = _metatable?.GetStringField("__mode"u8) ?? LuaValue.Nil;
+        var modeValue = _metatable?.GetMetamethodField(LuaMetamethod.Mode) ?? LuaValue.Nil;
         if (modeValue.Kind != LuaValueKind.String)
         {
             return LuaWeakMode.None;
@@ -359,17 +456,51 @@ public sealed class LuaTable : LuaGcObject
 
     internal LuaValue GetStringField(ReadOnlySpan<byte> name)
     {
-        foreach (ref readonly var bucket in _buckets.AsSpan())
+        if (_buckets.Length == 0)
         {
+            return LuaValue.Nil;
+        }
+
+        var hash = MixHash(LuaString.ComputeHashCode(name));
+        var mask = _buckets.Length - 1;
+        var index = hash & mask;
+        for (var probe = 0; probe < _buckets.Length; probe++)
+        {
+            ref readonly var bucket = ref _buckets[index];
+            if (bucket.State == BucketState.Empty)
+            {
+                return LuaValue.Nil;
+            }
+
             if (bucket.State == BucketState.Occupied &&
+                bucket.Hash == hash &&
                 bucket.Key.Kind == LuaValueKind.String &&
                 bucket.Key.AsString().AsSpan().SequenceEqual(name))
             {
                 return bucket.Value;
             }
+
+            index = (index + 1) & mask;
         }
 
         return LuaValue.Nil;
+    }
+
+    internal LuaValue GetMetamethodField(LuaMetamethod metamethod)
+    {
+        var bit = 1L << (int)metamethod;
+        if ((Volatile.Read(ref _absentMetamethodMask) & bit) != 0)
+        {
+            return LuaValue.Nil;
+        }
+
+        var value = GetStringField(LuaMetamethodFacts.GetName(metamethod));
+        if (value.IsNil)
+        {
+            Interlocked.Or(ref _absentMetamethodMask, bit);
+        }
+
+        return value;
     }
 
     private static void VisitNonClearedWeakValue(LuaGcVisitor visitor, LuaValue value)
@@ -389,6 +520,7 @@ public sealed class LuaTable : LuaGcObject
         }
 
         _array[offset] = value;
+        IncrementContentVersion();
         if (wasNil != value.IsNil)
         {
             IncrementShapeVersion();
@@ -410,6 +542,7 @@ public sealed class LuaTable : LuaGcObject
                     _hashCount--;
                     _tombstoneCount++;
                     IncrementShapeVersion();
+                    IncrementContentVersion();
                 }
 
                 return;
@@ -422,10 +555,17 @@ public sealed class LuaTable : LuaGcObject
                 _hashCount++;
                 _tombstoneCount--;
                 IncrementShapeVersion();
+                IncrementContentVersion();
             }
             else
             {
+                if (bucket.Value == value)
+                {
+                    return;
+                }
+
                 bucket.Value = value;
+                IncrementContentVersion();
             }
 
             return;
@@ -442,6 +582,7 @@ public sealed class LuaTable : LuaGcObject
         _buckets[insertion] = new Bucket(key, value, hash, BucketState.Occupied);
         _hashCount++;
         IncrementShapeVersion();
+        IncrementContentVersion();
     }
 
     private void EnsureHashCapacityForInsert()
@@ -551,9 +692,11 @@ public sealed class LuaTable : LuaGcObject
         throw new InvalidOperationException("Hash table has no empty bucket.");
     }
 
-    private int ComputeHash(LuaValue key)
+    private int ComputeHash(LuaValue key) => MixHash(key.GetHashCode());
+
+    private int MixHash(int keyHash)
     {
-        var hash = unchecked((uint)(key.GetHashCode() ^ Owner.HashSeed));
+        var hash = unchecked((uint)(keyHash ^ Owner.HashSeed));
         hash ^= hash >> 16;
         hash *= 0x7feb352d;
         hash ^= hash >> 15;
@@ -576,6 +719,12 @@ public sealed class LuaTable : LuaGcObject
     private void IncrementStorageVersion() => StorageVersion = unchecked(StorageVersion + 1);
 
     private void IncrementShapeVersion() => ShapeVersion = unchecked(ShapeVersion + 1);
+
+    private void IncrementContentVersion()
+    {
+        Interlocked.Increment(ref _contentVersion);
+        Volatile.Write(ref _absentMetamethodMask, 0);
+    }
 
     private static bool TryGetArrayIndex(LuaValue key, out int index)
     {
@@ -627,4 +776,25 @@ public sealed class LuaTable : LuaGcObject
 
         public BucketState State;
     }
+}
+
+/// <summary>
+/// Opaque, mutation-scoped handle for a raw Lua table entry. Its representation remains an
+/// implementation detail of <see cref="LuaTable"/> and is never part of the code-generation ABI.
+/// </summary>
+internal readonly struct LuaTableExistingEntry
+{
+    private LuaTableExistingEntry(int index, bool isArray)
+    {
+        Index = index;
+        IsArray = isArray;
+    }
+
+    internal int Index { get; }
+
+    internal bool IsArray { get; }
+
+    internal static LuaTableExistingEntry Array(int index) => new(index, isArray: true);
+
+    internal static LuaTableExistingEntry Hash(int index) => new(index, isArray: false);
 }

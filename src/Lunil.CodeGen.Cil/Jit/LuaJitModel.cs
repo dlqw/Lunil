@@ -48,6 +48,8 @@ public enum LuaJitTier2EligibilityReason : byte
     ManagedOptimizationRequired,
     ManagedSemanticBoundary,
     UnsupportedInstruction,
+    InsufficientTier2Work,
+    HotLoopCallBoundary,
 }
 
 public static class LuaJitTier2DiagnosticCodes
@@ -58,6 +60,8 @@ public static class LuaJitTier2DiagnosticCodes
     public const string UnexpectedCodeKind = "JIT2104";
     public const string ManagedSemanticBoundary = "JIT2105";
     public const string UnsupportedInstruction = "JIT2106";
+    public const string InsufficientTier2Work = "JIT2107";
+    public const string HotLoopCallBoundary = "JIT2108";
 }
 
 public enum LuaJitOsrState : byte

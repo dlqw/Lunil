@@ -3,8 +3,21 @@ using Lunil.Runtime.Operations;
 
 namespace Lunil.Runtime.Execution;
 
+/// <summary>Borrowed live view of one activation owned by a <see cref="LuaThread"/>.</summary>
+/// <remarks>
+/// Frames are pooled. A frame reference is valid only while that frame remains in its owning
+/// thread's <see cref="LuaThread.Frames"/> collection; after removal, its properties and value
+/// windows can be reset and reused for a different activation.
+/// </remarks>
 public sealed class LuaFrame
 {
+    private const int MaximumRetainedVarArguments = 64;
+    private readonly LuaValueWindow _varArgs = new();
+
+    internal LuaFrame()
+    {
+    }
+
     internal LuaFrame(
         LuaClosure closure,
         int @base,
@@ -18,34 +31,37 @@ public sealed class LuaFrame
         bool isDebugHook = false,
         bool isHidden = false)
     {
-        Closure = closure;
-        Base = @base;
-        Top = top;
-        ReturnBase = returnBase;
-        ExpectedResults = expectedResults;
-        VarArgs = varArgs;
-        Continuation.ProtectionKind = protectionKind;
-        Continuation.ErrorHandler = errorHandler;
-        Continuation.IsCloseHandler = isCloseHandler;
-        IsDebugHook = isDebugHook;
-        IsHidden = isHidden;
-        HasSourceLineInformation = closure.Function.Instructions.Any(
-            static instruction => instruction.SourceLine > 0);
+        Initialize(
+            closure,
+            @base,
+            top,
+            returnBase,
+            expectedResults,
+            varArgs,
+            protectionKind,
+            errorHandler,
+            isCloseHandler,
+            isDebugHook,
+            isHidden);
     }
 
-    public LuaClosure Closure { get; }
+    public LuaClosure Closure { get; private set; } = null!;
 
-    public int Base { get; }
+    public int Base { get; private set; }
 
     public int Top { get; internal set; }
 
     public int ProgramCounter { get; internal set; }
 
-    public int ReturnBase { get; }
+    public int ReturnBase { get; private set; }
 
-    public int ExpectedResults { get; }
+    public int ExpectedResults { get; private set; }
 
-    public IReadOnlyList<LuaValue> VarArgs { get; }
+    /// <summary>
+    /// Gets the borrowed live vararg window for this activation. This is not a snapshot and can be
+    /// reset or reused after the frame leaves its owning thread.
+    /// </summary>
+    public IReadOnlyList<LuaValue> VarArgs => _varArgs;
 
     public bool IsDebugHook { get; internal set; }
 
@@ -67,7 +83,7 @@ public sealed class LuaFrame
 
     internal int LastLineHookProgramCounter { get; set; } = -1;
 
-    internal bool HasSourceLineInformation { get; }
+    internal bool HasSourceLineInformation { get; private set; }
 
     internal int DebugHookCheckedProgramCounter { get; set; } = -1;
 
@@ -79,7 +95,9 @@ public sealed class LuaFrame
 
     internal int NativeCallSourceLine { get; set; } = -1;
 
-    internal LuaValue[] VarArgStorage => (LuaValue[])VarArgs;
+    internal LuaValueWindow VarArgStorage => _varArgs;
+
+    internal int RetainedVarArgCapacity => _varArgs.Capacity;
 
     internal List<int> ToBeClosedSlots { get; } = [];
 
@@ -88,6 +106,69 @@ public sealed class LuaFrame
     internal LuaFrameInstructionRoute InstructionRoute { get; set; }
 
     internal bool BackendEntryObserved { get; set; }
+
+    internal void Initialize(
+        LuaClosure closure,
+        int @base,
+        int top,
+        int returnBase,
+        int expectedResults,
+        ReadOnlySpan<LuaValue> varArgs,
+        LuaProtectedCallKind protectionKind = LuaProtectedCallKind.None,
+        LuaValue errorHandler = default,
+        bool isCloseHandler = false,
+        bool isDebugHook = false,
+        bool isHidden = false)
+    {
+        ArgumentNullException.ThrowIfNull(closure);
+        Closure = closure;
+        Base = @base;
+        Top = top;
+        ProgramCounter = 0;
+        ReturnBase = returnBase;
+        ExpectedResults = expectedResults;
+        _varArgs.Set(varArgs);
+        Continuation.ResetForFrameReuse();
+        Continuation.ProtectionKind = protectionKind;
+        Continuation.ErrorHandler = errorHandler;
+        Continuation.IsCloseHandler = isCloseHandler;
+        IsDebugHook = isDebugHook;
+        IsHidden = isHidden;
+        InstructionRoute = LuaFrameInstructionRoute.Backend;
+        BackendEntryObserved = false;
+        HasSourceLineInformation = closure.HasSourceLineInformation;
+    }
+
+    internal void ResetForPool()
+    {
+        Closure = null!;
+        Base = 0;
+        Top = 0;
+        ProgramCounter = 0;
+        ReturnBase = 0;
+        ExpectedResults = 0;
+        _varArgs.Clear(MaximumRetainedVarArguments);
+        IsDebugHook = false;
+        IsHidden = false;
+        PendingDebugHookEvent = null;
+        IsTailCall = false;
+        DebugFunctionName = null;
+        DebugFunctionNameWhat = null;
+        DebugFunctionOverride = LuaValue.Nil;
+        LastDebugHookLine = -1;
+        LastDebugHookProgramCounter = -1;
+        LastLineHookProgramCounter = -1;
+        HasSourceLineInformation = false;
+        DebugHookCheckedProgramCounter = -1;
+        DispatchedDebugHookEvent = null;
+        ReturnHookProgramCounter = -1;
+        NativeCallHookProgramCounter = -1;
+        NativeCallSourceLine = -1;
+        InstructionRoute = LuaFrameInstructionRoute.Backend;
+        BackendEntryObserved = false;
+        ToBeClosedSlots.Clear();
+        Continuation.ResetForFrameReuse();
+    }
 
 }
 

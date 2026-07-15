@@ -411,6 +411,10 @@ internal static class LuaCilMethodPlanner
     {
         LuaIrOpcode.LoadConstant or LuaIrOpcode.LoadNil or LuaIrOpcode.Move or
         LuaIrOpcode.SetTop or LuaIrOpcode.GetUpvalue or LuaIrOpcode.SetUpvalue or
+        LuaIrOpcode.NewTable or LuaIrOpcode.GetTable or LuaIrOpcode.SetTable or
+        LuaIrOpcode.SetList or
+        LuaIrOpcode.Closure or LuaIrOpcode.VarArg or
+        LuaIrOpcode.Call or LuaIrOpcode.TailCall or
         LuaIrOpcode.Unary or LuaIrOpcode.Binary or LuaIrOpcode.JumpIfFalse or
         LuaIrOpcode.JumpIfTrue or LuaIrOpcode.Return or LuaIrOpcode.NumericForPrepare or
         LuaIrOpcode.NumericForLoop or LuaIrOpcode.Close => true,
@@ -507,6 +511,107 @@ internal static class LuaCilMethodPlanner
                 LoadInt32(plan, instruction.B, pc);
                 Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ReadRegisterUnchecked, pc));
                 Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.WriteUpvalue, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.NewTable:
+                LoadArgument(plan, ContextArgument, pc);
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                LoadInt32(plan, instruction.C, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteNewTable, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.GetTable:
+            case LuaIrOpcode.SetTable:
+                {
+                    var completed = new CilLabel(nextLabel++);
+                    LoadArgument(plan, ContextArgument, pc);
+                    LoadArgument(plan, ThreadArgument, pc);
+                    LoadArgument(plan, FrameArgument, pc);
+                    LoadInt32(plan, instruction.A, pc);
+                    LoadInt32(plan, instruction.B, pc);
+                    LoadInt32(plan, instruction.C, pc);
+                    Emit(plan, CilPlanInstruction.Call(
+                        instruction.Opcode == LuaIrOpcode.GetTable
+                            ? CilWellKnownCalls.ExecuteGetTable
+                            : CilWellKnownCalls.ExecuteSetTable,
+                        pc));
+                    Emit(plan, CilPlanInstruction.WithLabel(
+                        CilPlanOpCode.BranchTrue,
+                        completed,
+                        pc));
+                    EmitExit(
+                        plan,
+                        CilWellKnownCalls.ExitContinue,
+                        pc + 1,
+                        consumedLocal,
+                        reason: null);
+                    Emit(plan, CilPlanInstruction.MarkLabel(completed, pc));
+                    BranchToNext(
+                        plan,
+                        pc,
+                        function,
+                        startProgramCounter,
+                        endProgramCounter,
+                        pcLabels,
+                        consumedLocal);
+                    break;
+                }
+            case LuaIrOpcode.SetList:
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                LoadInt32(plan, instruction.C, pc);
+                LoadInt32(plan, instruction.D, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteSetList, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.Closure:
+                LoadArgument(plan, ContextArgument, pc);
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteClosure, pc));
+                BranchToNext(
+                    plan,
+                    pc,
+                    function,
+                    startProgramCounter,
+                    endProgramCounter,
+                    pcLabels,
+                    consumedLocal);
+                break;
+            case LuaIrOpcode.VarArg:
+                LoadArgument(plan, ThreadArgument, pc);
+                LoadArgument(plan, FrameArgument, pc);
+                LoadInt32(plan, instruction.A, pc);
+                LoadInt32(plan, instruction.B, pc);
+                Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExecuteVarArg, pc));
                 BranchToNext(
                     plan,
                     pc,
@@ -638,6 +743,12 @@ internal static class LuaCilMethodPlanner
                 break;
             case LuaIrOpcode.Return:
                 EmitExit(plan, CilWellKnownCalls.ExitReturn, pc, consumedLocal, reason: null);
+                break;
+            case LuaIrOpcode.Call:
+                EmitExit(plan, CilWellKnownCalls.ExitCall, pc, consumedLocal, reason: null);
+                break;
+            case LuaIrOpcode.TailCall:
+                EmitExit(plan, CilWellKnownCalls.ExitTailCall, pc, consumedLocal, reason: null);
                 break;
             case LuaIrOpcode.Close:
                 BranchToNext(

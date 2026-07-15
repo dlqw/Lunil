@@ -1,4 +1,5 @@
 using Lunil.Runtime.Memory;
+using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Tests.Values;
@@ -92,6 +93,54 @@ public sealed class LuaTableTests
         table.SetMetatable(metatable);
         Assert.Equal<ulong>(1, table.MetatableVersion);
         Assert.True(table.ShapeVersion > shapeAfterAdd);
+    }
+
+    [Fact]
+    public void StringFieldUsesTheHashProbeAcrossTombstonesAndRehashes()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        for (var index = 0; index < 512; index++)
+        {
+            table.Set(String(state, $"field-{index}"), LuaValue.FromInteger(index));
+        }
+
+        for (var index = 0; index < 256; index++)
+        {
+            table.Set(String(state, $"field-{index}"), LuaValue.Nil);
+        }
+
+        for (var index = 256; index < 512; index++)
+        {
+            Assert.Equal(
+                LuaValue.FromInteger(index),
+                table.GetStringField(System.Text.Encoding.UTF8.GetBytes($"field-{index}")));
+        }
+
+        Assert.True(table.GetStringField("missing"u8).IsNil);
+    }
+
+    [Fact]
+    public void AbsentMetamethodCacheInvalidatesOnLogicalContentMutation()
+    {
+        var state = CreateDeterministicState();
+        var metatable = state.CreateTable();
+
+        Assert.True(metatable.GetMetamethodField(LuaMetamethod.Index).IsNil);
+        Assert.True(metatable.GetMetamethodField(LuaMetamethod.Index).IsNil);
+        var before = metatable.ContentVersion;
+
+        var indexValue = LuaValue.FromInteger(42);
+        metatable.Set(String(state, "__index"), indexValue);
+
+        Assert.True(metatable.ContentVersion > before);
+        Assert.Equal(indexValue, metatable.GetMetamethodField(LuaMetamethod.Index));
+        var after = metatable.ContentVersion;
+        metatable.Set(String(state, "__index"), indexValue);
+        Assert.Equal(after, metatable.ContentVersion);
+
+        metatable.Set(String(state, "__index"), LuaValue.Nil);
+        Assert.True(metatable.GetMetamethodField(LuaMetamethod.Index).IsNil);
     }
 
     [Fact]

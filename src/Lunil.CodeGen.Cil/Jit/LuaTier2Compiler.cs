@@ -49,6 +49,7 @@ public enum LuaJitTier2CodeKind : byte
 {
     ManagedProfileProgram,
     ExactNumericSpecializedCil,
+    GuardedSpecializedCil,
 }
 
 internal sealed record LuaTier2CompilationResult(
@@ -72,6 +73,8 @@ internal interface ILuaTier2Compiler
 
 internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 {
+    private const int MinimumStraightLineTier2InstructionCount = 16;
+
     public static ProfileGuidedLuaTier2Compiler Instance { get; } = new();
     [UnconditionalSuppressMessage(
         "AOT",
@@ -168,13 +171,22 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         {
             method = specializedMethod;
             estimatedCodeBytes = specializedCodeBytes;
-            plan = plan with { CodeKind = LuaJitTier2CodeKind.ExactNumericSpecializedCil };
+            plan = plan with
+            {
+                CodeKind = HasNonNumericSpecialization(optimized)
+                    ? LuaJitTier2CodeKind.GuardedSpecializedCil
+                    : LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+            };
         }
 
-        var specializedOptimizationCount = plan.CodeKind ==
-            LuaJitTier2CodeKind.ExactNumericSpecializedCil
+        var specializedOptimizationCount = plan.CodeKind !=
+            LuaJitTier2CodeKind.ManagedProfileProgram
             ? optimized.Values.Count(static item => item.Kind is
-                LuaJitOptimizationKind.NumericUnary or LuaJitOptimizationKind.NumericBinary)
+                LuaJitOptimizationKind.NumericUnary or
+                LuaJitOptimizationKind.NumericBinary or
+                LuaJitOptimizationKind.TableGetPic or
+                LuaJitOptimizationKind.TableSetPic or
+                LuaJitOptimizationKind.KnownClosureCall)
             : 0;
         var metrics = new LuaJitTier2CompilationMetrics(
             canonicalVerificationDuration,
@@ -222,29 +234,47 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var numericOptimizationCount = optimized.Values.Count(static optimization =>
             optimization.Kind is LuaJitOptimizationKind.NumericUnary or
                 LuaJitOptimizationKind.NumericBinary);
-        var hasManagedSemanticProfileSites = HasManagedSemanticProfileSites(profile);
-        var status = hasManagedSemanticProfileSites
-            ? LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired
-            : ReflectionEmitLuaTier2Compiler.EvaluateNumericSpecialization(
-                function,
-                optimized);
-        var reason = hasManagedSemanticProfileSites
-            ? LuaJitTier2EligibilityReason.ManagedSemanticBoundary
-            : status switch
+        var status = ReflectionEmitLuaTier2Compiler.EvaluateNumericSpecialization(
+            function,
+            optimized);
+        if (status == LuaTier2NumericSpecializationStatus.Eligible)
+        {
+            var hasLoopCall = Enumerable.Range(0, function.Instructions.Length).Any(pc =>
+                function.Instructions[pc].Opcode is (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
+                IsInsideLoop(function, pc));
+            var hasTablePic = optimized.Values.Any(static optimization =>
+                optimization.Kind is LuaJitOptimizationKind.TableGetPic or
+                    LuaJitOptimizationKind.TableSetPic);
+            if (hasLoopCall)
             {
-                LuaTier2NumericSpecializationStatus.Eligible =>
-                    LuaJitTier2EligibilityReason.Eligible,
-                LuaTier2NumericSpecializationStatus.NoNumericHotspot =>
-                    LuaJitTier2EligibilityReason.NoNumericHotspot,
-                LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile =>
-                    LuaJitTier2EligibilityReason.PolymorphicNumericProfile,
-                LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired =>
-                    LuaJitTier2EligibilityReason.ManagedOptimizationRequired,
-                LuaTier2NumericSpecializationStatus.UnsupportedInstruction =>
-                    LuaJitTier2EligibilityReason.UnsupportedInstruction,
-                _ => throw new InvalidOperationException(
-                    $"Unknown Tier 2 specialization status {status}."),
-            };
+                status = LuaTier2NumericSpecializationStatus.HotLoopCallBoundary;
+            }
+            else if (!hasTablePic && !HasBackedge(function) &&
+                     function.Instructions.Length < MinimumStraightLineTier2InstructionCount)
+            {
+                status = LuaTier2NumericSpecializationStatus.InsufficientTier2Work;
+            }
+        }
+
+        var reason = status switch
+        {
+            LuaTier2NumericSpecializationStatus.Eligible =>
+                LuaJitTier2EligibilityReason.Eligible,
+            LuaTier2NumericSpecializationStatus.NoNumericHotspot =>
+                LuaJitTier2EligibilityReason.NoNumericHotspot,
+            LuaTier2NumericSpecializationStatus.PolymorphicNumericProfile =>
+                LuaJitTier2EligibilityReason.PolymorphicNumericProfile,
+            LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired =>
+                LuaJitTier2EligibilityReason.ManagedOptimizationRequired,
+            LuaTier2NumericSpecializationStatus.UnsupportedInstruction =>
+                LuaJitTier2EligibilityReason.UnsupportedInstruction,
+            LuaTier2NumericSpecializationStatus.InsufficientTier2Work =>
+                LuaJitTier2EligibilityReason.InsufficientTier2Work,
+            LuaTier2NumericSpecializationStatus.HotLoopCallBoundary =>
+                LuaJitTier2EligibilityReason.HotLoopCallBoundary,
+            _ => throw new InvalidOperationException(
+                $"Unknown Tier 2 specialization status {status}."),
+        };
         var diagnosticCode = reason switch
         {
             LuaJitTier2EligibilityReason.Eligible => null,
@@ -258,6 +288,10 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 LuaJitTier2DiagnosticCodes.ManagedSemanticBoundary,
             LuaJitTier2EligibilityReason.UnsupportedInstruction =>
                 LuaJitTier2DiagnosticCodes.UnsupportedInstruction,
+            LuaJitTier2EligibilityReason.InsufficientTier2Work =>
+                LuaJitTier2DiagnosticCodes.InsufficientTier2Work,
+            LuaJitTier2EligibilityReason.HotLoopCallBoundary =>
+                LuaJitTier2DiagnosticCodes.HotLoopCallBoundary,
             _ => throw new InvalidOperationException(
                 $"Unknown Tier 2 eligibility reason {reason}."),
         };
@@ -270,34 +304,18 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             optimized.Count,
             numericOptimizationCount,
             status == LuaTier2NumericSpecializationStatus.Eligible
-                ? LuaJitTier2CodeKind.ExactNumericSpecializedCil
+                ? HasNonNumericSpecialization(optimized)
+                    ? LuaJitTier2CodeKind.GuardedSpecializedCil
+                    : LuaJitTier2CodeKind.ExactNumericSpecializedCil
                 : LuaJitTier2CodeKind.ManagedProfileProgram);
     }
 
-    private static bool HasManagedSemanticProfileSites(LuaJitFunctionProfile profile)
-    {
-        foreach (var site in profile.Sites)
-        {
-            if (site.Samples <= 0 || site.Opcode is not (
-                LuaIrOpcode.GetUpvalue or
-                LuaIrOpcode.SetUpvalue or
-                LuaIrOpcode.NewTable or
-                LuaIrOpcode.GetTable or
-                LuaIrOpcode.SetTable or
-                LuaIrOpcode.SetList or
-                LuaIrOpcode.Closure or
-                LuaIrOpcode.Call or
-                LuaIrOpcode.TailCall or
-                LuaIrOpcode.MarkToBeClosed))
-            {
-                continue;
-            }
-
-            return true;
-        }
-
-        return false;
-    }
+    private static bool HasNonNumericSpecialization(
+        ImmutableDictionary<int, OptimizedInstruction> optimized) =>
+        optimized.Values.Any(static optimization => optimization.Kind is
+            LuaJitOptimizationKind.TableGetPic or
+            LuaJitOptimizationKind.TableSetPic or
+            LuaJitOptimizationKind.KnownClosureCall);
 
     [UnconditionalSuppressMessage(
         "AOT",
@@ -470,6 +488,40 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         return result.ToImmutable();
     }
 
+    private static bool IsInsideLoop(LuaIrFunction function, int programCounter)
+    {
+        for (var backedge = programCounter; backedge < function.Instructions.Length; backedge++)
+        {
+            var instruction = function.Instructions[backedge];
+            if (instruction.Opcode is
+                    (LuaIrOpcode.Jump or LuaIrOpcode.JumpIfFalse or
+                        LuaIrOpcode.JumpIfTrue or LuaIrOpcode.NumericForLoop) &&
+                instruction.B <= programCounter && instruction.B <= backedge)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasBackedge(LuaIrFunction function)
+    {
+        for (var programCounter = 0; programCounter < function.Instructions.Length; programCounter++)
+        {
+            var instruction = function.Instructions[programCounter];
+            if (instruction.Opcode is
+                    (LuaIrOpcode.Jump or LuaIrOpcode.JumpIfFalse or
+                        LuaIrOpcode.JumpIfTrue or LuaIrOpcode.NumericForLoop) &&
+                instruction.B <= programCounter)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void AddConstantFolds(
         LuaIrFunction function,
         LuaRegisterLivenessResult liveness,
@@ -559,13 +611,13 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static bool IsStableTablePic(LuaJitSiteProfile site) =>
         !site.IsMegamorphic &&
         site.FirstOperandKinds == LuaJitValueKinds.Table &&
-        !site.TableShapes.IsEmpty &&
-        site.TableShapes.All(static shape => !shape.HasMetatable);
+        !site.TableShapes.IsEmpty;
 
     private sealed class Tier2Program
     {
         private readonly LuaIrFunction _function;
         private readonly OptimizedInstruction?[] _optimized;
+        private readonly LuaTier2RuntimeSites _runtimeSites;
 
         public Tier2Program(
             LuaIrFunction function,
@@ -573,6 +625,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         {
             _function = function;
             _optimized = new OptimizedInstruction?[function.Instructions.Length];
+            _runtimeSites = new LuaTier2RuntimeSites(function.Instructions.Length);
             foreach (var pair in optimized)
             {
                 _optimized[pair.Key] = pair.Value;
@@ -607,7 +660,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         thread,
                         frame,
                         instruction,
-                        optimization);
+                        optimization,
+                        _runtimeSites);
                     if (optimizedExit is { } optimizedResult)
                     {
                         return optimizedResult;
@@ -634,7 +688,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaThread thread,
             LuaFrame frame,
             LuaIrInstruction instruction,
-            OptimizedInstruction optimization)
+            OptimizedInstruction optimization,
+            LuaTier2RuntimeSites runtimeSites)
         {
             switch (optimization.Kind)
             {
@@ -757,22 +812,46 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 case LuaJitOptimizationKind.TableGetPic:
                 case LuaJitOptimizationKind.TableSetPic:
                     {
-                        var tableRegister = optimization.Kind == LuaJitOptimizationKind.TableGetPic
-                            ? instruction.B
-                            : instruction.A;
-                        var keyRegister = optimization.Kind == LuaJitOptimizationKind.TableGetPic
-                            ? instruction.C
-                            : instruction.B;
-                        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(
-                            thread,
-                            frame,
-                            tableRegister);
-                        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(
-                            thread,
-                            frame,
-                            keyRegister);
-                        if (target.Kind != LuaValueKind.Table ||
-                            !optimization.MatchesTable(target.AsTable(), key))
+                        var isGet = optimization.Kind == LuaJitOptimizationKind.TableGetPic;
+                        var cache = runtimeSites.GetTableSite(frame.ProgramCounter);
+                        var result = isGet
+                            ? LuaCodegenAbiV3.TryExecuteTableGetPic(
+                                context,
+                                thread,
+                                frame,
+                                cache,
+                                instruction.A,
+                                instruction.B,
+                                instruction.C)
+                            : LuaCodegenAbiV3.TryExecuteTableSetPic(
+                                context,
+                                thread,
+                                frame,
+                                cache,
+                                instruction.A,
+                                instruction.B,
+                                instruction.C);
+                        if (result == LuaCodegenPicExecutionResult.GuardFailure)
+                        {
+                            return GuardFailure(context, frame.ProgramCounter);
+                        }
+
+                        if (result == LuaCodegenPicExecutionResult.InstructionBudget)
+                        {
+                            return BudgetPoll(context, frame.ProgramCounter);
+                        }
+
+                        return null;
+                    }
+                case LuaJitOptimizationKind.KnownClosureCall:
+                    {
+                        var cache = runtimeSites.GetCallSite(frame.ProgramCounter);
+                        if (!LuaCodegenAbiV3.CanExecuteKnownClosureCall(
+                                thread,
+                                frame,
+                                cache,
+                                instruction.A,
+                                optimization.CallTarget!.FunctionId))
                         {
                             return GuardFailure(context, frame.ProgramCounter);
                         }
@@ -782,46 +861,28 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                             return BudgetPoll(context, frame.ProgramCounter);
                         }
 
-                        var table = target.AsTable();
-                        if (optimization.Kind == LuaJitOptimizationKind.TableGetPic)
+                        if (instruction.Opcode == LuaIrOpcode.TailCall)
                         {
-                            LuaCodegenAbiV2.WriteRegisterUnchecked(
+                            LuaCodegenAbiV3.ExecuteKnownClosureTailCall(
+                                context,
                                 thread,
                                 frame,
                                 instruction.A,
-                                table.Get(key));
+                                instruction.B);
                         }
                         else
                         {
-                            table.Set(
-                                key,
-                                LuaCodegenAbiV2.ReadRegisterUnchecked(
-                                    thread,
-                                    frame,
-                                    instruction.C));
+                            LuaCodegenAbiV3.ExecuteKnownClosureCall(
+                                context,
+                                thread,
+                                frame,
+                                instruction.A,
+                                instruction.B,
+                                instruction.C);
                         }
-
-                        frame.ProgramCounter++;
                         return LuaCompiledExit.Continue(
                             frame.ProgramCounter,
                             context.InstructionsConsumed);
-                    }
-                case LuaJitOptimizationKind.KnownClosureCall:
-                    {
-                        var functionValue = LuaCodegenAbiV2.ReadRegisterUnchecked(
-                            thread,
-                            frame,
-                            instruction.A);
-                        var closure = functionValue.TryGetClosure();
-                        if (closure is null ||
-                            closure.Function.Id != optimization.CallTarget!.FunctionId ||
-                            LuaJitModuleIdentity.Create(closure.Module) !=
-                            optimization.CallTarget.ModuleContentId)
-                        {
-                            return GuardFailure(context, frame.ProgramCounter);
-                        }
-
-                        return ExecuteSlowPath(context, thread, frame);
                     }
                 default:
                     throw new InvalidOperationException(
@@ -880,6 +941,111 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.B));
                     frame.ProgramCounter++;
                     return null;
+                case LuaIrOpcode.GetUpvalue:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV2.WriteRegisterUnchecked(
+                        thread,
+                        frame,
+                        instruction.A,
+                        LuaCodegenAbiV1.ReadUpvalue(frame, instruction.B));
+                    frame.ProgramCounter++;
+                    return null;
+                case LuaIrOpcode.SetUpvalue:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV1.WriteUpvalue(
+                        frame,
+                        instruction.A,
+                        LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.B));
+                    frame.ProgramCounter++;
+                    return null;
+                case LuaIrOpcode.NewTable:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV3.ExecuteNewTable(
+                        context,
+                        thread,
+                        frame,
+                        instruction.A,
+                        instruction.B,
+                        instruction.C);
+                    return null;
+                case LuaIrOpcode.GetTable:
+                case LuaIrOpcode.SetTable:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    var completed = instruction.Opcode == LuaIrOpcode.GetTable
+                        ? LuaCodegenAbiV3.ExecuteGetTable(
+                            context,
+                            thread,
+                            frame,
+                            instruction.A,
+                            instruction.B,
+                            instruction.C)
+                        : LuaCodegenAbiV3.ExecuteSetTable(
+                            context,
+                            thread,
+                            frame,
+                            instruction.A,
+                            instruction.B,
+                            instruction.C);
+                    return completed
+                        ? null
+                        : LuaCompiledExit.Continue(
+                            frame.ProgramCounter,
+                            context.InstructionsConsumed);
+                case LuaIrOpcode.SetList:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV3.ExecuteSetList(
+                        thread,
+                        frame,
+                        instruction.A,
+                        instruction.B,
+                        instruction.C,
+                        instruction.D);
+                    return null;
+                case LuaIrOpcode.Closure:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV3.ExecuteClosure(
+                        context,
+                        thread,
+                        frame,
+                        instruction.A,
+                        instruction.B);
+                    return null;
+                case LuaIrOpcode.VarArg:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    LuaCodegenAbiV3.ExecuteVarArg(
+                        thread,
+                        frame,
+                        instruction.A,
+                        instruction.B);
+                    return null;
                 case LuaIrOpcode.SetTop:
                     if (!Reserve(context, pc))
                     {
@@ -934,6 +1100,20 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     }
 
                     return LuaCompiledExit.Return(pc, context.InstructionsConsumed);
+                case LuaIrOpcode.Call:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    return LuaCompiledExit.Call(pc, context.InstructionsConsumed);
+                case LuaIrOpcode.TailCall:
+                    if (!Reserve(context, pc))
+                    {
+                        return BudgetPoll(context, pc);
+                    }
+
+                    return LuaCompiledExit.TailCall(pc, context.InstructionsConsumed);
                 default:
                     return ExecuteSlowPath(context, thread, frame);
             }
@@ -1014,13 +1194,6 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         public bool MatchesFirst(LuaValue value) => Matches(FirstKinds, value);
 
         public bool MatchesSecond(LuaValue value) => Matches(SecondKinds, value);
-
-        public bool MatchesTable(LuaTable table, LuaValue key) =>
-            table.Metatable is null && TableShapes.Any(shape =>
-                shape.ArrayCapacity == table.ArrayCapacity &&
-                shape.ShapeVersion == table.ShapeVersion &&
-                shape.MetatableVersion == table.MetatableVersion &&
-                (shape.KeyKinds & ToKinds(key)) != 0);
 
         public static OptimizedInstruction DeadMove(int pc) => new()
         {

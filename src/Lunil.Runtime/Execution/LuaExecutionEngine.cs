@@ -170,6 +170,7 @@ internal sealed class LuaExecutionEngine
             {
                 var activation = scheduler.Current;
                 var thread = activation.Thread;
+                thread.AdvanceFramePoolEpoch();
                 if (activation.ForcedResult is { } forcedResult)
                 {
                     activation.ForcedResult = null;
@@ -2179,6 +2180,149 @@ internal sealed class LuaExecutionEngine
         return null;
     }
 
+    internal void ExecuteKnownClosureCall(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaClosure closure,
+        int functionRegister,
+        int argumentCount,
+        int expectedResults)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(closure);
+        if (!ReferenceEquals(thread.CurrentFrame, frame) ||
+            !ReferenceEquals(
+                LuaCodegenAbiV2.ReadRegisterUnchecked(
+                    thread,
+                    frame,
+                    functionRegister).TryGetClosure(),
+                closure))
+        {
+            throw new InvalidOperationException("Known-closure call guard was not preserved.");
+        }
+
+        var functionIndex = frame.Base + functionRegister;
+        var argumentStart = functionIndex + 1;
+        var actualArgumentCount = argumentCount < 0
+            ? Math.Max(0, frame.Top - argumentStart)
+            : argumentCount;
+        frame.ProgramCounter++;
+        PushFrameFromStack(
+            thread,
+            closure,
+            argumentStart,
+            actualArgumentCount,
+            functionIndex,
+            expectedResults);
+    }
+
+    internal void ExecuteKnownClosureTailCall(
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaClosure closure,
+        int functionRegister,
+        int argumentCount)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentNullException.ThrowIfNull(closure);
+        if (!ReferenceEquals(thread.CurrentFrame, frame) ||
+            !ReferenceEquals(
+                LuaCodegenAbiV2.ReadRegisterUnchecked(
+                    thread,
+                    frame,
+                    functionRegister).TryGetClosure(),
+                closure))
+        {
+            throw new InvalidOperationException("Known-closure tail-call guard was not preserved.");
+        }
+
+        var functionIndex = frame.Base + functionRegister;
+        var argumentStart = functionIndex + 1;
+        if (frame.Continuation.Kind != LuaContinuationKind.TailCall)
+        {
+            var actualArgumentCount = argumentCount < 0
+                ? Math.Max(0, frame.Top - argumentStart)
+                : argumentCount;
+            var snapshot = thread.Stack
+                .AsReadOnlySpan(argumentStart, actualArgumentCount)
+                .ToArray();
+            frame.Continuation.Kind = LuaContinuationKind.TailCall;
+            frame.Continuation.Value = LuaValue.FromFunction(closure);
+            frame.Continuation.Values = snapshot;
+            thread.Owner.WriteBarrier(thread, frame.Continuation.Value);
+            foreach (var value in snapshot)
+            {
+                thread.Owner.WriteBarrier(thread, value);
+            }
+        }
+
+        if (TryCloseFrom(state, thread, frame, 0, LuaValue.Nil))
+        {
+            return;
+        }
+
+        var arguments = frame.Continuation.Values;
+        var returnBase = frame.ReturnBase;
+        var expectedResults = frame.ExpectedResults;
+        var protectionKind = frame.Continuation.ProtectionKind;
+        var protectionFunction = frame.Continuation.ProtectionFunction;
+        var errorHandler = frame.Continuation.ErrorHandler;
+        var isCloseHandler = frame.Continuation.IsCloseHandler;
+        var isDebugHook = frame.IsDebugHook;
+        var isHidden = frame.IsHidden;
+        var wasYieldBarrier = frame.Continuation.IsYieldBarrier;
+        var wasActiveCloseCall = ReferenceEquals(thread.UnwindState?.ActiveCloseCall, frame);
+        var wasActiveErrorHandler = ReferenceEquals(
+            thread.UnwindState?.ActiveErrorHandler,
+            frame);
+        frame.Continuation.Reset();
+        thread.PopFrame();
+        var replacement = PushFrame(
+            thread,
+            closure,
+            arguments,
+            returnBase,
+            expectedResults,
+            protectionKind,
+            errorHandler,
+            isCloseHandler,
+            isDebugHook,
+            isHidden,
+            scheduleCallHook: false);
+        replacement.Continuation.ProtectionFunction = protectionFunction;
+        replacement.IsTailCall = true;
+        if (!replacement.IsDebugHook && !replacement.IsHidden &&
+            !thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
+            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+        {
+            replacement.PendingDebugHookEvent = "tail call";
+            thread.SetDebugHookTransfer(
+                thread.Stack.AsReadOnlySpan(
+                    replacement.Base,
+                    closure.Function.ParameterCount),
+                isNative: false);
+        }
+
+        if (wasYieldBarrier)
+        {
+            replacement.Continuation.IsYieldBarrier = true;
+        }
+
+        if (wasActiveCloseCall)
+        {
+            thread.UnwindState!.ActiveCloseCall = replacement;
+        }
+
+        if (wasActiveErrorHandler)
+        {
+            thread.UnwindState!.ActiveErrorHandler = replacement;
+        }
+    }
+
     private static bool TryScheduleNativeCallHook(
         LuaThread thread,
         LuaFrame frame,
@@ -3372,9 +3516,9 @@ internal sealed class LuaExecutionEngine
         }
 
         var varArgs = function.IsVarArg && arguments.Length > function.ParameterCount
-            ? arguments[function.ParameterCount..].ToArray()
-            : [];
-        var frame = new LuaFrame(
+            ? arguments[function.ParameterCount..]
+            : ReadOnlySpan<LuaValue>.Empty;
+        var frame = thread.RentFrame(
             closure,
             @base,
             @base + function.ParameterCount,
@@ -3433,12 +3577,19 @@ internal sealed class LuaExecutionEngine
         }
 
         var fixedArguments = Math.Min(argumentCount, function.ParameterCount);
+        thread.Stack.EnsureCapacity(required);
         var varArgs = function.IsVarArg && argumentCount > function.ParameterCount
             ? thread.Stack.AsReadOnlySpan(
                 argumentStart + function.ParameterCount,
-                argumentCount - function.ParameterCount).ToArray()
-            : [];
-        thread.Stack.EnsureCapacity(required);
+                argumentCount - function.ParameterCount)
+            : ReadOnlySpan<LuaValue>.Empty;
+        var frame = thread.RentFrame(
+            closure,
+            @base,
+            @base + function.ParameterCount,
+            returnBase,
+            expectedResults,
+            varArgs);
         if (argumentStart != @base)
         {
             if (@base < argumentStart)
@@ -3474,13 +3625,6 @@ internal sealed class LuaExecutionEngine
             }
         }
 
-        var frame = new LuaFrame(
-            closure,
-            @base,
-            @base + function.ParameterCount,
-            returnBase,
-            expectedResults,
-            varArgs);
         frame.InstructionRoute = GetInitialFrameInstructionRoute(closure);
         if (!thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
             thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
@@ -3715,14 +3859,14 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        var count = instruction.B < 0 ? frame.VarArgStorage.Length : instruction.B;
+        var count = instruction.B < 0 ? frame.VarArgStorage.Count : instruction.B;
         for (var index = 0; index < count; index++)
         {
             Write(
                 thread,
                 frame,
                 instruction.A + index,
-                index < frame.VarArgStorage.Length ? frame.VarArgStorage[index] : LuaValue.Nil);
+                index < frame.VarArgStorage.Count ? frame.VarArgStorage[index] : LuaValue.Nil);
         }
 
         if (instruction.B < 0)

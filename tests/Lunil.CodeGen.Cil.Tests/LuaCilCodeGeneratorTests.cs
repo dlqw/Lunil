@@ -14,6 +14,9 @@ using Lunil.Runtime;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
+using Lunil.Semantics.Binding;
+using Lunil.Semantics.Lowering;
+using Lunil.Syntax.Parsing;
 
 namespace Lunil.CodeGen.Cil.Tests;
 
@@ -62,7 +65,7 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
-    public void LowersComplexOpcodesThroughTheVersionedRuntimeSlowPath()
+    public void LowersNonNumericOpcodesThroughRuntimeAbiV3WithoutInterpreterSlowPath()
     {
         var module = CreateModule(
             registerCount: 1,
@@ -74,7 +77,11 @@ public sealed class LuaCilCodeGeneratorTests
 
         Assert.True(result.Succeeded, string.Join("; ", result.Diagnostics.Select(static d => d.Message)));
         Assert.Contains(result.Plan!.Instructions, instruction =>
+            instruction.CallTarget?.Id == "LuaCodegenAbiV3.ExecuteNewTable");
+        Assert.DoesNotContain(result.Plan.Instructions, instruction =>
+            instruction.CanonicalProgramCounter == 0 &&
             instruction.CallTarget?.Id == "LuaCodegenAbiV1.ExecuteCanonicalInstruction");
+        Assert.Contains(0, result.Plan.DirectCanonicalProgramCounters);
         Assert.DoesNotContain(result.Plan.Instructions, instruction =>
             instruction.CanonicalProgramCounter == 0 &&
             instruction.CallTarget?.Id == "LuaCompiledExit.Deopt");
@@ -209,6 +216,57 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.Equal(0, executor.Statistics.Deoptimizations);
         Assert.Equal(0, executor.Statistics.DebugModeDeoptimizations);
         Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
+    public void PersistedAbiV3RoundTripsNonNumericOpcodesAndExecutesThem()
+    {
+        var module = CompileSource(
+            """
+            local values = { 10, 20 }
+            values.answer = 40
+            local function add(...)
+                local left, right = ...
+                return left + right
+            end
+            return values[1] + add(values.answer, 2)
+            """);
+        var opcodes = module.Functions
+            .SelectMany(static function => function.Instructions)
+            .Select(static instruction => instruction.Opcode)
+            .ToHashSet();
+        Assert.All(
+            new[]
+            {
+                LuaIrOpcode.NewTable,
+                LuaIrOpcode.GetTable,
+                LuaIrOpcode.SetTable,
+                LuaIrOpcode.SetList,
+                LuaIrOpcode.Closure,
+                LuaIrOpcode.VarArg,
+                LuaIrOpcode.Call,
+            },
+            opcode => Assert.Contains(opcode, opcodes));
+
+        var compilation = LuaAotCompiler.Compile(module);
+        Assert.True(
+            compilation.Succeeded,
+            string.Join("; ", compilation.Diagnostics.Select(static item => item.Message)));
+        var artifact = compilation.Artifact!;
+        Assert.Equal(LuaCodegenAbiV3.RuntimeAbiVersion, artifact.Manifest.RuntimeAbiVersion);
+        var loading = LuaAotArtifactLoader.Load(artifact);
+        Assert.True(
+            loading.Succeeded,
+            string.Join("; ", loading.Diagnostics.Select(static item => item.Message)));
+
+        using var loaded = loading.Module!;
+        var state = new LuaState();
+        var result = new LuaPersistedAotExecutor(loaded).Execute(
+            state,
+            state.CreateMainClosure(module));
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(LuaValue.FromInteger(52), Assert.Single(result.Values));
     }
 
     [Fact]
@@ -434,10 +492,10 @@ public sealed class LuaCilCodeGeneratorTests
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
         var artifact = LuaAotCompiler.Compile(module).Artifact!;
         var incompatible = artifact.PeImage.ToArray();
-        var version = "\"runtimeAbiVersion\":2"u8;
+        var version = "\"runtimeAbiVersion\":3"u8;
         var offset = incompatible.AsSpan().IndexOf(version);
         Assert.True(offset >= 0);
-        incompatible[offset + version.Length - 1] = (byte)'1';
+        incompatible[offset + version.Length - 1] = (byte)'2';
 
         var loading = LuaAotArtifactLoader.Load(incompatible.ToImmutableArray());
 
@@ -1083,6 +1141,17 @@ public sealed class LuaCilCodeGeneratorTests
                 },
             ],
         };
+    }
+
+    private static LuaIrModule CompileSource(string source)
+    {
+        var parsing = LuaParser.Parse(SourceText.FromUtf8(source));
+        var binding = LuaBinder.Bind(parsing);
+        var lowering = LuaLowerer.Lower(binding);
+        Assert.True(
+            lowering.Succeeded,
+            string.Join("; ", lowering.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+        return Assert.IsType<LuaIrModule>(lowering.Module);
     }
 
     private static CilMethodPlan MinimalPlan(params CilPlanInstruction[] instructions) => new()

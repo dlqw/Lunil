@@ -497,7 +497,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         if (!_entries.TryGetValue(key, out var entry))
         {
@@ -523,7 +523,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
         return EnsureEligibility(entry, module);
@@ -541,7 +541,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         return _entries.TryGetValue(key, out var entry)
             ? entry.Profile.Snapshot()
@@ -564,7 +564,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
         LuaJitFunctionProfile profile;
@@ -596,7 +596,7 @@ internal sealed class LuaTieredJitRegistry :
             var key = new FunctionKey(
                 profile.ModuleContentId,
                 imported.FunctionId,
-                LuaCodegenAbiV2.RuntimeAbiVersion,
+                LuaCodegenAbiV3.RuntimeAbiVersion,
                 CodegenVersion);
             var entry = GetOrCreateEntry(key, function.ParameterCount);
             entry.Profile.Merge(imported.Profile);
@@ -715,7 +715,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
         EnsureLoopOsrEntries(entry, module);
@@ -759,7 +759,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, module.Functions[functionId].ParameterCount);
         EnsureLoopOsrEntries(entry, module);
@@ -915,7 +915,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             route.ModuleContentId,
             route.FunctionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         var entry = GetOrCreateEntry(key, parameterCount);
         return Interlocked.CompareExchange(ref route.Entry, entry, null) ?? entry;
@@ -2151,7 +2151,8 @@ internal sealed class LuaTieredJitRegistry :
 
     private bool IsTier2CodeKindAllowed(LuaTier2CompilationResult result) =>
         _options.EnableTier2ManagedFallback ||
-        result.Plan?.CodeKind == LuaJitTier2CodeKind.ExactNumericSpecializedCil;
+        result.Plan?.CodeKind is LuaJitTier2CodeKind.ExactNumericSpecializedCil or
+            LuaJitTier2CodeKind.GuardedSpecializedCil;
 
     private void CompileLoopOsr(CompilationRequest request)
     {
@@ -2987,7 +2988,9 @@ internal sealed class LuaTieredJitRegistry :
         reason is LuaJitTier2EligibilityReason.PolymorphicNumericProfile or
             LuaJitTier2EligibilityReason.ManagedOptimizationRequired or
             LuaJitTier2EligibilityReason.ManagedSemanticBoundary or
-            LuaJitTier2EligibilityReason.UnsupportedInstruction;
+            LuaJitTier2EligibilityReason.UnsupportedInstruction or
+            LuaJitTier2EligibilityReason.InsufficientTier2Work or
+            LuaJitTier2EligibilityReason.HotLoopCallBoundary;
 
     // The caller holds entry.Gate. Keeping both delegates in the entry makes this a single
     // publication point: concurrent readers either execute the profiled method they already
@@ -3091,7 +3094,7 @@ internal sealed class LuaTieredJitRegistry :
         var key = new FunctionKey(
             GetModuleContentId(module),
             functionId,
-            LuaCodegenAbiV2.RuntimeAbiVersion,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
             CodegenVersion);
         return _entries.GetValueOrDefault(key);
     }

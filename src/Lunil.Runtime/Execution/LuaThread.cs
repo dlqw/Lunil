@@ -16,7 +16,10 @@ public enum LuaThreadStatus : byte
 /// <summary>Owns the persistent Lua stack, logical frames, and identity map for open upvalues.</summary>
 public sealed class LuaThread : LuaGcObject
 {
+    private const int MaximumPooledFrames = 256;
     private readonly List<LuaFrame> _frames = [];
+    private readonly List<LuaFrame> _retiredFrames = [];
+    private readonly Stack<LuaFrame> _framePool = [];
     private readonly SortedList<int, LuaUpvalue> _openUpvalues = [];
 
     internal LuaThread(LuaHeap owner, int initialStackCapacity = 128)
@@ -54,6 +57,11 @@ public sealed class LuaThread : LuaGcObject
 
     internal ReadOnlySpan<LuaValue> ResumeSpan => _resumeValues.AsSpan();
 
+    /// <summary>
+    /// Gets the borrowed live view of active frames. Removed frames are pooled and references to
+    /// them can be reset or reused; callers that need durable data must copy it while the frame is
+    /// present in this collection.
+    /// </summary>
     public IReadOnlyList<LuaFrame> Frames => _frames;
 
     public LuaValue DebugHook { get; internal set; }
@@ -80,6 +88,10 @@ public sealed class LuaThread : LuaGcObject
 
     internal int FrameCount => _frames.Count;
 
+    internal int RetiredFrameCount => _retiredFrames.Count;
+
+    internal int PooledFrameCount => _framePool.Count;
+
     internal LuaUnwindState? UnwindState { get; set; }
 
     internal LuaContinuation RootContinuation { get; } = new();
@@ -102,7 +114,55 @@ public sealed class LuaThread : LuaGcObject
     {
         var frame = _frames[^1];
         _frames.RemoveAt(_frames.Count - 1);
+        _retiredFrames.Add(frame);
         return frame;
+    }
+
+    internal LuaFrame RentFrame(
+        LuaClosure closure,
+        int @base,
+        int top,
+        int returnBase,
+        int expectedResults,
+        ReadOnlySpan<LuaValue> varArgs,
+        LuaProtectedCallKind protectionKind = LuaProtectedCallKind.None,
+        LuaValue errorHandler = default,
+        bool isCloseHandler = false,
+        bool isDebugHook = false,
+        bool isHidden = false)
+    {
+        var frame = _framePool.Count == 0 ? new LuaFrame() : _framePool.Pop();
+        frame.Initialize(
+            closure,
+            @base,
+            top,
+            returnBase,
+            expectedResults,
+            varArgs,
+            protectionKind,
+            errorHandler,
+            isCloseHandler,
+            isDebugHook,
+            isHidden);
+        return frame;
+    }
+
+    /// <summary>
+    /// Makes frames retired by the previous scheduler turn available for reuse. Retirement is
+    /// deliberately delayed because return/unwind code can still inspect a frame after PopFrame.
+    /// </summary>
+    internal void AdvanceFramePoolEpoch()
+    {
+        foreach (var frame in _retiredFrames)
+        {
+            frame.ResetForPool();
+            if (_framePool.Count < MaximumPooledFrames)
+            {
+                _framePool.Push(frame);
+            }
+        }
+
+        _retiredFrames.Clear();
     }
 
     internal LuaUpvalue GetOrCreateOpenUpvalue(int stackIndex)
@@ -135,7 +195,9 @@ public sealed class LuaThread : LuaGcObject
     internal void Reset()
     {
         CloseUpvalues(0);
+        RetireActiveFrames();
         _frames.Clear();
+        AdvanceFramePoolEpoch();
         UnwindState = null;
         RootContinuation.Reset();
         Entry = LuaValue.Nil;
@@ -199,7 +261,9 @@ public sealed class LuaThread : LuaGcObject
         }
 
         CloseUpvalues(0);
+        RetireActiveFrames();
         _frames.Clear();
+        AdvanceFramePoolEpoch();
         if (top > 0)
         {
             Stack.Clear(0, top);
@@ -253,20 +317,12 @@ public sealed class LuaThread : LuaGcObject
 
         foreach (var frame in _frames)
         {
-            visitor.Visit(frame.Closure);
-            Stack.Traverse(frame.Base, frame.Top, visitor);
-            foreach (var value in frame.VarArgStorage)
-            {
-                visitor.Visit(value);
-            }
+            TraverseFrame(visitor, frame, includeStack: true);
+        }
 
-            visitor.Visit(frame.Continuation.Value);
-            visitor.Visit(frame.Continuation.ErrorHandler);
-            visitor.Visit(frame.Continuation.ProtectionFunction);
-            foreach (var value in frame.Continuation.Values)
-            {
-                visitor.Visit(value);
-            }
+        foreach (var frame in _retiredFrames)
+        {
+            TraverseFrame(visitor, frame, includeStack: true);
         }
 
         visitor.Visit(RootContinuation.Value);
@@ -304,6 +360,36 @@ public sealed class LuaThread : LuaGcObject
         DebugHookTransferStart = 1;
         DebugHookTransferIsNative = false;
     }
+
+    private void RetireActiveFrames()
+    {
+        _retiredFrames.AddRange(_frames);
+    }
+
+    private void TraverseFrame(
+        LuaGcVisitor visitor,
+        LuaFrame frame,
+        bool includeStack)
+    {
+        visitor.Visit(frame.Closure);
+        if (includeStack)
+        {
+            Stack.Traverse(frame.Base, frame.Top, visitor);
+        }
+
+        foreach (var value in frame.VarArgStorage)
+        {
+            visitor.Visit(value);
+        }
+
+        visitor.Visit(frame.Continuation.Value);
+        visitor.Visit(frame.Continuation.ErrorHandler);
+        visitor.Visit(frame.Continuation.ProtectionFunction);
+        foreach (var value in frame.Continuation.Values)
+        {
+            visitor.Visit(value);
+        }
+    }
 }
 
 internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
@@ -312,9 +398,23 @@ internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
 
     public int Count { get; private set; }
 
-    public LuaValue this[int index] => index >= 0 && index < Count
-        ? _values[index]
-        : throw new ArgumentOutOfRangeException(nameof(index));
+    internal int Capacity => _values.Length;
+
+    public LuaValue this[int index]
+    {
+        get => index >= 0 && index < Count
+            ? _values[index]
+            : throw new ArgumentOutOfRangeException(nameof(index));
+        internal set
+        {
+            if ((uint)index >= (uint)Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            _values[index] = value;
+        }
+    }
 
     public void Set(ReadOnlySpan<LuaValue> values)
     {
@@ -347,18 +447,53 @@ internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
         }
     }
 
-    public ReadOnlySpan<LuaValue> AsSpan() => _values.AsSpan(0, Count);
-
-    public IEnumerator<LuaValue> GetEnumerator()
+    public void Clear(int maximumRetainedCapacity)
     {
-        for (var index = 0; index < Count; index++)
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumRetainedCapacity);
+        Clear();
+        if (_values.Length > maximumRetainedCapacity)
         {
-            yield return _values[index];
+            _values = [];
         }
     }
 
+    public ReadOnlySpan<LuaValue> AsSpan() => _values.AsSpan(0, Count);
+
+    public Enumerator GetEnumerator() => new(_values, Count);
+
+    IEnumerator<LuaValue> IEnumerable<LuaValue>.GetEnumerator() => GetEnumerator();
+
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() =>
         GetEnumerator();
+
+    internal struct Enumerator : IEnumerator<LuaValue>
+    {
+        private readonly LuaValue[] _values;
+        private readonly int _count;
+        private int _index;
+
+        internal Enumerator(LuaValue[] values, int count)
+        {
+            _values = values;
+            _count = count;
+            _index = -1;
+        }
+
+        public LuaValue Current => (uint)_index < (uint)_count
+            ? _values[_index]
+            : throw new InvalidOperationException(
+                "The enumerator is not positioned on a vararg value.");
+
+        public bool MoveNext() => ++_index < _count;
+
+        void IDisposable.Dispose()
+        {
+        }
+
+        object System.Collections.IEnumerator.Current => Current;
+
+        void System.Collections.IEnumerator.Reset() => _index = -1;
+    }
 }
 
 internal sealed class LuaUnwindState
