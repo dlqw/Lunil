@@ -2181,7 +2181,10 @@ internal sealed class LuaExecutionEngine
             return;
         }
 
-        var argumentStart = checked(frame.Base + frame.Closure.Function.RegisterCount);
+        var operationTop = frame.Top;
+        var argumentStart = Math.Max(
+            checked(frame.Base + frame.Closure.Function.RegisterCount),
+            operationTop);
         var argumentCount = resolution.ArgumentCount;
         EnsureScratchWindow(thread, argumentStart, argumentCount);
         CopyOperationArguments(thread, argumentStart, resolution);
@@ -2203,6 +2206,7 @@ internal sealed class LuaExecutionEngine
         {
             var operation = frame.Closure.Function.Instructions[frame.ProgramCounter];
             frame.Continuation.Kind = LuaContinuationKind.LuaCall;
+            frame.Continuation.Count = operationTop;
             frame.Continuation.Transform = resolution.Transform;
             frame.ProgramCounter++;
             var callee = PushFrameFromStack(
@@ -2211,7 +2215,8 @@ internal sealed class LuaExecutionEngine
                 argumentStart,
                 argumentCount,
                 returnBase,
-                expectedResults);
+                expectedResults,
+                minimumBase: operationTop);
             SetDebugFunctionName(
                 callee,
                 GetOperationMetamethodName(operation),
@@ -2234,7 +2239,13 @@ internal sealed class LuaExecutionEngine
             thread.Stack.Clear(argumentStart, argumentCount);
         }
 
-        WriteCallResults(thread, frame, returnBase, expectedResults, results);
+        WriteOperationResults(
+            thread,
+            frame,
+            returnBase,
+            expectedResults,
+            results,
+            operationTop);
         ApplyPendingTransform(thread, frame, returnBase, resolution.Transform);
         frame.ProgramCounter++;
     }
@@ -3152,22 +3163,38 @@ internal sealed class LuaExecutionEngine
             return null;
         }
 
-        WriteCallResults(
-            thread,
-            thread.CurrentFrame,
-            frame.ReturnBase,
-            frame.ExpectedResults,
-            results);
+        var operationTop = callerFrame.Continuation.Kind == LuaContinuationKind.LuaCall
+            ? callerFrame.Continuation.Count
+            : -1;
+        if (operationTop >= 0)
+        {
+            WriteOperationResults(
+                thread,
+                callerFrame,
+                frame.ReturnBase,
+                frame.ExpectedResults,
+                results,
+                operationTop);
+        }
+        else
+        {
+            WriteCallResults(
+                thread,
+                callerFrame,
+                frame.ReturnBase,
+                frame.ExpectedResults,
+                results);
+        }
         ApplyPendingTransform(
             thread,
-            thread.CurrentFrame,
+            callerFrame,
             frame.ReturnBase,
-            thread.CurrentFrame.Continuation.Kind == LuaContinuationKind.LuaCall
-                ? thread.CurrentFrame.Continuation.Transform
+            callerFrame.Continuation.Kind == LuaContinuationKind.LuaCall
+                ? callerFrame.Continuation.Transform
                 : LuaResultTransform.None);
-        if (thread.CurrentFrame.Continuation.Kind == LuaContinuationKind.LuaCall)
+        if (callerFrame.Continuation.Kind == LuaContinuationKind.LuaCall)
         {
-            thread.CurrentFrame.Continuation.Reset();
+            callerFrame.Continuation.Reset();
         }
         return null;
     }
@@ -3252,7 +3279,8 @@ internal sealed class LuaExecutionEngine
         int argumentStart,
         int argumentCount,
         int returnBase,
-        int expectedResults)
+        int expectedResults,
+        int minimumBase = -1)
     {
         const int emergencyCallDepth = 200;
         var callDepthLimit = thread.UnwindState?.ActiveErrorHandler is not null
@@ -3270,7 +3298,7 @@ internal sealed class LuaExecutionEngine
         }
 
         var function = closure.Function;
-        var @base = returnBase + 1;
+        var @base = Math.Max(returnBase + 1, minimumBase);
         var required = checked(@base + function.RegisterCount);
         if (required > _options.MaximumStackSlots)
         {
@@ -3441,6 +3469,23 @@ internal sealed class LuaExecutionEngine
         }
 
         SetFrameTop(thread, caller, returnBase + count);
+    }
+
+    private static void WriteOperationResults(
+        LuaThread thread,
+        LuaFrame caller,
+        int returnBase,
+        int expectedResults,
+        ReadOnlySpan<LuaValue> results,
+        int preservedTop)
+    {
+        var count = expectedResults < 0 ? results.Length : expectedResults;
+        for (var index = 0; index < count; index++)
+        {
+            thread.Stack[returnBase + index] = index < results.Length ? results[index] : LuaValue.Nil;
+        }
+
+        caller.Top = Math.Max(preservedTop, returnBase + count);
     }
 
     private static void WriteProtectedResults(

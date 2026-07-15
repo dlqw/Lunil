@@ -201,6 +201,62 @@ public sealed class LuaLowererTests
     }
 
     [Fact]
+    public void CanonicalWriterMatchesCompactPucNumericLoopShape()
+    {
+        const string source = """
+            local total = 0
+            local first = 0
+            local second = 1
+            local index = 0
+            while index < 5000 do
+                local next = (first + second) % 1024
+                first = second
+                second = next
+                total = total + next
+                index = index + 1
+            end
+            return total
+            """;
+        var result = Lower(source);
+        var module = Assert.IsType<LuaIrModule>(result.Module);
+
+        var prototype = Lua54CanonicalPrototypeWriter.CreateChunk(
+            module,
+            module.MainFunctionId).MainPrototype;
+
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(22, prototype.Code.Length);
+        Assert.Equal(5, prototype.MaximumStackSize);
+        var constant = Assert.Single(prototype.Constants);
+        Assert.Equal(Lua54ConstantKind.Integer, constant.Kind);
+        Assert.Equal(1024, constant.IntegerValue);
+        Assert.Contains(prototype.Code, static instruction =>
+            instruction.Opcode == Lua54Opcode.AddImmediate);
+        Assert.Contains(prototype.Code, static instruction =>
+            instruction.Opcode == Lua54Opcode.ModuloConstant);
+        Assert.DoesNotContain(prototype.Code, static instruction =>
+            instruction.Opcode == Lua54Opcode.Close);
+    }
+
+    [Fact]
+    public void LowererDeduplicatesConstantsAndClosesOnlyCapturedOrToBeClosedScopes()
+    {
+        var plain = Lower("do local a=1 local b=1 end return 1");
+        var plainFunction = Assert.IsType<LuaIrModule>(plain.Module).Functions[0];
+
+        Assert.Single(plainFunction.Constants);
+        Assert.DoesNotContain(plainFunction.Instructions, static instruction =>
+            instruction.Opcode == LuaIrOpcode.Close);
+
+        var captured = Lower(
+            "local f do local value=1 f=function() return value end end return f()");
+        var capturedFunction = Assert.IsType<LuaIrModule>(captured.Module).Functions[0];
+
+        Assert.Contains(capturedFunction.Instructions, static instruction =>
+            instruction.Opcode == LuaIrOpcode.Close);
+    }
+
+    [Fact]
     public void RefusesToLowerInvalidBoundProgram()
     {
         var result = Lower("break");

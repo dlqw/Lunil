@@ -427,12 +427,16 @@ public static class LuaLowerer
                 switch (target.Kind)
                 {
                     case AssignmentTargetKind.Register:
-                        Emit(new LuaIrInstruction(
-                            LuaIrOpcode.Move,
-                            target.First,
-                            source,
-                            span: span,
-                            sourceLine: sourceLine));
+                        if (target.First != source)
+                        {
+                            Emit(new LuaIrInstruction(
+                                LuaIrOpcode.Move,
+                                target.First,
+                                source,
+                                span: span,
+                                sourceLine: sourceLine));
+                        }
+
                         break;
                     case AssignmentTargetKind.Upvalue:
                         Emit(new LuaIrInstruction(
@@ -724,10 +728,7 @@ public static class LuaLowerer
                 _loops.Push(loop);
                 LowerBlock(body, createScope: false);
                 _loops.Pop();
-                Emit(new LuaIrInstruction(
-                    LuaIrOpcode.Close,
-                    baseRegister + 3,
-                    span: statement.Span));
+                CloseCurrentScope(statement.Span, baseRegister + 3);
                 Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, baseRegister + 4));
                 Emit(new LuaIrInstruction(
                     LuaIrOpcode.NumericForLoop,
@@ -809,10 +810,7 @@ public static class LuaLowerer
                 _loops.Push(loop);
                 LowerBlock(GetChild(statement, LuaSyntaxKind.Block), createScope: false);
                 _loops.Pop();
-                Emit(new LuaIrInstruction(
-                    LuaIrOpcode.Close,
-                    variableBase,
-                    span: statement.Span));
+                CloseCurrentScope(statement.Span, variableBase);
                 Emit(new LuaIrInstruction(LuaIrOpcode.SetTop, variableBase));
                 Emit(new LuaIrInstruction(LuaIrOpcode.Jump, b: loopStart, c: -1, span: statement.Span));
                 var end = _instructions.Count;
@@ -1257,7 +1255,14 @@ public static class LuaLowerer
             {
                 if (_symbolRegisters.TryGetValue(symbol.Id, out var register))
                 {
-                    Emit(new LuaIrInstruction(LuaIrOpcode.Move, destination, register, span: span));
+                    if (destination != register)
+                    {
+                        Emit(new LuaIrInstruction(
+                            LuaIrOpcode.Move,
+                            destination,
+                            register,
+                            span: span));
+                    }
                 }
                 else
                 {
@@ -1279,9 +1284,31 @@ public static class LuaLowerer
 
             private void LoadConstant(int destination, LuaIrConstant value, TextSpan span)
             {
-                var index = _constants.Count;
-                _constants.Add(value);
+                var index = FindConstant(value);
+                if (index < 0)
+                {
+                    index = _constants.Count;
+                    _constants.Add(value);
+                }
+
                 Emit(new LuaIrInstruction(LuaIrOpcode.LoadConstant, destination, index, span: span));
+            }
+
+            private int FindConstant(LuaIrConstant value)
+            {
+                for (var index = 0; index < _constants.Count; index++)
+                {
+                    var candidate = _constants[index];
+                    if (candidate.Kind == value.Kind && candidate.Integer == value.Integer &&
+                        BitConverter.DoubleToInt64Bits(candidate.Float) ==
+                        BitConverter.DoubleToInt64Bits(value.Float) &&
+                        candidate.Bytes.AsSpan().SequenceEqual(value.Bytes.AsSpan()))
+                    {
+                        return index;
+                    }
+                }
+
+                return -1;
             }
 
             private void FillExtraNil(int destination, int resultCount, TextSpan span)
@@ -1328,12 +1355,51 @@ public static class LuaLowerer
                 _scopes[^1].SyntheticLocals.Add(local);
             }
 
-            private void CloseCurrentScope(TextSpan span)
+            private void CloseCurrentScope(TextSpan span, int? minimumRegister = null)
             {
                 var scope = _scopes[^1];
-                if (_localTop > scope.EntryRegister)
+                var lowerBound = minimumRegister ?? scope.EntryRegister;
+                var closeBase = int.MaxValue;
+                foreach (var symbolId in scope.DeclaredSymbols)
                 {
-                    Emit(new LuaIrInstruction(LuaIrOpcode.Close, scope.EntryRegister, span: span));
+                    if (!_symbolRegisters.TryGetValue(symbolId, out var register))
+                    {
+                        continue;
+                    }
+
+                    var symbol = _info.Symbols.Single(candidate => candidate.Id == symbolId);
+                    if (register >= lowerBound &&
+                        (symbol.IsCaptured || symbol.Attribute == LuaLocalAttributeKind.ToBeClosed))
+                    {
+                        closeBase = Math.Min(closeBase, register);
+                    }
+                }
+
+                for (var index = scope.EntryActiveSyntheticCloseRegisterCount;
+                     index < _activeSyntheticCloseRegisters.Count;
+                     index++)
+                {
+                    var register = _activeSyntheticCloseRegisters[index];
+                    if (register >= lowerBound)
+                    {
+                        closeBase = Math.Min(closeBase, register);
+                    }
+                }
+
+                for (var index = scope.EntryActiveToBeClosedRegisterCount;
+                     index < _activeToBeClosedRegisters.Count;
+                     index++)
+                {
+                    var register = _activeToBeClosedRegisters[index];
+                    if (register >= lowerBound)
+                    {
+                        closeBase = Math.Min(closeBase, register);
+                    }
+                }
+
+                if (closeBase != int.MaxValue)
+                {
+                    Emit(new LuaIrInstruction(LuaIrOpcode.Close, closeBase, span: span));
                 }
             }
 

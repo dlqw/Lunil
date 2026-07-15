@@ -11,6 +11,7 @@ public sealed class Lua54InstructionTests
         Assert.Equal(0, (int)Lua54Opcode.Move);
         Assert.Equal(56, (int)Lua54Opcode.Jump);
         Assert.Equal(82, (int)Lua54Opcode.ExtraArgument);
+        Assert.False(Lua54OpcodeInfo.Get(Lua54Opcode.VarArgPrepare).SetsRegisterA);
     }
 
     [Fact]

@@ -692,7 +692,7 @@ public static class Lua54ChunkVerifier
         Lua54Instruction metamethod) => arithmetic.Opcode switch
         {
             Lua54Opcode.AddImmediate =>
-                !metamethod.K && metamethod.SignedB == arithmetic.SignedC,
+                metamethod.SignedB == arithmetic.SignedC,
             Lua54Opcode.ShiftRightImmediate when arithmetic.SignedC < 0 =>
                 !metamethod.K && metamethod.SignedB == -arithmetic.SignedC,
             Lua54Opcode.ShiftRightImmediate =>

@@ -1,4 +1,5 @@
 using Lunil.Core.Text;
+using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -122,10 +123,63 @@ public sealed class LuaMetamethodTests
         Assert.Contains("chain is too long", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LuaClosureOperationResultPreservesHigherLiveRegisters()
+    {
+        const string source = """
+            local mt = {}
+            function mt.__sub() return 123 end
+            local low = setmetatable({}, mt)
+            local keep = "alive"
+            low = low - 3
+            return low, keep
+            """;
+        var state = CreateStateWithSetMetatable();
+
+        var values = ExecuteRoundTripped(source, state);
+
+        Assert.Equal(LuaValue.FromInteger(123), values[0]);
+        Assert.Equal("alive", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void NativeOperationResultPreservesHigherLiveRegisters()
+    {
+        const string source = """
+            local low = object
+            local keep = "alive"
+            low = low - 3
+            return low, keep
+            """;
+        var state = CreateStateWithSetMetatable();
+        var value = state.CreateTable();
+        var metatable = state.CreateTable();
+        metatable.Set(
+            String(state, "__sub"),
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "native.__sub",
+                static (_, _) => [LuaValue.FromInteger(321)])));
+        value.SetMetatable(metatable);
+        state.SetGlobal("object", LuaValue.FromTable(value));
+
+        var values = ExecuteRoundTripped(source, state);
+
+        Assert.Equal(LuaValue.FromInteger(321), values[0]);
+        Assert.Equal("alive", values[1].AsString().ToString());
+    }
+
     private static LuaValue[] Execute(string source, LuaState? state = null)
     {
         state ??= CreateStateWithSetMetatable();
         var module = Compile(source);
+        return new LuaInterpreter().Execute(state, state.CreateMainClosure(module)).Values.ToArray();
+    }
+
+    private static LuaValue[] ExecuteRoundTripped(string source, LuaState state)
+    {
+        var original = Compile(source);
+        var bytes = Lua54CanonicalPrototypeWriter.Write(original, original.MainFunctionId);
+        var module = Lua54PrototypeConverter.Convert(bytes);
         return new LuaInterpreter().Execute(state, state.CreateMainClosure(module)).Values.ToArray();
     }
 
