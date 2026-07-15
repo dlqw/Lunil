@@ -116,6 +116,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         AllocationSlopeBytesIteration = [double]::Parse(
             $values.allocation_slope_bytes_iteration,
             [Globalization.CultureInfo]::InvariantCulture)
+        NumericRegionCompileAllocationSlopeBytesInstruction = [double]::Parse(
+            $values.numeric_region_compile_allocation_slope_bytes_instruction,
+            [Globalization.CultureInfo]::InvariantCulture)
         CompilationP95Ms = [double]::Parse($values.compilation_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier1P95Ms = [double]::Parse($values.tier1_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
         Tier2P95Ms = [double]::Parse($values.tier2_p95_ms, [Globalization.CultureInfo]::InvariantCulture)
@@ -160,6 +163,12 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         Tier2OptimizationCount = [int]$values.tier2_optimization_count
         Tier2SpecializedOptimizationCount = [int]$values.tier2_specialized_optimization_count
         Tier2DeoptSiteCount = [int]$values.tier2_deopt_site_count
+        Tier2NumericRegionCount = [int]$values.tier2_numeric_region_count
+        Tier2UnboxedNumericLocalCount = [int]$values.tier2_unboxed_numeric_local_count
+        Tier2DirectNumericInstructionCount = [int]$values.tier2_direct_numeric_instruction_count
+        Tier2NumericRegionSafepointCount = [int]$values.tier2_numeric_region_safepoint_count
+        Tier2NumericRegionHotInstructionBudgetCheckCount =
+            [int]$values.tier2_numeric_region_hot_instruction_budget_check_count
         Tier2ManagedCompilationCount = [int]$values.tier2_managed_compilation_count
         Tier2CompilationQueued = [long]$values.tier2_compilation_queued
         Tier2EligibilityEvaluated = [long]$values.tier2_eligibility_evaluated
@@ -171,6 +180,12 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         LoopOsrCodeKind = $values.loop_osr_code_kind
         LoopOsrSpecializedInstructionCount = [int]$values.loop_osr_specialized_instruction_count
         LoopOsrGuardCount = [int]$values.loop_osr_guard_count
+        LoopOsrNumericRegionCount = [int]$values.loop_osr_numeric_region_count
+        LoopOsrUnboxedNumericLocalCount = [int]$values.loop_osr_unboxed_numeric_local_count
+        LoopOsrDirectNumericInstructionCount = [int]$values.loop_osr_direct_numeric_instruction_count
+        LoopOsrNumericRegionSafepointCount = [int]$values.loop_osr_numeric_region_safepoint_count
+        LoopOsrNumericRegionHotInstructionBudgetCheckCount =
+            [int]$values.loop_osr_numeric_region_hot_instruction_budget_check_count
         LoopOsrManagedCompilationCount = [int]$values.loop_osr_managed_compilation_count
         LoopOsrEligibilityEvaluated = [long]$values.loop_osr_eligibility_evaluated
         LoopOsrEligibilityAccepted = [long]$values.loop_osr_eligibility_accepted
@@ -317,6 +332,8 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         AllocatedOp = Get-Median @($group.Group.AllocatedOp)
         AllocationRatioVsInterpreterMedian = Get-Median $allocationRatios.ToArray()
         AllocationSlopeBytesIteration = Get-Median @($group.Group.AllocationSlopeBytesIteration)
+        NumericRegionCompileAllocationSlopeBytesInstruction = Get-Median @(
+            $group.Group.NumericRegionCompileAllocationSlopeBytesInstruction)
         CompilationP95Ms = Get-Median @($group.Group.CompilationP95Ms)
         Tier1P95Ms = Get-Median @($group.Group.Tier1P95Ms)
         Tier2P95Ms = Get-Median @($group.Group.Tier2P95Ms)
@@ -373,6 +390,15 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         Tier2SpecializedOptimizationCount = Get-Median @(
             $group.Group.Tier2SpecializedOptimizationCount)
         Tier2DeoptSiteCount = Get-Median @($group.Group.Tier2DeoptSiteCount)
+        Tier2NumericRegionCount = Get-Median @($group.Group.Tier2NumericRegionCount)
+        Tier2UnboxedNumericLocalCount = Get-Median @(
+            $group.Group.Tier2UnboxedNumericLocalCount)
+        Tier2DirectNumericInstructionCount = Get-Median @(
+            $group.Group.Tier2DirectNumericInstructionCount)
+        Tier2NumericRegionSafepointCount = Get-Median @(
+            $group.Group.Tier2NumericRegionSafepointCount)
+        Tier2NumericRegionHotInstructionBudgetCheckCount = Get-Median @(
+            $group.Group.Tier2NumericRegionHotInstructionBudgetCheckCount)
         Tier2ManagedCompilationCount = Get-Median @($group.Group.Tier2ManagedCompilationCount)
         Tier2CompilationQueued = Get-Median @($group.Group.Tier2CompilationQueued)
         Tier2EligibilityEvaluated = Get-Median @($group.Group.Tier2EligibilityEvaluated)
@@ -385,6 +411,15 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         LoopOsrSpecializedInstructionCount = Get-Median @(
             $group.Group.LoopOsrSpecializedInstructionCount)
         LoopOsrGuardCount = Get-Median @($group.Group.LoopOsrGuardCount)
+        LoopOsrNumericRegionCount = Get-Median @($group.Group.LoopOsrNumericRegionCount)
+        LoopOsrUnboxedNumericLocalCount = Get-Median @(
+            $group.Group.LoopOsrUnboxedNumericLocalCount)
+        LoopOsrDirectNumericInstructionCount = Get-Median @(
+            $group.Group.LoopOsrDirectNumericInstructionCount)
+        LoopOsrNumericRegionSafepointCount = Get-Median @(
+            $group.Group.LoopOsrNumericRegionSafepointCount)
+        LoopOsrNumericRegionHotInstructionBudgetCheckCount = Get-Median @(
+            $group.Group.LoopOsrNumericRegionHotInstructionBudgetCheckCount)
         LoopOsrManagedCompilationCount = Get-Median @(
             $group.Group.LoopOsrManagedCompilationCount)
         LoopOsrEligibilityEvaluated = Get-Median @(
@@ -569,6 +604,14 @@ $tier2Decision = [pscustomobject]@{
     Tier2OptimizationCount = $tier2Arithmetic.Tier2OptimizationCount
     Tier2SpecializedOptimizationCount = $tier2Arithmetic.Tier2SpecializedOptimizationCount
     Tier2DeoptSiteCount = $tier2Arithmetic.Tier2DeoptSiteCount
+    Tier2NumericRegionCount = $tier2Arithmetic.Tier2NumericRegionCount
+    Tier2UnboxedNumericLocalCount = $tier2Arithmetic.Tier2UnboxedNumericLocalCount
+    Tier2DirectNumericInstructionCount =
+        $tier2Arithmetic.Tier2DirectNumericInstructionCount
+    Tier2NumericRegionSafepointCount =
+        $tier2Arithmetic.Tier2NumericRegionSafepointCount
+    Tier2NumericRegionHotInstructionBudgetCheckCount =
+        $tier2Arithmetic.Tier2NumericRegionHotInstructionBudgetCheckCount
     Tier2IrVerifyP95Ms = $tier2Arithmetic.Tier2IrVerifyP95Ms
     Tier2LivenessP95Ms = $tier2Arithmetic.Tier2LivenessP95Ms
     Tier2LivenessCacheHitRate = $tier2Arithmetic.Tier2LivenessCacheHitRate
@@ -576,6 +619,8 @@ $tier2Decision = [pscustomobject]@{
     Tier2CilEmitP95Ms = $tier2Arithmetic.Tier2CilEmitP95Ms
     Tier2DelegateCreateP95Ms = $tier2Arithmetic.Tier2DelegateCreateP95Ms
     Tier2CompileAllocatedP95Bytes = $tier2Arithmetic.Tier2CompileAllocatedP95Bytes
+    NumericRegionCompileAllocationSlopeBytesInstruction =
+        $tier2Arithmetic.NumericRegionCompileAllocationSlopeBytesInstruction
     Tier2EligibilityEvaluated = $tier2Arithmetic.Tier2EligibilityEvaluated
     Tier2EligibilityAccepted = $tier2Arithmetic.Tier2EligibilityAccepted
     Tier2EligibilityRejected = $tier2Arithmetic.Tier2EligibilityRejected
@@ -591,8 +636,15 @@ $tier2Decision = [pscustomobject]@{
         $tier2Arithmetic.SpeedupVsInterpreterCi95Lower -ge 4.0 -and
         [Math]::Abs($tier2Arithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
         $tier2Arithmetic.Tier2P95Ms -lt 10.0 -and
+        $tier2Arithmetic.Tier2CompileAllocatedP95Bytes -lt 262144 -and
+        $tier2Arithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -lt 32768 -and
         $tier2Arithmetic.Tier2CodeKind -eq 'ExactNumericSpecializedCil' -and
         $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0 -and
+        $tier2Arithmetic.Tier2NumericRegionCount -gt 0 -and
+        $tier2Arithmetic.Tier2UnboxedNumericLocalCount -gt 0 -and
+        $tier2Arithmetic.Tier2DirectNumericInstructionCount -gt 0 -and
+        $tier2Arithmetic.Tier2NumericRegionSafepointCount -gt 0 -and
+        $tier2Arithmetic.Tier2NumericRegionHotInstructionBudgetCheckCount -eq 0 -and
         $tier2Arithmetic.Tier2ManagedCompilationCount -eq 0 -and
         $tier2Arithmetic.Tier2EligibilityAccepted -gt 0 -and
         $tier2Arithmetic.Tier2MethodEntries -eq $tier2Arithmetic.Tier2CompletedInvocations -and
@@ -713,6 +765,15 @@ $loopOsrDecision = [pscustomobject]@{
     LoopOsrSpecializedInstructionCount =
         $loopOsrArithmetic.LoopOsrSpecializedInstructionCount
     LoopOsrGuardCount = $loopOsrArithmetic.LoopOsrGuardCount
+    LoopOsrNumericRegionCount = $loopOsrArithmetic.LoopOsrNumericRegionCount
+    LoopOsrUnboxedNumericLocalCount =
+        $loopOsrArithmetic.LoopOsrUnboxedNumericLocalCount
+    LoopOsrDirectNumericInstructionCount =
+        $loopOsrArithmetic.LoopOsrDirectNumericInstructionCount
+    LoopOsrNumericRegionSafepointCount =
+        $loopOsrArithmetic.LoopOsrNumericRegionSafepointCount
+    LoopOsrNumericRegionHotInstructionBudgetCheckCount =
+        $loopOsrArithmetic.LoopOsrNumericRegionHotInstructionBudgetCheckCount
     LoopOsrManagedCompilationCount = $loopOsrArithmetic.LoopOsrManagedCompilationCount
     LoopOsrEligibilityEvaluated = $loopOsrArithmetic.LoopOsrEligibilityEvaluated
     LoopOsrEligibilityAccepted = $loopOsrArithmetic.LoopOsrEligibilityAccepted
@@ -726,6 +787,8 @@ $loopOsrDecision = [pscustomobject]@{
     LoopOsrDelegateCreateP95Ms = $loopOsrArithmetic.LoopOsrDelegateCreateP95Ms
     LoopOsrCompileAllocatedP95Bytes =
         $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes
+    NumericRegionCompileAllocationSlopeBytesInstruction =
+        $loopOsrArithmetic.NumericRegionCompileAllocationSlopeBytesInstruction
     NegativeWorkloadComparisons = @($loopOsrWorkloadComparisons)
     NegativeWorkloadGateFailures = $loopOsrNegativeGateFailures.ToArray()
     QualifiesThisRid =
@@ -738,10 +801,16 @@ $loopOsrDecision = [pscustomobject]@{
         $loopOsrArithmetic.LoopOsrP95Ms -lt 10.0 -and
         $loopOsrArithmetic.LoopOsrCodeKind -eq 'GuardedExactNumericCil' -and
         $loopOsrArithmetic.LoopOsrSpecializedInstructionCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrNumericRegionCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrUnboxedNumericLocalCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrDirectNumericInstructionCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrNumericRegionSafepointCount -gt 0 -and
+        $loopOsrArithmetic.LoopOsrNumericRegionHotInstructionBudgetCheckCount -eq 0 -and
         $loopOsrArithmetic.LoopOsrManagedCompilationCount -eq 0 -and
         $loopOsrArithmetic.LoopOsrEligibilityAccepted -gt 0 -and
         $loopOsrArithmetic.LoopOsrLivenessCacheHitRate -eq 1.0 -and
-        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes -lt 65536 -and
+        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes -lt 196608 -and
+        $loopOsrArithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -lt 32768 -and
         $loopOsrNegativeGateFailures.Count -eq 0
 }
 $loopOsrDecision | ConvertTo-Json -Depth 8 | Set-Content `

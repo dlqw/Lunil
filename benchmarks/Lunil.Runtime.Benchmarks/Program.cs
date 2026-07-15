@@ -790,6 +790,7 @@ static void RunBackendEvidence(
         throughputStopwatch.Elapsed.TotalNanoseconds / operationCount;
     var allocatedPerOperation = (double)allocated / operationCount;
     var allocationSlopeBytesPerIteration = 0.0;
+    var numericRegionCompileAllocationSlopeBytesPerInstruction = 0.0;
     if (string.Equals(workload, "arithmetic", StringComparison.Ordinal))
     {
         using var small = factory(Compile(ArithmeticSource(1_000)));
@@ -797,6 +798,11 @@ static void RunBackendEvidence(
         var smallAllocated = MeasureAllocatedPerExecution(small);
         var largeAllocated = MeasureAllocatedPerExecution(large);
         allocationSlopeBytesPerIteration = (largeAllocated - smallAllocated) / 9_000.0;
+        if (name is "tier2" or "loop_osr")
+        {
+            numericRegionCompileAllocationSlopeBytesPerInstruction =
+                MeasureNumericRegionCompileAllocationSlope(factory, name);
+        }
     }
 
     var statistics = warmed.Statistics;
@@ -836,6 +842,8 @@ static void RunBackendEvidence(
         $"warm_ns_op={nanosecondsPerOperation:F2}, " +
         $"allocated_op={allocatedPerOperation:F2}, " +
         $"allocation_slope_bytes_iteration={allocationSlopeBytesPerIteration:F6}, " +
+        $"numeric_region_compile_allocation_slope_bytes_instruction=" +
+        $"{numericRegionCompileAllocationSlopeBytesPerInstruction:F6}, " +
         $"compilation_p95_ms={Percentile(compilationMilliseconds, 0.95):F3}, " +
         $"tier1_p95_ms={Percentile(tier1CompilationMilliseconds, 0.95):F3}, " +
         $"tier2_p95_ms={Percentile(tier2CompilationMilliseconds, 0.95):F3}, " +
@@ -878,6 +886,12 @@ static void RunBackendEvidence(
         $"tier2_optimization_count={warmed.Tier2OptimizationCount}, " +
         $"tier2_specialized_optimization_count={warmed.Tier2SpecializedOptimizationCount}, " +
         $"tier2_deopt_site_count={warmed.Tier2DeoptSiteCount}, " +
+        $"tier2_numeric_region_count={warmed.Tier2NumericRegionCount}, " +
+        $"tier2_unboxed_numeric_local_count={warmed.Tier2UnboxedNumericLocalCount}, " +
+        $"tier2_direct_numeric_instruction_count={warmed.Tier2DirectNumericInstructionCount}, " +
+        $"tier2_numeric_region_safepoint_count={warmed.Tier2NumericRegionSafepointCount}, " +
+        $"tier2_numeric_region_hot_instruction_budget_check_count=" +
+        $"{warmed.Tier2NumericRegionHotInstructionBudgetCheckCount}, " +
         $"tier2_managed_compilation_count={warmed.Tier2ManagedCompilationCount}, " +
         $"tier2_compilation_queued={statistics?.Tier2CompilationQueued ?? 0}, " +
         $"tier2_eligibility_evaluated={statistics?.Tier2EligibilityEvaluated ?? 0}, " +
@@ -889,6 +903,12 @@ static void RunBackendEvidence(
         $"loop_osr_code_kind={warmed.LoopOsrCodeKind}, " +
         $"loop_osr_specialized_instruction_count={warmed.LoopOsrSpecializedInstructionCount}, " +
         $"loop_osr_guard_count={warmed.LoopOsrGuardCount}, " +
+        $"loop_osr_numeric_region_count={warmed.LoopOsrNumericRegionCount}, " +
+        $"loop_osr_unboxed_numeric_local_count={warmed.LoopOsrUnboxedNumericLocalCount}, " +
+        $"loop_osr_direct_numeric_instruction_count={warmed.LoopOsrDirectNumericInstructionCount}, " +
+        $"loop_osr_numeric_region_safepoint_count={warmed.LoopOsrNumericRegionSafepointCount}, " +
+        $"loop_osr_numeric_region_hot_instruction_budget_check_count=" +
+        $"{warmed.LoopOsrNumericRegionHotInstructionBudgetCheckCount}, " +
         $"loop_osr_managed_compilation_count={warmed.LoopOsrManagedCompilationCount}, " +
         $"loop_osr_eligibility_evaluated={statistics?.LoopOsrEligibilityEvaluated ?? 0}, " +
         $"loop_osr_eligibility_accepted={statistics?.LoopOsrEligibilityAccepted ?? 0}, " +
@@ -933,6 +953,54 @@ static double MeasureAllocatedPerExecution(BackendEvidenceRunner runner)
 
     return (double)(GC.GetAllocatedBytesForCurrentThread() - allocatedBefore) / samples;
 }
+
+static double MeasureNumericRegionCompileAllocationSlope(
+    Func<LuaIrModule, BackendEvidenceRunner> factory,
+    string backend)
+{
+    using var small = factory(Compile(NumericRegionSizingSource(1)));
+    using var large = factory(Compile(NumericRegionSizingSource(8)));
+    for (var warmup = 0; warmup < small.RequiredWarmupOperations; warmup++)
+    {
+        small.ExecuteVerified();
+        large.ExecuteVerified();
+    }
+
+    var smallInstructions = backend == "tier2"
+        ? small.Tier2DirectNumericInstructionCount
+        : small.LoopOsrDirectNumericInstructionCount;
+    var largeInstructions = backend == "tier2"
+        ? large.Tier2DirectNumericInstructionCount
+        : large.LoopOsrDirectNumericInstructionCount;
+    var smallAllocated = backend == "tier2"
+        ? small.Tier2CompileAllocatedBytes
+        : small.LoopOsrCompileAllocatedBytes;
+    var largeAllocated = backend == "tier2"
+        ? large.Tier2CompileAllocatedBytes
+        : large.LoopOsrCompileAllocatedBytes;
+    if (smallAllocated <= 0 || largeAllocated <= 0 ||
+        largeInstructions <= smallInstructions)
+    {
+        throw new InvalidOperationException(
+            $"{backend} did not produce comparable numeric-region allocation samples.");
+    }
+
+    return Math.Max(
+        0.0,
+        (double)(largeAllocated - smallAllocated) /
+            (largeInstructions - smallInstructions));
+}
+
+static string NumericRegionSizingSource(int arithmeticInstructions) => $$"""
+    local total, index = 0, 0
+    while index < 500 do
+    {{string.Join(
+        Environment.NewLine,
+        Enumerable.Repeat("    total = total + index", arithmeticInstructions))}}
+        index = index + 1
+    end
+    return total
+    """;
 
 static void CollectCompilationDurations(
     IEnumerable<LuaJitEvent> events,
@@ -1170,6 +1238,30 @@ sealed class BackendEvidenceRunner : IDisposable
     public int Tier2DeoptSiteCount =>
         _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?.DeoptMap.Length ?? 0;
 
+    public int Tier2NumericRegionCount =>
+        _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?.NumericRegionCount ?? 0;
+
+    public int Tier2UnboxedNumericLocalCount =>
+        _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?
+            .UnboxedNumericLocalCount ?? 0;
+
+    public int Tier2DirectNumericInstructionCount =>
+        _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?
+            .DirectNumericInstructionCount ?? 0;
+
+    public int Tier2NumericRegionSafepointCount =>
+        _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?
+            .NumericRegionSafepointCount ?? 0;
+
+    public int Tier2NumericRegionHotInstructionBudgetCheckCount =>
+        _executor?.GetTier2Plan(_closure.Module, _closure.Function.Id)?
+            .NumericRegionHotInstructionBudgetCheckCount ?? 0;
+
+    public long Tier2CompileAllocatedBytes => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted)?
+        .Tier2CompilationMetrics?.AllocatedBytes ?? 0;
+
     public int Tier2ManagedCompilationCount => _compilationEvents.Count(static jitEvent =>
         jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted &&
         jitEvent.Tier2CompilationMetrics?.CodeKind ==
@@ -1190,6 +1282,26 @@ sealed class BackendEvidenceRunner : IDisposable
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)?
         .LoopOsrCompilationMetrics?.GuardCount ?? 0;
 
+    public int LoopOsrNumericRegionCount => LoopOsrPlans.Sum(static plan =>
+        plan.NumericRegionCount);
+
+    public int LoopOsrUnboxedNumericLocalCount => LoopOsrPlans.Sum(static plan =>
+        plan.UnboxedNumericLocalCount);
+
+    public int LoopOsrDirectNumericInstructionCount => LoopOsrPlans.Sum(static plan =>
+        plan.DirectNumericInstructionCount);
+
+    public int LoopOsrNumericRegionSafepointCount => LoopOsrPlans.Sum(static plan =>
+        plan.NumericRegionSafepointCount);
+
+    public int LoopOsrNumericRegionHotInstructionBudgetCheckCount => LoopOsrPlans.Sum(
+        static plan => plan.NumericRegionHotInstructionBudgetCheckCount);
+
+    public long LoopOsrCompileAllocatedBytes => _compilationEvents
+        .LastOrDefault(static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)?
+        .LoopOsrCompilationMetrics?.AllocatedBytes ?? 0;
+
     public int LoopOsrManagedCompilationCount => _compilationEvents.Count(static jitEvent =>
         jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted &&
         jitEvent.LoopOsrCompilationMetrics?.CodeKind ==
@@ -1201,6 +1313,9 @@ sealed class BackendEvidenceRunner : IDisposable
                 LuaJitEventKind.LoopOsrEligibilityAccepted or
                 LuaJitEventKind.LoopOsrEligibilityRejected)?
         .LoopOsrEligibility?.Reason;
+
+    private IReadOnlyList<LuaJitLoopOsrPlan> LoopOsrPlans =>
+        _executor?.GetLoopOsrPlans(_closure.Module, _closure.Function.Id) ?? [];
 
     public static BackendEvidenceRunner CreateInterpreter(
         LuaIrModule module,
