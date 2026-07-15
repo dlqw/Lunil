@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0--rc.1-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,13 +28,13 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.7.0-rc.1`**. The `0.6.0` line ended at the
+> The current source version is stable **`0.7.0`**. The `0.6.0` line ended at the
 > immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
 > Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
 > bounded type/control-flow analysis, incremental module workspace, and the `lunil` CLI are now
 > available. The official Lua 5.4.8 user-mode suite and six-RID evidence pass, and all 14 public
-> assemblies/packages are frozen by compatibility baselines. The release candidate accepts only
-> release-blocking fixes before stable `0.7.0`.
+> assemblies/packages are frozen by compatibility baselines. The accepted release candidate had
+> no product-code, public-API-baseline, or package-scope changes before stable promotion.
 
 ## Table of contents
 
@@ -77,18 +77,18 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | RC-qualified | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
-| Compiler product API | RC frozen | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
-| Hosting product API | RC frozen | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
-| Annotation product API | RC frozen | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
-| Type and flow analysis API | RC frozen | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
-| Workspace product API | RC frozen | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
-| CLI | RC frozen | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Release candidate | Only release-blocking fixes may enter before stable `0.7.0` |
+| JIT / AOT backends | Stable | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
+| Compiler product API | Stable `0.7` | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
+| Hosting product API | Stable `0.7` | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
+| Annotation product API | Stable `0.7` | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
+| Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
+| Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
+| CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
+| Stability contract | Stable release | Backward-compatible fixes on this line use `0.7.1`; the next feature/API milestone is `0.8.0` |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness accepted for `0.7.0-rc.1` |
+| Execution path | Release behavior | Readiness accepted for stable `0.7.0` |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -98,9 +98,8 @@ collector.
 | Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
 
 These results closed the `0.6.0-alpha.14` JIT/AOT productionization milestone and remain
-regression gates for `0.7.0`. RC retains the frozen compiler, analysis, hosting, CLI, conformance,
-and package surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md) and admits only
-release blockers.
+regression gates for `0.7.0`. The stable release retains the frozen compiler, analysis, hosting,
+CLI, conformance, and package surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md).
 
 ## Features
 
@@ -190,7 +189,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.7.0-rc.1
+dotnet tool install --global Lunil.Cli --version 0.7.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -229,7 +228,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0-rc.1" />
+<PackageReference Include="Lunil.Hosting" Version="0.7.0" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through
@@ -358,7 +357,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-rc.1" />
+  <PackageReference Include="Lunil.Build" Version="0.7.0" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -482,12 +481,12 @@ The `0.7.0` promotion sequence is:
 0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
 ```
 
-The current development version is **`0.7.0-rc.1`**. The `0.6.0` line was explicitly
+The current version is stable **`0.7.0`**. The `0.6.0` line was explicitly
 superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
 `0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. The accepted Beta entered RC without
-product-code or frozen API/package-scope changes. After `0.7.0-rc.1` is tagged, only a release
-blocker may produce `0.7.0-rc.2`; an unchanged accepted RC is promoted to stable `0.7.0`.
+channel and restart at `1` when entering a new channel. The accepted Beta entered RC, and the
+accepted `0.7.0-rc.1` entered stable without product-code or frozen API/package-scope changes.
+Backward-compatible fixes use `0.7.1`; new feature/API work starts at `0.8.0-alpha.1`.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a

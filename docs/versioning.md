@@ -6,11 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.7.0</VersionPrefix>
-  <VersionSuffix>rc.1</VersionSuffix>
 ```
 
-The resulting version is `0.7.0-rc.1` and its tag is `v0.7.0-rc.1`.
-`VersionSuffix` is removed for a stable release.
+The resulting stable version is `0.7.0` and its tag is `v0.7.0`. A prerelease adds
+`VersionSuffix`; the accepted candidate used `rc.1` before that property was removed.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -95,7 +94,7 @@ New compiler, analysis, hosting, and package-boundary work starts at
 `0.7.0-alpha.1`. Its scope and promotion gates are defined in the
 [`0.7.0` roadmap](roadmap-0.7.0.md).
 
-## Current `0.7.0-rc.1` decision
+## Current stable `0.7.0` decision
 
 `0.7.0-alpha.1` established the public compiler and hosting boundaries, `0.7.0-alpha.2` added the
 bounded LuaLS/legacy EmmyLua annotation syntax front end, and `0.7.0-alpha.3` added immutable
@@ -114,8 +113,12 @@ Its main-branch six-RID CI run and tag-triggered release workflow both passed fr
 commit, including conformance, backend, consumer, package, bundle, and publication gates.
 
 `0.7.0-rc.1` promotes that accepted Beta without product-code, public-API-baseline, or package-scope
-changes. Feature/API scope remains closed and RC accepts only release-blocking fixes. If no blocker
-is found, this candidate is promoted to suffix-free `0.7.0` without product-code changes.
+changes. Its main-branch six-RID CI and tag-triggered release workflow passed all candidate gates,
+and no release blocker was found.
+
+Stable `0.7.0` removes the suffix from that accepted candidate without product-code,
+public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
+`0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
 ## Release procedure
 
