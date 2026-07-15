@@ -6,7 +6,14 @@ internal sealed record BenchmarkSuite(
     int SchemaVersion,
     string BaselineEngine,
     IReadOnlyList<string> RequiredEngines,
-    IReadOnlyList<BenchmarkWorkload> Workloads);
+    IReadOnlyList<BenchmarkWorkload> Workloads,
+    BenchmarkComparisonPolicy Comparison);
+
+internal sealed record BenchmarkComparisonPolicy(
+    string ReferenceEngine,
+    IReadOnlyList<string> CandidateEngines,
+    double MinimumMedianSpeedup,
+    double MinimumCi95Lower);
 
 internal sealed record BenchmarkWorkload(
     string Name,
@@ -77,6 +84,9 @@ internal sealed record EngineWorkloadSummary(
     double SpeedupVsNativeLua,
     double SpeedupCi95Lower,
     double SpeedupCi95Upper,
+    double? SpeedupVsComparison,
+    double? ComparisonSpeedupCi95Lower,
+    double? ComparisonSpeedupCi95Upper,
     IReadOnlyDictionary<string, int> Routes,
     bool Valid);
 
@@ -85,7 +95,30 @@ internal sealed record OverallEngineSummary(
     int Workloads,
     double GeometricMeanSpeedupVsNativeLua,
     double MinimumSpeedupVsNativeLua,
-    double MaximumSpeedupVsNativeLua);
+    double MaximumSpeedupVsNativeLua,
+    double? GeometricMeanSpeedupVsComparison,
+    double? MinimumSpeedupVsComparison,
+    double? MaximumSpeedupVsComparison);
+
+internal sealed record BenchmarkPerformanceGateMeasurement(
+    string Workload,
+    string CandidateEngine,
+    double MedianSpeedup,
+    double SpeedupCi95Lower,
+    double SpeedupCi95Upper,
+    bool StableRoute,
+    bool CleanTelemetry,
+    bool Passed,
+    string? Failure);
+
+internal sealed record BenchmarkPerformanceGateSummary(
+    string ReferenceEngine,
+    IReadOnlyList<string> CandidateEngines,
+    double MinimumMedianSpeedup,
+    double MinimumCi95Lower,
+    IReadOnlyList<BenchmarkPerformanceGateMeasurement> Measurements,
+    bool Complete,
+    bool Passed);
 
 internal sealed record BenchmarkCompleteness(
     IReadOnlyList<string> RequiredEngines,
@@ -103,6 +136,7 @@ internal sealed record CrossRuntimeBenchmarkReport(
     IReadOnlyList<BenchmarkSample> Samples,
     IReadOnlyList<EngineWorkloadSummary> Results,
     IReadOnlyList<OverallEngineSummary> Overall,
+    BenchmarkPerformanceGateSummary PerformanceGate,
     BenchmarkCompleteness Completeness);
 
 [JsonSerializable(typeof(BenchmarkSuite))]

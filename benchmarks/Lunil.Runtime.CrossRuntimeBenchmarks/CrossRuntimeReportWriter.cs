@@ -29,6 +29,11 @@ internal static class CrossRuntimeReportWriter
                     sample.Engine == settings.BaselineEngine)
                 .OrderBy(static sample => sample.Round)
                 .ToArray();
+            var comparison = samples.Where(sample =>
+                    sample.Workload == workload.Name &&
+                    sample.Engine == suite.Comparison.ReferenceEngine)
+                .OrderBy(static sample => sample.Round)
+                .ToArray();
             foreach (var engine in engines)
             {
                 var selected = samples.Where(sample =>
@@ -44,16 +49,26 @@ internal static class CrossRuntimeReportWriter
                 var timings = selected
                     .Select(static sample => sample.CpuNanosecondsPerOperation)
                     .ToArray();
-                var baselineTimings = baseline
-                    .Select(static sample => sample.CpuNanosecondsPerOperation)
-                    .ToArray();
-                var speedup = Median(baselineTimings) / Median(timings);
+                var baselineRatios = PairedSpeedups(baseline, selected);
+                var speedup = Median(baselineRatios);
                 var interval = engine.Id == settings.BaselineEngine
                     ? new ConfidenceInterval(1d, 1d)
-                    : BootstrapRatioInterval(
-                        baselineTimings,
-                        timings,
+                    : BootstrapMedianInterval(
+                        baselineRatios,
                         StableSeed(workload.Name + "\0" + engine.Id));
+                var comparisonRatios = PairedSpeedups(comparison, selected);
+                var comparisonSpeedup = comparisonRatios.Length == 0
+                    ? (double?)null
+                    : Median(comparisonRatios);
+                var comparisonInterval = comparisonRatios.Length == 0
+                    ? null
+                    : engine.Id == suite.Comparison.ReferenceEngine
+                        ? new ConfidenceInterval(1d, 1d)
+                        : BootstrapMedianInterval(
+                            comparisonRatios,
+                            StableSeed(
+                                workload.Name + "\0" +
+                                suite.Comparison.ReferenceEngine + "\0" + engine.Id));
                 var median = Median(timings);
                 summaries.Add(new EngineWorkloadSummary(
                     workload.Name,
@@ -68,6 +83,9 @@ internal static class CrossRuntimeReportWriter
                     speedup,
                     interval.Lower,
                     interval.Upper,
+                    comparisonSpeedup,
+                    comparisonInterval?.Lower,
+                    comparisonInterval?.Upper,
                     selected.GroupBy(static sample => sample.Route, StringComparer.Ordinal)
                         .OrderBy(static group => group.Key, StringComparer.Ordinal)
                         .ToDictionary(
@@ -80,17 +98,32 @@ internal static class CrossRuntimeReportWriter
 
         var overall = engines.Select(engine =>
         {
-            var values = summaries
+            var engineSummaries = summaries
                 .Where(summary => summary.Engine == engine.Id && summary.Valid)
+                .ToArray();
+            var values = engineSummaries
                 .Select(static summary => summary.SpeedupVsNativeLua)
+                .ToArray();
+            var comparisonValues = engineSummaries
+                .Where(static summary => summary.SpeedupVsComparison.HasValue)
+                .Select(static summary => summary.SpeedupVsComparison!.Value)
                 .ToArray();
             return new OverallEngineSummary(
                 engine.Id,
                 values.Length,
                 values.Length == 0 ? 0d : GeometricMean(values),
                 values.Length == 0 ? 0d : values.Min(),
-                values.Length == 0 ? 0d : values.Max());
+                values.Length == 0 ? 0d : values.Max(),
+                comparisonValues.Length == 0 ? null : GeometricMean(comparisonValues),
+                comparisonValues.Length == 0 ? null : comparisonValues.Min(),
+                comparisonValues.Length == 0 ? null : comparisonValues.Max());
         }).ToArray();
+
+        var performanceGate = BuildPerformanceGate(
+            suite,
+            workloads,
+            samples,
+            summaries);
 
         var engineIds = engines.Select(static engine => engine.Id).ToHashSet(StringComparer.Ordinal);
         var missingEngines = suite.RequiredEngines
@@ -118,7 +151,7 @@ internal static class CrossRuntimeReportWriter
             summaries.All(summary => summary.Samples == settings.Rounds));
 
         return new CrossRuntimeBenchmarkReport(
-            1,
+            2,
             environment,
             settings,
             engines,
@@ -126,6 +159,7 @@ internal static class CrossRuntimeReportWriter
             samples,
             summaries,
             overall,
+            performanceGate,
             completeness);
     }
 
@@ -148,8 +182,9 @@ internal static class CrossRuntimeReportWriter
         var suite = new BenchmarkSuite(
             1,
             "lua54",
-            ["lua54", "candidate"],
-            [new BenchmarkWorkload("synthetic", "test", "synthetic.lua", 1d, "Synthetic")]);
+            ["lua54", "moonsharp", "candidate"],
+            [new BenchmarkWorkload("synthetic", "test", "synthetic.lua", 1d, "Synthetic")],
+            new BenchmarkComparisonPolicy("moonsharp", ["candidate"], 1.1d, 1d));
         var environment = new BenchmarkEnvironment(
             "self-test",
             "test",
@@ -163,12 +198,14 @@ internal static class CrossRuntimeReportWriter
         BenchmarkEngineDescriptor[] engines =
         [
             new("lua54", "Lua", "PUC Lua", "test", "test", null),
+            new("moonsharp", "MoonSharp", "MoonSharp", "test", "test", null),
             new("candidate", "Candidate", "Test", "test", "test", null),
         ];
         var samples = new List<BenchmarkSample>();
         for (var round = 1; round <= 4; round++)
         {
             samples.Add(Synthetic("lua54", round, 100d + round));
+            samples.Add(Synthetic("moonsharp", round, 80d + round));
             samples.Add(Synthetic("candidate", round, 50d + round / 2d));
         }
 
@@ -180,7 +217,10 @@ internal static class CrossRuntimeReportWriter
             suite.Workloads,
             samples);
         var candidate = report.Results.Single(static result => result.Engine == "candidate");
-        if (!report.Completeness.Complete || Math.Abs(candidate.SpeedupVsNativeLua - 2d) > 1e-9)
+        if (!report.Completeness.Complete || !report.PerformanceGate.Passed ||
+            Math.Abs(candidate.SpeedupVsNativeLua - 2d) > 1e-9 ||
+            candidate.SpeedupVsComparison is not { } comparisonSpeedup ||
+            comparisonSpeedup <= 1.5d)
         {
             throw new InvalidOperationException("Cross-runtime report self-test failed.");
         }
@@ -190,6 +230,25 @@ internal static class CrossRuntimeReportWriter
             !CreateSummaryCsv(report).Contains("candidate", StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Cross-runtime report rendering self-test failed.");
+        }
+
+        var missingTelemetry = samples
+            .Select(sample => sample.Engine == "candidate" && sample.Round == 1
+                ? sample with { Telemetry = new Dictionary<string, string>() }
+                : sample)
+            .ToArray();
+        var rejected = BuildReport(
+            suite,
+            environment,
+            settings,
+            engines,
+            suite.Workloads,
+            missingTelemetry);
+        if (rejected.PerformanceGate.Passed ||
+            rejected.PerformanceGate.Measurements.Single().CleanTelemetry)
+        {
+            throw new InvalidOperationException(
+                "Cross-runtime report self-test admitted missing candidate telemetry.");
         }
 
         Console.WriteLine("Cross-runtime report self-test passed.");
@@ -208,7 +267,13 @@ internal static class CrossRuntimeReportWriter
             1d,
             true,
             engine,
-            new Dictionary<string, string>());
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["interpreterFallbacks"] = "0",
+                ["deoptimizations"] = "0",
+                ["unexpectedDeoptimizations"] = "0",
+                ["tier2UnsupportedExits"] = "0",
+            });
 
     private static string CreateSummaryCsv(CrossRuntimeBenchmarkReport report)
     {
@@ -216,7 +281,8 @@ internal static class CrossRuntimeReportWriter
         builder.AppendLine(
             "rid,workload,category,engine,operations,samples,median_cpu_ns_op,p95_cpu_ns_op," +
             "mad_cpu_ns,median_setup_cpu_ms,speedup_vs_native_lua,speedup_ci95_lower," +
-            "speedup_ci95_upper,routes,valid");
+            "speedup_ci95_upper,speedup_vs_moonsharp,moonsharp_speedup_ci95_lower," +
+            "moonsharp_speedup_ci95_upper,routes,valid");
         foreach (var result in report.Results)
         {
             AppendCsvRow(builder,
@@ -234,12 +300,103 @@ internal static class CrossRuntimeReportWriter
                 Invariant(result.SpeedupVsNativeLua),
                 Invariant(result.SpeedupCi95Lower),
                 Invariant(result.SpeedupCi95Upper),
+                Invariant(result.SpeedupVsComparison),
+                Invariant(result.ComparisonSpeedupCi95Lower),
+                Invariant(result.ComparisonSpeedupCi95Upper),
                 string.Join(';', result.Routes.Select(static pair => $"{pair.Key}:{pair.Value}")),
                 result.Valid.ToString(CultureInfo.InvariantCulture),
             ]);
         }
 
         return builder.ToString();
+    }
+
+    private static BenchmarkPerformanceGateSummary BuildPerformanceGate(
+        BenchmarkSuite suite,
+        IReadOnlyList<BenchmarkWorkload> workloads,
+        IReadOnlyList<BenchmarkSample> samples,
+        IReadOnlyList<EngineWorkloadSummary> summaries)
+    {
+        var measurements = new List<BenchmarkPerformanceGateMeasurement>(
+            workloads.Count * suite.Comparison.CandidateEngines.Count);
+        foreach (var workload in workloads)
+        {
+            foreach (var candidate in suite.Comparison.CandidateEngines)
+            {
+                var summary = summaries.FirstOrDefault(item =>
+                    item.Workload == workload.Name && item.Engine == candidate);
+                if (summary?.SpeedupVsComparison is not { } speedup ||
+                    summary.ComparisonSpeedupCi95Lower is not { } lower ||
+                    summary.ComparisonSpeedupCi95Upper is not { } upper)
+                {
+                    continue;
+                }
+
+                var candidateSamples = samples.Where(sample =>
+                        sample.Workload == workload.Name && sample.Engine == candidate)
+                    .ToArray();
+                var routes = candidateSamples
+                    .Select(static sample => sample.Route)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var stableRoute = routes.Length == 1 &&
+                    !routes[0].Contains("fallback", StringComparison.Ordinal);
+                var cleanTelemetry = candidateSamples.All(static sample =>
+                    IsZero(sample.Telemetry, "interpreterFallbacks") &&
+                    IsZero(sample.Telemetry, "deoptimizations") &&
+                    IsZero(sample.Telemetry, "unexpectedDeoptimizations") &&
+                    IsZero(sample.Telemetry, "tier2UnsupportedExits"));
+                var failures = new List<string>(4);
+                if (speedup < suite.Comparison.MinimumMedianSpeedup)
+                {
+                    failures.Add("median speedup");
+                }
+
+                if (lower < suite.Comparison.MinimumCi95Lower)
+                {
+                    failures.Add("CI95 lower bound");
+                }
+
+                if (!stableRoute)
+                {
+                    failures.Add("route");
+                }
+
+                if (!cleanTelemetry)
+                {
+                    failures.Add("telemetry");
+                }
+
+                measurements.Add(new BenchmarkPerformanceGateMeasurement(
+                    workload.Name,
+                    candidate,
+                    speedup,
+                    lower,
+                    upper,
+                    stableRoute,
+                    cleanTelemetry,
+                    failures.Count == 0,
+                    failures.Count == 0 ? null : string.Join(", ", failures)));
+            }
+        }
+
+        var expectedMeasurements = workloads.Count * suite.Comparison.CandidateEngines.Count;
+        var complete = measurements.Count == expectedMeasurements;
+        return new BenchmarkPerformanceGateSummary(
+            suite.Comparison.ReferenceEngine,
+            suite.Comparison.CandidateEngines,
+            suite.Comparison.MinimumMedianSpeedup,
+            suite.Comparison.MinimumCi95Lower,
+            measurements,
+            complete,
+            complete && measurements.All(static measurement => measurement.Passed));
+
+        static bool IsZero(
+            IReadOnlyDictionary<string, string> telemetry,
+            string key) =>
+            telemetry.TryGetValue(key, out var value) &&
+            long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) &&
+            parsed == 0;
     }
 
     private static string CreateSamplesCsv(CrossRuntimeBenchmarkReport report)
@@ -300,13 +457,14 @@ internal static class CrossRuntimeReportWriter
             "the primary interval and are reported separately as setup CPU time. The primary " +
             "metric is process CPU nanoseconds per logical workload operation. Operation counts " +
             "are calibrated per engine/workload, engine order rotates by round, every result is " +
-            "checked against the manifest, and speedup confidence intervals use deterministic " +
-            "bootstrap resampling of medians. Values above `1.000x` are faster than native Lua.");
+            "checked against the manifest, and speedups are the median of matched balanced-round " +
+            "ratios with deterministic paired bootstrap confidence intervals. Values above " +
+            "`1.000x` are faster than native Lua.");
         builder.AppendLine();
         builder.AppendLine("## Overall");
         builder.AppendLine();
-        builder.AppendLine("| Engine | Workloads | Geomean vs native Lua | Range |");
-        builder.AppendLine("|---|---:|---:|---:|");
+        builder.AppendLine("| Engine | Workloads | Geomean vs native Lua | Native range | Geomean vs MoonSharp |");
+        builder.AppendLine("|---|---:|---:|---:|---:|");
         foreach (var overall in report.Overall.OrderByDescending(
                      static value => value.GeometricMeanSpeedupVsNativeLua))
         {
@@ -315,7 +473,8 @@ internal static class CrossRuntimeReportWriter
                 $"| {Escape(names[overall.Engine])} | {overall.Workloads} | " +
                 $"{overall.GeometricMeanSpeedupVsNativeLua:F3}x | " +
                 $"{overall.MinimumSpeedupVsNativeLua:F3}x–" +
-                $"{overall.MaximumSpeedupVsNativeLua:F3}x |");
+                $"{overall.MaximumSpeedupVsNativeLua:F3}x | " +
+                $"{FormatOptionalRatio(overall.GeometricMeanSpeedupVsComparison)} |");
         }
 
         foreach (var workload in report.Workloads)
@@ -327,8 +486,9 @@ internal static class CrossRuntimeReportWriter
             builder.AppendLine();
             builder.AppendLine(
                 "| Engine | Median CPU | p95 CPU | Setup CPU | vs native Lua (95% CI) | " +
+                "vs MoonSharp (95% CI) | " +
                 "Operations | Observed route |");
-            builder.AppendLine("|---|---:|---:|---:|---:|---:|---|");
+            builder.AppendLine("|---|---:|---:|---:|---:|---:|---:|---|");
             foreach (var result in report.Results
                          .Where(value => value.Workload == workload.Name)
                          .OrderBy(static value => value.MedianCpuNanosecondsPerOperation))
@@ -344,9 +504,39 @@ internal static class CrossRuntimeReportWriter
                     $"{result.MedianSetupCpuMilliseconds:F3} ms | " +
                     $"{result.SpeedupVsNativeLua:F3}x " +
                     $"({result.SpeedupCi95Lower:F3}–{result.SpeedupCi95Upper:F3}) | " +
+                    $"{FormatOptionalInterval(result.SpeedupVsComparison, result.ComparisonSpeedupCi95Lower, result.ComparisonSpeedupCi95Upper)} | " +
                     $"{result.Operations} | {routes} |");
             }
         }
+
+        builder.AppendLine();
+        builder.AppendLine("## Lunil versus MoonSharp stability gate");
+        builder.AppendLine();
+        builder.AppendLine(string.Format(
+            CultureInfo.InvariantCulture,
+            "Candidates must reach at least {0:F2}x paired median speedup and a paired bootstrap CI95 lower " +
+            "bound of {1:F2}x on every workload, with one stable compiled route and clean " +
+            "fallback/deoptimization telemetry.",
+            report.PerformanceGate.MinimumMedianSpeedup,
+            report.PerformanceGate.MinimumCi95Lower));
+        builder.AppendLine();
+        builder.AppendLine("| Workload | Candidate | Median speedup | CI95 | Route | Telemetry | Result |");
+        builder.AppendLine("|---|---|---:|---:|---|---|---|");
+        foreach (var gate in report.PerformanceGate.Measurements)
+        {
+            builder.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"| {Escape(gate.Workload)} | {Escape(names[gate.CandidateEngine])} | " +
+                $"{gate.MedianSpeedup:F3}x | {gate.SpeedupCi95Lower:F3}–" +
+                $"{gate.SpeedupCi95Upper:F3} | " +
+                $"{(gate.StableRoute ? "stable" : "unstable")} | " +
+                $"{(gate.CleanTelemetry ? "clean" : "fallback/deopt")} | " +
+                $"{(gate.Passed ? "PASS" : "FAIL")} |");
+        }
+        builder.AppendLine();
+        builder.AppendLine(
+            CultureInfo.InvariantCulture,
+            $"Gate: **{(report.PerformanceGate.Passed ? "PASS" : report.PerformanceGate.Complete ? "FAIL" : "INCOMPLETE")}**.");
 
         builder.AppendLine();
         builder.AppendLine("## Runtime inventory");
@@ -400,28 +590,39 @@ internal static class CrossRuntimeReportWriter
             Environment.NewLine);
     }
 
-    private static ConfidenceInterval BootstrapRatioInterval(
-        double[] baseline,
-        double[] candidate,
+    private static double[] PairedSpeedups(
+        IReadOnlyList<BenchmarkSample> reference,
+        IReadOnlyList<BenchmarkSample> candidate)
+    {
+        var candidateByRound = candidate.ToDictionary(static sample => sample.Round);
+        return reference
+            .Where(sample => candidateByRound.ContainsKey(sample.Round))
+            .Select(sample =>
+                sample.CpuNanosecondsPerOperation /
+                candidateByRound[sample.Round].CpuNanosecondsPerOperation)
+            .ToArray();
+    }
+
+    private static ConfidenceInterval BootstrapMedianInterval(
+        double[] values,
         int seed)
     {
+        if (values.Length == 0)
+        {
+            throw new ArgumentException("At least one paired ratio is required.", nameof(values));
+        }
+
         var random = new Random(seed);
         var ratios = new double[BootstrapIterations];
-        var baselineSample = new double[baseline.Length];
-        var candidateSample = new double[candidate.Length];
+        var sample = new double[values.Length];
         for (var iteration = 0; iteration < ratios.Length; iteration++)
         {
-            for (var index = 0; index < baselineSample.Length; index++)
+            for (var index = 0; index < sample.Length; index++)
             {
-                baselineSample[index] = baseline[random.Next(baseline.Length)];
+                sample[index] = values[random.Next(values.Length)];
             }
 
-            for (var index = 0; index < candidateSample.Length; index++)
-            {
-                candidateSample[index] = candidate[random.Next(candidate.Length)];
-            }
-
-            ratios[iteration] = Median(baselineSample) / Median(candidateSample);
+            ratios[iteration] = Median(sample);
         }
 
         return new ConfidenceInterval(Percentile(ratios, 0.025d), Percentile(ratios, 0.975d));
@@ -463,6 +664,19 @@ internal static class CrossRuntimeReportWriter
             ? $"{nanoseconds / 1_000d:F3} µs"
             : $"{nanoseconds:F3} ns";
 
+    private static string FormatOptionalRatio(double? ratio) => ratio.HasValue
+        ? string.Create(CultureInfo.InvariantCulture, $"{ratio.Value:F3}x")
+        : "—";
+
+    private static string FormatOptionalInterval(
+        double? ratio,
+        double? lower,
+        double? upper) => ratio.HasValue && lower.HasValue && upper.HasValue
+        ? string.Create(
+            CultureInfo.InvariantCulture,
+            $"{ratio.Value:F3}x ({lower.Value:F3}–{upper.Value:F3})")
+        : "—";
+
     private static string Escape(string value) => value.Replace("|", "\\|", StringComparison.Ordinal);
 
     private static void AppendCsvRow(StringBuilder builder, IEnumerable<string> values) =>
@@ -474,6 +688,10 @@ internal static class CrossRuntimeReportWriter
             : '"' + value.Replace("\"", "\"\"", StringComparison.Ordinal) + '"';
 
     private static string Invariant(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+
+    private static string Invariant(double? value) => value.HasValue
+        ? Invariant(value.Value)
+        : string.Empty;
 
     private static string Invariant(int value) => value.ToString(CultureInfo.InvariantCulture);
 }

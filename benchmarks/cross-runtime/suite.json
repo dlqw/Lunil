@@ -12,6 +12,15 @@
     "lunil_loop_osr",
     "lunil_persisted_aot"
   ],
+  "comparison": {
+    "referenceEngine": "moonsharp",
+    "candidateEngines": [
+      "lunil_auto",
+      "lunil_tier2"
+    ],
+    "minimumMedianSpeedup": 1.05,
+    "minimumCi95Lower": 1.0
+  },
   "workloads": [
     {
       "name": "arithmetic",

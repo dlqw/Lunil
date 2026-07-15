@@ -66,7 +66,8 @@ var engines = allEngines
     .Where(engine =>
         engineFilter.Count == 0 ||
         engineFilter.Contains(engine.Descriptor.Id) ||
-        engine.Descriptor.Id == suite.BaselineEngine)
+        engine.Descriptor.Id == suite.BaselineEngine ||
+        engine.Descriptor.Id == suite.Comparison.ReferenceEngine)
     .ToArray();
 if (engines.All(engine => engine.Descriptor.Id != suite.BaselineEngine))
 {
@@ -93,6 +94,12 @@ if (!report.Completeness.Complete && engineFilter.Count == 0 && workloadFilter.C
     throw new InvalidOperationException("The full cross-runtime report is incomplete.");
 }
 
+if (report.Completeness.Complete && !report.PerformanceGate.Passed)
+{
+    throw new InvalidOperationException(
+        "The Lunil-versus-MoonSharp stability gate did not pass for every candidate workload.");
+}
+
 Console.WriteLine($"Cross-runtime performance report written to {outputDirectory}");
 
 static void ValidateSuite(BenchmarkSuite suite, string suiteRoot)
@@ -111,6 +118,19 @@ static void ValidateSuite(BenchmarkSuite suite, string suiteRoot)
     if (!suite.RequiredEngines.Contains(suite.BaselineEngine, StringComparer.Ordinal))
     {
         throw new InvalidOperationException("The native Lua baseline must be a required engine.");
+    }
+
+
+    if (!suite.RequiredEngines.Contains(suite.Comparison.ReferenceEngine, StringComparer.Ordinal) ||
+        suite.Comparison.CandidateEngines.Count == 0 ||
+        suite.Comparison.CandidateEngines.Any(candidate =>
+            !suite.RequiredEngines.Contains(candidate, StringComparer.Ordinal)) ||
+        !double.IsFinite(suite.Comparison.MinimumMedianSpeedup) ||
+        suite.Comparison.MinimumMedianSpeedup <= 0 ||
+        !double.IsFinite(suite.Comparison.MinimumCi95Lower) ||
+        suite.Comparison.MinimumCi95Lower <= 0)
+    {
+        throw new InvalidOperationException("The cross-runtime comparison policy is invalid.");
     }
 
     if (suite.Workloads.Select(static workload => workload.Name)

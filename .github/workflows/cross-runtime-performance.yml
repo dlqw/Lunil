@@ -102,7 +102,7 @@ jobs:
           retention-days: 30
 
   aggregate:
-    name: Aggregate native-Lua-relative six-RID report
+    name: Aggregate native-Lua and MoonSharp gates
     needs: measure
     runs-on: ubuntu-latest
     steps:

@@ -186,6 +186,7 @@ internal sealed class MoonSharpEngine : IBenchmarkEngine
             result = script.Call(function, DynValue.NewNumber(1));
         }
 
+        PrepareManagedHeap();
         var setupSeconds = CpuSecondsSince(setupStarted);
         var started = Process.GetCurrentProcess().TotalProcessorTime;
         var stopwatch = Stopwatch.StartNew();
@@ -209,6 +210,13 @@ internal sealed class MoonSharpEngine : IBenchmarkEngine
 
     private static double CpuSecondsSince(TimeSpan started) =>
         (Process.GetCurrentProcess().TotalProcessorTime - started).TotalSeconds;
+
+    private static void PrepareManagedHeap()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: false);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: false);
+    }
 }
 
 internal enum LunilBenchmarkConfiguration
@@ -258,6 +266,8 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             result = runner.Execute(1);
         }
 
+        PrepareManagedHeap();
+        var telemetryBeforeMeasurement = runner.Telemetry;
         var setupSeconds = CpuSecondsSince(setupStarted);
         var started = Process.GetCurrentProcess().TotalProcessorTime;
         var stopwatch = Stopwatch.StartNew();
@@ -276,7 +286,7 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             setupSeconds,
             result.AsFloat(),
             runner.Route,
-            runner.Telemetry);
+            runner.TelemetrySince(telemetryBeforeMeasurement));
     }
 
     private static LuaIrModule Compile(string source, string sourcePath)
@@ -329,6 +339,13 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
 
     private static double CpuSecondsSince(TimeSpan started) =>
         (Process.GetCurrentProcess().TotalProcessorTime - started).TotalSeconds;
+
+    private static void PrepareManagedHeap()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: false);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: false);
+    }
 }
 
 internal sealed class LunilRunner : IDisposable
@@ -417,6 +434,11 @@ internal sealed class LunilRunner : IDisposable
                 ["compilationCompleted"] = Invariant(jit.CompilationCompleted),
                 ["compiledInvocations"] = Invariant(jit.CompiledInvocations),
                 ["interpreterFallbacks"] = Invariant(jit.InterpreterFallbacks),
+                ["deoptimizations"] = Invariant(jit.Deoptimizations),
+                // Any deoptimization inside this hook-free timed workload is unexpected. Keep
+                // the explicit field aligned with persisted-AOT telemetry so the gate can reject
+                // a missing counter rather than silently treating it as zero.
+                ["unexpectedDeoptimizations"] = Invariant(jit.Deoptimizations),
                 ["tier2CompilationCompleted"] = Invariant(jit.Tier2CompilationCompleted),
                 ["tier2MethodEntries"] = Invariant(jit.Tier2MethodEntries),
                 ["tier2UnsupportedExits"] = Invariant(jit.Tier2UnsupportedExits),
@@ -425,6 +447,23 @@ internal sealed class LunilRunner : IDisposable
                 ["loopOsrGuardFailures"] = Invariant(jit.LoopOsrGuardFailures),
             };
         }
+    }
+
+    public IReadOnlyDictionary<string, string> TelemetrySince(
+        IReadOnlyDictionary<string, string> baseline)
+    {
+        var current = Telemetry;
+        return current.ToDictionary(
+            static pair => pair.Key,
+            pair =>
+            {
+                var currentValue = long.Parse(pair.Value, CultureInfo.InvariantCulture);
+                var baselineValue = baseline.TryGetValue(pair.Key, out var value)
+                    ? long.Parse(value, CultureInfo.InvariantCulture)
+                    : 0;
+                return Invariant(checked(currentValue - baselineValue));
+            },
+            StringComparer.Ordinal);
     }
 
     public static LunilRunner Create(LuaIrModule module, LunilBenchmarkConfiguration configuration)
