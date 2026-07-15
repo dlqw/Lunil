@@ -36,6 +36,12 @@ internal sealed class LuaContinuation
 
     public LuaResultTransform Transform { get; set; }
 
+    /// <summary>
+    /// Absolute exclusive caller top preserved by a resumable native runtime operation, or -1
+    /// for an ordinary native call.
+    /// </summary>
+    public int NativeOperationTop { get; set; } = -1;
+
     public LuaValue Value { get; set; }
 
     public LuaValue[] Values { get; set; } = [];
@@ -73,6 +79,7 @@ internal sealed class LuaContinuation
         Count = 0;
         ExpectedResults = 0;
         Transform = LuaResultTransform.None;
+        NativeOperationTop = -1;
         Value = LuaValue.Nil;
         Values = [];
         NativeByteBuffer = null;

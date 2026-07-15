@@ -109,9 +109,10 @@ public sealed class LuaExecutionContext
         LuaExecutionEngine executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
-        ResetCore(executionEngine, state, thread, remainingInstructionCount);
+        ResetCore(executionEngine, state, thread, remainingInstructionCount, scheduler);
     }
 
     public LuaState State { get; private set; } = null!;
@@ -128,6 +129,8 @@ public sealed class LuaExecutionContext
 
     internal LuaExecutionEngine? ExecutionEngine { get; private set; }
 
+    internal LuaScheduler? Scheduler { get; private set; }
+
     internal void Reset(
         LuaState state,
         LuaThread thread,
@@ -140,16 +143,18 @@ public sealed class LuaExecutionContext
         LuaExecutionEngine executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
-        ResetCore(executionEngine, state, thread, remainingInstructionCount);
+        ResetCore(executionEngine, state, thread, remainingInstructionCount, scheduler);
     }
 
     private void ResetCore(
         LuaExecutionEngine? executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(thread);
@@ -159,6 +164,7 @@ public sealed class LuaExecutionContext
         _lastObservedProgramCounter = -1;
         _lastObservedInstructionCount = -1;
         ExecutionEngine = executionEngine;
+        Scheduler = scheduler;
         State = state;
         Thread = thread;
         RemainingInstructionCount = remainingInstructionCount;

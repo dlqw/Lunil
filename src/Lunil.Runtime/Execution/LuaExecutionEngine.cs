@@ -316,7 +316,8 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount);
+                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler);
                             activation.ExecutionContext = executionContext;
                         }
                         else
@@ -325,7 +326,8 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount);
+                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler);
                         }
                         pendingInstructionContext = executionContext;
                         var executor = ShouldUseReferenceInterpreter(frame, instruction)
@@ -351,7 +353,8 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount);
+                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler);
                             pendingInstructionContext = executionContext;
                             exit = _referenceInstructionExecutor.Execute(
                                 this,
@@ -916,6 +919,8 @@ internal sealed class LuaExecutionEngine
             var nativeReturnBase = continuation.Base;
             var nativeExpectedResults = continuation.ExpectedResults;
             var nativeTailCall = (continuation.Count & 1) != 0;
+            var nativeOperationTop = continuation.NativeOperationTop;
+            var nativeOperationTransform = continuation.Transform;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
             var byteBuffer = continuation.NativeByteBuffer;
@@ -939,7 +944,9 @@ internal sealed class LuaExecutionEngine
                 nativeExpectedResults,
                 nativeTailCall,
                 programCounterAdvanced: !nativeTailCall,
-                step);
+                step,
+                nativeOperationTop,
+                nativeOperationTransform);
             if (forcedResult is not null)
             {
                 scheduler.Current.ForcedResult = forcedResult;
@@ -1420,7 +1427,9 @@ internal sealed class LuaExecutionEngine
         int expectedResults,
         bool tailCall,
         bool programCounterAdvanced,
-        LuaNativeStep step)
+        LuaNativeStep step,
+        int operationTop = -1,
+        LuaResultTransform operationTransform = LuaResultTransform.None)
     {
         var descriptor = nativeFunction.TryGetNativeFunction() ??
             throw new InvalidOperationException("A native continuation has no descriptor.");
@@ -1475,7 +1484,31 @@ internal sealed class LuaExecutionEngine
                                 completedValues.Length));
                     }
 
-                    WriteCallResults(thread, frame, returnBase, expectedResults, completedValues);
+                    if (operationTop >= 0)
+                    {
+                        WriteOperationResults(
+                            thread,
+                            frame,
+                            returnBase,
+                            expectedResults,
+                            completedValues,
+                            operationTop);
+                        ApplyPendingTransform(
+                            thread,
+                            frame,
+                            returnBase,
+                            operationTransform);
+                    }
+                    else
+                    {
+                        WriteCallResults(
+                            thread,
+                            frame,
+                            returnBase,
+                            expectedResults,
+                            completedValues);
+                    }
+
                     if (!programCounterAdvanced)
                     {
                         frame.ProgramCounter++;
@@ -1514,6 +1547,8 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Base = returnBase;
                         frame.Continuation.ExpectedResults = expectedResults;
                         frame.Continuation.Count = tailCall ? 1 : 0;
+                        frame.Continuation.NativeOperationTop = operationTop;
+                        frame.Continuation.Transform = operationTransform;
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
                         frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
@@ -1547,6 +1582,8 @@ internal sealed class LuaExecutionEngine
                         frame.Continuation.Base = returnBase;
                         frame.Continuation.ExpectedResults = expectedResults;
                         frame.Continuation.Count = tailCall ? 1 : 0;
+                        frame.Continuation.NativeOperationTop = operationTop;
+                        frame.Continuation.Transform = operationTransform;
                         frame.Continuation.Value = nativeFunction;
                         frame.Continuation.IsYieldBarrier = !step.CallIsYieldable;
                         frame.Continuation.NativeCallbackIsProtected = step.CallIsProtected;
@@ -1611,6 +1648,8 @@ internal sealed class LuaExecutionEngine
                     frame.Continuation.Base = returnBase;
                     frame.Continuation.ExpectedResults = expectedResults;
                     frame.Continuation.Count = tailCall ? 1 : 0;
+                    frame.Continuation.NativeOperationTop = operationTop;
+                    frame.Continuation.Transform = operationTransform;
                     frame.Continuation.Value = nativeFunction;
                     SaveNativeInvocationState(
                         thread,
@@ -2198,6 +2237,7 @@ internal sealed class LuaExecutionEngine
 
     internal void ExecuteOperation(
         LuaState state,
+        LuaScheduler scheduler,
         LuaThread thread,
         LuaFrame frame,
         LuaOperationResolution resolution,
@@ -2259,8 +2299,43 @@ internal sealed class LuaExecutionEngine
             return;
         }
 
-        _ = callable.TryGetNativeFunction() ??
+        var native = callable.TryGetNativeFunction() ??
             throw new InvalidOperationException("Resolved metamethod is not callable.");
+        if (native.StepBody is not null)
+        {
+            LuaNativeStep step;
+            try
+            {
+                var context = new LuaNativeCallContext(
+                    state,
+                    thread,
+                    callable.TryGetNativeClosure());
+                step = native.StepBody(
+                    context,
+                    0,
+                    thread.Stack.AsReadOnlySpan(argumentStart, argumentCount));
+            }
+            finally
+            {
+                thread.Stack.Clear(argumentStart, argumentCount);
+            }
+
+            _ = ContinueNative(
+                state,
+                scheduler,
+                thread,
+                frame,
+                callable,
+                returnBase,
+                expectedResults,
+                tailCall: false,
+                programCounterAdvanced: false,
+                step,
+                operationTop,
+                resolution.Transform);
+            return;
+        }
+
         LuaValue[] results;
         try
         {
@@ -2755,6 +2830,8 @@ internal sealed class LuaExecutionEngine
                 var returnBase = continuation.Base;
                 var expectedResults = continuation.ExpectedResults;
                 var tailCall = (continuation.Count & 1) != 0;
+                var operationTop = continuation.NativeOperationTop;
+                var operationTransform = continuation.Transform;
                 var continuationId = continuation.State;
                 var invocationState = continuation.Values;
                 var byteBuffer = continuation.NativeByteBuffer;
@@ -2782,7 +2859,9 @@ internal sealed class LuaExecutionEngine
                     descriptor.StepBody!(
                         context,
                         continuationId,
-                        [LuaValue.FromBoolean(false), unwind.Error]));
+                        [LuaValue.FromBoolean(false), unwind.Error]),
+                    operationTop,
+                    operationTransform);
                 if (completed is { } values)
                 {
                     scheduler.Current.ForcedResult = values;
@@ -3157,6 +3236,8 @@ internal sealed class LuaExecutionEngine
             var returnBase = continuation.Base;
             var expectedResults = continuation.ExpectedResults;
             var tailCall = (continuation.Count & 1) != 0;
+            var nativeOperationTop = continuation.NativeOperationTop;
+            var nativeOperationTransform = continuation.Transform;
             var continuationId = continuation.State;
             var invocationState = continuation.Values;
             var byteBuffer = continuation.NativeByteBuffer;
@@ -3186,7 +3267,9 @@ internal sealed class LuaExecutionEngine
                 expectedResults,
                 tailCall,
                 programCounterAdvanced: !tailCall,
-                step);
+                step,
+                nativeOperationTop,
+                nativeOperationTransform);
         }
 
         if (protectionKind != LuaProtectedCallKind.None)

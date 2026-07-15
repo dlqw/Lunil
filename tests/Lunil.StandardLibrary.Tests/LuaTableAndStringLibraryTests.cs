@@ -1,4 +1,5 @@
 using Lunil.Core.Text;
+using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
@@ -194,6 +195,28 @@ public sealed class LuaTableAndStringLibraryTests
         Assert.Equal("4:8", values[3].AsString().ToString());
         Assert.False(values[4].AsBoolean());
         Assert.True(values[5].AsBoolean());
+    }
+
+    [Fact]
+    public void ResumableNativeMetamethodOperationsPreserveCallbacksYieldBarrierAndLiveSlots()
+    {
+        var values = ExecuteRoundTripped(
+            "local backing={'a','b'} " +
+            "local mt={__concat=table.concat," +
+            "__len=function() collectgarbage(); return #backing end," +
+            "__index=function(_,i) collectgarbage(); return backing[i] end} " +
+            "local result=setmetatable({},mt) local high='alive' result=result..':' " +
+            "local indexed=setmetatable({'x','y'},{__index=table.concat}) " +
+            "local co=coroutine.create(function() local yielding=setmetatable({}, {" +
+            "__concat=table.concat,__len=function() return 1 end," +
+            "__index=function() coroutine.yield(); return 'z' end}); return yielding..',' end) " +
+            "local ok,e=coroutine.resume(co) return result,indexed['/'],high,ok,e~=nil");
+
+        Assert.Equal("a:b", values[0].AsString().ToString());
+        Assert.Equal("x/y", values[1].AsString().ToString());
+        Assert.Equal("alive", values[2].AsString().ToString());
+        Assert.False(values[3].AsBoolean());
+        Assert.True(values[4].AsBoolean());
     }
 
     [Fact]
@@ -546,6 +569,25 @@ public sealed class LuaTableAndStringLibraryTests
         Assert.Empty(lowering.Diagnostics);
         return new LuaInterpreter()
             .Execute(state, state.CreateMainClosure(lowering.Module!))
+            .Values
+            .ToArray();
+    }
+
+    private static LuaValue[] ExecuteRoundTripped(string source)
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallBasic(state);
+        LuaStandardLibrary.InstallCoroutine(state);
+        LuaStandardLibrary.InstallTable(state);
+        LuaStandardLibrary.InstallString(state);
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        var original = lowering.Module!;
+        var bytes = Lua54CanonicalPrototypeWriter.Write(original, original.MainFunctionId);
+        var module = Lua54PrototypeConverter.Convert(bytes);
+        return new LuaInterpreter()
+            .Execute(state, state.CreateMainClosure(module))
             .Values
             .ToArray();
     }
