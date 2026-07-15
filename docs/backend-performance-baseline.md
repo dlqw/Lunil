@@ -692,3 +692,61 @@ all six RID measurement jobs and the fail-closed aggregate. All 96 Auto/Tier 2 w
 passed. Across 48 measurements per candidate, Auto/Tier 2 reached 1.980x/1.979x geometric means
 versus MoonSharp; the minimum paired medians were 1.067x/1.054x on win-x64 `string_build`, whose
 CI95 lower bounds remained above one at 1.026x/1.010x.
+
+## M19 linear unboxed numeric regions
+
+M19 replaces the hot-loop portion of exact-numeric Tier 2 and Loop OSR with one reducible-CFG
+numeric-region emitter. The emitted loop uses versioned unboxed CLR locals, direct arithmetic CIL,
+local instruction accounting, boundary-only PC/materialization, and a bounded backedge countdown.
+The arithmetic evidence row now reports these five plan facts independently for both backends:
+
+- `numeric_region_count`;
+- `unboxed_numeric_local_count`;
+- `direct_numeric_instruction_count`;
+- `numeric_region_safepoint_count` (static backedge poll sites, not dynamic poll executions);
+- `numeric_region_hot_instruction_budget_check_count` (qualified hot path only; cold slow-tail
+  checks are excluded).
+
+The four structural facts must be nonzero and the hot budget-check count must be exactly zero. The
+numeric-region planner cuts backedges and proves a conservative instruction quantum; admitted hot
+execution charges actual work at basic-block boundaries. Budgets too small for that quantum use a
+separate per-instruction cold slow tail, retaining exact budget PCs without contaminating hot-path
+telemetry. This prevents the legacy helper/switch emitter, or a region that regressed to a hot
+per-instruction budget branch, from satisfying the gate under the same public code-kind name. The
+Tier 2 preparation fixture includes a real natural loop, so the `<10 ms` compilation gate measures a
+warmed production pipeline instead of the CLR's one-time JIT of the planner.
+
+The old 64 KiB Loop OSR allocation limit applied to the previous compact single-block emitter and
+would force every CFG region back to legacy code. The implementation first removed duplicated
+per-PC materialization IL and replaced reaching-definition `HashSet` graphs plus sparse immutable
+dictionaries with compact immutable definition vectors and dense kind maps. Warm arithmetic Loop
+OSR compilation then measured roughly 162 KiB instead of about 1 MiB. The gate is replaced with two
+strict dimensions rather than removed:
+
+| Gate | Tier 2 | Loop OSR |
+|---|---:|---:|
+| Compile allocation p95 | < 256 KiB | < 192 KiB |
+| 1-op to 8-op region allocation slope | < 32 KiB/direct instruction | < 32 KiB/direct instruction |
+| Compilation p95 | < 10 ms | < 10 ms |
+
+The local sizing smoke measured about 21.4 KiB/direct instruction for Tier 2 and 14.4 KiB/direct
+instruction for Loop OSR. Execution allocation slope remains independently constrained, so the new
+compile bound cannot hide per-iteration allocation. See
+[ADR 0011](adr/0011-linear-numeric-regions.md).
+
+The completed six-process win-x64 Release record is
+`artifacts/backend-performance/win-x64/20260715-173950`. Both arithmetic paths installed one numeric
+region with eight unboxed locals, five direct numeric instructions, one static safepoint site, and
+zero hot instruction-budget checks. Median arithmetic time fell from the saved pre-change WIP's
+205.403/191.895 microseconds for Tier 2/Loop OSR to 31.747/39.118 microseconds, improvements of
+6.47x/4.91x. The resulting interpreter speedups were 240.945x and 196.688x respectively.
+
+Tier 2/Loop OSR compilation p95 was 1.789/2.228 ms, compile allocation p95 was 240,280/191,672 B,
+and allocation growth was 20,712/15,694 B per added direct instruction. These satisfy the `<10 ms`,
+`<256 KiB`/`<192 KiB`, and `<32 KiB/direct instruction` numeric-region gates with zero execution
+allocation slope. Tier 1, Tier 2, and persisted-AOT decisions qualified. The aggregate local Loop
+OSR decision still reports the same pre-existing rejected-workload variance seen in the saved WIP:
+`lua_calls` and `metamethod` on/off medians were 0.788x and 0.884x (the WIP was 0.829x and 0.831x).
+All Loop OSR arithmetic, code-kind, qualification, startup, allocation, compilation, region-shape,
+hot-budget-check, managed-installation, and guard-failure gates passed. The protected six-RID native
+aggregate remains the cross-architecture authority after review and push.

@@ -1043,6 +1043,12 @@ namespace Lunil.CodeGen.Cil.Jit
         public System.Collections.Immutable.ImmutableArray<int> ProgramCounters { get => throw null; init { } }
         public Lunil.CodeGen.Cil.Jit.LuaJitOsrEntryMap EntryMap { get => throw null; init { } }
         public Lunil.CodeGen.Cil.Jit.LuaJitLoopOsrCodeKind CodeKind { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile> NumericTypes { get => throw null; init { } }
+        public int NumericRegionCount { get => throw null; init { } }
+        public int UnboxedNumericLocalCount { get => throw null; init { } }
+        public int DirectNumericInstructionCount { get => throw null; init { } }
+        public int NumericRegionSafepointCount { get => throw null; init { } }
+        public int NumericRegionHotInstructionBudgetCheckCount { get => throw null; init { } }
         public LuaJitLoopOsrPlan(int FunctionId, int HeaderProgramCounter, int BackedgeProgramCounter, System.Collections.Immutable.ImmutableArray<int> ProgramCounters, Lunil.CodeGen.Cil.Jit.LuaJitOsrEntryMap EntryMap) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitLoopOsrPlan? left, Lunil.CodeGen.Cil.Jit.LuaJitLoopOsrPlan? right) => throw null;
@@ -1125,6 +1131,21 @@ namespace Lunil.CodeGen.Cil.Jit
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterMap? other) => throw null;
         public void Deconstruct(out int CanonicalRegister, out int CompiledSlot) => throw null;
+    }
+
+    public sealed class LuaJitOsrRegisterTypeProfile : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile>
+    {
+        public int ProgramCounter { get => throw null; init { } }
+        public int Register { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitValueKinds Kinds { get => throw null; init { } }
+        public LuaJitOsrRegisterTypeProfile(int ProgramCounter, int Register, Lunil.CodeGen.Cil.Jit.LuaJitValueKinds Kinds) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile? left, Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile? left, Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitOsrRegisterTypeProfile? other) => throw null;
+        public void Deconstruct(out int ProgramCounter, out int Register, out Lunil.CodeGen.Cil.Jit.LuaJitValueKinds Kinds) => throw null;
     }
 
     public enum LuaJitOsrState
@@ -1305,8 +1326,7 @@ namespace Lunil.CodeGen.Cil.Jit
     public enum LuaJitTier2CodeKind
     {
         ManagedProfileProgram = 0,
-        ExactNumericSpecializedCil = 1,
-        GuardedSpecializedCil = 2
+        ExactNumericSpecializedCil = 1
     }
 
     public readonly struct LuaJitTier2CompilationMetrics : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2CompilationMetrics>
@@ -1345,8 +1365,6 @@ namespace Lunil.CodeGen.Cil.Jit
         public const string UnexpectedCodeKind = "JIT2104";
         public const string ManagedSemanticBoundary = "JIT2105";
         public const string UnsupportedInstruction = "JIT2106";
-        public const string InsufficientTier2Work = "JIT2107";
-        public const string HotLoopCallBoundary = "JIT2108";
     }
 
     public sealed class LuaJitTier2Eligibility : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Eligibility>
@@ -1375,9 +1393,7 @@ namespace Lunil.CodeGen.Cil.Jit
         PolymorphicNumericProfile = 2,
         ManagedOptimizationRequired = 3,
         ManagedSemanticBoundary = 4,
-        UnsupportedInstruction = 5,
-        InsufficientTier2Work = 6,
-        HotLoopCallBoundary = 7
+        UnsupportedInstruction = 5
     }
 
     public sealed class LuaJitTier2Plan : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan>
@@ -1386,6 +1402,11 @@ namespace Lunil.CodeGen.Cil.Jit
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitOptimization> Optimizations { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitDeoptMapEntry> DeoptMap { get => throw null; init { } }
         public Lunil.CodeGen.Cil.Jit.LuaJitTier2CodeKind CodeKind { get => throw null; init { } }
+        public int NumericRegionCount { get => throw null; init { } }
+        public int UnboxedNumericLocalCount { get => throw null; init { } }
+        public int DirectNumericInstructionCount { get => throw null; init { } }
+        public int NumericRegionSafepointCount { get => throw null; init { } }
+        public int NumericRegionHotInstructionBudgetCheckCount { get => throw null; init { } }
         public LuaJitTier2Plan(int FunctionId, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitOptimization> Optimizations, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitDeoptMapEntry> DeoptMap) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan? left, Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan? right) => throw null;
@@ -1767,20 +1788,9 @@ namespace Lunil.CodeGen.Cil.Planning
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteBinaryPrimitive { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNumericForPrepare { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNumericForLoop { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNewTable { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteGetTable { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteSetTable { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteSetList { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteClosure { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteVarArg { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget TryExecuteFramelessCall { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget CanContinueAfterFramelessCall { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget PollGcSafepoint { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitPoll { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitContinue { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitReturn { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitCall { get => throw null; }
-        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitTailCall { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitDeopt { get => throw null; }
         public static System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilCallTarget> All { get => throw null; }
         public static bool TryGet(string id, out Lunil.CodeGen.Cil.Planning.CilCallTarget target) => throw null;
