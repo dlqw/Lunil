@@ -43,6 +43,24 @@ public sealed record LuaJitTier2Plan(
 {
     public LuaJitTier2CodeKind CodeKind { get; init; } =
         LuaJitTier2CodeKind.ManagedProfileProgram;
+
+    /// <summary>Number of verified natural-loop regions emitted by this plan.</summary>
+    public int NumericRegionCount { get; init; }
+
+    /// <summary>Number of numeric region value versions represented as CLR numeric locals.</summary>
+    public int UnboxedNumericLocalCount { get; init; }
+
+    /// <summary>Number of canonical numeric instructions emitted directly inside regions.</summary>
+    public int DirectNumericInstructionCount { get; init; }
+
+    /// <summary>Number of static backedge safepoint sites, not the dynamic poll count.</summary>
+    public int NumericRegionSafepointCount { get; init; }
+
+    /// <summary>
+    /// Number of per-instruction instruction-budget comparisons emitted on the qualified hot
+    /// numeric-region path. Cold exact-budget slow-tail checks are intentionally excluded.
+    /// </summary>
+    public int NumericRegionHotInstructionBudgetCheckCount { get; init; }
 }
 
 public enum LuaJitTier2CodeKind : byte
@@ -131,6 +149,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var livenessAnalysisDuration = Stopwatch.GetElapsedTime(livenessStarted);
         var optimizationStarted = Stopwatch.GetTimestamp();
         var optimized = BuildOptimizations(function, profile, liveness);
+        var numericRegionPlans = BuildNumericRegionPlans(
+            module,
+            function,
+            profile,
+            cancellationToken);
         var optimizationDescriptions = optimized.Values
             .OrderBy(static item => item.ProgramCounter)
             .SelectMany(static item => item.ReusesFixedResultWindow
@@ -161,16 +184,60 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var estimatedCodeBytes = checked(
             function.Instructions.Length * 12L + optimized.Count * 64L);
         var emissionMetrics = default(LuaTier2EmissionMetrics);
-        if (TryCompileNumericSpecializedCil(
+        if (!numericRegionPlans.IsEmpty &&
+            TryCompileNumericRegions(
+                function,
+                numericRegionPlans,
+                cancellationToken,
+                out var numericRegions) &&
+            TryCompileNumericSpecializedCil(
                 function,
                 optimized,
+                numericRegionPlans
+                    .SelectMany(static region => region.Region.ProgramCounters)
+                    .ToImmutableHashSet(),
                 cancellationToken,
                 out var specializedMethod,
                 out var specializedCodeBytes,
+                out var outerEmissionMetrics))
+        {
+            method = new NumericRegionTier2Program(specializedMethod, numericRegions).Execute;
+            estimatedCodeBytes = checked(
+                specializedCodeBytes + numericRegions.Sum(static region =>
+                    region.EstimatedCodeBytes));
+            emissionMetrics = new LuaTier2EmissionMetrics(
+                outerEmissionMetrics.CilEmissionDuration + TimeSpan.FromTicks(
+                    numericRegions.Sum(static region =>
+                        region.Metrics.CilEmissionDuration.Ticks)),
+                outerEmissionMetrics.DelegateCreationDuration + TimeSpan.FromTicks(
+                    numericRegions.Sum(static region =>
+                        region.Metrics.DelegateCreationDuration.Ticks)));
+            plan = plan with
+            {
+                CodeKind = LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+                NumericRegionCount = numericRegions.Length,
+                UnboxedNumericLocalCount = numericRegions.Sum(static region =>
+                    region.Plan.Registers.Count(static register => register.Kind is
+                        LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float)),
+                DirectNumericInstructionCount = numericRegions.Sum(static region =>
+                    region.Plan.DirectNumericInstructionCount),
+                NumericRegionSafepointCount = numericRegions.Sum(static region =>
+                    region.Plan.BackedgeProgramCounters.Length),
+                NumericRegionHotInstructionBudgetCheckCount = numericRegions.Sum(
+                    static region => region.Plan.HotInstructionBudgetCheckCount),
+            };
+        }
+        else if (TryCompileNumericSpecializedCil(
+                function,
+                optimized,
+                [],
+                cancellationToken,
+                out var fallbackSpecializedMethod,
+                out var fallbackSpecializedCodeBytes,
                 out emissionMetrics))
         {
-            method = specializedMethod;
-            estimatedCodeBytes = specializedCodeBytes;
+            method = fallbackSpecializedMethod;
+            estimatedCodeBytes = fallbackSpecializedCodeBytes;
             plan = plan with
             {
                 CodeKind = HasNonNumericSpecialization(optimized)
@@ -319,6 +386,195 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaJitOptimizationKind.TableSetPic or
             LuaJitOptimizationKind.KnownClosureCall);
 
+    private static ImmutableArray<LuaNumericRegionPlan> BuildNumericRegionPlans(
+        LuaIrModule module,
+        LuaIrFunction function,
+        LuaJitFunctionProfile profile,
+        CancellationToken cancellationToken)
+    {
+        var candidates = ImmutableArray.CreateBuilder<LuaNumericRegionPlan>();
+        foreach (var region in LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+            module,
+            function.Id,
+            out _,
+            cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var plan = LuaNumericRegionPlanner.TryCreate(
+                function,
+                region,
+                BuildNumericRegionHints(function, region, profile),
+                cancellationToken);
+            if (plan is not null)
+            {
+                candidates.Add(plan);
+            }
+        }
+
+        var occupied = new HashSet<int>();
+        var selected = ImmutableArray.CreateBuilder<LuaNumericRegionPlan>();
+        foreach (var candidate in candidates
+            .OrderByDescending(static candidate => candidate.Region.ProgramCounters.Length)
+            .ThenBy(static candidate => candidate.Region.HeaderProgramCounter)
+            .ThenBy(static candidate => candidate.Region.BackedgeProgramCounter))
+        {
+            if (candidate.Region.ProgramCounters.Any(occupied.Contains))
+            {
+                continue;
+            }
+
+            selected.Add(candidate);
+            occupied.UnionWith(candidate.Region.ProgramCounters);
+        }
+
+        return selected
+            .OrderBy(static candidate => candidate.Region.HeaderProgramCounter)
+            .ThenBy(static candidate => candidate.Region.BackedgeProgramCounter)
+            .ToImmutableArray();
+    }
+
+    private static ImmutableArray<LuaNumericRegionTypeHint> BuildNumericRegionHints(
+        LuaIrFunction function,
+        LuaNaturalLoopRegion region,
+        LuaJitFunctionProfile profile)
+    {
+        var result = ImmutableArray.CreateBuilder<LuaNumericRegionTypeHint>();
+        for (var register = 0;
+            register < Math.Min(function.ParameterCount, profile.ArgumentKinds.Length);
+            register++)
+        {
+            var kind = ToNumericRegionKind(profile.ArgumentKinds[register]);
+            if (kind is not LuaNumericRegionValueKind.Conflict)
+            {
+                result.Add(new LuaNumericRegionTypeHint(
+                    region.HeaderProgramCounter,
+                    register,
+                    kind));
+            }
+        }
+
+        foreach (var site in profile.Sites)
+        {
+            if (site.Samples <= 0 || !region.ProgramCounters.Contains(site.ProgramCounter) ||
+                (uint)site.ProgramCounter >= (uint)function.Instructions.Length)
+            {
+                continue;
+            }
+
+            var instruction = function.Instructions[site.ProgramCounter];
+            if (site.Opcode != instruction.Opcode)
+            {
+                continue;
+            }
+
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.Unary:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.B,
+                        site.FirstOperandKinds);
+                    break;
+                case LuaIrOpcode.Binary:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.B,
+                        site.FirstOperandKinds);
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.C,
+                        site.SecondOperandKinds);
+                    break;
+                case LuaIrOpcode.JumpIfFalse:
+                case LuaIrOpcode.JumpIfTrue:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.A,
+                        site.FirstOperandKinds);
+                    break;
+                case LuaIrOpcode.NumericForLoop:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.A,
+                        site.FirstOperandKinds);
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.A + 1,
+                        site.SecondOperandKinds);
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.A + 2,
+                        site.ThirdOperandKinds);
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.A + 3,
+                        site.FirstOperandKinds);
+                    break;
+            }
+        }
+
+        return result.ToImmutable();
+    }
+
+    private static void AddNumericRegionHint(
+        ImmutableArray<LuaNumericRegionTypeHint>.Builder hints,
+        int programCounter,
+        int register,
+        LuaJitValueKinds kinds) => hints.Add(new LuaNumericRegionTypeHint(
+            programCounter,
+            register,
+            ToNumericRegionKind(kinds)));
+
+    private static LuaNumericRegionValueKind ToNumericRegionKind(LuaJitValueKinds kinds) =>
+        kinds switch
+        {
+            LuaJitValueKinds.Integer => LuaNumericRegionValueKind.Integer,
+            LuaJitValueKinds.Float => LuaNumericRegionValueKind.Float,
+            LuaJitValueKinds.Boolean => LuaNumericRegionValueKind.Boolean,
+            _ => LuaNumericRegionValueKind.Conflict,
+        };
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Tier 2 compilation is reached only after the dynamic-code capability check.")]
+    private static bool TryCompileNumericRegions(
+        LuaIrFunction function,
+        ImmutableArray<LuaNumericRegionPlan> plans,
+        CancellationToken cancellationToken,
+        out ImmutableArray<LuaCompiledNumericRegion> regions)
+    {
+        var result = ImmutableArray.CreateBuilder<LuaCompiledNumericRegion>(plans.Length);
+        foreach (var plan in plans)
+        {
+            if (!ReflectionEmitLuaNumericRegionCompiler.TryCompile(
+                function,
+                plan,
+                new LuaNumericRegionEmissionMode(
+                    RequireLoopOsrEntry: false,
+                    ObserveLoopOsrBackedge: false),
+                cancellationToken,
+                out var region))
+            {
+                regions = [];
+                return false;
+            }
+
+            result.Add(region);
+        }
+
+        regions = result.MoveToImmutable();
+        return true;
+    }
+
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
@@ -326,12 +582,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static bool TryCompileNumericSpecializedCil(
         LuaIrFunction function,
         ImmutableDictionary<int, OptimizedInstruction> optimized,
+        ImmutableHashSet<int> numericRegionProgramCounters,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
         out long estimatedCodeBytes,
         out LuaTier2EmissionMetrics metrics) => ReflectionEmitLuaTier2Compiler.TryCompile(
             function,
             optimized,
+            numericRegionProgramCounters,
             cancellationToken,
             out method,
             out estimatedCodeBytes,
@@ -349,8 +607,22 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 a: 2,
                 b: 0,
                 c: 1,
+                d: (int)LuaIrBinaryOperator.LessThan),
+            new LuaIrInstruction(LuaIrOpcode.JumpIfFalse, a: 2, b: 5),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                a: 3,
+                b: 3,
+                c: 0,
                 d: (int)LuaIrBinaryOperator.Add),
-            new LuaIrInstruction(LuaIrOpcode.Return, a: 2, b: 1));
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                a: 0,
+                b: 0,
+                c: 4,
+                d: (int)LuaIrBinaryOperator.Add),
+            new LuaIrInstruction(LuaIrOpcode.Jump, b: 0, c: -1),
+            new LuaIrInstruction(LuaIrOpcode.Return, a: 3, b: 1));
         var module = new LuaIrModule
         {
             MainFunctionId = 0,
@@ -360,8 +632,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 {
                     Id = 0,
                     Span = default,
-                    ParameterCount = 2,
-                    RegisterCount = 3,
+                    ParameterCount = 5,
+                    RegisterCount = 5,
                     Constants = [],
                     Instructions = instructions,
                     BasicBlocks = LuaIrControlFlow.Build(instructions),
@@ -369,8 +641,15 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             ],
         };
         var profile = new LuaJitFunctionProfile(
-            Samples: 1,
-            ArgumentKinds: [LuaJitValueKinds.Integer, LuaJitValueKinds.Integer],
+            Samples: 2,
+            ArgumentKinds:
+            [
+                LuaJitValueKinds.Integer,
+                LuaJitValueKinds.Integer,
+                LuaJitValueKinds.Boolean,
+                LuaJitValueKinds.Integer,
+                LuaJitValueKinds.Integer,
+            ],
             Sites:
             [
                 new LuaJitSiteProfile(
@@ -385,10 +664,47 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     IsMegamorphic: false,
                     TableShapes: [],
                     CallTargets: []),
+                new LuaJitSiteProfile(
+                    ProgramCounter: 1,
+                    Opcode: LuaIrOpcode.JumpIfFalse,
+                    Samples: 2,
+                    FirstOperandKinds: LuaJitValueKinds.Boolean,
+                    SecondOperandKinds: LuaJitValueKinds.None,
+                    ThirdOperandKinds: LuaJitValueKinds.None,
+                    BranchTaken: 1,
+                    BranchNotTaken: 1,
+                    IsMegamorphic: false,
+                    TableShapes: [],
+                    CallTargets: []),
+                new LuaJitSiteProfile(
+                    ProgramCounter: 2,
+                    Opcode: LuaIrOpcode.Binary,
+                    Samples: 2,
+                    FirstOperandKinds: LuaJitValueKinds.Integer,
+                    SecondOperandKinds: LuaJitValueKinds.Integer,
+                    ThirdOperandKinds: LuaJitValueKinds.None,
+                    BranchTaken: 0,
+                    BranchNotTaken: 0,
+                    IsMegamorphic: false,
+                    TableShapes: [],
+                    CallTargets: []),
+                new LuaJitSiteProfile(
+                    ProgramCounter: 3,
+                    Opcode: LuaIrOpcode.Binary,
+                    Samples: 2,
+                    FirstOperandKinds: LuaJitValueKinds.Integer,
+                    SecondOperandKinds: LuaJitValueKinds.Integer,
+                    ThirdOperandKinds: LuaJitValueKinds.None,
+                    BranchTaken: 0,
+                    BranchNotTaken: 0,
+                    IsMegamorphic: false,
+                    TableShapes: [],
+                    CallTargets: []),
             ]);
         var result = Instance.Compile(module, 0, profile, CancellationToken.None);
         if (!result.Succeeded || result.Plan?.CodeKind !=
-            LuaJitTier2CodeKind.ExactNumericSpecializedCil)
+            LuaJitTier2CodeKind.ExactNumericSpecializedCil ||
+            result.Plan.NumericRegionCount == 0)
         {
             throw new InvalidOperationException(
                 $"Tier 2 compiler preparation failed: {string.Join("; ", result.Diagnostics)}");
@@ -614,6 +930,77 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         !site.IsMegamorphic &&
         site.FirstOperandKinds == LuaJitValueKinds.Table &&
         !site.TableShapes.IsEmpty;
+
+    private sealed class NumericRegionTier2Program
+    {
+        private readonly LuaCompiledMethod _outerMethod;
+        private readonly LuaCompiledNumericRegion?[] _regionsByProgramCounter;
+
+        public NumericRegionTier2Program(
+            LuaCompiledMethod outerMethod,
+            ImmutableArray<LuaCompiledNumericRegion> regions)
+        {
+            _outerMethod = outerMethod;
+            var length = regions
+                .SelectMany(static region => region.Plan.Region.ProgramCounters)
+                .DefaultIfEmpty(-1)
+                .Max() + 1;
+            _regionsByProgramCounter = new LuaCompiledNumericRegion?[length];
+            foreach (var region in regions)
+            {
+                foreach (var programCounter in region.Plan.Region.ProgramCounters)
+                {
+                    if (_regionsByProgramCounter[programCounter] is not null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Numeric regions overlap at PC {programCounter}.");
+                    }
+
+                    _regionsByProgramCounter[programCounter] = region;
+                }
+            }
+        }
+
+        public LuaCompiledExit Execute(
+            LuaExecutionContext context,
+            LuaThread thread,
+            LuaFrame frame)
+        {
+            while (true)
+            {
+                var region = FindRegion(frame.ProgramCounter);
+                var exit = region is null
+                    ? _outerMethod(context, thread, frame)
+                    : region.Method(context, thread, frame);
+                if (exit.Kind != LuaCompiledExitKind.Continue)
+                {
+                    return exit;
+                }
+
+                if (frame.ProgramCounter != exit.ProgramCounter)
+                {
+                    return LuaCompiledExit.Deopt(
+                        exit.ProgramCounter,
+                        context.InstructionsConsumed,
+                        LuaCompiledExitReason.BackendInvalidated);
+                }
+
+                var nextRegion = FindRegion(exit.ProgramCounter);
+                if (region is null ? nextRegion is null : ReferenceEquals(region, nextRegion))
+                {
+                    return LuaCompiledExit.Deopt(
+                        exit.ProgramCounter,
+                        context.InstructionsConsumed,
+                        LuaCompiledExitReason.BackendInvalidated);
+                }
+            }
+        }
+
+        private LuaCompiledNumericRegion? FindRegion(int programCounter) =>
+            (uint)programCounter < (uint)_regionsByProgramCounter.Length
+                ? _regionsByProgramCounter[programCounter]
+                : null;
+    }
 
     private sealed class Tier2Program
     {

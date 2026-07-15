@@ -582,11 +582,14 @@ internal sealed class LuaExecutionEngine
             instructions[programCounter]);
     }
 
-    internal void ObserveLoopOsrBackedge(LuaFrame frame, int programCounter)
+    internal void ObserveLoopOsrBackedges(
+        LuaFrame frame,
+        int programCounter,
+        int backedgeCount)
     {
         if (_instructionObserver is ILuaLoopOsrObserver observer)
         {
-            observer.ObserveLoopOsrBackedge(frame, programCounter);
+            observer.ObserveLoopOsrBackedges(frame, programCounter, backedgeCount);
         }
     }
 

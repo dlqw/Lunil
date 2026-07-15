@@ -138,9 +138,22 @@ public static class LuaCodegenAbiV1
         LuaExecutionContext context,
         LuaFrame frame,
         int programCounter)
+        => ObserveLoopOsrBackedges(context, frame, programCounter, 1);
+
+    internal static void ObserveLoopOsrBackedges(
+        LuaExecutionContext context,
+        LuaFrame frame,
+        int programCounter,
+        int backedgeCount)
     {
         ArgumentNullException.ThrowIfNull(context);
-        context.ExecutionEngine?.ObserveLoopOsrBackedge(frame, programCounter);
+        ArgumentNullException.ThrowIfNull(frame);
+        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backedgeCount);
+        context.ExecutionEngine?.ObserveLoopOsrBackedges(
+            frame,
+            programCounter,
+            backedgeCount);
     }
 
     public static LuaCompiledExit ExecuteCanonicalInstruction(

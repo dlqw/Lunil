@@ -193,6 +193,17 @@ internal sealed class LuaJitProfileAccumulator(
                         ref _secondOperandKinds,
                         LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.C));
                     break;
+                case LuaIrOpcode.NumericForLoop:
+                    AddKind(
+                        ref _firstOperandKinds,
+                        LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.A));
+                    AddKind(
+                        ref _secondOperandKinds,
+                        LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.A + 1));
+                    AddKind(
+                        ref _thirdOperandKinds,
+                        LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.A + 2));
+                    break;
                 case LuaIrOpcode.JumpIfFalse:
                 case LuaIrOpcode.JumpIfTrue:
                     ObserveBranch(thread, frame, instruction);

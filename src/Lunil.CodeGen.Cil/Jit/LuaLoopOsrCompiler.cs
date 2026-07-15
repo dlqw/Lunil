@@ -19,6 +19,11 @@ public sealed record LuaJitOsrEntryMap(
     bool OpenUpvaluesMaterialized,
     bool ToBeClosedStateMaterialized);
 
+public sealed record LuaJitOsrRegisterTypeProfile(
+    int ProgramCounter,
+    int Register,
+    LuaJitValueKinds Kinds);
+
 public sealed record LuaJitLoopOsrPlan(
     int FunctionId,
     int HeaderProgramCounter,
@@ -28,6 +33,26 @@ public sealed record LuaJitLoopOsrPlan(
 {
     public LuaJitLoopOsrCodeKind CodeKind { get; init; } =
         LuaJitLoopOsrCodeKind.ManagedCanonicalProgram;
+
+    public ImmutableArray<LuaJitOsrRegisterTypeProfile> NumericTypes { get; init; } = [];
+
+    /// <summary>Number of verified natural-loop regions emitted by this plan.</summary>
+    public int NumericRegionCount { get; init; }
+
+    /// <summary>Number of numeric region value versions represented as CLR numeric locals.</summary>
+    public int UnboxedNumericLocalCount { get; init; }
+
+    /// <summary>Number of canonical numeric instructions emitted directly inside regions.</summary>
+    public int DirectNumericInstructionCount { get; init; }
+
+    /// <summary>Number of static backedge safepoint sites, not the dynamic poll count.</summary>
+    public int NumericRegionSafepointCount { get; init; }
+
+    /// <summary>
+    /// Number of per-instruction instruction-budget comparisons emitted on the qualified hot
+    /// numeric-region path. Cold exact-budget slow-tail checks are intentionally excluded.
+    /// </summary>
+    public int NumericRegionHotInstructionBudgetCheckCount { get; init; }
 }
 
 internal sealed record LuaLoopOsrCompilationResult(
@@ -72,165 +97,35 @@ internal static class LuaLoopOsrAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var function = module.Functions[functionId];
-        var blocks = function.BasicBlocks.IsDefaultOrEmpty
-            ? LuaIrControlFlow.Build(function.Instructions)
-            : function.BasicBlocks;
-        if (blocks.IsEmpty)
-        {
-            livenessCacheHit = false;
-            return [];
-        }
-
-        var blockByStart = blocks.ToDictionary(static block => block.Start);
-        var predecessors = blocks.ToDictionary(
-            static block => block.Start,
-            static _ => new HashSet<int>());
-        foreach (var block in blocks)
-        {
-            foreach (var successor in block.Successors)
-            {
-                if (predecessors.TryGetValue(successor, out var targets))
-                {
-                    targets.Add(block.Start);
-                }
-            }
-        }
-
-        var dominators = ComputeDominators(blocks, predecessors);
-        var liveness = LuaRegisterLiveness.AnalyzeCached(
+        return LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
             module,
-            function,
+            functionId,
             out livenessCacheHit,
-            cancellationToken);
-        var plans = ImmutableArray.CreateBuilder<LuaJitLoopOsrPlan>();
-        foreach (var block in blocks)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var backedgePc = block.End - 1;
-            var instruction = function.Instructions[backedgePc];
-            if (!IsOsrBackedgeInstruction(instruction, backedgePc) ||
-                !blockByStart.ContainsKey(instruction.B) ||
-                !dominators[block.Start].Contains(instruction.B))
-            {
-                continue;
-            }
-
-            var loopBlocks = BuildNaturalLoop(
-                instruction.B,
-                block.Start,
-                predecessors,
-                dominators);
-            var programCounters = loopBlocks
-                .SelectMany(start => Enumerable.Range(
-                    start,
-                    blockByStart[start].Length))
-                .Order()
-                .ToImmutableArray();
-            var registers = liveness.LiveBefore[instruction.B]
-                .Select(static register => new LuaJitOsrRegisterMap(register, register))
-                .ToImmutableArray();
-            plans.Add(new LuaJitLoopOsrPlan(
-                functionId,
-                instruction.B,
-                backedgePc,
-                programCounters,
-                new LuaJitOsrEntryMap(
-                    instruction.B,
-                    registers,
-                    FrameTopMaterialized: true,
-                    OpenUpvaluesMaterialized: true,
-                    ToBeClosedStateMaterialized: true)));
-        }
-
-        return plans
+            cancellationToken)
+            .Select(CreatePlan)
             .OrderBy(static plan => plan.HeaderProgramCounter)
             .ThenBy(static plan => plan.BackedgeProgramCounter)
             .ToImmutableArray();
     }
 
+    internal static LuaJitLoopOsrPlan CreatePlan(LuaNaturalLoopRegion region) => new(
+        region.FunctionId,
+        region.HeaderProgramCounter,
+        region.BackedgeProgramCounter,
+        region.ProgramCounters,
+        new LuaJitOsrEntryMap(
+            region.HeaderProgramCounter,
+            region.Liveness.LiveBefore[region.HeaderProgramCounter]
+                .Select(static register => new LuaJitOsrRegisterMap(register, register))
+                .ToImmutableArray(),
+            FrameTopMaterialized: true,
+            OpenUpvaluesMaterialized: true,
+            ToBeClosedStateMaterialized: true));
+
     public static bool IsOsrBackedgeInstruction(
         LuaIrInstruction instruction,
         int programCounter) =>
-        instruction.B <= programCounter && instruction.Opcode switch
-        {
-            LuaIrOpcode.Jump => true,
-            LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
-                LuaIrOpcode.NumericForLoop => true,
-            _ => false,
-        };
-
-    private static Dictionary<int, HashSet<int>> ComputeDominators(
-        ImmutableArray<LuaIrBasicBlock> blocks,
-        Dictionary<int, HashSet<int>> predecessors)
-    {
-        var starts = blocks.Select(static block => block.Start).ToHashSet();
-        var entry = blocks[0].Start;
-        var result = blocks.ToDictionary(
-            static block => block.Start,
-            block => block.Start == entry ? new HashSet<int> { entry } : new HashSet<int>(starts));
-        var changed = true;
-        while (changed)
-        {
-            changed = false;
-            foreach (var block in blocks.Skip(1))
-            {
-                var incoming = predecessors[block.Start];
-                HashSet<int> next;
-                if (incoming.Count == 0)
-                {
-                    next = [block.Start];
-                }
-                else
-                {
-                    using var enumerator = incoming.GetEnumerator();
-                    _ = enumerator.MoveNext();
-                    next = new HashSet<int>(result[enumerator.Current]);
-                    while (enumerator.MoveNext())
-                    {
-                        next.IntersectWith(result[enumerator.Current]);
-                    }
-
-                    next.Add(block.Start);
-                }
-
-                if (!result[block.Start].SetEquals(next))
-                {
-                    result[block.Start] = next;
-                    changed = true;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    private static HashSet<int> BuildNaturalLoop(
-        int header,
-        int source,
-        Dictionary<int, HashSet<int>> predecessors,
-        Dictionary<int, HashSet<int>> dominators)
-    {
-        var result = new HashSet<int> { header, source };
-        var pending = new Stack<int>();
-        if (source != header)
-        {
-            pending.Push(source);
-        }
-
-        while (pending.TryPop(out var block))
-        {
-            foreach (var predecessor in predecessors[block])
-            {
-                if (dominators[predecessor].Contains(header) && result.Add(predecessor))
-                {
-                    pending.Push(predecessor);
-                }
-            }
-        }
-
-        return result;
-    }
+        LuaNumericRegionAnalyzer.IsBackedgeInstruction(instruction, programCounter);
 }
 
 internal static class LuaLoopOsrEligibilityEvaluator
@@ -353,12 +248,20 @@ internal static class LuaLoopOsrRuntimeEligibilityEvaluator
                 LuaIrUnaryOperator.Negate or LuaIrUnaryOperator.BitwiseNot,
             LuaIrOpcode.Binary =>
                 (LuaIrBinaryOperator)instruction.D != LuaIrBinaryOperator.Concatenate,
+            LuaIrOpcode.NumericForLoop => true,
             _ => false,
         };
 
     public static bool HasExactNumericOperands(
         LuaThread thread,
         LuaFrame frame,
+        LuaIrInstruction instruction) =>
+        !CaptureExactNumericTypes(thread, frame, programCounter: 0, instruction).IsDefault;
+
+    public static ImmutableArray<LuaJitOsrRegisterTypeProfile> CaptureExactNumericTypes(
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter,
         LuaIrInstruction instruction)
     {
         if (instruction.Opcode == LuaIrOpcode.Unary)
@@ -367,18 +270,46 @@ internal static class LuaLoopOsrRuntimeEligibilityEvaluator
                 thread,
                 frame,
                 instruction.B);
-            return (LuaIrUnaryOperator)instruction.C == LuaIrUnaryOperator.BitwiseNot
-                ? operand.Kind == LuaValueKind.Integer
-                : IsExactNumber(operand);
+            var kind = ToExactKind(operand);
+            return ((LuaIrUnaryOperator)instruction.C == LuaIrUnaryOperator.BitwiseNot
+                    ? kind == LuaJitValueKinds.Integer
+                    : kind is LuaJitValueKinds.Integer or LuaJitValueKinds.Float)
+                ? [new LuaJitOsrRegisterTypeProfile(programCounter, instruction.B, kind)]
+                : default;
+        }
+
+        if (instruction.Opcode == LuaIrOpcode.NumericForLoop)
+        {
+            var result = ImmutableArray.CreateBuilder<LuaJitOsrRegisterTypeProfile>(4);
+            LuaJitValueKinds expected = LuaJitValueKinds.None;
+            for (var register = instruction.A; register < instruction.A + 4; register++)
+            {
+                var kind = ToExactKind(LuaCodegenAbiV2.ReadRegisterUnchecked(
+                    thread,
+                    frame,
+                    register));
+                if (kind is not (LuaJitValueKinds.Integer or LuaJitValueKinds.Float) ||
+                    expected != LuaJitValueKinds.None && kind != expected)
+                {
+                    return default;
+                }
+
+                expected = kind;
+                result.Add(new LuaJitOsrRegisterTypeProfile(programCounter, register, kind));
+            }
+
+            return result.MoveToImmutable();
         }
 
         if (instruction.Opcode != LuaIrOpcode.Binary)
         {
-            return true;
+            return [];
         }
 
         var left = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.B);
         var right = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, instruction.C);
+        var leftKind = ToExactKind(left);
+        var rightKind = ToExactKind(right);
         var operation = (LuaIrBinaryOperator)instruction.D;
         if (operation is
             LuaIrBinaryOperator.BitwiseAnd or
@@ -387,14 +318,31 @@ internal static class LuaLoopOsrRuntimeEligibilityEvaluator
             LuaIrBinaryOperator.ShiftLeft or
             LuaIrBinaryOperator.ShiftRight)
         {
-            return left.Kind == LuaValueKind.Integer && right.Kind == LuaValueKind.Integer;
+            if (leftKind != LuaJitValueKinds.Integer || rightKind != LuaJitValueKinds.Integer)
+            {
+                return default;
+            }
+        }
+        else if (leftKind is not (LuaJitValueKinds.Integer or LuaJitValueKinds.Float) ||
+            rightKind is not (LuaJitValueKinds.Integer or LuaJitValueKinds.Float))
+        {
+            return default;
         }
 
-        return IsExactNumber(left) && IsExactNumber(right);
+        return
+        [
+            new LuaJitOsrRegisterTypeProfile(programCounter, instruction.B, leftKind),
+            new LuaJitOsrRegisterTypeProfile(programCounter, instruction.C, rightKind),
+        ];
     }
 
-    private static bool IsExactNumber(LuaValue value) =>
-        value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
+    private static LuaJitValueKinds ToExactKind(LuaValue value) =>
+        value.Kind switch
+        {
+            LuaValueKind.Integer => LuaJitValueKinds.Integer,
+            LuaValueKind.Float => LuaJitValueKinds.Float,
+            _ => LuaJitValueKinds.None,
+        };
 }
 
 internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
@@ -446,7 +394,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         }
 
         var analysisStarted = Stopwatch.GetTimestamp();
-        var verifiedPlan = LuaLoopOsrAnalyzer.Analyze(
+        var verifiedRegion = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
                 module,
                 plan.FunctionId,
                 out var livenessCacheHit,
@@ -455,7 +403,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                 candidate.HeaderProgramCounter == plan.HeaderProgramCounter &&
                 candidate.BackedgeProgramCounter == plan.BackedgeProgramCounter);
         var loopAnalysisDuration = Stopwatch.GetElapsedTime(analysisStarted);
-        if (verifiedPlan is null)
+        if (verifiedRegion is null)
         {
             return new LuaLoopOsrCompilationResult(
                 null,
@@ -477,11 +425,26 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                     EstimatedCodeBytes: 0));
         }
 
+        var verifiedPlan = LuaLoopOsrAnalyzer.CreatePlan(verifiedRegion) with
+        {
+            NumericTypes = plan.NumericTypes,
+        };
         var function = module.Functions[plan.FunctionId];
         var specializationStarted = Stopwatch.GetTimestamp();
-        var specializedInstructionCount = 0;
-        var guardCount = 0;
-        var specializedEligible = allowSpecializedCil &&
+        var numericRegionPlan = allowSpecializedCil
+            ? LuaNumericRegionPlanner.TryCreate(
+                function,
+                verifiedRegion,
+                ToNumericRegionHints(plan.NumericTypes),
+                cancellationToken)
+            : null;
+        var specializedInstructionCount = numericRegionPlan?.DirectNumericInstructionCount ?? 0;
+        var guardCount = numericRegionPlan is null
+            ? 0
+            : 2 + numericRegionPlan.Registers.Count(register =>
+                verifiedRegion.Liveness.LiveBefore[verifiedRegion.HeaderProgramCounter]
+                    .Contains(register.Register));
+        var legacySpecializedEligible = allowSpecializedCil && numericRegionPlan is null &&
             ReflectionEmitLuaLoopOsrCompiler.IsEligible(
                 function,
                 verifiedPlan,
@@ -492,7 +455,32 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         LuaCompiledMethod method;
         long estimatedCodeBytes;
         var emissionMetrics = default(LuaLoopOsrEmissionMetrics);
-        if (specializedEligible && TryCompileSpecializedCil(
+        if (numericRegionPlan is not null && TryCompileNumericRegion(
+                function,
+                numericRegionPlan,
+                cancellationToken,
+                out var numericRegion))
+        {
+            method = numericRegion.Method;
+            estimatedCodeBytes = numericRegion.EstimatedCodeBytes;
+            codeKind = LuaJitLoopOsrCodeKind.GuardedExactNumericCil;
+            emissionMetrics = new LuaLoopOsrEmissionMetrics(
+                numericRegion.Metrics.CilEmissionDuration,
+                numericRegion.Metrics.DelegateCreationDuration);
+            verifiedPlan = verifiedPlan with
+            {
+                CodeKind = codeKind,
+                NumericRegionCount = 1,
+                UnboxedNumericLocalCount = numericRegionPlan.Registers.Count(
+                    static register => register.Kind is
+                        LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float),
+                DirectNumericInstructionCount = numericRegionPlan.DirectNumericInstructionCount,
+                NumericRegionSafepointCount = numericRegionPlan.BackedgeProgramCounters.Length,
+                NumericRegionHotInstructionBudgetCheckCount =
+                    numericRegionPlan.HotInstructionBudgetCheckCount,
+            };
+        }
+        else if (legacySpecializedEligible && TryCompileSpecializedCil(
                 function,
                 verifiedPlan,
                 cancellationToken,
@@ -537,6 +525,42 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
             [],
             metrics);
     }
+
+    private static IEnumerable<LuaNumericRegionTypeHint> ToNumericRegionHints(
+        ImmutableArray<LuaJitOsrRegisterTypeProfile> types)
+    {
+        foreach (var type in types)
+        {
+            yield return new LuaNumericRegionTypeHint(
+                type.ProgramCounter,
+                type.Register,
+                type.Kinds switch
+                {
+                    LuaJitValueKinds.Integer => LuaNumericRegionValueKind.Integer,
+                    LuaJitValueKinds.Float => LuaNumericRegionValueKind.Float,
+                    LuaJitValueKinds.Boolean => LuaNumericRegionValueKind.Boolean,
+                    _ => LuaNumericRegionValueKind.Conflict,
+                });
+        }
+    }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Loop OSR compilation is reached only after the dynamic-code capability check.")]
+    private static bool TryCompileNumericRegion(
+        LuaIrFunction function,
+        LuaNumericRegionPlan plan,
+        CancellationToken cancellationToken,
+        [NotNullWhen(true)] out LuaCompiledNumericRegion? region) =>
+        ReflectionEmitLuaNumericRegionCompiler.TryCompile(
+            function,
+            plan,
+            new LuaNumericRegionEmissionMode(
+                RequireLoopOsrEntry: true,
+                ObserveLoopOsrBackedge: true),
+            cancellationToken,
+            out region);
 
     [UnconditionalSuppressMessage(
         "AOT",

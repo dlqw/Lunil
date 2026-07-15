@@ -17,5 +17,8 @@ internal interface ILuaInstructionObserver
 /// <summary>Low-overhead accounting boundary for loop OSR backedges.</summary>
 internal interface ILuaLoopOsrObserver
 {
-    void ObserveLoopOsrBackedge(LuaFrame frame, int programCounter);
+    void ObserveLoopOsrBackedges(
+        LuaFrame frame,
+        int programCounter,
+        int backedgeCount);
 }

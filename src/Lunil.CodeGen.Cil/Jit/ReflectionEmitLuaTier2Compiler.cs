@@ -282,6 +282,10 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
         [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+    private static readonly MethodInfo ContinueExit = Method(
+        typeof(LuaCompiledExit),
+        nameof(LuaCompiledExit.Continue),
+        [typeof(int), typeof(int)]);
 
     [RequiresDynamicCode("Tier 2 CIL specialization requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
@@ -291,6 +295,7 @@ internal static class ReflectionEmitLuaTier2Compiler
     public static bool TryCompile(
         LuaIrFunction function,
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized,
+        ImmutableHashSet<int> numericRegionProgramCounters,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
         out long estimatedCodeBytes,
@@ -300,7 +305,10 @@ internal static class ReflectionEmitLuaTier2Compiler
         estimatedCodeBytes = 0;
         metrics = default;
         if (!RuntimeFeature.IsDynamicCodeSupported ||
-            EvaluateNumericSpecialization(function, optimized) !=
+            EvaluateNumericSpecialization(
+                function,
+                optimized,
+                numericRegionProgramCounters) !=
                 LuaTier2NumericSpecializationStatus.Eligible)
         {
             return false;
@@ -350,6 +358,12 @@ internal static class ReflectionEmitLuaTier2Compiler
             }
 
             generator.MarkLabel(labels[pc]);
+            if (numericRegionProgramCounters.Contains(pc))
+            {
+                EmitContinue(generator, pc);
+                continue;
+            }
+
             var instruction = function.Instructions[pc];
             if (optimized.TryGetValue(pc, out var optimization))
             {
@@ -417,7 +431,9 @@ internal static class ReflectionEmitLuaTier2Compiler
             compiledWithSites(context, thread, frame, runtimeSites);
         var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
         estimatedCodeBytes = checked(
-            function.Instructions.Length * 32L + optimized.Count * 48L);
+            (function.Instructions.Length - numericRegionProgramCounters.Count) * 32L +
+            optimized.Count(pair => !numericRegionProgramCounters.Contains(pair.Key)) * 48L +
+            numericRegionProgramCounters.Count * 8L);
         metrics = new LuaTier2EmissionMetrics(
             cilEmissionDuration,
             delegateCreationDuration);
@@ -426,12 +442,23 @@ internal static class ReflectionEmitLuaTier2Compiler
 
     internal static LuaTier2NumericSpecializationStatus EvaluateNumericSpecialization(
         LuaIrFunction function,
-        ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized)
+        ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized) =>
+        EvaluateNumericSpecialization(function, optimized, []);
+
+    internal static LuaTier2NumericSpecializationStatus EvaluateNumericSpecialization(
+        LuaIrFunction function,
+        ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized,
+        ImmutableHashSet<int> numericRegionProgramCounters)
     {
-        var hasSpecializableHotspot = false;
+        var hasSpecializableHotspot = !numericRegionProgramCounters.IsEmpty;
         foreach (var pair in optimized)
         {
             var pc = pair.Key;
+            if (numericRegionProgramCounters.Contains(pc))
+            {
+                continue;
+            }
+
             var optimization = pair.Value;
             switch (optimization.Kind)
             {
@@ -471,7 +498,9 @@ internal static class ReflectionEmitLuaTier2Compiler
 
         for (var pc = 0; pc < function.Instructions.Length; pc++)
         {
-            if (!optimized.ContainsKey(pc) && !IsDirectlySupported(function.Instructions[pc]))
+            if (!numericRegionProgramCounters.Contains(pc) &&
+                !optimized.ContainsKey(pc) &&
+                !IsDirectlySupported(function.Instructions[pc]))
             {
                 return LuaTier2NumericSpecializationStatus.UnsupportedInstruction;
             }
@@ -1122,6 +1151,14 @@ internal static class ReflectionEmitLuaTier2Compiler
             DeoptExit,
             programCounter,
             LuaCompiledExitReason.UnsupportedInstruction);
+    }
+
+    private static void EmitContinue(ILGenerator generator, int programCounter)
+    {
+        EmitInt32(generator, programCounter);
+        EmitInstructionsConsumed(generator);
+        generator.Emit(OpCodes.Call, ContinueExit);
+        generator.Emit(OpCodes.Ret);
     }
 
     private static void EmitExit(

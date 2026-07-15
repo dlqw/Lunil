@@ -409,13 +409,17 @@ internal sealed class LuaTieredJitRegistry :
         }
     }
 
-    public void ObserveLoopOsrBackedge(LuaFrame frame, int programCounter)
+    public void ObserveLoopOsrBackedges(
+        LuaFrame frame,
+        int programCounter,
+        int backedgeCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backedgeCount);
         if (_observedFrames.TryGetValue(frame, out var observation) &&
             observation.Entry is { } entry)
         {
-            Interlocked.Increment(ref entry.Backedges);
-            Interlocked.Increment(ref _backedges);
+            Interlocked.Add(ref entry.Backedges, backedgeCount);
+            Interlocked.Add(ref _backedges, backedgeCount);
         }
     }
 
@@ -685,6 +689,22 @@ internal sealed class LuaTieredJitRegistry :
         }
 
         var function = module.Functions[functionId];
+        var entry = FindEntry(module, functionId);
+        if (entry is not null)
+        {
+            lock (entry.Gate)
+            {
+                if (entry.LoopOsrAnalyzed && entry.LoopOsrEntries.Count != 0)
+                {
+                    return entry.LoopOsrEntries.Values
+                        .Select(static loop => loop.Plan)
+                        .OrderBy(static plan => plan.HeaderProgramCounter)
+                        .ThenBy(static plan => plan.BackedgeProgramCounter)
+                        .ToArray();
+                }
+            }
+        }
+
         return LuaLoopOsrAnalyzer.Analyze(module, functionId)
             .Select(plan => plan with
             {
@@ -1328,10 +1348,12 @@ internal sealed class LuaTieredJitRegistry :
             return;
         }
 
-        var exactNumeric = LuaLoopOsrRuntimeEligibilityEvaluator.HasExactNumericOperands(
+        var numericTypes = LuaLoopOsrRuntimeEligibilityEvaluator.CaptureExactNumericTypes(
             thread,
             frame,
+            programCounter,
             instruction);
+        var exactNumeric = !numericTypes.IsDefault;
         List<LuaJitLoopOsrEligibility>? completed = null;
         lock (entry.Gate)
         {
@@ -1360,6 +1382,19 @@ internal sealed class LuaTieredJitRegistry :
                     continue;
                 }
 
+                foreach (var type in numericTypes)
+                {
+                    var key = (type.ProgramCounter, type.Register);
+                    if (loop.ExactNumericTypes.TryGetValue(key, out var existing))
+                    {
+                        loop.ExactNumericTypes[key] = existing | type.Kinds;
+                    }
+                    else
+                    {
+                        loop.ExactNumericTypes.Add(key, type.Kinds);
+                    }
+                }
+
                 loop.PendingExactNumericGuardSites.Remove(programCounter);
                 if (loop.PendingExactNumericGuardSites.Count != 0)
                 {
@@ -1367,6 +1402,19 @@ internal sealed class LuaTieredJitRegistry :
                 }
 
                 loop.ExactNumericQualificationState = 1;
+                loop.Plan = loop.Plan with
+                {
+                    NumericTypes =
+                    [
+                        .. loop.ExactNumericTypes
+                            .OrderBy(static pair => pair.Key.ProgramCounter)
+                            .ThenBy(static pair => pair.Key.Register)
+                            .Select(static pair => new LuaJitOsrRegisterTypeProfile(
+                                pair.Key.ProgramCounter,
+                                pair.Key.Register,
+                                pair.Value)),
+                    ],
+                };
                 loop.Eligibility = loop.StructuralEligibility;
                 Interlocked.Decrement(ref entry.LoopOsrRuntimeQualificationPendingCount);
                 (completed ??= []).Add(loop.Eligibility);
@@ -2099,6 +2147,7 @@ internal sealed class LuaTieredJitRegistry :
                 request.Entry.Key.FunctionId,
                 request.Profile!,
                 _disposeCancellation.Token);
+            _disposeCancellation.Token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -2190,6 +2239,7 @@ internal sealed class LuaTieredJitRegistry :
                 loop.Plan,
                 !loop.PreferManagedFallback,
                 _disposeCancellation.Token);
+            _disposeCancellation.Token.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -3333,6 +3383,10 @@ internal sealed class LuaTieredJitRegistry :
         public long GuardFailures;
 
         public HashSet<int> PendingExactNumericGuardSites { get; } = [];
+
+        public Dictionary<(int ProgramCounter, int Register), LuaJitValueKinds>
+            ExactNumericTypes
+        { get; } = [];
 
         public int ExactNumericQualificationState { get; set; } =
             eligibility.IsAutoEligible && !enableManagedFallback ? 0 : 1;
