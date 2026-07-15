@@ -975,6 +975,10 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(LuaJitTier2State.Ready, executor.GetTier2State(module, 0));
         var tier2Plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
         Assert.Equal(LuaJitTier2CodeKind.ExactNumericSpecializedCil, tier2Plan.CodeKind);
+        Assert.True(tier2Plan.NumericRegionCount > 0);
+        Assert.True(tier2Plan.UnboxedNumericLocalCount > 0);
+        Assert.True(tier2Plan.DirectNumericInstructionCount > 0);
+        Assert.True(tier2Plan.NumericRegionSafepointCount > 0);
         Assert.True(
             tier2Plan.Optimizations.Any(
                 optimization => optimization.Kind == LuaJitOptimizationKind.NumericBinary),
@@ -1978,6 +1982,9 @@ public sealed class LuaJitExecutorTests
             ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
             LuaValue.FromInteger(3));
         Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, 0));
+        Assert.True(
+            Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0))
+                .NumericRegionCount > 0);
 
         Assert.Throws<LuaRuntimeException>(() => ExecuteFresh(
             executor,
@@ -2612,29 +2619,210 @@ public sealed class LuaJitExecutorTests
                 SynchronousCompilation = true,
                 EnableTier2 = true,
                 EnableTier2ManagedFallback = true,
+                Tier2InvocationThreshold = 2,
+                Tier2BackedgeThreshold = int.MaxValue,
+            },
+            tier2Compiler: compiler);
+        var module = Compile("""
+            local value = ...
+            local index = 0
+            while index < 20 do
+                value = value + 1
+                index = index + 1
+            end
+            return value
+            """);
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(1)),
+            LuaValue.FromInteger(21));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(22));
+
+        var tasks = new List<Task<LuaExecutionResult>>
+        {
+            Task.Run(() => ExecuteFresh(executor, module, LuaValue.FromInteger(3))),
+        };
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+        tasks.AddRange(Enumerable.Range(0, 7).Select(index => Task.Run(() =>
+            ExecuteFresh(executor, module, LuaValue.FromInteger(index + 4)))));
+        release.Set();
+
+        var results = await Task.WhenAll(tasks);
+        var postPromotion = ExecuteFresh(executor, module, LuaValue.FromInteger(11));
+        var concurrentPlan = Assert.IsType<LuaJitTier2Plan>(
+            executor.GetTier2Plan(module, 0));
+
+        Assert.Equal(8, results.Length);
+        for (var index = 0; index < results.Length; index++)
+        {
+            Assert.True(
+                results[index].Values.SequenceEqual(
+                    [LuaValue.FromInteger(index + 23)]),
+                $"Concurrent result {index}: expected {index + 23}, actual " +
+                $"[{string.Join(", ", results[index].Values)}]; post-promotion " +
+                $"[{string.Join(", ", postPromotion.Values)}]; regions=" +
+                $"{concurrentPlan.NumericRegionCount}, kind={concurrentPlan.CodeKind}.");
+        }
+        AssertValues(postPromotion, LuaValue.FromInteger(31));
+        Assert.Equal(1, compiler.CallCount);
+        Assert.Equal(1, executor.Statistics.Tier2CompilationCompleted);
+        Assert.True(concurrentPlan.NumericRegionCount > 0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Tier2ResultCompiledAcrossInvalidationOrClearIsNeverPublished(
+        bool clearCache)
+    {
+        using var release = new ManualResetEventSlim();
+        using var started = new ManualResetEventSlim();
+        var compiler = new BlockingTier2Compiler(
+            ProfileGuidedLuaTier2Compiler.Instance,
+            started,
+            release);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                SynchronousCompilation = true,
+                EnableTier2 = true,
+                EnableLoopOsr = false,
+                Tier2InvocationThreshold = 2,
+                Tier2BackedgeThreshold = int.MaxValue,
+            },
+            tier2Compiler: compiler);
+        var module = Compile("local n=...; local i=0; while i<20 do n=n+1; i=i+1 end; return n");
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(1)), LuaValue.FromInteger(21));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(2)), LuaValue.FromInteger(22));
+        var active = Task.Run(() => ExecuteFresh(
+            executor,
+            module,
+            LuaValue.FromInteger(3)));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        if (clearCache)
+        {
+            executor.ClearCache();
+        }
+        else
+        {
+            executor.Invalidate(module);
+        }
+
+        release.Set();
+        AssertValues(await active, LuaValue.FromInteger(23));
+
+        Assert.Equal(1, compiler.CallCount);
+        Assert.Equal(0, executor.Statistics.Tier2CompilationCompleted);
+        Assert.Null(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
+        Assert.Equal(LuaJitTier2State.Profiling, executor.GetTier2State(module, 0));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(4)), LuaValue.FromInteger(24));
+    }
+
+    [Fact]
+    public async Task DisposeDoesNotPublishATier2ResultThatIgnoredCancellation()
+    {
+        using var started = new ManualResetEventSlim();
+        using var cancellationRequested = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        var compiler = new CancellationIgnoringTier2Compiler(
+            ProfileGuidedLuaTier2Compiler.Instance,
+            started,
+            cancellationRequested,
+            release,
+            returned);
+        var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                EnableTier2 = true,
+                EnableLoopOsr = false,
+                Tier2InvocationThreshold = 1,
+                Tier2BackedgeThreshold = int.MaxValue,
+                MaximumConcurrentCompilations = 1,
+            },
+            tier2Compiler: compiler);
+        var completedEvents = 0;
+        executor.EventOccurred += (_, jitEvent) =>
+        {
+            if (jitEvent.Kind == LuaJitEventKind.Tier2CompilationCompleted)
+            {
+                Interlocked.Increment(ref completedEvents);
+            }
+        };
+        var module = Compile(
+            "local n=...; local i=0; while i<20 do n=n+1; i=i+1 end; return n");
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(1)),
+            LuaValue.FromInteger(21));
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            await executor.WaitForIdleAsync(timeout.Token);
+        }
+
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(22));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(3)),
+            LuaValue.FromInteger(23));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        var disposing = Task.Run(executor.Dispose);
+        Assert.True(cancellationRequested.Wait(TimeSpan.FromSeconds(10)));
+        release.Set();
+        await disposing;
+
+        Assert.True(returned.IsSet);
+        Assert.Equal(0, Volatile.Read(ref completedEvents));
+        Assert.Equal(0, executor.Statistics.Tier2CompilationCompleted);
+        Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
+    }
+
+    [Fact]
+    public async Task ActiveTier2DelegateFinishesAcrossInvalidationButCannotBeReentered()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var compiler = new BlockingInvocationTier2Compiler(
+            ProfileGuidedLuaTier2Compiler.Instance,
+            entered,
+            release);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                SynchronousCompilation = true,
+                EnableTier2 = true,
+                EnableLoopOsr = false,
                 Tier2InvocationThreshold = 1,
                 Tier2BackedgeThreshold = int.MaxValue,
             },
             tier2Compiler: compiler);
-        var module = Compile("local value = ...; return value + 1");
-        AssertValues(
-            ExecuteFresh(executor, module, LuaValue.FromInteger(1)),
-            LuaValue.FromInteger(2));
+        var module = Compile("local n=...; local i=0; while i<20 do n=n+1; i=i+1 end; return n");
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(1)), LuaValue.FromInteger(21));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(2)), LuaValue.FromInteger(22));
+        Assert.NotNull(executor.GetTier2Plan(module, 0));
+        var firstGenerationBefore = compiler.FirstGenerationEntries;
+        compiler.Arm();
+        var active = Task.Run(() => ExecuteFresh(
+            executor,
+            module,
+            LuaValue.FromInteger(3)));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
 
-        var tasks = new List<Task<LuaExecutionResult>>
-        {
-            Task.Run(() => ExecuteFresh(executor, module, LuaValue.FromInteger(2))),
-        };
-        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
-        tasks.AddRange(Enumerable.Range(0, 7).Select(index => Task.Run(() =>
-            ExecuteFresh(executor, module, LuaValue.FromInteger(index + 3)))));
+        executor.Invalidate(module);
         release.Set();
 
-        var results = await Task.WhenAll(tasks);
-
-        Assert.Equal(8, results.Length);
-        Assert.Equal(1, compiler.CallCount);
-        Assert.Equal(1, executor.Statistics.Tier2CompilationCompleted);
+        AssertValues(await active, LuaValue.FromInteger(23));
+        Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
+        Assert.Equal(LuaJitFunctionState.Invalidated, executor.GetFunctionState(module, 0));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(4)), LuaValue.FromInteger(24));
+        Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
     }
 
     [Fact]
@@ -3185,7 +3373,17 @@ public sealed class LuaJitExecutorTests
     [Fact]
     public void LoopOsrUsesGuardedExactNumericCilForQualifiedLoops()
     {
-        using var executor = CreateLoopOsrExecutor();
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = false,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
         var events = new List<LuaJitEvent>();
         executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
         var module = Compile("""
@@ -3220,6 +3418,12 @@ public sealed class LuaJitExecutorTests
         Assert.True(metrics.EstimatedCodeBytes > 0);
         Assert.True(metrics.AllocatedBytes > 0);
         var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        Assert.True(
+            plan.NumericRegionCount == 1,
+            $"Numeric types: {string.Join(", ", plan.NumericTypes.Select(static type => $"pc{type.ProgramCounter}:r{type.Register}={type.Kinds}"))}");
+        Assert.True(plan.UnboxedNumericLocalCount > 0);
+        Assert.True(plan.DirectNumericInstructionCount > 0);
+        Assert.True(plan.NumericRegionSafepointCount > 0);
         var eligibility = executor.GetLoopOsrEligibility(
             module,
             0,
@@ -3365,7 +3569,17 @@ public sealed class LuaJitExecutorTests
     [Fact]
     public void LoopOsrRetainsManagedFallbackForSemanticBoundaries()
     {
-        using var executor = CreateLoopOsrExecutor();
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = true,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
         var events = new List<LuaJitEvent>();
         executor.EventOccurred += (_, jitEvent) => events.Add(jitEvent);
         var module = Compile("""
@@ -3697,13 +3911,169 @@ public sealed class LuaJitExecutorTests
         Assert.All(results, result => AssertValues(result, LuaValue.FromInteger(465)));
         Assert.Equal(1, compiler.CallCount);
         Assert.Equal(1, executor.Statistics.LoopOsrCompilationCompleted);
+        Assert.Equal(
+            1,
+            Assert.Single(executor.GetLoopOsrPlans(module, 0)).NumericRegionCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LoopOsrResultCompiledAcrossInvalidationOrClearIsNeverPublished(
+        bool clearCache)
+    {
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        var compiler = new BlockingLoopOsrCompiler(
+            CanonicalLuaLoopOsrCompiler.Instance,
+            started,
+            release,
+            returned);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = int.MaxValue,
+                BackedgeThreshold = int.MaxValue,
+                EnableTier2 = false,
+                EnableLoopOsr = true,
+                EnableLoopOsrManagedFallback = false,
+                LoopOsrBackedgeThreshold = 1,
+                MaximumConcurrentCompilations = 1,
+            },
+            loopOsrCompiler: compiler);
+        var module = Compile("local n=0; while n<2500 do n=n+1 end; return n");
+        var active = Task.Run(() => ExecuteFresh(executor, module));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        if (clearCache)
+        {
+            executor.ClearCache();
+        }
+        else
+        {
+            executor.Invalidate(module);
+        }
+
+        release.Set();
+        AssertValues(await active, LuaValue.FromInteger(2500));
+        Assert.True(returned.Wait(TimeSpan.FromSeconds(10)));
+
+        Assert.True(compiler.CallCount >= 1);
+        Assert.Equal(
+            compiler.CallCount - 1,
+            executor.Statistics.LoopOsrCompilationCompleted);
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        var state = executor.GetLoopOsrState(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter);
+        Assert.True(
+            state is LuaJitOsrState.Invalidated or LuaJitOsrState.Ready,
+            $"Unexpected post-invalidation OSR state {state}.");
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2500));
+    }
+
+    [Fact]
+    public async Task DisposeDoesNotPublishALoopOsrResultThatIgnoredCancellation()
+    {
+        using var started = new ManualResetEventSlim();
+        using var cancellationRequested = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        var compiler = new CancellationIgnoringLoopOsrCompiler(
+            CanonicalLuaLoopOsrCompiler.Instance,
+            started,
+            cancellationRequested,
+            release,
+            returned);
+        var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = int.MaxValue,
+                BackedgeThreshold = int.MaxValue,
+                EnableTier2 = false,
+                EnableLoopOsr = true,
+                EnableLoopOsrManagedFallback = false,
+                LoopOsrBackedgeThreshold = 1,
+                MaximumConcurrentCompilations = 1,
+            },
+            loopOsrCompiler: compiler);
+        var completedEvents = 0;
+        executor.EventOccurred += (_, jitEvent) =>
+        {
+            if (jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)
+            {
+                Interlocked.Increment(ref completedEvents);
+            }
+        };
+        var module = Compile("local n=0; while n<2500 do n=n+1 end; return n");
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2500));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        var disposing = Task.Run(executor.Dispose);
+        Assert.True(cancellationRequested.Wait(TimeSpan.FromSeconds(10)));
+        release.Set();
+        await disposing;
+
+        Assert.True(returned.IsSet);
+        Assert.Equal(0, Volatile.Read(ref completedEvents));
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationCompleted);
+        Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
+    }
+
+    [Fact]
+    public async Task ActiveLoopOsrDelegateFinishesAcrossInvalidationButCannotBeReentered()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var compiler = new BlockingInvocationLoopOsrCompiler(
+            CanonicalLuaLoopOsrCompiler.Instance,
+            entered,
+            release);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.Auto,
+                FunctionEntryThreshold = int.MaxValue,
+                BackedgeThreshold = int.MaxValue,
+                EnableTier2 = false,
+                EnableLoopOsr = true,
+                EnableLoopOsrManagedFallback = false,
+                LoopOsrBackedgeThreshold = 1,
+                SynchronousCompilation = true,
+            },
+            loopOsrCompiler: compiler);
+        var module = Compile("local n=0; while n<2500 do n=n+1 end; return n");
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2500));
+        var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        Assert.Equal(LuaJitOsrState.Ready, executor.GetLoopOsrState(
+            module,
+            0,
+            plan.HeaderProgramCounter,
+            plan.BackedgeProgramCounter));
+        var firstGenerationBefore = compiler.FirstGenerationEntries;
+        compiler.Arm();
+        var active = Task.Run(() => ExecuteFresh(executor, module));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+
+        executor.Invalidate(module);
+        release.Set();
+
+        AssertValues(await active, LuaValue.FromInteger(2500));
+        Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2500));
+        Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
     }
 
     [Fact]
     public void LoopOsrHonorsBudgetDebugGcAndInvalidationGuards()
     {
         var module = Compile(
-            "local total=0; for i=1,20 do local value={i}; total=total+value[1] end; return total");
+            "local total=0; for i=1,20 do total=total+i end; return total");
         using (var budgetExecutor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
             Policy = LuaJitPolicy.Auto,
@@ -3727,7 +4097,17 @@ public sealed class LuaJitExecutorTests
             Assert.Equal(LuaThreadStatus.Error, budgetState.MainThread.Status);
         }
 
-        using var executor = CreateLoopOsrExecutor();
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            EnableLoopOsrManagedFallback = false,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        });
         var debugState = new LuaState();
         LuaDebugApi.SetHook(
             debugState,
@@ -3749,6 +4129,7 @@ public sealed class LuaJitExecutorTests
             LuaValue.FromInteger(210));
         Assert.True(executor.Statistics.LoopOsrEntries >= 1);
         var plan = Assert.Single(executor.GetLoopOsrPlans(module, 0));
+        Assert.Equal(1, plan.NumericRegionCount);
         Assert.Equal(
             LuaJitOsrState.Ready,
             executor.GetLoopOsrState(
@@ -4269,6 +4650,84 @@ public sealed class LuaJitExecutorTests
         }
     }
 
+    private sealed class CancellationIgnoringTier2Compiler(
+        ILuaTier2Compiler inner,
+        ManualResetEventSlim started,
+        ManualResetEventSlim cancellationRequested,
+        ManualResetEventSlim release,
+        ManualResetEventSlim returned) : ILuaTier2Compiler
+    {
+        public LuaTier2CompilationResult Compile(
+            LuaIrModule module,
+            int functionId,
+            LuaJitFunctionProfile profile,
+            CancellationToken cancellationToken)
+        {
+            using var registration = cancellationToken.Register(cancellationRequested.Set);
+            started.Set();
+            Assert.True(release.Wait(
+                TimeSpan.FromSeconds(10),
+                CancellationToken.None));
+            var result = inner.Compile(
+                module,
+                functionId,
+                profile,
+                CancellationToken.None);
+            returned.Set();
+            return result;
+        }
+    }
+
+    private sealed class BlockingInvocationTier2Compiler(
+        ILuaTier2Compiler inner,
+        ManualResetEventSlim entered,
+        ManualResetEventSlim release) : ILuaTier2Compiler
+    {
+        private int _armed;
+        private int _blocked;
+        private int _generation;
+        private int _firstGenerationEntries;
+
+        public int FirstGenerationEntries => Volatile.Read(ref _firstGenerationEntries);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public LuaTier2CompilationResult Compile(
+            LuaIrModule module,
+            int functionId,
+            LuaJitFunctionProfile profile,
+            CancellationToken cancellationToken)
+        {
+            var result = inner.Compile(module, functionId, profile, cancellationToken);
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
+            var generation = Interlocked.Increment(ref _generation);
+            var method = result.Method!;
+            return result with
+            {
+                Method = (context, thread, frame) =>
+                {
+                    if (generation == 1)
+                    {
+                        Interlocked.Increment(ref _firstGenerationEntries);
+                    }
+
+                    if (Volatile.Read(ref _armed) != 0 &&
+                        Interlocked.CompareExchange(ref _blocked, 1, 0) == 0)
+                    {
+                        entered.Set();
+                        Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+                    }
+
+                    return method(context, thread, frame);
+                },
+            };
+        }
+    }
+
     private sealed class AlternatingGuardFailureCompiler(ILuaTier2Compiler inner)
         : ILuaTier2Compiler
     {
@@ -4312,7 +4771,8 @@ public sealed class LuaJitExecutorTests
     private sealed class BlockingLoopOsrCompiler(
         ILuaLoopOsrCompiler inner,
         ManualResetEventSlim started,
-        ManualResetEventSlim release) : ILuaLoopOsrCompiler
+        ManualResetEventSlim release,
+        ManualResetEventSlim? returned = null) : ILuaLoopOsrCompiler
     {
         private int _callCount;
 
@@ -4327,7 +4787,91 @@ public sealed class LuaJitExecutorTests
             Interlocked.Increment(ref _callCount);
             started.Set();
             Assert.True(release.Wait(TimeSpan.FromSeconds(10), cancellationToken));
-            return inner.Compile(module, plan, allowSpecializedCil, cancellationToken);
+            var result = inner.Compile(module, plan, allowSpecializedCil, cancellationToken);
+            returned?.Set();
+            return result;
+        }
+    }
+
+    private sealed class CancellationIgnoringLoopOsrCompiler(
+        ILuaLoopOsrCompiler inner,
+        ManualResetEventSlim started,
+        ManualResetEventSlim cancellationRequested,
+        ManualResetEventSlim release,
+        ManualResetEventSlim returned) : ILuaLoopOsrCompiler
+    {
+        public LuaLoopOsrCompilationResult Compile(
+            LuaIrModule module,
+            LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
+            CancellationToken cancellationToken)
+        {
+            using var registration = cancellationToken.Register(cancellationRequested.Set);
+            started.Set();
+            Assert.True(release.Wait(
+                TimeSpan.FromSeconds(10),
+                CancellationToken.None));
+            var result = inner.Compile(
+                module,
+                plan,
+                allowSpecializedCil,
+                CancellationToken.None);
+            returned.Set();
+            return result;
+        }
+    }
+
+    private sealed class BlockingInvocationLoopOsrCompiler(
+        ILuaLoopOsrCompiler inner,
+        ManualResetEventSlim entered,
+        ManualResetEventSlim release) : ILuaLoopOsrCompiler
+    {
+        private int _armed;
+        private int _blocked;
+        private int _generation;
+        private int _firstGenerationEntries;
+
+        public int FirstGenerationEntries => Volatile.Read(ref _firstGenerationEntries);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public LuaLoopOsrCompilationResult Compile(
+            LuaIrModule module,
+            LuaJitLoopOsrPlan plan,
+            bool allowSpecializedCil,
+            CancellationToken cancellationToken)
+        {
+            var result = inner.Compile(
+                module,
+                plan,
+                allowSpecializedCil,
+                cancellationToken);
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
+            var generation = Interlocked.Increment(ref _generation);
+            var method = result.Method!;
+            return result with
+            {
+                Method = (context, thread, frame) =>
+                {
+                    if (generation == 1)
+                    {
+                        Interlocked.Increment(ref _firstGenerationEntries);
+                    }
+
+                    if (Volatile.Read(ref _armed) != 0 &&
+                        Interlocked.CompareExchange(ref _blocked, 1, 0) == 0)
+                    {
+                        entered.Set();
+                        Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+                    }
+
+                    return method(context, thread, frame);
+                },
+            };
         }
     }
 
