@@ -2963,10 +2963,10 @@ internal sealed class LuaTieredJitRegistry :
             lock (entry.Gate)
             {
                 terminal = entry.Eligibility is
-                    {
-                        IsAutoEligible: false,
-                        Reason: not LuaJitEligibilityReason.NoRepeatedWork,
-                    } &&
+                {
+                    IsAutoEligible: false,
+                    Reason: not LuaJitEligibilityReason.NoRepeatedWork,
+                } &&
                     (!IsLoopOsrEnabled ||
                      Volatile.Read(ref entry.LoopOsrObservationState) < 0);
             }
