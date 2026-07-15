@@ -136,9 +136,23 @@ performance fixes. New planned features move to the next numeric milestone.
 - the SDK strict package validator, an all-library local consumer, the installed CLI tool smoke, and
   both API/package baseline checks run in CI and the tag-triggered release workflow.
 
-The feature and API scope is therefore frozen. The next promotion is `0.7.0-rc.1` after Beta
-hardening confirms clean API/package compatibility, clean-checkout release evidence, and no open
-release blocker.
+The feature and API scope is therefore frozen. Beta hardening confirmed clean API/package
+compatibility, clean-checkout release evidence, and no open release blocker.
+
+## RC 1 candidate status
+
+`0.7.0-rc.1` satisfies the RC entry gate without changing product code, any of the 14 public API
+baselines, or the frozen 14-package scope:
+
+- the accepted Beta commit passed main-branch six-RID CI and the tag-triggered release workflow;
+- the release workflow reproduced all six RID bundles, all 14 NuGet and symbol packages, clean
+  local consumers, installed-tool smoke, and compatibility checks;
+- official conformance, six-backend differential, deterministic fuzz, GC/coroutine soak, and
+  multi-publish evidence remains unchanged and accepted;
+- no release blocker is open.
+
+RC now accepts only release blockers. If none is found, the next promotion is stable `0.7.0`
+without product-code, public-API-baseline, or package-scope changes.
 
 ## RC and stable gate
 

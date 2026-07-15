@@ -6,10 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.7.0</VersionPrefix>
-  <VersionSuffix>beta.1</VersionSuffix>
+  <VersionSuffix>rc.1</VersionSuffix>
 ```
 
-The resulting version is `0.7.0-beta.1` and its tag is `v0.7.0-beta.1`.
+The resulting version is `0.7.0-rc.1` and its tag is `v0.7.0-rc.1`.
 `VersionSuffix` is removed for a stable release.
 
 The three numeric fields select the compatibility line; the optional suffix selects
@@ -95,7 +95,7 @@ New compiler, analysis, hosting, and package-boundary work starts at
 `0.7.0-alpha.1`. Its scope and promotion gates are defined in the
 [`0.7.0` roadmap](roadmap-0.7.0.md).
 
-## Current `0.7.0-beta.1` decision
+## Current `0.7.0-rc.1` decision
 
 `0.7.0-alpha.1` established the public compiler and hosting boundaries, `0.7.0-alpha.2` added the
 bounded LuaLS/legacy EmmyLua annotation syntax front end, and `0.7.0-alpha.3` added immutable
@@ -110,8 +110,12 @@ backends, and added deterministic fuzz/GC/coroutine evidence across all six rele
 
 `0.7.0-beta.1` freezes the resulting 14-assembly and 14-package scope with exact public API and
 version-independent package baselines, strict SDK package validation, and clean local consumers.
-Feature/API scope is closed; compatibility, diagnostics, documentation, reliability, and
-performance hardening remain allowed until the RC gate is accepted.
+Its main-branch six-RID CI run and tag-triggered release workflow both passed from the accepted
+commit, including conformance, backend, consumer, package, bundle, and publication gates.
+
+`0.7.0-rc.1` promotes that accepted Beta without product-code, public-API-baseline, or package-scope
+changes. Feature/API scope remains closed and RC accepts only release-blocking fixes. If no blocker
+is found, this candidate is promoted to suffix-free `0.7.0` without product-code changes.
 
 ## Release procedure
 
