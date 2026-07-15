@@ -139,6 +139,7 @@ namespace Lunil.Runtime.CodeGen
         public static bool CanExecuteBinaryPrimitive(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int operation, int leftRegister, int rightRegister) => throw null;
         public static void ExecuteBinaryPrimitive(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int operation, int leftRegister, int rightRegister) { }
         public static void ExecuteNumericForPrepare(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int baseRegister, int exitProgramCounter) { }
+        public static void ExecuteVarArg(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int resultCount) { }
         public static void ExecuteNumericForLoop(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int baseRegister, int bodyProgramCounter) { }
     }
 

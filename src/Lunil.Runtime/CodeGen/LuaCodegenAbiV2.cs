@@ -255,6 +255,21 @@ public static class LuaCodegenAbiV2
                 exitProgramCounter));
     }
 
+    public static void ExecuteVarArg(
+        LuaThread thread,
+        LuaFrame frame,
+        int destinationRegister,
+        int resultCount)
+    {
+        LuaExecutionEngine.ExecuteVarArg(
+            thread,
+            frame,
+            new LuaIrInstruction(
+                LuaIrOpcode.VarArg,
+                destinationRegister,
+                resultCount));
+    }
+
     public static void ExecuteNumericForLoop(
         LuaThread thread,
         LuaFrame frame,

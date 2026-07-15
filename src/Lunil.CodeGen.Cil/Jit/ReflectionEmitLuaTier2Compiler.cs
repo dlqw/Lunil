@@ -22,6 +22,7 @@ internal enum LuaTier2NumericSpecializationStatus : byte
     NoNumericHotspot,
     PolymorphicNumericProfile,
     ManagedOptimizationRequired,
+    UnsupportedInstruction,
 }
 
 internal static class ReflectionEmitLuaTier2Compiler
@@ -57,22 +58,22 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked),
         [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo CanSkipClose = Method(
+    private static readonly MethodInfo ExecuteNumericForPrepare = Method(
         typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanSkipClose),
-        [typeof(LuaFrame), typeof(int)]);
+        nameof(LuaCodegenAbiV2.ExecuteNumericForPrepare),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
+    private static readonly MethodInfo ExecuteNumericForLoop = Method(
+        typeof(LuaCodegenAbiV2),
+        nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
+    private static readonly MethodInfo ExecuteVarArg = Method(
+        typeof(LuaCodegenAbiV2),
+        nameof(LuaCodegenAbiV2.ExecuteVarArg),
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
     private static readonly MethodInfo MaterializeConstant = Method(
         typeof(LuaCodegenAbiV1),
         nameof(LuaCodegenAbiV1.MaterializeConstant),
         [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo CommitProgramCounter = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.CommitProgramCounter),
-        [typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo ExecuteCanonicalInstruction = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.ExecuteCanonicalInstruction),
-        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
     private static readonly MethodInfo ReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
@@ -267,6 +268,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         var hasNumericHotspot = false;
         foreach (var pair in optimized)
         {
+            var pc = pair.Key;
             var optimization = pair.Value;
             switch (optimization.Kind)
             {
@@ -275,7 +277,7 @@ internal static class ReflectionEmitLuaTier2Compiler
                     break;
                 case LuaJitOptimizationKind.NumericUnary:
                     if (!IsExactNumericKind(optimization.FirstKinds) ||
-                        (LuaIrUnaryOperator)function.Instructions[pair.Key].C is not
+                        (LuaIrUnaryOperator)function.Instructions[pc].C is not
                             (LuaIrUnaryOperator.Negate or
                                 LuaIrUnaryOperator.BitwiseNot or
                                 LuaIrUnaryOperator.LogicalNot))
@@ -299,10 +301,36 @@ internal static class ReflectionEmitLuaTier2Compiler
             }
         }
 
+        for (var pc = 0; pc < function.Instructions.Length; pc++)
+        {
+            if (!optimized.ContainsKey(pc) && !IsDirectlySupported(function.Instructions[pc]))
+            {
+                return LuaTier2NumericSpecializationStatus.UnsupportedInstruction;
+            }
+        }
+
         return hasNumericHotspot
             ? LuaTier2NumericSpecializationStatus.Eligible
             : LuaTier2NumericSpecializationStatus.NoNumericHotspot;
     }
+
+    private static bool IsDirectlySupported(LuaIrInstruction instruction) =>
+        instruction.Opcode switch
+        {
+            LuaIrOpcode.LoadConstant or
+            LuaIrOpcode.LoadNil or
+            LuaIrOpcode.Move or
+            LuaIrOpcode.SetTop or
+            LuaIrOpcode.Close or
+            LuaIrOpcode.JumpIfFalse or
+            LuaIrOpcode.JumpIfTrue or
+            LuaIrOpcode.Return or
+            LuaIrOpcode.NumericForPrepare or
+            LuaIrOpcode.NumericForLoop or
+            LuaIrOpcode.VarArg => true,
+            LuaIrOpcode.Jump => instruction.C < 0,
+            _ => false,
+        };
 
     private static bool IsExactNumericKind(LuaJitValueKinds kinds) =>
         kinds is LuaJitValueKinds.Integer or LuaJitValueKinds.Float;
@@ -465,10 +493,9 @@ internal static class ReflectionEmitLuaTier2Compiler
                 EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
             case LuaIrOpcode.Close:
-                generator.Emit(OpCodes.Ldarg_2);
-                EmitInt32(generator, instruction.A);
-                generator.Emit(OpCodes.Call, CanSkipClose);
-                generator.Emit(OpCodes.Brfalse, slowPathExit);
+                // Exact-numeric Tier 2 is admitted only when every instruction has native
+                // coverage. In particular, Closure and MarkToBeClosed are rejected, so a Close
+                // in an admitted function cannot own an open upvalue or a __close slot.
                 EmitReserve(generator, 1, budgetExit);
                 EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
@@ -510,6 +537,33 @@ internal static class ReflectionEmitLuaTier2Compiler
                 EmitInstructionsConsumed(generator);
                 generator.Emit(OpCodes.Call, ReturnExit);
                 generator.Emit(OpCodes.Ret);
+                break;
+            case LuaIrOpcode.NumericForPrepare:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ExecuteNumericForPrepare);
+                EmitFrameProgramCounterDispatch(generator, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.NumericForLoop:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ExecuteNumericForLoop);
+                EmitFrameProgramCounterDispatch(generator, labels, invalidatedExit);
+                break;
+            case LuaIrOpcode.VarArg:
+                EmitReserve(generator, 1, budgetExit);
+                generator.Emit(OpCodes.Ldarg_1);
+                generator.Emit(OpCodes.Ldarg_2);
+                EmitInt32(generator, instruction.A);
+                EmitInt32(generator, instruction.B);
+                generator.Emit(OpCodes.Call, ExecuteVarArg);
+                EmitNext(generator, pc + 1, labels, invalidatedExit);
                 break;
             default:
                 generator.Emit(OpCodes.Br, slowPathExit);
@@ -591,17 +645,24 @@ internal static class ReflectionEmitLuaTier2Compiler
                 : invalidatedExit);
     }
 
-    private static void EmitSlowPath(ILGenerator generator, int programCounter)
+    private static void EmitFrameProgramCounterDispatch(
+        ILGenerator generator,
+        Label[] labels,
+        Label invalidatedExit)
     {
         generator.Emit(OpCodes.Ldarg_2);
-        EmitInt32(generator, programCounter);
-        generator.Emit(OpCodes.Call, CommitProgramCounter);
-        generator.Emit(OpCodes.Ldarg_0);
-        generator.Emit(OpCodes.Ldarg_1);
-        generator.Emit(OpCodes.Ldarg_2);
-        EmitInt32(generator, programCounter);
-        generator.Emit(OpCodes.Call, ExecuteCanonicalInstruction);
-        generator.Emit(OpCodes.Ret);
+        generator.Emit(OpCodes.Callvirt, GetProgramCounter);
+        generator.Emit(OpCodes.Switch, labels);
+        generator.Emit(OpCodes.Br, invalidatedExit);
+    }
+
+    private static void EmitSlowPath(ILGenerator generator, int programCounter)
+    {
+        EmitExit(
+            generator,
+            DeoptExit,
+            programCounter,
+            LuaCompiledExitReason.UnsupportedInstruction);
     }
 
     private static void EmitExit(

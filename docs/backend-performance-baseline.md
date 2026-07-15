@@ -606,3 +606,31 @@ methods with zero artifact fallback and zero unexpected deoptimization; all maxi
 were the expected 1,550,120 `DebugModeChanged` exits per RID. The aggregate records
 `AllRidsExecutePersistedAot=true`, `AllRidsAttributeExpectedDebugDeoptimization=true`, and
 `AllRidsQualify=true`.
+
+## M18 continuous Tier 2 numeric-for dispatch
+
+M18 removes the scheduler round trip previously taken by every
+`NumericForPrepare`/`NumericForLoop` execution in exact-numeric Tier 2. The exact emitter now keeps
+canonical PC dispatch inside one generated method and rejects any function CFG that would require
+an unsupported slow path. Evidence distinguishes method entries, completed Lua invocations, and
+unsupported exits; arithmetic records one completed Tier 2 entry per warm execution rather than one
+entry per loop iteration.
+
+The runner adds iterative Fibonacci and floating-point Mandelbrot rows and pairs each Tier 2 process
+with its Tier 1 process. A local win-x64 Release smoke run (30 warm operations, three cold samples)
+produced:
+
+| Workload | Tier 1 warm | Tier 2 warm | Tier 2 / Tier 1 | Allocation |
+|---|---:|---:|---:|---:|
+| arithmetic (5,000 iterations) | 6.022 ms | 1.516 ms | **3.97x** | 1,913 B / 1,913 B |
+| fib_iter (1,000 calls) | 6.843 ms | 6.251 ms | **1.09x** | 330,838 B / 330,854 B |
+| mandelbrot (48x48, 50 max iterations) | 86.513 ms | 11.330 ms | **7.64x** | 759,783 B / 759,839 B |
+
+The arithmetic Tier 2 row reported `method_entries=34`, `completed_invocations=34`, and
+`unsupported_exits=0`; its 5,075,350 compiled canonical instructions produced only 35 total
+scheduler exits across warmup and measurement. The six-RID decision now additionally requires
+arithmetic Tier 2 not to regress Tier 1 (paired median at least 1.0x and CI95 lower at least 0.95x),
+fib_iter at least 0.95x, Mandelbrot at least 0.90x, completed-entry parity, and zero unsupported
+exits. Each paired allocation median must remain within 1.10x of Tier 1. These local measurements
+are smoke evidence; the protected six-RID run remains the rollout
+authority.

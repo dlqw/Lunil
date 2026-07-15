@@ -75,6 +75,11 @@ semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Di
 进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义
 compiler 或陈旧 profile 绕过。
 
+启用 Tier 2 时，Tier 1 cache entry 同时拥有带逐指令 observation 的 profiled delegate 与无 observation
+的 plain delegate；两个方法的估算代码字节都参与同一 LRU 上限。永久 polymorphic、managed semantic
+或 unsupported-CFG 拒绝会切换到 plain delegate。eviction/invalidation 会一起释放两者并重置 promotion
+状态；后续重新编译、profile import 或 guard-failure reprofiling 不会复用陈旧的 terminal decision。
+
 Loop OSR 不使用持久 profile 决定 code shape。`EnableLoopOsr` 默认是 `true`；启用后先在当前进程
 累计 verified backedge，达到阈值才执行 natural-loop/static eligibility。可保证生成
 `GuardedExactNumericCil` 的 loop 还必须在 interpreter 中成功观察全部 exact-numeric guard site，才会

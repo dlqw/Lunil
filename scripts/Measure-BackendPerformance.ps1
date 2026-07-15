@@ -165,6 +165,9 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         Tier2EligibilityEvaluated = [long]$values.tier2_eligibility_evaluated
         Tier2EligibilityAccepted = [long]$values.tier2_eligibility_accepted
         Tier2EligibilityRejected = [long]$values.tier2_eligibility_rejected
+        Tier2MethodEntries = [long]$values.tier2_method_entries
+        Tier2CompletedInvocations = [long]$values.tier2_completed_invocations
+        Tier2UnsupportedExits = [long]$values.tier2_unsupported_exits
         LoopOsrCodeKind = $values.loop_osr_code_kind
         LoopOsrSpecializedInstructionCount = [int]$values.loop_osr_specialized_instruction_count
         LoopOsrGuardCount = [int]$values.loop_osr_guard_count
@@ -259,11 +262,11 @@ finally {
     Pop-Location
 }
 
-$expectedRecords = $Rounds * 8 * 6
+$expectedRecords = $Rounds * 10 * 6
 if ($records.Count -ne $expectedRecords) {
     throw "Expected $expectedRecords backend evidence records, found $($records.Count)."
 }
-$expectedEligibilityRecords = $Rounds * 8
+$expectedEligibilityRecords = $Rounds * 10
 if ($eligibilityRecords.Count -ne $expectedEligibilityRecords) {
     throw "Expected $expectedEligibilityRecords eligibility records, found $($eligibilityRecords.Count)."
 }
@@ -375,6 +378,9 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         Tier2EligibilityEvaluated = Get-Median @($group.Group.Tier2EligibilityEvaluated)
         Tier2EligibilityAccepted = Get-Median @($group.Group.Tier2EligibilityAccepted)
         Tier2EligibilityRejected = Get-Median @($group.Group.Tier2EligibilityRejected)
+        Tier2MethodEntries = Get-Median @($group.Group.Tier2MethodEntries)
+        Tier2CompletedInvocations = Get-Median @($group.Group.Tier2CompletedInvocations)
+        Tier2UnsupportedExits = Get-Median @($group.Group.Tier2UnsupportedExits)
         LoopOsrCodeKind = @($group.Group.LoopOsrCodeKind | Sort-Object -Unique) -join '+'
         LoopOsrSpecializedInstructionCount = Get-Median @(
             $group.Group.LoopOsrSpecializedInstructionCount)
@@ -403,6 +409,12 @@ $tier1Arithmetic = $summary | Where-Object {
 $tier2Arithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier2'
 } | Select-Object -First 1
+$tier2FibIter = $summary | Where-Object {
+    $_.Workload -eq 'fib_iter' -and $_.Name -eq 'tier2'
+} | Select-Object -First 1
+$tier2Mandelbrot = $summary | Where-Object {
+    $_.Workload -eq 'mandelbrot' -and $_.Name -eq 'tier2'
+} | Select-Object -First 1
 $loopOsrArithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'loop_osr'
 } | Select-Object -First 1
@@ -413,6 +425,47 @@ $aotControlFlow = $summary | Where-Object {
     $_.Workload -eq 'control_flow' -and $_.Name -eq 'persisted_aot'
 } | Select-Object -First 1
 $aotRows = @($summary | Where-Object { $_.Name -eq 'persisted_aot' })
+$tier2Tier1Comparisons = foreach ($workload in @('arithmetic', 'fib_iter', 'mandelbrot')) {
+    $ratios = [Collections.Generic.List[double]]::new()
+    $allocationRatios = [Collections.Generic.List[double]]::new()
+    foreach ($record in $records | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'tier2'
+    }) {
+        $tier1Record = $records | Where-Object {
+            $_.Round -eq $record.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'tier1'
+        } | Select-Object -First 1
+        if ($null -eq $tier1Record) {
+            throw "Missing Tier 1/Tier 2 pair for round $($record.Round), workload $workload."
+        }
+
+        $ratios.Add($tier1Record.WarmNsOp / $record.WarmNsOp)
+        $allocationRatios.Add($(if ($tier1Record.AllocatedOp -eq 0) {
+            if ($record.AllocatedOp -eq 0) { 1.0 } else { [double]::PositiveInfinity }
+        } else {
+            $record.AllocatedOp / $tier1Record.AllocatedOp
+        }))
+    }
+
+    $interval = Get-BootstrapMedianInterval $ratios.ToArray()
+    [pscustomobject]@{
+        Workload = $workload
+        SpeedupVsTier1Median = Get-Median $ratios.ToArray()
+        SpeedupVsTier1Ci95Lower = $interval.Lower
+        SpeedupVsTier1Ci95Upper = $interval.Upper
+        AllocationRatioVsTier1Median = Get-Median $allocationRatios.ToArray()
+    }
+}
+$tier2ArithmeticVsTier1 = $tier2Tier1Comparisons | Where-Object {
+    $_.Workload -eq 'arithmetic'
+} | Select-Object -First 1
+$tier2FibIterVsTier1 = $tier2Tier1Comparisons | Where-Object {
+    $_.Workload -eq 'fib_iter'
+} | Select-Object -First 1
+$tier2MandelbrotVsTier1 = $tier2Tier1Comparisons | Where-Object {
+    $_.Workload -eq 'mandelbrot'
+} | Select-Object -First 1
 $negativeGateFailures = [Collections.Generic.List[string]]::new()
 $tier2NegativeGateFailures = [Collections.Generic.List[string]]::new()
 $tier2NegativeComparisons = [Collections.Generic.List[object]]::new()
@@ -527,6 +580,10 @@ $tier2Decision = [pscustomobject]@{
     Tier2EligibilityAccepted = $tier2Arithmetic.Tier2EligibilityAccepted
     Tier2EligibilityRejected = $tier2Arithmetic.Tier2EligibilityRejected
     Tier2ManagedCompilationCount = $tier2Arithmetic.Tier2ManagedCompilationCount
+    Tier2MethodEntries = $tier2Arithmetic.Tier2MethodEntries
+    Tier2CompletedInvocations = $tier2Arithmetic.Tier2CompletedInvocations
+    Tier2UnsupportedExits = $tier2Arithmetic.Tier2UnsupportedExits
+    Tier2VsTier1Comparisons = $tier2Tier1Comparisons
     NegativeWorkloadComparisons = $tier2NegativeComparisons.ToArray()
     NegativeWorkloadGateFailures = $tier2NegativeGateFailures.ToArray()
     QualifiesThisRid =
@@ -538,6 +595,19 @@ $tier2Decision = [pscustomobject]@{
         $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0 -and
         $tier2Arithmetic.Tier2ManagedCompilationCount -eq 0 -and
         $tier2Arithmetic.Tier2EligibilityAccepted -gt 0 -and
+        $tier2Arithmetic.Tier2MethodEntries -eq $tier2Arithmetic.Tier2CompletedInvocations -and
+        $tier2Arithmetic.Tier2UnsupportedExits -eq 0 -and
+        $tier2FibIter.Tier2MethodEntries -eq $tier2FibIter.Tier2CompletedInvocations -and
+        $tier2FibIter.Tier2UnsupportedExits -eq 0 -and
+        $tier2Mandelbrot.Tier2MethodEntries -eq $tier2Mandelbrot.Tier2CompletedInvocations -and
+        $tier2Mandelbrot.Tier2UnsupportedExits -eq 0 -and
+        $tier2ArithmeticVsTier1.SpeedupVsTier1Median -ge 1.0 -and
+        $tier2ArithmeticVsTier1.SpeedupVsTier1Ci95Lower -ge 0.95 -and
+        $tier2FibIterVsTier1.SpeedupVsTier1Median -ge 0.95 -and
+        $tier2MandelbrotVsTier1.SpeedupVsTier1Median -ge 0.90 -and
+        $tier2ArithmeticVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
+        $tier2FibIterVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
+        $tier2MandelbrotVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
         $tier2NegativeGateFailures.Count -eq 0
 }
 $tier2Decision | ConvertTo-Json | Set-Content `

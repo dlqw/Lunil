@@ -240,6 +240,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     LuaJitTier2EligibilityReason.PolymorphicNumericProfile,
                 LuaTier2NumericSpecializationStatus.ManagedOptimizationRequired =>
                     LuaJitTier2EligibilityReason.ManagedOptimizationRequired,
+                LuaTier2NumericSpecializationStatus.UnsupportedInstruction =>
+                    LuaJitTier2EligibilityReason.UnsupportedInstruction,
                 _ => throw new InvalidOperationException(
                     $"Unknown Tier 2 specialization status {status}."),
             };
@@ -254,6 +256,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 LuaJitTier2DiagnosticCodes.ManagedOptimizationRequired,
             LuaJitTier2EligibilityReason.ManagedSemanticBoundary =>
                 LuaJitTier2DiagnosticCodes.ManagedSemanticBoundary,
+            LuaJitTier2EligibilityReason.UnsupportedInstruction =>
+                LuaJitTier2DiagnosticCodes.UnsupportedInstruction,
             _ => throw new InvalidOperationException(
                 $"Unknown Tier 2 eligibility reason {reason}."),
         };

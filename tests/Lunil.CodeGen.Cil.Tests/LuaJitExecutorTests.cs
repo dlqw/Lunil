@@ -162,6 +162,33 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void ProfiledTier1CompilationAccountsForItsPlainDelegateVariant()
+    {
+        var module = Compile(
+            "local total=0; for index=1,20 do total=total+index end; return total");
+
+        var pair = ReflectionEmitLuaTier1Compiler.Instance.Compile(
+            module,
+            0,
+            includeInstructionObservation: true,
+            CancellationToken.None);
+        var plain = ReflectionEmitLuaTier1Compiler.Instance.Compile(
+            module,
+            0,
+            includeInstructionObservation: false,
+            CancellationToken.None);
+
+        Assert.True(pair.Succeeded, string.Join("; ", pair.Diagnostics));
+        Assert.True(plain.Succeeded, string.Join("; ", plain.Diagnostics));
+        Assert.NotNull(pair.PlainMethod);
+        Assert.Equal(plain.EstimatedCodeBytes, pair.PlainEstimatedCodeBytes);
+        Assert.Equal(
+            pair.EstimatedCodeBytes,
+            pair.Metrics?.EstimatedCodeBytes);
+        Assert.True(pair.EstimatedCodeBytes > plain.EstimatedCodeBytes);
+    }
+
+    [Fact]
     public void TerminalEligibilityRejectionInstallsABoundedFunctionReferenceRoute()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
@@ -1008,6 +1035,204 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void Tier2NumericForCompletesInsideOneCompiledMethodEntry()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("""
+            local limit = ...
+            local total = 0
+            for index = 1, limit do total = total + index end
+            return total
+            """);
+
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(10_000)),
+            LuaValue.FromInteger(50_005_000));
+        var entriesBefore = executor.Statistics.Tier2MethodEntries;
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(10_000)),
+            LuaValue.FromInteger(50_005_000));
+
+        Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, 0));
+        Assert.Equal(entriesBefore + 1, executor.Statistics.Tier2MethodEntries);
+        Assert.Equal(
+            executor.Statistics.Tier2MethodEntries,
+            executor.Statistics.Tier2Invocations);
+        Assert.Equal(
+            executor.Statistics.Tier2MethodEntries,
+            executor.Statistics.Tier2CompletedInvocations);
+        Assert.Equal(0, executor.Statistics.Tier2UnsupportedExits);
+        Assert.Equal(
+            executor.Statistics.CompiledInvocations,
+            executor.Statistics.SchedulerExits);
+    }
+
+    [Fact]
+    public void Tier2NumericForPreservesDescendingSkipAndZeroStepSemantics()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("""
+            local initial, limit, step = ...
+            local total = 0
+            for index = initial, limit, step do total = total + index end
+            return total
+            """);
+        var descending = new[]
+        {
+            LuaValue.FromInteger(5),
+            LuaValue.FromInteger(1),
+            LuaValue.FromInteger(-2),
+        };
+
+        AssertValues(ExecuteFresh(executor, module, descending), LuaValue.FromInteger(9));
+        AssertValues(ExecuteFresh(executor, module, descending), LuaValue.FromInteger(9));
+        Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, 0));
+        AssertValues(
+            ExecuteFresh(
+                executor,
+                module,
+                LuaValue.FromInteger(1),
+                LuaValue.FromInteger(5),
+                LuaValue.FromInteger(-1)),
+            LuaValue.FromInteger(0));
+
+        Assert.Throws<LuaRuntimeException>(() => ExecuteFresh(
+            executor,
+            module,
+            LuaValue.FromInteger(1),
+            LuaValue.FromInteger(5),
+            LuaValue.FromInteger(0)));
+    }
+
+    [Fact]
+    public void Tier2FibIterUsesOneEntryPerFunctionInvocationInsteadOfPerLoopIteration()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function fib(n)
+                local first, second = 0, 1
+                for index = 1, n do first, second = second, first + second end
+                return first
+            end
+            local total = 0
+            for index = 1, 200 do total = total + fib(index % 20) end
+            return total
+            """);
+        var interpreterState = new LuaState();
+        var expected = new LuaInterpreter().Execute(
+            interpreterState,
+            interpreterState.CreateMainClosure(module));
+
+        AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+        AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+
+        var fib = Assert.Single(module.Functions.Where(function => function.Id != 0));
+        Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, fib.Id));
+        Assert.True(executor.Statistics.Tier2MethodEntries > 0);
+        Assert.True(executor.Statistics.Tier2MethodEntries < 1_000);
+        Assert.Equal(
+            executor.Statistics.Tier2MethodEntries,
+            executor.Statistics.Tier2CompletedInvocations);
+        Assert.Equal(0, executor.Statistics.Tier2UnsupportedExits);
+    }
+
+    [Fact]
+    public void Tier2CoverageRejectsAnUnsupportedInstructionAnywhereInNumericCfg()
+    {
+        var module = Compile("""
+            local total = 0
+            for key, value in ... do total = total + value end
+            return total
+            """);
+        var function = module.Functions[0];
+        var binaryPc = Enumerable.Range(0, function.Instructions.Length).Single(pc =>
+            function.Instructions[pc].Opcode == LuaIrOpcode.Binary);
+        var profile = new LuaJitFunctionProfile(
+            Samples: 1,
+            ArgumentKinds: [],
+            Sites:
+            [
+                new LuaJitSiteProfile(
+                    binaryPc,
+                    LuaIrOpcode.Binary,
+                    Samples: 1,
+                    LuaJitValueKinds.Integer,
+                    LuaJitValueKinds.Integer,
+                    LuaJitValueKinds.None,
+                    BranchTaken: 0,
+                    BranchNotTaken: 0,
+                    IsMegamorphic: false,
+                    TableShapes: [],
+                    CallTargets: []),
+            ]);
+
+        var eligibility = LuaJitExecutor.EvaluateTier2PromotionEligibility(
+            module,
+            0,
+            profile);
+
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.Equal(
+            LuaJitTier2EligibilityReason.UnsupportedInstruction,
+            eligibility.Reason);
+        Assert.Equal(
+            LuaJitTier2DiagnosticCodes.UnsupportedInstruction,
+            eligibility.DiagnosticCode);
+        Assert.True(eligibility.NumericOptimizationCount > 0);
+    }
+
+    [Fact]
+    public void Tier2UnsupportedExitIsCountedAndAtomicallyRestoresPlainTier1()
+    {
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                SynchronousCompilation = true,
+                EnableTier2 = true,
+                EnableLoopOsr = false,
+                Tier2InvocationThreshold = 1,
+                Tier2BackedgeThreshold = int.MaxValue,
+            },
+            tier2Compiler: new OneUnsupportedExitTier2Compiler(
+                ProfileGuidedLuaTier2Compiler.Instance));
+        var module = Compile(
+            "local total=0; for index=1,20 do total=total+index end; return total");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(210));
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(210));
+
+        Assert.Equal(1, executor.Statistics.Tier2UnsupportedExits);
+        Assert.Equal(1, executor.Statistics.Tier2Invalidations);
+        Assert.Equal(LuaJitCompilationTier.Tier1, executor.GetFunctionTier(module, 0));
+        Assert.Equal(LuaJitTier2State.Failed, executor.GetTier2State(module, 0));
+    }
+
+    [Fact]
     public void DefaultAutoTier2RejectsManagedTableProfileWithoutQueueingCompilation()
     {
         var compiler = new CountingTier2Compiler(ProfileGuidedLuaTier2Compiler.Instance);
@@ -1031,7 +1256,7 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(0, executor.Statistics.Tier2CompilationQueued);
         Assert.Equal(1, executor.Statistics.Tier2EligibilityRejected);
         Assert.Equal(LuaJitCompilationTier.Tier1, executor.GetFunctionTier(module, 0));
-        Assert.Equal(LuaJitTier2State.Profiling, executor.GetTier2State(module, 0));
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
         var rejected = Assert.Single(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.Tier2EligibilityRejected);
         var eligibility = Assert.IsType<LuaJitTier2Eligibility>(
@@ -1043,6 +1268,85 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(
             LuaJitTier2DiagnosticCodes.ManagedSemanticBoundary,
             rejected.DiagnosticCode);
+
+        var samplesAfterRejection = executor.GetFunctionProfile(module, 0).Samples;
+        for (var execution = 0; execution < 20; execution++)
+        {
+            ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        }
+
+        Assert.Equal(
+            samplesAfterRejection,
+            executor.GetFunctionProfile(module, 0).Samples);
+
+        executor.Invalidate(module);
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+        var samplesAfterRecompilation = executor.GetFunctionProfile(module, 0).Samples;
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        Assert.Equal(
+            samplesAfterRecompilation,
+            executor.GetFunctionProfile(module, 0).Samples);
+
+        var imported = executor.ImportProfile(module, executor.ExportProfile(module));
+        Assert.Equal(LuaJitProfileImportStatus.Imported, imported.Status);
+        Assert.Equal(LuaJitTier2State.Profiling, executor.GetTier2State(module, 0));
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+    }
+
+    [Fact]
+    public void MandelbrotTerminalRejectionSwitchesToPlainTier1()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function escapes(cx, cy)
+                local zx, zy = 0.0, 0.0
+                local iteration = 0
+                while zx * zx + zy * zy <= 4.0 and iteration < 20 do
+                    local next = zx * zx - zy * zy + cx
+                    zy = 2.0 * zx * zy + cy
+                    zx = next
+                    iteration = iteration + 1
+                end
+                return iteration < 20
+            end
+            local escaped = 0
+            for y = -8, 8 do
+                for x = -12, 12 do
+                    if escapes(x / 8.0, y / 8.0) then escaped = escaped + 1 end
+                end
+            end
+            return escaped
+            """);
+        var interpreterState = new LuaState();
+        var expected = new LuaInterpreter().Execute(
+            interpreterState,
+            interpreterState.CreateMainClosure(module));
+
+        AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+        AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+        var samplesAfterRejection = executor.GetFunctionProfile(module, 0).Samples;
+
+        for (var execution = 0; execution < 5; execution++)
+        {
+            AssertValues(ExecuteFresh(executor, module), expected.Values.ToArray());
+        }
+
+        Assert.Equal(
+            samplesAfterRejection,
+            executor.GetFunctionProfile(module, 0).Samples);
+        Assert.Equal(0, executor.Statistics.Tier2UnsupportedExits);
     }
 
     [Fact]
@@ -1080,6 +1384,51 @@ public sealed class LuaJitExecutorTests
             LuaJitTier2DiagnosticCodes.PolymorphicNumericProfile,
             eligibility.DiagnosticCode);
         Assert.Equal(0, executor.Statistics.Tier2CompilationQueued);
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+        var samplesAfterRejection = executor.GetFunctionProfile(module, 0).Samples;
+
+        for (var execution = 0; execution < 20; execution++)
+        {
+            AssertValues(
+                ExecuteFresh(executor, module, LuaValue.FromInteger(execution)),
+                LuaValue.FromInteger(execution + 1));
+        }
+
+        Assert.Equal(
+            samplesAfterRejection,
+            executor.GetFunctionProfile(module, 0).Samples);
+    }
+
+    [Fact]
+    public void RepeatedNoNumericHotspotRejectionStopsProfilingAtABoundedSampleCount()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("local value = true; return value");
+
+        for (var execution = 0; execution < 4; execution++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromBoolean(true));
+        }
+
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+        Assert.Equal(2, executor.Statistics.Tier2EligibilityRejected);
+        var samplesAfterRejection = executor.GetFunctionProfile(module, 0).Samples;
+        for (var execution = 0; execution < 20; execution++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromBoolean(true));
+        }
+
+        Assert.Equal(
+            samplesAfterRejection,
+            executor.GetFunctionProfile(module, 0).Samples);
     }
 
     [Fact]
@@ -1092,6 +1441,8 @@ public sealed class LuaJitExecutorTests
                 SynchronousCompilation = true,
                 Tier2InvocationThreshold = 1,
                 Tier2BackedgeThreshold = int.MaxValue,
+                MaximumCompilationAttempts = 2,
+                CompilationRetryBackoff = TimeSpan.Zero,
             },
             tier2Compiler: new ManagedCodeKindTier2Compiler(
                 ProfileGuidedLuaTier2Compiler.Instance));
@@ -1105,14 +1456,24 @@ public sealed class LuaJitExecutorTests
         AssertValues(
             ExecuteFresh(executor, module, LuaValue.FromInteger(4)),
             LuaValue.FromInteger(5));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(6)),
+            LuaValue.FromInteger(7));
 
         Assert.Equal(LuaJitCompilationTier.Tier1, executor.GetFunctionTier(module, 0));
         Assert.Equal(LuaJitTier2State.Failed, executor.GetTier2State(module, 0));
         Assert.Equal(0, executor.Statistics.Tier2CompilationCompleted);
-        Assert.Equal(1, executor.Statistics.Tier2CompilationFailed);
+        Assert.Equal(2, executor.Statistics.Tier2CompilationFailed);
         Assert.Contains(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.Tier2CompilationFailed &&
             jitEvent.DiagnosticCode == LuaJitTier2DiagnosticCodes.UnexpectedCodeKind);
+        var samplesAfterFailure = executor.GetFunctionProfile(module, 0).Samples;
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(8)),
+            LuaValue.FromInteger(9));
+        Assert.Equal(
+            samplesAfterFailure,
+            executor.GetFunctionProfile(module, 0).Samples);
     }
 
     [Fact]
@@ -1216,6 +1577,78 @@ public sealed class LuaJitExecutorTests
             LuaValue.FromBoolean(true),
             LuaValue.FromBoolean(true),
             LuaValue.FromBoolean(false));
+    }
+
+    [Fact]
+    public void Tier2NumericForHonorsBudgetDebugGcAndInvalidation()
+    {
+        var module = Compile("""
+            local limit = ...
+            local total = 0
+            for index = 1, limit do total = total + index end
+            return total
+            """);
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+            Interpreter = LuaInterpreterOptions.Default with
+            {
+                MaximumInstructionCount = 80,
+            },
+        });
+
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+        Assert.Equal(LuaJitCompilationTier.Tier2, executor.GetFunctionTier(module, 0));
+
+        Assert.Throws<LuaRuntimeException>(() => ExecuteFresh(
+            executor,
+            module,
+            LuaValue.FromInteger(100)));
+        Assert.True(executor.Statistics.InstructionBudgetPolls >= 1);
+
+        var debugState = new LuaState();
+        LuaDebugApi.SetHook(
+            debugState,
+            debugState.MainThread,
+            LuaValue.FromFunction(new LuaNativeFunction("hook", static (_, _) => [])),
+            LuaDebugHookMask.Line,
+            count: 0);
+        var tier2EntriesBeforeDebug = executor.Statistics.Tier2MethodEntries;
+        AssertValues(
+            executor.Execute(
+                debugState,
+                debugState.CreateMainClosure(module),
+                [LuaValue.FromInteger(2)]),
+            LuaValue.FromInteger(3));
+        Assert.Equal(tier2EntriesBeforeDebug, executor.Statistics.Tier2MethodEntries);
+
+        var gcState = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StressEveryAllocation = true },
+        });
+        AssertValues(
+            executor.Execute(
+                gcState,
+                gcState.CreateMainClosure(module),
+                [LuaValue.FromInteger(2)]),
+            LuaValue.FromInteger(3));
+        Assert.True(executor.Statistics.Tier2MethodEntries > tier2EntriesBeforeDebug);
+
+        executor.Invalidate(module);
+
+        Assert.Equal(LuaJitFunctionState.Invalidated, executor.GetFunctionState(module, 0));
+        Assert.Equal(LuaJitTier2State.Invalidated, executor.GetTier2State(module, 0));
+        Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
     }
 
     [Fact]
@@ -1330,7 +1763,7 @@ public sealed class LuaJitExecutorTests
         var eligibility = executor.GetTier2PromotionEligibility(module, 0);
         Assert.False(eligibility.IsAutoEligible);
         Assert.Equal(
-            LuaJitTier2EligibilityReason.NoNumericHotspot,
+            LuaJitTier2EligibilityReason.UnsupportedInstruction,
             eligibility.Reason);
         Assert.Equal(1, executor.Statistics.Tier2CompilationCompleted);
         Assert.True(executor.Statistics.Tier2EligibilityRejected >= 1);
@@ -1675,6 +2108,41 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(8, results.Length);
         Assert.Equal(1, compiler.CallCount);
         Assert.Equal(1, executor.Statistics.Tier2CompilationCompleted);
+    }
+
+    [Fact]
+    public async Task ConcurrentTerminalTier2RejectionPublishesOnePlainVariantTransition()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var events = new ConcurrentQueue<LuaJitEvent>();
+        executor.EventOccurred += (_, jitEvent) => events.Enqueue(jitEvent);
+        var module = Compile("local target, key = ...; return target[key]");
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        using var start = new ManualResetEventSlim();
+        var executions = Enumerable.Range(0, 16).Select(_ => Task.Run(() =>
+        {
+            start.Wait();
+            ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        })).ToArray();
+
+        start.Set();
+        await Task.WhenAll(executions);
+
+        Assert.Equal(LuaJitTier2State.Ineligible, executor.GetTier2State(module, 0));
+        Assert.Equal(1, executor.Statistics.Tier2EligibilityRejected);
+        Assert.Single(events, static jitEvent =>
+            jitEvent.Kind == LuaJitEventKind.Tier2EligibilityRejected);
+        var samples = executor.GetFunctionProfile(module, 0).Samples;
+        ExecuteTableLookup(executor, module, extraKeys: 0, expected: LuaValue.Nil);
+        Assert.Equal(samples, executor.GetFunctionProfile(module, 0).Samples);
     }
 
     [Fact]
@@ -2977,6 +3445,37 @@ public sealed class LuaJitExecutorTests
                     },
                 }
                 : result;
+        }
+    }
+
+    private sealed class OneUnsupportedExitTier2Compiler(ILuaTier2Compiler inner)
+        : ILuaTier2Compiler
+    {
+        private int _injected;
+
+        public LuaTier2CompilationResult Compile(
+            LuaIrModule module,
+            int functionId,
+            LuaJitFunctionProfile profile,
+            CancellationToken cancellationToken)
+        {
+            var result = inner.Compile(module, functionId, profile, cancellationToken);
+            if (!result.Succeeded)
+            {
+                return result;
+            }
+
+            var method = result.Method!;
+            return result with
+            {
+                Method = (context, thread, frame) =>
+                    Interlocked.Exchange(ref _injected, 1) == 0
+                        ? LuaCompiledExit.Deopt(
+                            frame.ProgramCounter,
+                            instructionsConsumed: 0,
+                            LuaCompiledExitReason.UnsupportedInstruction)
+                        : method(context, thread, frame),
+            };
         }
     }
 

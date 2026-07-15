@@ -1271,6 +1271,9 @@ namespace Lunil.CodeGen.Cil.Jit
         public long LoopOsrEligibilityEvaluated { get => throw null; init { } }
         public long LoopOsrEligibilityAccepted { get => throw null; init { } }
         public long LoopOsrEligibilityRejected { get => throw null; init { } }
+        public long Tier2MethodEntries { get => throw null; init { } }
+        public long Tier2CompletedInvocations { get => throw null; init { } }
+        public long Tier2UnsupportedExits { get => throw null; init { } }
         public LuaJitStatistics(long FunctionEntries, long Backedges, long CompilationQueued, long CompilationStarted, long CompilationCompleted, long CompilationFailed, long QueueRejected, long CompiledInvocations, long InterpreterFallbacks, long Deoptimizations, long CacheEvictions, long Invalidations, long EstimatedCodeBytes, long TotalQueueLatencyTicks, long TotalCompilationTicks, long Tier2CompilationQueued, long Tier2CompilationStarted, long Tier2CompilationCompleted, long Tier2CompilationFailed, long Tier2Invocations, long Tier2GuardFailures, long Tier2Invalidations, long LoopOsrRequests, long LoopOsrCompilationQueued, long LoopOsrCompilationStarted, long LoopOsrCompilationCompleted, long LoopOsrCompilationFailed, long LoopOsrEntries, long LoopOsrExits, long LoopOsrGuardFailures, long LoopOsrInvalidations, long CompiledCanonicalInstructions, long SchedulerExits, long ContinueExits, long PollExits, long CallExits, long TailCallExits, long ReturnExits, long InstructionBudgetPolls, long GarbageCollectionPolls, long DebugModeDeoptimizations, long Tier1CompileAllocatedBytes, long Tier1DirectCanonicalInstructions, long Tier1SlowPathCanonicalInstructions, long Tier1PlanInstructions, long TotalCanonicalVerificationTicks, long TotalControlFlowAnalysisTicks, long TotalMethodPlanBuildTicks, long TotalPlanVerificationTicks, long TotalReflectionEmitTicks, long TotalDelegateCreationTicks, long EligibilityEvaluated, long EligibilityAccepted, long EligibilityRejected, long Tier2EligibilityEvaluated, long Tier2EligibilityAccepted, long Tier2EligibilityRejected, long LoopOsrEligibilityEvaluated, long LoopOsrEligibilityAccepted, long LoopOsrEligibilityRejected) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitStatistics? left, Lunil.CodeGen.Cil.Jit.LuaJitStatistics? right) => throw null;
@@ -1340,6 +1343,7 @@ namespace Lunil.CodeGen.Cil.Jit
         public const string ManagedOptimizationRequired = "JIT2103";
         public const string UnexpectedCodeKind = "JIT2104";
         public const string ManagedSemanticBoundary = "JIT2105";
+        public const string UnsupportedInstruction = "JIT2106";
     }
 
     public sealed class LuaJitTier2Eligibility : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Eligibility>
@@ -1367,7 +1371,8 @@ namespace Lunil.CodeGen.Cil.Jit
         NoNumericHotspot = 1,
         PolymorphicNumericProfile = 2,
         ManagedOptimizationRequired = 3,
-        ManagedSemanticBoundary = 4
+        ManagedSemanticBoundary = 4,
+        UnsupportedInstruction = 5
     }
 
     public sealed class LuaJitTier2Plan : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan>
@@ -1394,7 +1399,8 @@ namespace Lunil.CodeGen.Cil.Jit
         Compiling = 3,
         Ready = 4,
         Failed = 5,
-        Invalidated = 6
+        Invalidated = 6,
+        Ineligible = 7
     }
 
     [System.Flags]

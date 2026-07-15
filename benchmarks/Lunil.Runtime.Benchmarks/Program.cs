@@ -242,6 +242,36 @@ var backendEvidenceOperations = Math.Max(
 BackendEvidenceWorkload[] backendWorkloads =
 [
     new("arithmetic", ArithmeticSource(5_000)),
+    new("fib_iter", """
+        local function fib(n)
+            local first, second = 0, 1
+            for index = 1, n do first, second = second, first + second end
+            return first
+        end
+        local total = 0
+        for index = 1, 1000 do total = total + fib(index % 30) end
+        return total
+        """),
+    new("mandelbrot", """
+        local function escapes(cx, cy)
+            local zx, zy = 0.0, 0.0
+            local iteration = 0
+            while zx * zx + zy * zy <= 4.0 and iteration < 50 do
+                local next = zx * zx - zy * zy + cx
+                zy = 2.0 * zx * zy + cy
+                zx = next
+                iteration = iteration + 1
+            end
+            return iteration < 50
+        end
+        local escaped = 0
+        for y = -24, 23 do
+            for x = -24, 23 do
+                if escapes(x / 16.0, y / 16.0) then escaped = escaped + 1 end
+            end
+        end
+        return escaped
+        """),
     new("control_flow", """
         local total = 0
         local index = 0
@@ -853,6 +883,9 @@ static void RunBackendEvidence(
         $"tier2_eligibility_evaluated={statistics?.Tier2EligibilityEvaluated ?? 0}, " +
         $"tier2_eligibility_accepted={statistics?.Tier2EligibilityAccepted ?? 0}, " +
         $"tier2_eligibility_rejected={statistics?.Tier2EligibilityRejected ?? 0}, " +
+        $"tier2_method_entries={statistics?.Tier2MethodEntries ?? 0}, " +
+        $"tier2_completed_invocations={statistics?.Tier2CompletedInvocations ?? 0}, " +
+        $"tier2_unsupported_exits={statistics?.Tier2UnsupportedExits ?? 0}, " +
         $"loop_osr_code_kind={warmed.LoopOsrCodeKind}, " +
         $"loop_osr_specialized_instruction_count={warmed.LoopOsrSpecializedInstructionCount}, " +
         $"loop_osr_guard_count={warmed.LoopOsrGuardCount}, " +

@@ -37,6 +37,7 @@ public enum LuaJitTier2State : byte
     Ready,
     Failed,
     Invalidated,
+    Ineligible,
 }
 
 public enum LuaJitTier2EligibilityReason : byte
@@ -46,6 +47,7 @@ public enum LuaJitTier2EligibilityReason : byte
     PolymorphicNumericProfile,
     ManagedOptimizationRequired,
     ManagedSemanticBoundary,
+    UnsupportedInstruction,
 }
 
 public static class LuaJitTier2DiagnosticCodes
@@ -55,6 +57,7 @@ public static class LuaJitTier2DiagnosticCodes
     public const string ManagedOptimizationRequired = "JIT2103";
     public const string UnexpectedCodeKind = "JIT2104";
     public const string ManagedSemanticBoundary = "JIT2105";
+    public const string UnsupportedInstruction = "JIT2106";
 }
 
 public enum LuaJitOsrState : byte
@@ -193,6 +196,11 @@ public sealed record LuaJitExecutorOptions
     public LuaInterpreterOptions Interpreter { get; init; } = LuaInterpreterOptions.Default;
 }
 
+/// <summary>Process-local counters for the tiered execution registry.</summary>
+/// <param name="Tier2Invocations">
+/// Compatibility alias for <see cref="LuaJitStatistics.Tier2MethodEntries"/>. It counts generated method
+/// entries, not completed Lua invocations or canonical loop iterations.
+/// </param>
 public sealed record LuaJitStatistics(
     long FunctionEntries,
     long Backedges,
@@ -253,7 +261,17 @@ public sealed record LuaJitStatistics(
     long Tier2EligibilityRejected,
     long LoopOsrEligibilityEvaluated,
     long LoopOsrEligibilityAccepted,
-    long LoopOsrEligibilityRejected);
+    long LoopOsrEligibilityRejected)
+{
+    /// <summary>Number of times a Tier 2 delegate was entered.</summary>
+    public long Tier2MethodEntries { get; init; }
+
+    /// <summary>Tier 2 entries that completed the current Lua invocation.</summary>
+    public long Tier2CompletedInvocations { get; init; }
+
+    /// <summary>Defensive exits attributed to unsupported Tier 2 coverage.</summary>
+    public long Tier2UnsupportedExits { get; init; }
+}
 
 public sealed record LuaJitTier2Eligibility(
     bool IsAutoEligible,
