@@ -4,6 +4,12 @@ This document records local reference measurements for JIT/AOT backend work. The
 evidence from one machine, not portable pass/fail limits. CI publishes the same benchmark output
 for every native RID without failing a build on timing variance.
 
+These Lunil-internal qualification measurements are intentionally separate from the
+[cross-runtime workflow](cross-runtime-performance.md). The cross-runtime suite pins native Lua
+5.4.8 as the per-RID baseline and compares LuaJIT, MoonSharp, and all Lunil configurations using
+the same portable source, balanced rounds, correctness validation, raw CSV/JSON evidence, and a
+six-RID aggregate report.
+
 ## M0 Windows x64 baseline
 
 - Date: 2026-07-12

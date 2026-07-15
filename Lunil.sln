@@ -73,6 +73,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.Conformance.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.Stability.Tests", "tests\Lunil.Stability.Tests\Lunil.Stability.Tests.csproj", "{F62E3932-2956-4020-A356-4A67F059E02C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.Runtime.CrossRuntimeBenchmarks", "benchmarks\Lunil.Runtime.CrossRuntimeBenchmarks\Lunil.Runtime.CrossRuntimeBenchmarks.csproj", "{8BB9195B-A605-4535-9696-E298218A77FD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -467,6 +469,18 @@ Global
 		{F62E3932-2956-4020-A356-4A67F059E02C}.Release|x64.Build.0 = Release|Any CPU
 		{F62E3932-2956-4020-A356-4A67F059E02C}.Release|x86.ActiveCfg = Release|Any CPU
 		{F62E3932-2956-4020-A356-4A67F059E02C}.Release|x86.Build.0 = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|x64.Build.0 = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Debug|x86.Build.0 = Debug|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|x64.ActiveCfg = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|x64.Build.0 = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|x86.ActiveCfg = Release|Any CPU
+		{8BB9195B-A605-4535-9696-E298218A77FD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -504,5 +518,6 @@ Global
 		{D44F6B18-0CBD-4125-92AC-0036713988E6} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{D1D4167B-8979-4472-B22E-C5713DD87D6A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F62E3932-2956-4020-A356-4A67F059E02C} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{8BB9195B-A605-4535-9696-E298218A77FD} = {66320409-64EC-F7C5-3DEF-65E7510DAAD1}
 	EndGlobalSection
 EndGlobal

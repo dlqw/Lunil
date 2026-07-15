@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "baselineEngine": "lua54",
+  "requiredEngines": [
+    "lua54",
+    "luajit",
+    "moonsharp",
+    "lunil_interpreter",
+    "lunil_auto",
+    "lunil_tier1",
+    "lunil_tier2",
+    "lunil_loop_osr",
+    "lunil_persisted_aot"
+  ],
+  "workloads": [
+    {
+      "name": "arithmetic",
+      "category": "numeric",
+      "file": "workloads/arithmetic.lua",
+      "expectedPerOperation": 50005000,
+      "description": "Integer-compatible accumulation over a 10,000-iteration numeric loop."
+    },
+    {
+      "name": "fib_iter",
+      "category": "numeric-calls",
+      "file": "workloads/fib_iter.lua",
+      "expectedPerOperation": 4038947,
+      "description": "Repeated iterative Fibonacci calls using the common Lua 5.1 language subset."
+    },
+    {
+      "name": "mandelbrot",
+      "category": "floating-point",
+      "file": "workloads/mandelbrot.lua",
+      "expectedPerOperation": 1887,
+      "description": "Floating-point Mandelbrot escape test over a fixed 48 by 48 grid."
+    },
+    {
+      "name": "control_flow",
+      "category": "branching",
+      "file": "workloads/control_flow.lua",
+      "expectedPerOperation": 6247502,
+      "description": "While, if/else, and repeat/until control flow without version-specific syntax."
+    },
+    {
+      "name": "function_calls",
+      "category": "calls",
+      "file": "workloads/function_calls.lua",
+      "expectedPerOperation": 6009000,
+      "description": "Fixed and variable-return Lua function calls."
+    },
+    {
+      "name": "table_access",
+      "category": "tables",
+      "file": "workloads/table_access.lua",
+      "expectedPerOperation": 9003000,
+      "description": "Combined array and string-field table reads and writes."
+    },
+    {
+      "name": "sieve",
+      "category": "tables-math",
+      "file": "workloads/sieve.lua",
+      "expectedPerOperation": 1229,
+      "description": "Prime sieve using tables and the common math library."
+    },
+    {
+      "name": "string_build",
+      "category": "strings",
+      "file": "workloads/string_build.lua",
+      "expectedPerOperation": 6899,
+      "description": "String conversion, concatenation, table construction, and table.concat."
+    }
+  ]
+}
