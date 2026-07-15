@@ -151,8 +151,22 @@ baselines, or the frozen 14-package scope:
   multi-publish evidence remains unchanged and accepted;
 - no release blocker is open.
 
-RC now accepts only release blockers. If none is found, the next promotion is stable `0.7.0`
-without product-code, public-API-baseline, or package-scope changes.
+RC accepted only release blockers. None was found.
+
+## Stable release status
+
+Stable `0.7.0` satisfies the final gate by removing the suffix from the accepted
+`0.7.0-rc.1` candidate without changing product code, any of the 14 public API baselines, or the
+frozen 14-package scope:
+
+- both RC branch/PR CI runs and the RC main-branch six-RID CI passed;
+- the immutable RC tag reproduced six RID bundles, 14 NuGet packages, 14 symbol packages,
+  compatibility checks, clean local consumers, and publication in the release workflow;
+- no release blocker was found after the candidate release;
+- the same version-derived release gates are retained for stable packaging and publication.
+
+The `0.7.0` milestone is complete. Backward-compatible fixes use `0.7.1`; new feature/API work
+belongs to `0.8.0-alpha.1`.
 
 ## RC and stable gate
 
