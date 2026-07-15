@@ -45,12 +45,7 @@ internal sealed record CliCommandContext(
     {
         var inputArray = inputs.ToArray();
         moduleRoots = ResolveModuleRoots(inputArray);
-        var resolver = new LuaFileSystemModuleResolver(new LuaFileSystemModuleResolverOptions
-        {
-            RootDirectories = moduleRoots,
-            PathPatterns = Options.PathPatterns,
-            MaximumFileBytes = Options.MaximumInputBytes,
-        });
+        var resolver = CreateModuleResolver(moduleRoots);
         var console = new CliStreamConsole(StandardInput, StandardOutput, StandardError);
         var profile = Options.Profile switch
         {
@@ -69,9 +64,17 @@ internal sealed record CliCommandContext(
                     moduleRoots,
                     Options.MaximumInputBytes),
             };
+        var executionBackend = Options.ExecutionBackend switch
+        {
+            CliExecutionBackend.Auto => LuaHostExecutionBackend.Auto,
+            CliExecutionBackend.Interpreter => LuaHostExecutionBackend.Interpreter,
+            CliExecutionBackend.Jit => LuaHostExecutionBackend.Jit,
+            _ => throw new InvalidOperationException("Unknown CLI execution backend."),
+        };
         var host = new LuaHost(new LuaHostOptions
         {
             Profile = profile,
+            ExecutionBackend = executionBackend,
             StandardLibrary = capabilities,
             ModuleResolver = resolver,
             State = LuaStateOptions.Default with
@@ -90,6 +93,15 @@ internal sealed record CliCommandContext(
         });
         SetPackagePath(host, moduleRoots, Options.PathPatterns);
         return host;
+    }
+
+    public LuaWorkspace CreateWorkspace(
+        IEnumerable<CliInputDocument> inputs,
+        out ImmutableArray<string> moduleRoots)
+    {
+        var inputArray = inputs.ToArray();
+        moduleRoots = ResolveModuleRoots(inputArray);
+        return new LuaWorkspace(LuaWorkspaceOptions.Default, CreateModuleResolver(moduleRoots));
     }
 
     public LuaValue[] CreateScriptArguments(LuaHost host, string input)
@@ -128,6 +140,14 @@ internal sealed record CliCommandContext(
 
     private static LuaValue CreateString(LuaHost host, string value) =>
         LuaValue.FromString(host.State.Strings.GetOrCreate(Encoding.UTF8.GetBytes(value)));
+
+    private LuaFileSystemModuleResolver CreateModuleResolver(
+        ImmutableArray<string> moduleRoots) => new(new LuaFileSystemModuleResolverOptions
+        {
+            RootDirectories = moduleRoots,
+            PathPatterns = Options.PathPatterns,
+            MaximumFileBytes = Options.MaximumInputBytes,
+        });
 
     private static StringComparer GetPathComparer() => OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase

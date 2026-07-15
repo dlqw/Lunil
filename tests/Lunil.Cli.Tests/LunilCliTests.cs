@@ -18,6 +18,7 @@ public sealed class LunilCliTests
 
         Assert.Equal(0, help.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--execution <backend>", help.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
         var informationalVersion = typeof(LunilCli).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
@@ -83,6 +84,37 @@ public sealed class LunilCliTests
         Assert.Contains("one\ttwo", result.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("one\ttwo", result.StandardOutput, StringComparison.Ordinal);
         Assert.Empty(result.StandardError);
+    }
+
+    [Theory]
+    [InlineData("auto")]
+    [InlineData("interpreter")]
+    [InlineData("jit")]
+    public async Task RunSupportsQualifiedExecutionBackends(string backend)
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write(
+            "backend.lua",
+            "local n=0; for i=1,1000 do n=n+i end; print(n)");
+
+        var result = await fixture.RunAsync("run", script, "--execution", backend);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("500500\n", result.StandardOutput);
+    }
+
+    [Fact]
+    public async Task InvalidExecutionBackendIsAUsageError()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("backend.lua", "return 1");
+
+        var result = await fixture.RunAsync("run", script, "--execution", "fastest");
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("auto", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("interpreter", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("jit", result.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -351,14 +383,21 @@ public sealed class LunilCliTests
             """
             {
               "profile": "sandbox",
+              "execution": "interpreter",
               "diagnosticFormat": "json",
               "maximumInstructions": 1000
             }
             """);
         fixture.Environment["LUNIL_PROFILE"] = "deterministic";
+        fixture.Environment["LUNIL_EXECUTION"] = "auto";
 
         var fromEnvironment = await fixture.RunAsync("run", script);
-        var fromCli = await fixture.RunAsync("run", script, "--trusted");
+        var fromCli = await fixture.RunAsync(
+            "run",
+            script,
+            "--trusted",
+            "--execution",
+            "interpreter");
 
         Assert.Equal(0, fromEnvironment.ExitCode);
         Assert.Equal("0\n", fromEnvironment.StandardOutput);

@@ -9,6 +9,7 @@ internal static class CliConfigurationLoader
     private static readonly HashSet<string> KnownProperties = new(StringComparer.Ordinal)
     {
         "profile",
+        "execution",
         "diagnosticFormat",
         "buildTarget",
         "dumpKind",
@@ -156,6 +157,10 @@ internal static class CliConfigurationLoader
             return new CliConfiguration
             {
                 Profile = ReadString(document.RootElement, "profile", CliParser.ParseProfile),
+                ExecutionBackend = ReadString(
+                    document.RootElement,
+                    "execution",
+                    CliParser.ParseExecutionBackend),
                 DiagnosticFormat = ReadString(
                     document.RootElement,
                     "diagnosticFormat",
@@ -195,6 +200,7 @@ internal static class CliConfigurationLoader
         Func<string, string?> getEnvironmentVariable)
     {
         var profile = Get("LUNIL_PROFILE");
+        var execution = Get("LUNIL_EXECUTION");
         var diagnostics = Get("LUNIL_DIAGNOSTIC_FORMAT");
         var buildTarget = Get("LUNIL_BUILD_TARGET");
         var dumpKind = Get("LUNIL_DUMP_KIND");
@@ -211,6 +217,9 @@ internal static class CliConfigurationLoader
         return configuration with
         {
             Profile = profile is null ? configuration.Profile : CliParser.ParseProfile(profile),
+            ExecutionBackend = execution is null
+                ? configuration.ExecutionBackend
+                : CliParser.ParseExecutionBackend(execution),
             DiagnosticFormat = diagnostics is null
                 ? configuration.DiagnosticFormat
                 : CliParser.ParseDiagnosticFormat(diagnostics),

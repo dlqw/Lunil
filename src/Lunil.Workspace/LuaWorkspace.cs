@@ -624,10 +624,15 @@ public sealed class LuaWorkspace : IDisposable
         }
 
         Interlocked.Increment(ref operation.CacheMisses);
-        var environment = new LuaAnalysisEnvironment { ModuleTypes = moduleTypes.ToImmutable() };
-        var compilation = await Task.Run(
-            () => _compiler.Compile(discovery.Document.Source, environment, cancellationToken),
-            cancellationToken).ConfigureAwait(false);
+        var moduleTypeSnapshot = moduleTypes.ToImmutable();
+        var compilation = moduleTypeSnapshot.Count == 0
+            ? discovery.Compilation
+            : await Task.Run(
+                () => _compiler.Compile(
+                    discovery.Document.Source,
+                    new LuaAnalysisEnvironment { ModuleTypes = moduleTypeSnapshot },
+                    cancellationToken),
+                cancellationToken).ConfigureAwait(false);
         var exportedType = GetExportedType(compilation);
         var result = new LuaWorkspaceModuleResult(
             discovery.Document.Module,

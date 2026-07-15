@@ -224,6 +224,7 @@ Global options:
       --trusted                   Enable trusted host capabilities (default).
       --sandbox                   Use a root-confined read-only file system.
       --deterministic             Use sandbox capabilities and deterministic time/hash.
+      --execution <backend>       auto, interpreter, or jit (default: auto).
       --warnings-as-errors        Promote warnings to errors.
       --maximum-input-bytes <n>   Bound each input and resolved module.
       --maximum-instructions <n>  Bound VM instructions per execution.

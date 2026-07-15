@@ -1,3 +1,4 @@
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -11,6 +12,25 @@ public enum LuaHostProfile : byte
     Trusted,
     Restricted,
     Deterministic,
+}
+
+/// <summary>Selects the execution engine owned by a <see cref="LuaHost"/>.</summary>
+public enum LuaHostExecutionBackend : byte
+{
+    /// <summary>
+    /// Uses the qualified tiered JIT when dynamic code is available and otherwise uses the
+    /// interpreter.
+    /// </summary>
+    Auto,
+
+    /// <summary>Always uses the reference interpreter.</summary>
+    Interpreter,
+
+    /// <summary>
+    /// Requires a runtime that supports dynamic code and uses the qualified tiered JIT. Functions
+    /// that are not eligible for compilation retain the JIT executor's interpreter fallback.
+    /// </summary>
+    Jit,
 }
 
 /// <summary>Compiler, runtime-budget, and capability configuration for a reusable Lua host.</summary>
@@ -34,6 +54,15 @@ public sealed record LuaHostOptions
     public LuaStateOptions State { get; init; } = LuaStateOptions.Default;
 
     public LuaInterpreterOptions Execution { get; init; } = LuaInterpreterOptions.Default;
+
+    /// <summary>Gets the requested execution backend. The default selects a qualified backend.</summary>
+    public LuaHostExecutionBackend ExecutionBackend { get; init; } = LuaHostExecutionBackend.Auto;
+
+    /// <summary>
+    /// Gets tiered-JIT configuration. <see cref="Execution"/> always supplies the interpreter
+    /// fallback budgets so both backends enforce the same execution limits.
+    /// </summary>
+    public LuaJitExecutorOptions Jit { get; init; } = LuaJitExecutorOptions.Default;
 
     public LuaWorkspaceOptions Workspace { get; init; } = LuaWorkspaceOptions.Default;
 
