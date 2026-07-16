@@ -3319,6 +3319,7 @@ public sealed class LuaJitExecutorTests
 
         AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
 
+        Assert.Equal(8, executor.Statistics.Backedges);
         Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
         Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
         Assert.Equal(0, executor.Statistics.LoopOsrEntries);
@@ -3327,6 +3328,161 @@ public sealed class LuaJitExecutorTests
             LuaJitEventKind.LoopOsrEligibilityRejected);
         Assert.DoesNotContain(events, static jitEvent =>
             jitEvent.Kind == LuaJitEventKind.LoopOsrCompilerPrepared);
+    }
+
+    [Fact]
+    public void LoopOsrBatchedBackedgeCountdownAccumulatesAcrossShortInvocations()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 10,
+            SynchronousCompilation = true,
+        });
+        var module = Compile(
+            "local total=0; for i=1,8 do total=total+i end; return total");
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
+        Assert.Equal(8, executor.Statistics.Backedges);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(36));
+
+        Assert.True(executor.Statistics.Backedges >= 10);
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityAccepted);
+        Assert.Equal(1, executor.Statistics.LoopOsrCompilationCompleted);
+        Assert.True(executor.Statistics.LoopOsrEntries >= 1);
+    }
+
+    [Fact]
+    public void LoopOsrBatchedBackedgeCountdownCommitsWhenAnInvocationUnwinds()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1_024,
+            SynchronousCompilation = true,
+        });
+        var module = Compile(
+            "local total=0; for i=1,8 do total=total+i end; return 1//0");
+        var state = new LuaState();
+
+        Assert.Throws<LuaRuntimeException>(() => executor.Execute(
+            state,
+            state.CreateMainClosure(module)));
+
+        Assert.Equal(8, executor.Statistics.Backedges);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+    }
+
+    [Fact]
+    public void LoopOsrDoesNotAllocateFrameObservationsForCalleesWithoutBackedges()
+    {
+        var module = Compile("""
+            local function add(left, right) return left + right end
+            local total = 0
+            for index = 1, 200 do total = total + add(index, 1) end
+            return total
+            """);
+        var baseOptions = LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            LoopOsrBackedgeThreshold = 1,
+            SynchronousCompilation = true,
+        };
+        using var enabled = CreateExecutor(baseOptions with { EnableLoopOsr = true });
+        using var disabled = CreateExecutor(baseOptions with { EnableLoopOsr = false });
+        var enabledState = new LuaState();
+        var enabledClosure = enabledState.CreateMainClosure(module);
+        var disabledState = new LuaState();
+        var disabledClosure = disabledState.CreateMainClosure(module);
+        AssertValues(
+            enabled.Execute(enabledState, enabledClosure),
+            LuaValue.FromInteger(20_300));
+        AssertValues(
+            disabled.Execute(disabledState, disabledClosure),
+            LuaValue.FromInteger(20_300));
+
+        var enabledAllocation = MeasureCurrentThreadAllocation(
+            3,
+            () => AssertValues(
+                enabled.Execute(enabledState, enabledClosure),
+                LuaValue.FromInteger(20_300)));
+        var disabledAllocation = MeasureCurrentThreadAllocation(
+            3,
+            () => AssertValues(
+                disabled.Execute(disabledState, disabledClosure),
+                LuaValue.FromInteger(20_300)));
+
+        Assert.InRange(enabledAllocation, 0, disabledAllocation + 4_096);
+    }
+
+    [Fact]
+    public void LoopOsrRejectsRepeatedManagedLoopsBeforeTheFullHotThreshold()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1_024,
+            SynchronousCompilation = true,
+        });
+        var module = Compile("""
+            local function add(left, right) return left + right end
+            local total = 0
+            for index = 1, 100 do total = add(total, index) end
+            return total
+            """);
+
+        for (var invocation = 0; invocation < 4; invocation++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_050));
+        }
+
+        Assert.Equal(1, executor.Statistics.LoopOsrEligibilityRejected);
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityAccepted);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.True(executor.Statistics.Backedges < 1_024);
+    }
+
+    [Fact]
+    public void LoopOsrStructuralRejectionPreflightDoesNotPublishNumericCandidatesEarly()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = int.MaxValue,
+            BackedgeThreshold = int.MaxValue,
+            EnableTier2 = false,
+            EnableLoopOsr = true,
+            LoopOsrBackedgeThreshold = 1_024,
+            SynchronousCompilation = true,
+        });
+        var module = Compile(
+            "local total=0; for index=1,100 do total=total+index end; return total");
+
+        for (var invocation = 0; invocation < 4; invocation++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_050));
+        }
+
+        Assert.Equal(0, executor.Statistics.LoopOsrEligibilityEvaluated);
+        Assert.Equal(0, executor.Statistics.LoopOsrCompilationQueued);
+        Assert.True(executor.Statistics.Backedges < 1_024);
     }
 
     [Fact]

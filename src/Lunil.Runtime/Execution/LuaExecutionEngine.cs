@@ -2074,6 +2074,7 @@ internal sealed class LuaExecutionEngine
                 var protectionFunction = frame.Continuation.ProtectionFunction;
                 var errorHandler = frame.Continuation.ErrorHandler;
                 var isCloseHandler = frame.Continuation.IsCloseHandler;
+                CommitPendingBackedges(frame);
                 thread.PopFrame();
                 var replacement = PushFrame(
                     thread,
@@ -3274,6 +3275,7 @@ internal sealed class LuaExecutionEngine
             }
 
             var wasActiveErrorHandler = ReferenceEquals(unwind.ActiveErrorHandler, frame);
+            CommitPendingBackedges(frame);
             thread.PopFrame();
             if (frame.IsDebugHook)
             {
@@ -3562,6 +3564,7 @@ internal sealed class LuaExecutionEngine
         var results = frame.Continuation.Values;
         var protectionKind = frame.Continuation.ProtectionKind;
         frame.Continuation.Reset();
+        CommitPendingBackedges(frame);
         thread.PopFrame();
         if (frame.IsDebugHook)
         {
@@ -3887,15 +3890,36 @@ internal sealed class LuaExecutionEngine
         _frameInstructionRouter?.GetInitialFrameInstructionRoute(closure) ??
         LuaFrameInstructionRoute.Backend;
 
+    private void CommitPendingBackedges(LuaFrame frame) =>
+        _frameInstructionRouter?.CommitPendingBackedges(frame);
+
     private static bool ShouldUseReferenceInterpreter(
         LuaFrame frame,
-        LuaIrInstruction instruction) => frame.InstructionRoute switch
+        LuaIrInstruction instruction)
+    {
+        if (frame.InstructionRoute == LuaFrameInstructionRoute.Interpreter)
         {
-            LuaFrameInstructionRoute.Interpreter => true,
-            LuaFrameInstructionRoute.InterpreterWithBackedgeProbes =>
-                !LuaInstructionRouting.IsBackedge(frame.ProgramCounter, instruction),
-            _ => false,
-        };
+            return true;
+        }
+
+        if (frame.InstructionRoute != LuaFrameInstructionRoute.InterpreterWithBackedgeProbes)
+        {
+            return false;
+        }
+
+        if (LuaInstructionRouting.IsBackedge(frame.ProgramCounter, instruction))
+        {
+            frame.UnreportedBackendBackedgeCount++;
+            frame.BackendBackedgeProbeCountdown--;
+            return frame.BackendBackedgeProbeCountdown > 0;
+        }
+
+        // Commit a partial countdown when the frame leaves normally. This preserves cumulative
+        // hotness across short invocations without routing every interpreted backedge through the
+        // tier controller.
+        return frame.UnreportedBackendBackedgeCount == 0 ||
+            instruction.Opcode is not (LuaIrOpcode.Return or LuaIrOpcode.TailCall);
+    }
 
     private static long GetActiveCallDepth(LuaThread thread)
     {

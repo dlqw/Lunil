@@ -136,6 +136,8 @@ public sealed class LuaFrame
         IsHidden = isHidden;
         InstructionRoute = LuaFrameInstructionRoute.Backend;
         BackendEntryObserved = false;
+        BackendBackedgeProbeCountdown = 1;
+        UnreportedBackendBackedgeCount = 0;
         HasSourceLineInformation = closure.HasSourceLineInformation;
     }
 
@@ -166,9 +168,15 @@ public sealed class LuaFrame
         NativeCallSourceLine = -1;
         InstructionRoute = LuaFrameInstructionRoute.Backend;
         BackendEntryObserved = false;
+        BackendBackedgeProbeCountdown = 1;
+        UnreportedBackendBackedgeCount = 0;
         ToBeClosedSlots.Clear();
         Continuation.ResetForFrameReuse();
     }
+
+    internal int BackendBackedgeProbeCountdown { get; set; } = 1;
+
+    internal int UnreportedBackendBackedgeCount { get; set; }
 
 }
 

@@ -148,6 +148,19 @@ internal sealed class LuaTieredJitRegistry :
             : LuaFrameInstructionRoute.Backend;
     }
 
+    public void CommitPendingBackedges(LuaFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (frame.UnreportedBackendBackedgeCount == 0 ||
+            !_observedFrames.TryGetValue(frame, out var observation) ||
+            observation.Entry is not { } entry)
+        {
+            return;
+        }
+
+        CommitPendingBackedges(entry, frame);
+    }
+
     public LuaCompiledExit Execute(
         LuaExecutionEngine engine,
         LuaExecutionContext context,
@@ -181,6 +194,7 @@ internal sealed class LuaTieredJitRegistry :
                 entry,
                 functionRoute);
         }
+        TryRejectLoopOsrStructurally(entry, module);
         if (_options.Policy == LuaJitPolicy.InterpreterOnly)
         {
             MarkTerminalInterpreterRoute(functionRoute);
@@ -193,9 +207,13 @@ internal sealed class LuaTieredJitRegistry :
                 entry,
                 LuaCompiledExitReason.BackendInvalidated);
         }
+        if (Volatile.Read(ref entry.LoopOsrObservationState) == 0)
+        {
+            RejectLoopOsrWhenNoBackedge(entry, frame.Closure.Function);
+        }
         FunctionEntryObservation? frameObservation = null;
         if ((IsTier2Enabled && Volatile.Read(ref entry.Tier2ProfilingActive) != 0) ||
-            (IsLoopOsrEnabled && Volatile.Read(ref entry.LoopOsrObservationState) >= 0))
+            Volatile.Read(ref entry.LoopOsrObservationState) >= 0)
         {
             frameObservation = _observedFrames.GetValue(
                 frame,
@@ -1070,8 +1088,11 @@ internal sealed class LuaTieredJitRegistry :
             }
         }
 
-        if (LuaInstructionRouting.IsBackedge(programCounter, instruction))
+        var reportedBackedgeCount = CommitPendingBackedges(entry, frame);
+        if (reportedBackedgeCount == 0 &&
+            LuaInstructionRouting.IsBackedge(programCounter, instruction))
         {
+            reportedBackedgeCount = 1;
             Interlocked.Increment(ref entry.Backedges);
             Interlocked.Increment(ref _backedges);
         }
@@ -2989,6 +3010,10 @@ internal sealed class LuaTieredJitRegistry :
             : forceBackendProbe || RequiresPerInstructionBackendProbe(entry)
                 ? LuaFrameInstructionRoute.Backend
                 : LuaFrameInstructionRoute.InterpreterWithBackedgeProbes;
+        frame.BackendBackedgeProbeCountdown = frame.InstructionRoute ==
+            LuaFrameInstructionRoute.InterpreterWithBackedgeProbes
+                ? GetBackedgeProbeCountdown(entry)
+                : 1;
         RecordFallbackTransition(entry, state, reason);
         return engine.ExecuteCodegenSlowPath(
             context,
@@ -3018,8 +3043,7 @@ internal sealed class LuaTieredJitRegistry :
                     IsAutoEligible: false,
                     Reason: not LuaJitEligibilityReason.NoRepeatedWork,
                 } &&
-                    (!IsLoopOsrEnabled ||
-                     Volatile.Read(ref entry.LoopOsrObservationState) < 0);
+                    Volatile.Read(ref entry.LoopOsrObservationState) < 0;
             }
         }
 
@@ -3079,6 +3103,131 @@ internal sealed class LuaTieredJitRegistry :
             return entry.State == LuaJitFunctionState.Failed &&
                 entry.CompilationAttempts < _options.MaximumCompilationAttempts;
         }
+    }
+
+    private int GetBackedgeProbeCountdown(FunctionEntry entry)
+    {
+        var observedBackedges = Interlocked.Read(ref entry.Backedges);
+        var remaining = long.MaxValue;
+        lock (entry.Gate)
+        {
+            if (_options.Policy == LuaJitPolicy.Auto && entry.Eligibility is null)
+            {
+                remaining = _options.BackedgeThreshold - observedBackedges;
+            }
+        }
+
+        var loopOsrObservationState = Volatile.Read(ref entry.LoopOsrObservationState);
+        if (loopOsrObservationState == 0)
+        {
+            remaining = Math.Min(
+                remaining,
+                _options.LoopOsrBackedgeThreshold - observedBackedges);
+        }
+        else if (loopOsrObservationState > 0)
+        {
+            // Once concrete loop plans exist, each loop owns its own backedge counter. Keep
+            // per-backedge routing for this short qualification/installation phase so backedges
+            // from distinct natural loops are never attributed to the wrong plan.
+            remaining = 1;
+        }
+
+        return remaining switch
+        {
+            <= 1 => 1,
+            > int.MaxValue => int.MaxValue,
+            _ => (int)remaining,
+        };
+    }
+
+    private static void RejectLoopOsrWhenNoBackedge(
+        FunctionEntry entry,
+        LuaIrFunction function)
+    {
+        if (Volatile.Read(ref entry.LoopOsrObservationState) != 0 ||
+            HasLoopOsrBackedge(function))
+        {
+            return;
+        }
+
+        lock (entry.Gate)
+        {
+            if (entry.LoopOsrAnalyzed)
+            {
+                return;
+            }
+
+            entry.LoopOsrAnalyzed = true;
+            Volatile.Write(ref entry.LoopOsrObservationState, -1);
+        }
+    }
+
+    private static bool HasLoopOsrBackedge(LuaIrFunction function)
+    {
+        for (var programCounter = 0;
+             programCounter < function.Instructions.Length;
+             programCounter++)
+        {
+            if (LuaLoopOsrAnalyzer.IsOsrBackedgeInstruction(
+                    function.Instructions[programCounter],
+                    programCounter))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void TryRejectLoopOsrStructurally(FunctionEntry entry, LuaIrModule module)
+    {
+        if (Volatile.Read(ref entry.LoopOsrObservationState) != 0 ||
+            Volatile.Read(ref entry.LoopOsrStructuralRejectionPreflightState) != 0 ||
+            Interlocked.Read(ref entry.FunctionEntries) < 4 ||
+            Interlocked.Read(ref entry.Backedges) <
+                Math.Min(_options.LoopOsrBackedgeThreshold, 64))
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(
+                ref entry.LoopOsrStructuralRejectionPreflightState,
+                1,
+                0) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var function = module.Functions[entry.Key.FunctionId];
+            var plans = LuaLoopOsrAnalyzer.Analyze(module, entry.Key.FunctionId).ToArray();
+            if (plans.Length == 0 || plans.Any(plan =>
+                    LuaLoopOsrEligibilityEvaluator.Evaluate(function, plan).IsAutoEligible))
+            {
+                return;
+            }
+
+            EnsureLoopOsrEntries(entry, module);
+        }
+        finally
+        {
+            Volatile.Write(ref entry.LoopOsrStructuralRejectionPreflightState, -1);
+        }
+    }
+
+    private int CommitPendingBackedges(FunctionEntry entry, LuaFrame frame)
+    {
+        var reportedBackedgeCount = frame.UnreportedBackendBackedgeCount;
+        if (reportedBackedgeCount == 0)
+        {
+            return 0;
+        }
+
+        frame.UnreportedBackendBackedgeCount = 0;
+        Interlocked.Add(ref entry.Backedges, reportedBackedgeCount);
+        Interlocked.Add(ref _backedges, reportedBackedgeCount);
+        return reportedBackedgeCount;
     }
 
     private void RecordFallbackTransition(
@@ -3245,6 +3394,8 @@ internal sealed class LuaTieredJitRegistry :
         public int LoopOsrObservationState = enableLoopOsr ? 0 : -1;
 
         public int LoopOsrRuntimeQualificationPendingCount;
+
+        public int LoopOsrStructuralRejectionPreflightState = enableLoopOsr ? 0 : -1;
 
         public LuaCompiledMethod? Method { get; set; }
 

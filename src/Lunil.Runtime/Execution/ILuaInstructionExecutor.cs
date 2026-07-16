@@ -23,6 +23,8 @@ internal interface ILuaInstructionExecutor
 internal interface ILuaFrameInstructionRouter
 {
     LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaClosure closure);
+
+    void CommitPendingBackedges(LuaFrame frame);
 }
 
 internal enum LuaFrameInstructionRoute : byte

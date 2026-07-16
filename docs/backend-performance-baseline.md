@@ -734,7 +734,7 @@ instruction for Loop OSR. Execution allocation slope remains independently const
 compile bound cannot hide per-iteration allocation. See
 [ADR 0011](adr/0011-linear-numeric-regions.md).
 
-The completed six-process win-x64 Release record is
+The completed six-process win-x64 Release record for the linear-region emitter is
 `artifacts/backend-performance/win-x64/20260715-173950`. Both arithmetic paths installed one numeric
 region with eight unboxed locals, five direct numeric instructions, one static safepoint site, and
 zero hot instruction-budget checks. Median arithmetic time fell from the saved pre-change WIP's
@@ -744,9 +744,25 @@ zero hot instruction-budget checks. Median arithmetic time fell from the saved p
 Tier 2/Loop OSR compilation p95 was 1.789/2.228 ms, compile allocation p95 was 240,280/191,672 B,
 and allocation growth was 20,712/15,694 B per added direct instruction. These satisfy the `<10 ms`,
 `<256 KiB`/`<192 KiB`, and `<32 KiB/direct instruction` numeric-region gates with zero execution
-allocation slope. Tier 1, Tier 2, and persisted-AOT decisions qualified. The aggregate local Loop
-OSR decision still reports the same pre-existing rejected-workload variance seen in the saved WIP:
-`lua_calls` and `metamethod` on/off medians were 0.788x and 0.884x (the WIP was 0.829x and 0.831x).
-All Loop OSR arithmetic, code-kind, qualification, startup, allocation, compilation, region-shape,
-hot-budget-check, managed-installation, and guard-failure gates passed. The protected six-RID native
-aggregate remains the cross-architecture authority after review and push.
+allocation slope. Tier 1, Tier 2, and persisted-AOT decisions qualified. The first protected six-RID
+run then isolated a non-region regression in the Loop OSR disabled-control comparison: before the
+1024-backedge threshold, every interpreted backedge re-entered the tier controller, no-backedge
+callees created frame observations, and one-time structural rejection could fall after the five
+warmup operations. This affected `lua_calls`, `metamethod`, and other structurally rejected loops;
+it did not change numeric-region shape or arithmetic throughput.
+
+The corrected six-process win-x64 Release record is
+`artifacts/backend-performance/win-x64/20260716-022711`. Pre-qualification backedges are now counted
+by a frame-local countdown, partial counts are committed on return/tail-call/unwind, no-backedge
+functions skip frame observations, and a repeated structurally impossible loop is rejected after at
+least four entries and 64 backedges. Structural exact-numeric candidates still publish nothing
+before the configured 1024-backedge threshold. Loop OSR arithmetic reached **213.057x** interpreter
+and **210.098x** disabled-control median speedup; compilation p95 was **2.162 ms**, compile allocation
+p95 was **191,672 B**, region growth was **15,694 B/direct instruction**, execution allocation slope
+was zero, all four region-shape facts were nonzero, and hot instruction-budget checks remained zero.
+
+The corrected rejected-workload on/off medians were `lua_calls` **1.003x**, `table_access`
+**1.006x**, `metamethod` **0.990x**, and `coroutine_error_hook` **0.990x**. Every allocation comparison
+was at parity and the local Tier 1, Tier 2, Loop OSR, and persisted-AOT decisions all qualified. A
+fresh protected six-RID aggregate remains the cross-architecture authority for this final probe
+batching change.

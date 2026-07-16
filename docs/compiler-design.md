@@ -451,8 +451,19 @@ Loop OSR 由 `EnableLoopOsr` 独立控制并默认开启。CFG 分析只接受 t
 canonical register 映射到同编号 materialized slot，并显式声明 frame top、open upvalue 与
 to-be-closed state 已物化。
 
-启用 OSR 后先使用 verified backedge 计数；只有函数达到 `LoopOsrBackedgeThreshold` 才执行一次
-natural-loop/`LuaJitLoopOsrEligibility` 分析，冷函数与短循环不承担 CFG、dominator 或 liveness 成本。
+启用 OSR 后先使用 verified backedge 计数。尚未建立具体 loop plan 时，reference interpreter 在 frame
+内以 countdown 批量累计 backedge；只有到达函数/Loop OSR hotness 边界才重新进入 tier controller，
+return、tail call 与异常 unwind 会提交未满 countdown 的精确余数。没有 backedge 的 callee 在第一次入口
+即关闭 Loop OSR observation，不创建逐 frame 的 weak observation。具体 loop plan 建立后才恢复逐 backedge
+路由，以免嵌套 loop 或多 latch 的计数归入错误 plan。
+
+达到 `LoopOsrBackedgeThreshold` 时执行一次完整 natural-loop/`LuaJitLoopOsrEligibility` 分析。另有一个
+只处理确定性负例的 warmup preflight：函数至少进入四次并累计至少
+`min(LoopOsrBackedgeThreshold, 64)` 个 backedge 后，若所有 natural loop 从静态结构上都不可能进入默认
+specialized OSR，则提前发布同一个正式 rejection。只要存在一个 exact-numeric structural candidate，
+preflight 就不发布 plan、eligibility 或编译结果，仍严格等待完整 hot threshold 和运行时 operand profile。
+因此一次性冷函数不承担分析成本，反复执行的 call/table/metamethod/coroutine 负例也不会把一次性 CFG
+拒绝成本拖入短稳态测量窗口。
 只有完整循环可生成 `GuardedExactNumericCil` 且至少包含一个 exact numeric hotspot 时才进入运行时
 资格采样；允许的组合包括
 load/move/set-top、canonical branch/jump、numeric-for、guarded close 和精确 integer/float/mixed-numeric
