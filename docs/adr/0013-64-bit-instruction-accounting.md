@@ -35,10 +35,15 @@ Loop OSR, and numeric-region emitters bind to the 64-bit overloads.
 accumulator now overflows only at the 64-bit limit, consistent with `MaximumInstructionCount` and
 `LuaSchedulerActivation.InstructionCount`.
 
+The exit value declares its 64-bit counter, program counter, and byte-sized tags in compact layout
+order. The complete control payload therefore remains 16 bytes instead of growing to 24 bytes,
+avoiding a hidden return buffer on common 64-bit ABIs while preserving the wider counter.
+
 ## Verification
 
 - Runtime ABI tests reserve `Int32.MaxValue + 10` instructions across two ranges and require the
   exact remaining and consumed 64-bit values.
+- Runtime ABI tests also freeze the compact `LuaCompiledExit` payload at 16 bytes.
 - Existing int-factory tests continue to exercise the retained signatures.
 - Reflection.Emit numeric-region, Tier 2, and Loop OSR tests resolve and execute the long factory
   overloads.
@@ -54,3 +59,5 @@ accumulator now overflows only at the 64-bit limit, consistent with `MaximumInst
   saturating policy chosen by that host.
 - Long-running compiled entries preserve exact budgets and telemetry without representation-driven
   scheduler exits.
+- Compiled returns retain the pre-widening 16-byte control payload and its register-return-friendly
+  layout.

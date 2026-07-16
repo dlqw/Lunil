@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
@@ -25,6 +26,12 @@ public sealed class LuaCodegenAbiV1Tests
         Assert.Equal(LuaCompiledExitReason.GuardFailure, deopt.Reason);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             LuaCompiledExit.Poll(0, 0, LuaCompiledExitReason.None));
+    }
+
+    [Fact]
+    public void CompiledExitKeepsARegisterSizedControlPayload()
+    {
+        Assert.Equal(16, Unsafe.SizeOf<LuaCompiledExit>());
     }
 
     [Fact]

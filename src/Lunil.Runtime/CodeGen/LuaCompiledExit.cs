@@ -35,6 +35,14 @@ public enum LuaCompiledExitReason : byte
 [EditorBrowsable(EditorBrowsableState.Never)]
 public readonly record struct LuaCompiledExit
 {
+    // Keep the 64-bit counter first and the byte tags last so the complete control payload
+    // remains 16 bytes. A declaration-order layout would otherwise pad this value to 24 bytes
+    // and force a hidden return buffer on common 64-bit ABIs.
+    private readonly long _instructionsConsumed;
+    private readonly int _programCounter;
+    private readonly LuaCompiledExitKind _kind;
+    private readonly LuaCompiledExitReason _reason;
+
     private LuaCompiledExit(
         LuaCompiledExitKind kind,
         int programCounter,
@@ -43,21 +51,21 @@ public readonly record struct LuaCompiledExit
     {
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
         ArgumentOutOfRangeException.ThrowIfNegative(instructionsConsumed);
-        Kind = kind;
-        ProgramCounter = programCounter;
-        InstructionsConsumed = instructionsConsumed;
-        Reason = reason;
+        _instructionsConsumed = instructionsConsumed;
+        _programCounter = programCounter;
+        _kind = kind;
+        _reason = reason;
     }
 
-    public LuaCompiledExitKind Kind { get; }
+    public LuaCompiledExitKind Kind => _kind;
 
     /// <summary>The committed or restart program counter in canonical IR coordinates.</summary>
-    public int ProgramCounter { get; }
+    public int ProgramCounter => _programCounter;
 
     /// <summary>The number of canonical instructions completed by this entry invocation.</summary>
-    public long InstructionsConsumed { get; }
+    public long InstructionsConsumed => _instructionsConsumed;
 
-    public LuaCompiledExitReason Reason { get; }
+    public LuaCompiledExitReason Reason => _reason;
 
     public static LuaCompiledExit Continue(int programCounter, int instructionsConsumed) =>
         Continue(programCounter, (long)instructionsConsumed);
