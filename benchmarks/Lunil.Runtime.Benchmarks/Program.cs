@@ -516,6 +516,25 @@ foreach (var workload in backendWorkloads.Where(item =>
         return artifact;
     }
 
+    var profiledPersistedArtifacts = new Dictionary<LuaIrModule, LuaAotArtifact>(
+        ReferenceEqualityComparer.Instance);
+    LuaAotArtifact GetProfiledPersistedArtifact(LuaIrModule module)
+    {
+        if (profiledPersistedArtifacts.TryGetValue(module, out var artifact))
+        {
+            return artifact;
+        }
+
+        var profile = TrainPersistedProfile(module, workload.InstallStandardLibrary);
+        artifact = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = profile,
+        }).Artifact ?? throw new InvalidOperationException(
+            $"Profile-guided backend evidence AOT artifact did not compile for {workload.Name}.");
+        profiledPersistedArtifacts.Add(module, artifact);
+        return artifact;
+    }
+
     if (ShouldRunBackend(backendFilter, "interpreter"))
     {
         RunBackendEvidence(
@@ -540,6 +559,28 @@ foreach (var workload in backendWorkloads.Where(item =>
             module => BackendEvidenceRunner.CreatePersistedAot(
                 module,
                 GetPersistedArtifact(module),
+                workload.InstallStandardLibrary));
+    }
+
+    if (ShouldRunBackend(backendFilter, "persisted_aot_pgo"))
+    {
+        var profiledArtifact = GetProfiledPersistedArtifact(backendEvidenceModule);
+        Console.WriteLine(
+            $"backend_profiled_artifact workload={workload.Name}, " +
+            $"persisted_pe_bytes={profiledArtifact.PeImage.Length}, " +
+            $"portable_pdb_bytes={profiledArtifact.PortablePdbImage.Length}, " +
+            $"numeric_regions={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Length)}, " +
+            $"unboxed_numeric_locals={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Sum(static region => region.UnboxedNumericLocalCount))}, " +
+            $"direct_numeric_instructions={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Sum(static region => region.DirectNumericInstructionCount))}");
+        RunBackendEvidence(
+            workload.Name,
+            "persisted_aot_pgo",
+            backendEvidenceModule,
+            backendEvidenceOperations,
+            coldSamples,
+            module => BackendEvidenceRunner.CreatePersistedAot(
+                module,
+                GetProfiledPersistedArtifact(module),
                 workload.InstallStandardLibrary));
     }
 
@@ -1350,6 +1391,31 @@ static LuaIrModule Compile(string source)
     }
 
     return lowering.Module;
+}
+
+static LuaJitModuleProfile TrainPersistedProfile(
+    LuaIrModule module,
+    bool installStandardLibrary)
+{
+    using var executor = new LuaJitExecutor(LuaJitExecutorOptions.Default with
+    {
+        FunctionEntryThreshold = 1,
+        BackedgeThreshold = 1,
+        EnableLoopOsr = false,
+        Tier2InvocationThreshold = int.MaxValue,
+        Tier2BackedgeThreshold = int.MaxValue,
+        SynchronousCompilation = true,
+    });
+    var state = new LuaState();
+    if (installStandardLibrary)
+    {
+        LuaStandardLibrary.InstallAll(state);
+    }
+
+    var closure = state.CreateMainClosure(module);
+    _ = executor.Execute(state, closure);
+    _ = executor.Execute(state, closure);
+    return LuaJitProfileCodec.Deserialize(module, executor.ExportProfile(module));
 }
 
 sealed class BackendEvidenceRunner : IDisposable

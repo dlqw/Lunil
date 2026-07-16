@@ -6,6 +6,7 @@ using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.CodeGen.Cil.Loading;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.CodeGen.Cil.Verification;
 using Lunil.Core.Text;
@@ -139,6 +140,10 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.True(first.Succeeded, string.Join("; ", first.Diagnostics.Select(static d => d.Message)));
         Assert.True(first.Artifact!.PeImage.SequenceEqual(second.Artifact!.PeImage));
         Assert.True(first.Artifact.PortablePdbImage.SequenceEqual(second.Artifact.PortablePdbImage));
+        Assert.False(first.Artifact.Manifest.ProfileGuidedNumericRegions);
+        Assert.Equal(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            first.Artifact.Manifest.ProfileFingerprint);
         Assert.Equal((byte)'M', first.Artifact.PeImage[0]);
         Assert.Equal((byte)'Z', first.Artifact.PeImage[1]);
 
@@ -238,7 +243,7 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [Fact]
-    public void PersistedAbiV3RoundTripsNonNumericOpcodesAndExecutesThem()
+    public void PersistedAbiV4RoundTripsNonNumericOpcodesAndExecutesThem()
     {
         var module = CompileSource(
             """
@@ -272,7 +277,7 @@ public sealed class LuaCilCodeGeneratorTests
             compilation.Succeeded,
             string.Join("; ", compilation.Diagnostics.Select(static item => item.Message)));
         var artifact = compilation.Artifact!;
-        Assert.Equal(LuaCodegenAbiV3.RuntimeAbiVersion, artifact.Manifest.RuntimeAbiVersion);
+        Assert.Equal(LuaCodegenAbiV4.RuntimeAbiVersion, artifact.Manifest.RuntimeAbiVersion);
         var loading = LuaAotArtifactLoader.Load(artifact);
         Assert.True(
             loading.Succeeded,
@@ -280,12 +285,293 @@ public sealed class LuaCilCodeGeneratorTests
 
         using var loaded = loading.Module!;
         var state = new LuaState();
-        var result = new LuaPersistedAotExecutor(loaded).Execute(
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var result = executor.Execute(
             state,
             state.CreateMainClosure(module));
 
         Assert.Equal(LuaVmSignal.Completed, result.Signal);
         Assert.Equal(LuaValue.FromInteger(52), Assert.Single(result.Values));
+    }
+
+    [Fact]
+    public void ProfileGuidedPersistedAotEmitsAndExecutesExactNumericRegions()
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return;
+        }
+
+        var module = CompileSource(
+            "local total = 0; for i = 1, 1000 do total = total + i end; return total");
+        var profile = TrainProfile(module);
+
+        var compilation = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = profile,
+        });
+
+        Assert.True(
+            compilation.Succeeded,
+            string.Join("; ", compilation.Diagnostics.Select(static item => item.Message)));
+        var artifact = compilation.Artifact!;
+        Assert.True(artifact.Manifest.ProfileGuidedNumericRegions);
+        Assert.Equal(
+            LuaAotArtifactManifest.CurrentProfilePolicyVersion,
+            artifact.Manifest.ProfilePolicyVersion);
+        Assert.NotEmpty(artifact.Manifest.Functions.SelectMany(
+            static function => function.NumericRegions));
+        Assert.All(
+            artifact.Manifest.Functions.SelectMany(static function => function.NumericRegions),
+            static region =>
+            {
+                Assert.True(region.UnboxedNumericLocalCount > 0);
+                Assert.True(region.DirectNumericInstructionCount > 0);
+                Assert.True(region.SafepointCount > 0);
+            });
+
+        var loading = LuaAotArtifactLoader.Load(artifact);
+        Assert.True(
+            loading.Succeeded,
+            string.Join("; ", loading.Diagnostics.Select(static item => item.Message)));
+        using var loaded = loading.Module!;
+        var state = new LuaState();
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var result = executor.Execute(
+            state,
+            state.CreateMainClosure(module));
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(LuaValue.FromInteger(500_500), Assert.Single(result.Values));
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+        Assert.True(executor.Statistics.CompiledInvocations > 0);
+    }
+
+    [Fact]
+    public void ProfileGuidedPersistedAotGuardsMixedKindsAndFallsBackExactly()
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return;
+        }
+
+        var module = CompileSource(
+            "local value = ...; for i = 1, 100 do value = value + 1 end; return value");
+        var profile = TrainProfile(module, LuaValue.FromInteger(0));
+        var compilation = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = profile,
+        });
+        Assert.True(
+            compilation.Succeeded,
+            string.Join("; ", compilation.Diagnostics.Select(static item => item.Message)));
+        var loading = LuaAotArtifactLoader.Load(compilation.Artifact!);
+        Assert.True(
+            loading.Succeeded,
+            string.Join("; ", loading.Diagnostics.Select(static item => item.Message)));
+
+        using var loaded = loading.Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+        var result = executor.Execute(
+            state,
+            state.CreateMainClosure(module),
+            [LuaValue.FromFloat(0.5)]);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(LuaValue.FromFloat(100.5), Assert.Single(result.Values));
+        Assert.True(executor.Statistics.Deoptimizations > 0);
+    }
+
+    [Fact]
+    public void PersistedAotRejectsAProfileFromAnotherModule()
+    {
+        var source = CompileSource("local total = 0; for i = 1, 10 do total = total + i end; return total");
+        var other = CompileSource("return 42");
+        var profile = TrainProfile(source);
+
+        var compilation = LuaAotCompiler.Compile(other, new LuaAotCompilationOptions
+        {
+            Profile = profile,
+        });
+
+        Assert.False(compilation.Succeeded);
+        Assert.Contains(compilation.Diagnostics, static diagnostic => diagnostic.Code == "AOT1005");
+    }
+
+    [Theory]
+    [InlineData("local v = 9223372036854775800; for i = 1, 100 do v = v + i * 7 end; return v")]
+    [InlineData("local v = 0.5; for i = 100, 1, -0.5 do v = v + i / 3.0 + (i % 2.5) end; return v")]
+    [InlineData("local v = 0; for i = 100, 1, -1 do if i % 3 == 0 then v = v + i else v = v - i end end; return v")]
+    public void ProfileGuidedPersistedAotPreservesNumericAndControlSemantics(string source)
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return;
+        }
+
+        var module = CompileSource(source);
+        var profile = TrainProfile(module);
+        var compilation = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = profile,
+        });
+        Assert.True(
+            compilation.Succeeded,
+            string.Join("; ", compilation.Diagnostics.Select(static item => item.Message)));
+        Assert.NotEmpty(compilation.Artifact!.Manifest.Functions.SelectMany(
+            static function => function.NumericRegions));
+
+        var referenceState = new LuaState();
+        var reference = new LuaInterpreter().Execute(
+            referenceState,
+            referenceState.CreateMainClosure(module));
+        var loading = LuaAotArtifactLoader.Load(compilation.Artifact);
+        Assert.True(
+            loading.Succeeded,
+            string.Join("; ", loading.Diagnostics.Select(static item => item.Message)));
+
+        using var loaded = loading.Module!;
+        var executor = new LuaPersistedAotExecutor(loaded);
+        var state = new LuaState();
+        var actual = executor.Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(reference.Signal, actual.Signal);
+        Assert.True(reference.Values.SequenceEqual(actual.Values));
+        Assert.Equal(0, executor.Statistics.UnexpectedDeoptimizations);
+    }
+
+    [Fact]
+    public void PersistedAotProfileFingerprintIsStableAndChangesArtifactIdentity()
+    {
+        var module = CompileSource(
+            "local value = ...; for i = 1, 100 do value = value + i end; return value");
+        var integerProfile = TrainProfile(module, LuaValue.FromInteger(0));
+        var floatProfile = TrainProfile(module, LuaValue.FromFloat(0.5));
+
+        var first = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = integerProfile,
+        }).Artifact!;
+        var repeated = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = integerProfile,
+        }).Artifact!;
+        var changed = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = floatProfile,
+        }).Artifact!;
+
+        Assert.Equal(first.Manifest.ProfileFingerprint, repeated.Manifest.ProfileFingerprint);
+        Assert.Equal(first.Manifest.OptionsFingerprint, repeated.Manifest.OptionsFingerprint);
+        Assert.Equal(first.Manifest.AssemblyName, repeated.Manifest.AssemblyName);
+        Assert.NotEqual(first.Manifest.ProfileFingerprint, changed.Manifest.ProfileFingerprint);
+        Assert.NotEqual(first.Manifest.OptionsFingerprint, changed.Manifest.OptionsFingerprint);
+        Assert.NotEqual(first.Manifest.AssemblyName, changed.Manifest.AssemblyName);
+    }
+
+    [Fact]
+    public void PersistedAotRejectsMalformedProfileFunctionCoverage()
+    {
+        var module = CompileSource(
+            "local total = 0; for i = 1, 10 do total = total + i end; return total");
+        var profile = TrainProfile(module);
+        var malformed = profile with
+        {
+            Functions = profile.Functions.Add(profile.Functions[0]),
+        };
+
+        var compilation = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = malformed,
+        });
+
+        Assert.False(compilation.Succeeded);
+        Assert.Contains(compilation.Diagnostics, static diagnostic => diagnostic.Code == "AOT1006");
+    }
+
+    [Fact]
+    public void PersistedAotRejectsNullProfileEntriesAsDiagnostics()
+    {
+        var module = CompileSource(
+            "local total = 0; for i = 1, 10 do total = total + i end; return total");
+        var profile = TrainProfile(module);
+        var malformed = profile with
+        {
+            Functions = [new LuaJitFunctionProfileEntry(0, null!)],
+        };
+
+        var compilation = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = malformed,
+        });
+
+        Assert.False(compilation.Succeeded);
+        Assert.Contains(compilation.Diagnostics, static diagnostic => diagnostic.Code == "AOT1006");
+    }
+
+    [Fact]
+    public void PersistedAotRejectsCorruptedProfilePolicyAndNumericRegionManifest()
+    {
+        var module = CompileSource(
+            "local total = 0; for i = 1, 1000 do total = total + i end; return total");
+        var artifact = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = TrainProfile(module),
+        }).Artifact!;
+
+        var stalePolicy = artifact.PeImage.ToArray();
+        var policy = "\"profilePolicyVersion\":1"u8;
+        var policyOffset = stalePolicy.AsSpan().IndexOf(policy);
+        Assert.True(policyOffset >= 0);
+        stalePolicy[policyOffset + policy.Length - 1] = (byte)'2';
+        var stalePolicyValidation = LuaAotArtifactLoader.Validate(
+            stalePolicy.ToImmutableArray(),
+            artifact.PortablePdbImage);
+        Assert.False(stalePolicyValidation.Succeeded);
+        Assert.Contains(
+            stalePolicyValidation.Diagnostics,
+            static diagnostic => diagnostic.Code == "AOT2007");
+
+        var malformedRegion = artifact.PeImage.ToArray();
+        var safepoint = "\"safepointCount\":1"u8;
+        var safepointOffset = malformedRegion.AsSpan().IndexOf(safepoint);
+        Assert.True(safepointOffset >= 0);
+        malformedRegion[safepointOffset + safepoint.Length - 1] = (byte)'0';
+        var malformedRegionValidation = LuaAotArtifactLoader.Validate(
+            malformedRegion.ToImmutableArray(),
+            artifact.PortablePdbImage);
+        Assert.False(malformedRegionValidation.Succeeded);
+        Assert.Contains(
+            malformedRegionValidation.Diagnostics,
+            static diagnostic => diagnostic.Code == "AOT2007");
+    }
+
+    [Fact]
+    public void ProfileGuidedPersistedAotHonorsInstructionBudgetAtNumericSafepoints()
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            return;
+        }
+
+        var module = CompileSource(
+            "local total = 0; for i = 1, 10000 do total = total + i end; return total");
+        var artifact = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
+        {
+            Profile = TrainProfile(module),
+        }).Artifact!;
+        using var loaded = LuaAotArtifactLoader.Load(artifact).Module!;
+        var executor = new LuaPersistedAotExecutor(
+            loaded,
+            LuaInterpreterOptions.Default with { MaximumInstructionCount = 50 });
+        var state = new LuaState();
+
+        Assert.Throws<LuaRuntimeException>(() => executor.Execute(
+            state,
+            state.CreateMainClosure(module)));
+        Assert.True(executor.Statistics.CompiledInvocations > 0);
+        Assert.Equal(LuaThreadStatus.Error, state.MainThread.Status);
     }
 
     [Fact]
@@ -511,10 +797,10 @@ public sealed class LuaCilCodeGeneratorTests
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
         var artifact = LuaAotCompiler.Compile(module).Artifact!;
         var incompatible = artifact.PeImage.ToArray();
-        var version = "\"runtimeAbiVersion\":3"u8;
+        var version = "\"runtimeAbiVersion\":4"u8;
         var offset = incompatible.AsSpan().IndexOf(version);
         Assert.True(offset >= 0);
-        incompatible[offset + version.Length - 1] = (byte)'2';
+        incompatible[offset + version.Length - 1] = (byte)'3';
 
         var loading = LuaAotArtifactLoader.Load(incompatible.ToImmutableArray());
 
@@ -1136,6 +1422,26 @@ public sealed class LuaCilCodeGeneratorTests
 
             Assert.Null(exception);
         }
+    }
+
+    private static LuaJitModuleProfile TrainProfile(
+        LuaIrModule module,
+        params LuaValue[] arguments)
+    {
+        using var executor = new LuaJitExecutor(LuaJitExecutorOptions.Default with
+        {
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+            SynchronousCompilation = true,
+        });
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+        _ = executor.Execute(state, closure, arguments);
+        _ = executor.Execute(state, closure, arguments);
+        return LuaJitProfileCodec.Deserialize(module, executor.ExportProfile(module));
     }
 
     private static LuaIrModule CreateModule(

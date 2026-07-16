@@ -5,8 +5,10 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using Lunil.CodeGen.Cil.Artifacts;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.CodeGen.Cil.Verification;
+using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -16,6 +18,11 @@ namespace Lunil.CodeGen.Cil.Emission;
 internal sealed record PersistedCilMethod(
     string Name,
     CilMethodPlan Plan);
+
+internal sealed record PersistedNumericCilMethod(
+    string Name,
+    LuaIrFunction Function,
+    LuaNumericRegionPlan Plan);
 
 internal sealed record ManagedPeEmissionResult(
     ImmutableArray<byte> PeImage,
@@ -40,10 +47,12 @@ internal static class ManagedPeCilEmitter
         ReadOnlySpan<byte> moduleBytes,
         ReadOnlySpan<byte> sourceBytes,
         IReadOnlyList<PersistedCilMethod> methods,
+        IReadOnlyList<PersistedNumericCilMethod> numericMethods,
         LuaAotCompilationOptions options)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(methods);
+        ArgumentNullException.ThrowIfNull(numericMethods);
         var diagnostics = ImmutableArray.CreateBuilder<CilPlanDiagnostic>();
         var verifiedMethods = new List<(PersistedCilMethod Method, CilPlanVerificationResult Verification)>();
         foreach (var method in methods)
@@ -134,6 +143,47 @@ internal static class ManagedPeCilEmitter
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
                 MethodImplAttributes.IL | MethodImplAttributes.Managed,
                 metadata.GetOrAddString(item.Method.Name),
+                methodSignature,
+                emitted.BodyOffset,
+                MetadataTokens.ParameterHandle(1));
+            emittedMethods.Add(emitted with { Handle = methodHandle });
+        }
+
+        foreach (var numericMethod in numericMethods)
+        {
+            EmittedMethod emitted;
+            try
+            {
+                emitted = EmitNumericMethodBody(
+                    metadata,
+                    methodBodies,
+                    numericMethod,
+                    systemRuntime,
+                    runtime,
+                    options.MaximumBranchInstructionsPerMethod);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                diagnostics.Add(new CilPlanDiagnostic(
+                    "CIL0030",
+                    $"Persisted numeric method '{numericMethod.Name}' could not be emitted: " +
+                    $"{exception.GetType().Name}: {exception.Message}"));
+                continue;
+            }
+
+            if (emitted.CodeSize > options.MaximumMethodBodyBytes)
+            {
+                diagnostics.Add(new CilPlanDiagnostic(
+                    "CIL0028",
+                    $"Method body '{numericMethod.Name}' contains {emitted.CodeSize} bytes; " +
+                    $"limit is {options.MaximumMethodBodyBytes}."));
+            }
+
+            var methodHandle = metadata.AddMethodDefinition(
+                MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
+                MethodImplAttributes.IL | MethodImplAttributes.Managed,
+                metadata.GetOrAddString(numericMethod.Name),
                 methodSignature,
                 emitted.BodyOffset,
                 MetadataTokens.ParameterHandle(1));
@@ -248,6 +298,52 @@ internal static class ManagedPeCilEmitter
             localSignature);
     }
 
+    private static EmittedMethod EmitNumericMethodBody(
+        MetadataBuilder metadata,
+        MethodBodyStreamEncoder methodBodies,
+        PersistedNumericCilMethod method,
+        AssemblyReferenceHandle systemRuntime,
+        AssemblyReferenceHandle runtime,
+        int maximumBranchInstructions)
+    {
+        var code = new BlobBuilder();
+        var controlFlow = new ControlFlowBuilder();
+        var encoder = new InstructionEncoder(code, controlFlow);
+        var generator = new MetadataLuaNumericRegionIlGenerator(
+            metadata,
+            encoder,
+            systemRuntime,
+            runtime);
+        ReflectionEmitLuaNumericRegionCompiler.Emit(
+            method.Function,
+            method.Plan,
+            new LuaNumericRegionEmissionMode(
+                RequireLoopOsrEntry: false,
+                ObserveLoopOsrBackedge: false),
+            generator,
+            CancellationToken.None);
+        if (generator.BranchInstructionCount > maximumBranchInstructions)
+        {
+            throw new InvalidOperationException(
+                $"Numeric region contains {generator.BranchInstructionCount} branch instructions; " +
+                $"limit is {maximumBranchInstructions}.");
+        }
+
+        var localSignature = AddNumericLocalSignature(metadata, generator.Locals, generator);
+        var bodyOffset = methodBodies.AddMethodBody(
+            encoder,
+            maxStack: 32,
+            localSignature,
+            MethodBodyAttributes.InitLocals);
+        return new EmittedMethod(
+            default,
+            Plan: null,
+            bodyOffset,
+            code.Count,
+            InstructionOffsets: [],
+            localSignature);
+    }
+
     private static void EmitInstruction(
         InstructionEncoder encoder,
         CilPlanInstruction instruction,
@@ -324,6 +420,26 @@ internal static class ManagedPeCilEmitter
         foreach (var local in locals.OrderBy(static local => local.Index))
         {
             EncodeType(encoder.AddVariable().Type(), local.Kind, types);
+        }
+
+        return metadata.AddStandaloneSignature(metadata.GetOrAddBlob(blob));
+    }
+
+    private static StandaloneSignatureHandle AddNumericLocalSignature(
+        MetadataBuilder metadata,
+        IReadOnlyList<Type> locals,
+        MetadataLuaNumericRegionIlGenerator generator)
+    {
+        if (locals.Count == 0)
+        {
+            return default;
+        }
+
+        var blob = new BlobBuilder();
+        var encoder = new BlobEncoder(blob).LocalVariableSignature(locals.Count);
+        foreach (var local in locals)
+        {
+            generator.EncodeType(encoder.AddVariable().Type(), local);
         }
 
         return metadata.AddStandaloneSignature(metadata.GetOrAddBlob(blob));
@@ -568,21 +684,26 @@ internal static class ManagedPeCilEmitter
             pdbMetadata.GetOrAddGuid(LuaDocumentLanguage));
         foreach (var method in methods)
         {
-            var sequencePoints = EncodeSequencePoints(pdbMetadata, method);
+            var sequencePoints = method.Plan is null
+                ? default
+                : EncodeSequencePoints(pdbMetadata, method);
             pdbMetadata.AddMethodDebugInformation(
                 sequencePoints.IsNil ? default : document,
                 sequencePoints);
-            var programCounterMap = LuaAotPortablePdbMetadata.EncodeProgramCounterMap(
-                method.Plan.SequencePoints.Select(point =>
-                    new LuaAotProgramCounterMapEntry(
-                        method.InstructionOffsets[point.PlanInstructionIndex],
-                        point.CanonicalProgramCounter,
-                        point.LogicalProgramCounter)));
-            pdbMetadata.AddCustomDebugInformation(
-                method.Handle,
-                pdbMetadata.GetOrAddGuid(
-                    LuaAotPortablePdbMetadata.ProgramCounterMapKind),
-                pdbMetadata.GetOrAddBlob(programCounterMap));
+            if (method.Plan is { } plan)
+            {
+                var programCounterMap = LuaAotPortablePdbMetadata.EncodeProgramCounterMap(
+                    plan.SequencePoints.Select(point =>
+                        new LuaAotProgramCounterMapEntry(
+                            method.InstructionOffsets[point.PlanInstructionIndex],
+                            point.CanonicalProgramCounter,
+                            point.LogicalProgramCounter)));
+                pdbMetadata.AddCustomDebugInformation(
+                    method.Handle,
+                    pdbMetadata.GetOrAddGuid(
+                        LuaAotPortablePdbMetadata.ProgramCounterMapKind),
+                    pdbMetadata.GetOrAddBlob(programCounterMap));
+            }
         }
 
         var builder = new PortablePdbBuilder(
@@ -599,7 +720,7 @@ internal static class ManagedPeCilEmitter
         MetadataBuilder metadata,
         EmittedMethod method)
     {
-        var points = method.Plan.SequencePoints
+        var points = method.Plan!.SequencePoints
             .Where(static point => point.SourceLine > 0)
             .Select(point => (
                 Offset: method.InstructionOffsets[point.PlanInstructionIndex],
@@ -680,7 +801,7 @@ internal static class ManagedPeCilEmitter
 
     private sealed record EmittedMethod(
         MethodDefinitionHandle Handle,
-        CilMethodPlan Plan,
+        CilMethodPlan? Plan,
         int BodyOffset,
         int CodeSize,
         ImmutableArray<int> InstructionOffsets,

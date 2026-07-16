@@ -24,6 +24,11 @@ internal static class LuaAotManifestCodec
             writer.WriteString("moduleContentId", manifest.ModuleContentId);
             writer.WriteString("moduleChecksum", manifest.ModuleChecksum);
             writer.WriteString("optionsFingerprint", manifest.OptionsFingerprint);
+            writer.WriteBoolean(
+                "profileGuidedNumericRegions",
+                manifest.ProfileGuidedNumericRegions);
+            writer.WriteNumber("profilePolicyVersion", manifest.ProfilePolicyVersion);
+            writer.WriteString("profileFingerprint", manifest.ProfileFingerprint);
             writer.WriteBoolean("emitPortablePdb", manifest.EmitPortablePdb);
             writer.WriteNumber(
                 "maximumCanonicalInstructionsPerMethod",
@@ -54,6 +59,31 @@ internal static class LuaAotManifestCodec
                 }
 
                 writer.WriteEndArray();
+                writer.WriteStartArray("numericRegions");
+                foreach (var region in function.NumericRegions)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("methodName", region.MethodName);
+                    writer.WriteNumber("headerProgramCounter", region.HeaderProgramCounter);
+                    writer.WriteNumber("backedgeProgramCounter", region.BackedgeProgramCounter);
+                    writer.WriteStartArray("programCounters");
+                    foreach (var programCounter in region.ProgramCounters)
+                    {
+                        writer.WriteNumberValue(programCounter);
+                    }
+
+                    writer.WriteEndArray();
+                    writer.WriteNumber(
+                        "unboxedNumericLocalCount",
+                        region.UnboxedNumericLocalCount);
+                    writer.WriteNumber(
+                        "directNumericInstructionCount",
+                        region.DirectNumericInstructionCount);
+                    writer.WriteNumber("safepointCount", region.SafepointCount);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
                 writer.WriteEndObject();
             }
 
@@ -80,9 +110,29 @@ internal static class LuaAotManifestCodec
                     RequiredInt32(shardElement, "instructionCount")));
             }
 
+            var numericRegions = ImmutableArray.CreateBuilder<LuaAotNumericRegionManifest>();
+            foreach (var regionElement in Required(functionElement, "numericRegions").EnumerateArray())
+            {
+                var programCounters = Required(regionElement, "programCounters")
+                    .EnumerateArray()
+                    .Select(static value => value.GetInt32())
+                    .ToImmutableArray();
+                numericRegions.Add(new LuaAotNumericRegionManifest(
+                    RequiredString(regionElement, "methodName"),
+                    RequiredInt32(regionElement, "headerProgramCounter"),
+                    RequiredInt32(regionElement, "backedgeProgramCounter"),
+                    programCounters,
+                    RequiredInt32(regionElement, "unboxedNumericLocalCount"),
+                    RequiredInt32(regionElement, "directNumericInstructionCount"),
+                    RequiredInt32(regionElement, "safepointCount")));
+            }
+
             functions.Add(new LuaAotFunctionManifest(
                 RequiredInt32(functionElement, "functionId"),
-                shards.ToImmutable()));
+                shards.ToImmutable())
+            {
+                NumericRegions = numericRegions.ToImmutable(),
+            });
         }
 
         return new LuaAotArtifactManifest
@@ -95,6 +145,11 @@ internal static class LuaAotManifestCodec
             ModuleContentId = RequiredString(root, "moduleContentId"),
             ModuleChecksum = RequiredString(root, "moduleChecksum"),
             OptionsFingerprint = RequiredString(root, "optionsFingerprint"),
+            ProfileGuidedNumericRegions = Required(
+                root,
+                "profileGuidedNumericRegions").GetBoolean(),
+            ProfilePolicyVersion = RequiredInt32(root, "profilePolicyVersion"),
+            ProfileFingerprint = RequiredString(root, "profileFingerprint"),
             EmitPortablePdb = Required(root, "emitPortablePdb").GetBoolean(),
             MaximumCanonicalInstructionsPerMethod = RequiredInt32(
                 root,
@@ -116,7 +171,9 @@ internal static class LuaAotManifestCodec
     public static string FingerprintOptions(
         LuaAotCompilationOptions options,
         string sourceChecksum,
-        string sourceDocumentName)
+        string sourceDocumentName,
+        string profileFingerprint,
+        bool profileGuidedNumericRegions)
     {
         var text = string.Join(
             "\n",
@@ -125,6 +182,9 @@ internal static class LuaAotManifestCodec
             $"body={options.MaximumMethodBodyBytes}",
             $"tokens={options.MaximumMetadataTokens}",
             $"branches={options.MaximumBranchInstructionsPerMethod}",
+            $"profileGuided={(profileGuidedNumericRegions ? 1 : 0)}",
+            $"profilePolicy={LuaAotArtifactManifest.CurrentProfilePolicyVersion}",
+            $"profile={profileFingerprint}",
             $"source={sourceDocumentName}",
             $"sourceChecksum={sourceChecksum}");
         return LuaCanonicalModuleSerializer.Sha256Hex(Encoding.UTF8.GetBytes(text));

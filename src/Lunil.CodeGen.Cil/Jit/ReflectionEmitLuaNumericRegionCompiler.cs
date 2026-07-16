@@ -28,98 +28,21 @@ internal sealed record LuaCompiledNumericRegion(
 
 internal static class LuaNumericRegionRuntime
 {
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static long Shift(long value, long count, bool left)
-    {
-        if (count < 0)
-        {
-            if (count == long.MinValue)
-            {
-                return 0;
-            }
+    public static long Shift(long value, long count, bool left) =>
+        LuaCodegenAbiV4.Shift(value, count, left);
 
-            return Shift(value, -count, !left);
-        }
+    public static double FloatingModulo(double dividend, double divisor) =>
+        LuaCodegenAbiV4.FloatingModulo(dividend, divisor);
 
-        if (count >= 64)
-        {
-            return 0;
-        }
-
-        return left
-            ? unchecked((long)((ulong)value << (int)count))
-            : unchecked((long)((ulong)value >> (int)count));
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static double FloatingModulo(double dividend, double divisor)
-    {
-        var remainder = dividend % divisor;
-        if (remainder > 0 ? divisor < 0 : remainder < 0 && divisor > 0)
-        {
-            remainder += divisor;
-        }
-
-        return remainder;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CompareMixed(
-        long integer,
+        long integerValue,
         double floatingPoint,
         bool integerOnLeft,
-        LuaIrBinaryOperator operation)
-    {
-        if (double.IsNaN(floatingPoint))
-        {
-            return operation == LuaIrBinaryOperator.NotEqual;
-        }
-
-        var comparison = IntegerFloatCompare(integer, floatingPoint);
-        if (!integerOnLeft)
-        {
-            comparison = -comparison;
-        }
-
-        return operation switch
-        {
-            LuaIrBinaryOperator.Equal => comparison == 0,
-            LuaIrBinaryOperator.NotEqual => comparison != 0,
-            LuaIrBinaryOperator.LessThan => comparison < 0,
-            LuaIrBinaryOperator.LessThanOrEqual => comparison <= 0,
-            LuaIrBinaryOperator.GreaterThan => comparison > 0,
-            LuaIrBinaryOperator.GreaterThanOrEqual => comparison >= 0,
-            _ => throw new InvalidOperationException(
-                $"{operation} is not a numeric comparison."),
-        };
-    }
-
-    private static int IntegerFloatCompare(long integer, double floatingPoint)
-    {
-        if (floatingPoint >= 9_223_372_036_854_775_808d)
-        {
-            return -1;
-        }
-
-        if (floatingPoint < long.MinValue)
-        {
-            return 1;
-        }
-
-        var integral = (long)Math.Truncate(floatingPoint);
-        var comparison = integer.CompareTo(integral);
-        if (comparison != 0)
-        {
-            return comparison;
-        }
-
-        return floatingPoint.CompareTo((double)integral) switch
-        {
-            > 0 => -1,
-            < 0 => 1,
-            _ => 0,
-        };
-    }
+        LuaIrBinaryOperator operation) => LuaCodegenAbiV4.CompareMixed(
+            integerValue,
+            floatingPoint,
+            integerOnLeft,
+            (int)operation);
 }
 
 /// <summary>
@@ -138,8 +61,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private readonly record struct NumericDirtyState(
-        LocalBuilder Dirty,
-        LocalBuilder ActiveKind);
+        LuaNumericIlLocal Dirty,
+        LuaNumericIlLocal ActiveKind);
 
     private static readonly Type[] CompiledMethodParameters =
     [
@@ -190,15 +113,17 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     private static readonly MethodInfo GetRemainingInstructionCount = PropertyGetter(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.RemainingInstructionCount));
-    private static readonly MethodInfo GetInstructionsConsumed = PropertyGetter(
-        typeof(LuaExecutionContext),
-        "InstructionsConsumed");
+    private static readonly MethodInfo GetInstructionsConsumed = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.GetInstructionsConsumed),
+        [typeof(LuaExecutionContext)]);
     private static readonly MethodInfo GetProgramCounter = PropertyGetter(
         typeof(LuaFrame),
         nameof(LuaFrame.ProgramCounter));
-    private static readonly MethodInfo SetProgramCounter = PropertySetter(
-        typeof(LuaFrame),
-        nameof(LuaFrame.ProgramCounter));
+    private static readonly MethodInfo SetProgramCounter = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.SetProgramCounter),
+        [typeof(LuaFrame), typeof(int)]);
     private static readonly MethodInfo GetKind = PropertyGetter(
         typeof(LuaValue),
         nameof(LuaValue.Kind));
@@ -235,17 +160,17 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         nameof(Math.Pow),
         [typeof(double), typeof(double)]);
     private static readonly MethodInfo Shift = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.Shift),
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.Shift),
         [typeof(long), typeof(long), typeof(bool)]);
     private static readonly MethodInfo FloatingModulo = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.FloatingModulo),
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.FloatingModulo),
         [typeof(double), typeof(double)]);
     private static readonly MethodInfo CompareMixed = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.CompareMixed),
-        [typeof(long), typeof(double), typeof(bool), typeof(LuaIrBinaryOperator)]);
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.CompareMixed),
+        [typeof(long), typeof(double), typeof(bool), typeof(int)]);
     private static readonly MethodInfo ContinueExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Continue),
@@ -290,7 +215,41 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             CompiledMethodParameters,
             typeof(ReflectionEmitLuaNumericRegionCompiler).Module,
             skipVisibility: true);
-        var generator = dynamicMethod.GetILGenerator();
+        var generator = new ReflectionEmitLuaNumericRegionIlGenerator(
+            dynamicMethod.GetILGenerator());
+        Emit(function, plan, mode, generator, cancellationToken);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var cilEmissionDuration = Stopwatch.GetElapsedTime(emissionStarted);
+        var delegateStarted = Stopwatch.GetTimestamp();
+        var method = (LuaCompiledMethod)dynamicMethod.CreateDelegate(typeof(LuaCompiledMethod));
+        var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
+        var estimatedCodeBytes = checked(
+            plan.Region.ProgramCounters.Length * 48L +
+            plan.Registers.Length * 96L +
+            plan.DirectNumericInstructionCount * 48L +
+            plan.BackedgeProgramCounters.Length * 96L);
+        result = new LuaCompiledNumericRegion(
+            plan,
+            method,
+            estimatedCodeBytes,
+            new LuaNumericRegionEmissionMetrics(
+                cilEmissionDuration,
+                delegateCreationDuration));
+        return true;
+    }
+
+    internal static void Emit(
+        LuaIrFunction function,
+        LuaNumericRegionPlan plan,
+        LuaNumericRegionEmissionMode mode,
+        LuaNumericRegionIlGenerator generator,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(function);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(generator);
+        cancellationToken.ThrowIfCancellationRequested();
         var valueLocals = plan.Registers.ToDictionary(
             static register => (register.Register, register.Kind),
             register => generator.DeclareLocal(LocalType(register.Kind)));
@@ -546,32 +505,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Call, DeoptExit);
         generator.Emit(OpCodes.Ret);
 
-        cancellationToken.ThrowIfCancellationRequested();
-        var cilEmissionDuration = Stopwatch.GetElapsedTime(emissionStarted);
-        var delegateStarted = Stopwatch.GetTimestamp();
-        var method = (LuaCompiledMethod)dynamicMethod.CreateDelegate(typeof(LuaCompiledMethod));
-        var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
-        var estimatedCodeBytes = checked(
-            plan.Region.ProgramCounters.Length * 48L +
-            plan.Registers.Length * 96L +
-            plan.DirectNumericInstructionCount * 48L +
-            plan.BackedgeProgramCounters.Length * 96L);
-        result = new LuaCompiledNumericRegion(
-            plan,
-            method,
-            estimatedCodeBytes,
-            new LuaNumericRegionEmissionMetrics(
-                cilEmissionDuration,
-                delegateCreationDuration));
-        return true;
     }
 
     private static void EmitEntryGuard(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaIrFunction function,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
-        Label invalidatedExit)
+        LuaNumericIlLabel invalidatedExit)
     {
         generator.Emit(OpCodes.Ldarg_0);
         if (mode.RequireLoopOsrEntry)
@@ -595,11 +536,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitLoadAndGuardRegister(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionRegister register,
-        LocalBuilder local,
-        LocalBuilder taggedValue,
-        Label guardExit)
+        LuaNumericIlLocal local,
+        LuaNumericIlLocal taggedValue,
+        LuaNumericIlLabel guardExit)
     {
         generator.Emit(OpCodes.Ldarg_1);
         generator.Emit(OpCodes.Ldarg_2);
@@ -625,10 +566,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitLocalInstructionReservation(
-        ILGenerator generator,
-        LocalBuilder remaining,
-        LocalBuilder pending,
-        Label budgetExit)
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLabel budgetExit)
     {
         generator.Emit(OpCodes.Ldloc, remaining);
         generator.Emit(OpCodes.Brfalse, budgetExit);
@@ -644,13 +585,13 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitQuantumDecision(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         int programCounter,
-        LocalBuilder remaining,
-        LocalBuilder backedgeCountdown,
-        Label hotQuantum,
-        Label coldSlowTail)
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal backedgeCountdown,
+        LuaNumericIlLabel hotQuantum,
+        LuaNumericIlLabel coldSlowTail)
     {
         var site = plan.GetBudgetSite(programCounter);
         generator.Emit(OpCodes.Ldloc, remaining);
@@ -669,8 +610,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitAddPendingInstructions(
-        ILGenerator generator,
-        LocalBuilder pending,
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal pending,
         int instructionCount)
     {
         generator.Emit(OpCodes.Ldloc, pending);
@@ -680,8 +621,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitSubtractPendingInstructions(
-        ILGenerator generator,
-        LocalBuilder pending,
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal pending,
         int instructionCount)
     {
         generator.Emit(OpCodes.Ldloc, pending);
@@ -691,9 +632,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitCancelLocalInstructionReservation(
-        ILGenerator generator,
-        LocalBuilder remaining,
-        LocalBuilder pending)
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending)
     {
         generator.Emit(OpCodes.Ldloc, remaining);
         generator.Emit(OpCodes.Ldc_I4_1);
@@ -707,11 +648,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitSetTop(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         int registerCount,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
         Dictionary<int, NumericDirtyState> dirtyLocals)
     {
         var updateMinimum = generator.DefineLabel();
@@ -742,31 +683,31 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitInstruction(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaIrFunction function,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, Label> bodyLabels,
-        IReadOnlyDictionary<int, Label> blockEntryLabels,
-        IReadOnlyDictionary<int, Label> resumeLabels,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> valueLocals,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
-        LocalBuilder remaining,
-        LocalBuilder pending,
-        LocalBuilder backedgeCountdown,
-        Dictionary<int, LocalBuilder> observedBackedges,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal backedgeCountdown,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
         int backedgePollInterval,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
-        LocalBuilder headerReason,
-        LocalBuilder integerTemporary,
-        LocalBuilder integerRemainder,
-        LocalBuilder floatingTemporary,
-        Label semanticDeopt)
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal headerReason,
+        LuaNumericIlLocal integerTemporary,
+        LuaNumericIlLocal integerRemainder,
+        LuaNumericIlLocal floatingTemporary,
+        LuaNumericIlLabel semanticDeopt)
     {
         switch (instruction.Opcode)
         {
@@ -1005,11 +946,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitUnary(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         int pc,
         LuaIrInstruction instruction,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> locals)
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> locals)
     {
         var operation = (LuaIrUnaryOperator)instruction.C;
         var sourceKind = plan.GetKindBefore(pc, instruction.B);
@@ -1049,14 +990,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitBinary(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         int pc,
         LuaIrInstruction instruction,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> locals,
-        LocalBuilder integerTemporary,
-        LocalBuilder integerRemainder,
-        Label semanticDeopt)
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> locals,
+        LuaNumericIlLocal integerTemporary,
+        LuaNumericIlLocal integerRemainder,
+        LuaNumericIlLabel semanticDeopt)
     {
         var operation = (LuaIrBinaryOperator)instruction.D;
         var leftKind = plan.GetKindBefore(pc, instruction.B);
@@ -1178,14 +1119,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitIntegerFloorOperation(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaIrBinaryOperator operation,
-        LocalBuilder dividend,
-        LocalBuilder divisor,
-        LocalBuilder result,
-        LocalBuilder quotient,
-        LocalBuilder remainder,
-        Label semanticDeopt)
+        LuaNumericIlLocal dividend,
+        LuaNumericIlLocal divisor,
+        LuaNumericIlLocal result,
+        LuaNumericIlLocal quotient,
+        LuaNumericIlLocal remainder,
+        LuaNumericIlLabel semanticDeopt)
     {
         var nonZero = generator.DefineLabel();
         var notNegativeOne = generator.DefineLabel();
@@ -1254,12 +1195,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitComparison(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaIrBinaryOperator operation,
         LuaNumericRegionValueKind leftKind,
         LuaNumericRegionValueKind rightKind,
-        LocalBuilder left,
-        LocalBuilder right)
+        LuaNumericIlLocal left,
+        LuaNumericIlLocal right)
     {
         if (leftKind != rightKind)
         {
@@ -1307,26 +1248,26 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitConditionalTransfer(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, Label> bodyLabels,
-        IReadOnlyDictionary<int, Label> blockEntryLabels,
-        IReadOnlyDictionary<int, Label> resumeLabels,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> valueLocals,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
-        LocalBuilder remaining,
-        LocalBuilder pending,
-        LocalBuilder backedgeCountdown,
-        Dictionary<int, LocalBuilder> observedBackedges,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal backedgeCountdown,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
         int backedgePollInterval,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
-        LocalBuilder headerReason)
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal headerReason)
     {
         var kind = plan.GetKindBefore(pc, instruction.A);
         if (kind == LuaNumericRegionValueKind.Boolean)
@@ -1397,27 +1338,27 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitNumericForLoop(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, Label> bodyLabels,
-        IReadOnlyDictionary<int, Label> blockEntryLabels,
-        IReadOnlyDictionary<int, Label> resumeLabels,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> valueLocals,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
-        LocalBuilder remaining,
-        LocalBuilder pending,
-        LocalBuilder backedgeCountdown,
-        Dictionary<int, LocalBuilder> observedBackedges,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal backedgeCountdown,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
         int backedgePollInterval,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
-        LocalBuilder headerReason,
-        LocalBuilder floatingTemporary)
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal headerReason,
+        LuaNumericIlLocal floatingTemporary)
     {
         var continues = generator.DefineLabel();
         var exits = generator.DefineLabel();
@@ -1540,26 +1481,26 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitTransfer(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         NumericExecutionPath executionPath,
         int sourceProgramCounter,
         int targetProgramCounter,
-        IReadOnlyDictionary<int, Label> bodyLabels,
-        IReadOnlyDictionary<int, Label> blockEntryLabels,
-        IReadOnlyDictionary<int, Label> resumeLabels,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> valueLocals,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
-        LocalBuilder remaining,
-        LocalBuilder pending,
-        LocalBuilder backedgeCountdown,
-        Dictionary<int, LocalBuilder> observedBackedges,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal backedgeCountdown,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
         int backedgePollInterval,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
-        LocalBuilder headerReason)
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal headerReason)
     {
         if (!plan.Contains(targetProgramCounter))
         {
@@ -1664,18 +1605,18 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitBoundaryState(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionPlan plan,
         int programCounter,
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> valueLocals,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
-        LocalBuilder pending,
-        LocalBuilder remaining,
-        Dictionary<int, LocalBuilder> observedBackedges,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty,
-        LocalBuilder? dynamicProgramCounter = null)
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal remaining,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal? dynamicProgramCounter = null)
     {
         EmitMinimumFrameTop(generator, minimumTop, topDirty);
         foreach (var (register, state) in dirtyLocals)
@@ -1726,22 +1667,22 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         EmitObservedBackedges(generator, observedBackedges);
 
         generator.Emit(OpCodes.Ldarg_2);
-        if (dynamicProgramCounter is null)
+        if (dynamicProgramCounter is not { } programCounterLocal)
         {
             EmitInt32(generator, programCounter);
         }
         else
         {
-            generator.Emit(OpCodes.Ldloc, dynamicProgramCounter);
+            generator.Emit(OpCodes.Ldloc, programCounterLocal);
         }
 
-        generator.Emit(OpCodes.Callvirt, SetProgramCounter);
+        generator.Emit(OpCodes.Call, SetProgramCounter);
         EmitCommitPending(generator, pending, remaining);
     }
 
     private static void EmitObservedBackedges(
-        ILGenerator generator,
-        Dictionary<int, LocalBuilder> observedBackedges)
+        LuaNumericRegionIlGenerator generator,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges)
     {
         foreach (var (programCounter, count) in observedBackedges)
         {
@@ -1760,9 +1701,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitMinimumFrameTop(
-        ILGenerator generator,
-        LocalBuilder minimumTop,
-        LocalBuilder topDirty)
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal topDirty)
     {
         var unchanged = generator.DefineLabel();
         generator.Emit(OpCodes.Ldloc, topDirty);
@@ -1775,10 +1716,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitFinalFrameTop(
-        ILGenerator generator,
-        LocalBuilder minimumTop,
-        LocalBuilder desiredTop,
-        LocalBuilder topDirty)
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty)
     {
         var reset = generator.DefineLabel();
         var complete = generator.DefineLabel();
@@ -1800,9 +1741,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitCommitPending(
-        ILGenerator generator,
-        LocalBuilder pending,
-        LocalBuilder remaining)
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal remaining)
     {
         var committed = generator.DefineLabel();
         generator.Emit(OpCodes.Ldloc, pending);
@@ -1820,9 +1761,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitLoadAsDouble(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaNumericRegionValueKind kind,
-        LocalBuilder local)
+        LuaNumericIlLocal local)
     {
         generator.Emit(OpCodes.Ldloc, local);
         if (kind == LuaNumericRegionValueKind.Integer)
@@ -1832,9 +1773,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitConstant(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         LuaIrConstant constant,
-        LocalBuilder destination)
+        LuaNumericIlLocal destination)
     {
         switch (constant.Kind)
         {
@@ -1855,14 +1796,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Stloc, destination);
     }
 
-    private static void EmitSetDirty(ILGenerator generator, LocalBuilder dirty)
+    private static void EmitSetDirty(LuaNumericRegionIlGenerator generator, LuaNumericIlLocal dirty)
     {
         generator.Emit(OpCodes.Ldc_I4_1);
         generator.Emit(OpCodes.Stloc, dirty);
     }
 
     private static void EmitMarkDirty(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         NumericDirtyState state,
         LuaNumericRegionValueKind kind)
     {
@@ -1872,7 +1813,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitExit(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         MethodInfo factory,
         int programCounter,
         LuaCompiledExitReason reason)
@@ -1885,9 +1826,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     }
 
     private static void EmitDynamicExit(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         MethodInfo factory,
-        LocalBuilder programCounter,
+        LuaNumericIlLocal programCounter,
         LuaCompiledExitReason reason)
     {
         generator.Emit(OpCodes.Ldloc, programCounter);
@@ -1897,19 +1838,19 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Ret);
     }
 
-    private static void EmitInstructionsConsumed(ILGenerator generator)
+    private static void EmitInstructionsConsumed(LuaNumericRegionIlGenerator generator)
     {
         generator.Emit(OpCodes.Ldarg_0);
-        generator.Emit(OpCodes.Callvirt, GetInstructionsConsumed);
+        generator.Emit(OpCodes.Call, GetInstructionsConsumed);
     }
 
     private static void EmitSwitch(
-        ILGenerator generator,
+        LuaNumericRegionIlGenerator generator,
         int instructionCount,
-        IReadOnlyDictionary<int, Label> labels,
-        Label invalidatedExit)
+        IReadOnlyDictionary<int, LuaNumericIlLabel> labels,
+        LuaNumericIlLabel invalidatedExit)
     {
-        var dispatch = new Label[instructionCount];
+        var dispatch = new LuaNumericIlLabel[instructionCount];
         for (var pc = 0; pc < dispatch.Length; pc++)
         {
             dispatch[pc] = labels.GetValueOrDefault(pc, invalidatedExit);
@@ -1927,8 +1868,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         _ => throw new InvalidOperationException($"{kind} is not promotable."),
     };
 
-    private static LocalBuilder NumericLocal(
-        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LocalBuilder> locals,
+    private static LuaNumericIlLocal NumericLocal(
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> locals,
         int register,
         LuaNumericRegionValueKind kind) =>
         locals.TryGetValue((register, kind), out var local)
@@ -1978,21 +1919,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             type.FullName,
             name);
 
-    private static MethodInfo PropertySetter(
-        [DynamicallyAccessedMembers(
-            DynamicallyAccessedMemberTypes.PublicProperties |
-            DynamicallyAccessedMemberTypes.NonPublicProperties)]
-        Type type,
-        string name) =>
-        type.GetProperty(
-            name,
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
-                BindingFlags.Static)?.GetSetMethod(nonPublic: true) ??
-        throw new MissingMemberException(
-            type.FullName,
-            name);
-
-    private static void EmitInt32(ILGenerator generator, int value)
+    private static void EmitInt32(LuaNumericRegionIlGenerator generator, int value)
     {
         switch (value)
         {

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.CodeGen.Cil.Jit;
 
 namespace Lunil.CodeGen.Cil.Artifacts;
 
@@ -24,6 +25,12 @@ public sealed record LuaAotCompilationOptions
     public int MaximumBranchInstructionsPerMethod { get; init; } = 250_000;
 
     public LuaAotSourceDocument? SourceDocument { get; init; }
+
+    /// <summary>
+    /// Exact-module profile used to specialize persisted numeric regions. Profiles are never
+    /// remapped across module identities; incompatible or malformed input rejects compilation.
+    /// </summary>
+    public LuaJitModuleProfile? Profile { get; init; }
 }
 
 public sealed record LuaAotMethodShardManifest(
@@ -33,13 +40,26 @@ public sealed record LuaAotMethodShardManifest(
 
 public sealed record LuaAotFunctionManifest(
     int FunctionId,
-    ImmutableArray<LuaAotMethodShardManifest> Shards);
+    ImmutableArray<LuaAotMethodShardManifest> Shards)
+{
+    public ImmutableArray<LuaAotNumericRegionManifest> NumericRegions { get; init; } = [];
+}
+
+public sealed record LuaAotNumericRegionManifest(
+    string MethodName,
+    int HeaderProgramCounter,
+    int BackedgeProgramCounter,
+    ImmutableArray<int> ProgramCounters,
+    int UnboxedNumericLocalCount,
+    int DirectNumericInstructionCount,
+    int SafepointCount);
 
 public sealed record LuaAotArtifactManifest
 {
     public const string CurrentMagic = "LUNIL-CIL-AOT";
-    public const int CurrentArtifactSchemaVersion = 1;
-    public const int CurrentCodegenVersion = 1;
+    public const int CurrentArtifactSchemaVersion = 2;
+    public const int CurrentCodegenVersion = 2;
+    public const int CurrentProfilePolicyVersion = 1;
 
     public required string Magic { get; init; }
 
@@ -56,6 +76,12 @@ public sealed record LuaAotArtifactManifest
     public required string ModuleChecksum { get; init; }
 
     public required string OptionsFingerprint { get; init; }
+
+    public required bool ProfileGuidedNumericRegions { get; init; }
+
+    public required int ProfilePolicyVersion { get; init; }
+
+    public required string ProfileFingerprint { get; init; }
 
     public required bool EmitPortablePdb { get; init; }
 

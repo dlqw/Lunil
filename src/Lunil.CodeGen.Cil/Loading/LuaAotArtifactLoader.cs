@@ -97,6 +97,9 @@ public sealed class LuaAotLoadedModule : IDisposable
 
 public static class LuaAotArtifactLoader
 {
+    private static readonly string EmptyProfileFingerprint =
+        LuaCanonicalModuleSerializer.Sha256Hex([]);
+
     public static LuaAotValidationResult Validate(
         LuaAotArtifact artifact,
         LuaAotLoadOptions? options = null)
@@ -375,7 +378,7 @@ public static class LuaAotArtifactLoader
         if (manifest.Magic != LuaAotArtifactManifest.CurrentMagic ||
             manifest.ArtifactSchemaVersion != LuaAotArtifactManifest.CurrentArtifactSchemaVersion ||
             manifest.IrFormatVersion != LuaIrModule.CurrentFormatVersion ||
-            manifest.RuntimeAbiVersion != LuaCodegenAbiV3.RuntimeAbiVersion ||
+            manifest.RuntimeAbiVersion != LuaCodegenAbiV4.RuntimeAbiVersion ||
             manifest.CodegenVersion != LuaAotArtifactManifest.CurrentCodegenVersion)
         {
             return new LuaAotDiagnostic(
@@ -395,7 +398,14 @@ public static class LuaAotArtifactLoader
         if (!IsSha256Hex(manifest.ModuleChecksum) ||
             !IsSha256Hex(manifest.ModuleContentId) ||
             !IsSha256Hex(manifest.OptionsFingerprint) ||
+            !IsSha256Hex(manifest.ProfileFingerprint) ||
+            (!manifest.ProfileGuidedNumericRegions && !string.Equals(
+                manifest.ProfileFingerprint,
+                EmptyProfileFingerprint,
+                StringComparison.Ordinal)) ||
             !IsSha256Hex(manifest.SourceDocumentChecksum) ||
+            manifest.ProfilePolicyVersion !=
+                LuaAotArtifactManifest.CurrentProfilePolicyVersion ||
             string.IsNullOrEmpty(manifest.AssemblyName) ||
             string.IsNullOrEmpty(manifest.TypeName) ||
             string.IsNullOrEmpty(manifest.PortablePdbName) ||
@@ -433,7 +443,9 @@ public static class LuaAotArtifactLoader
         var expectedOptionsFingerprint = LuaAotManifestCodec.FingerprintOptions(
             manifestOptions,
             manifest.SourceDocumentChecksum,
-            manifest.SourceDocumentName);
+            manifest.SourceDocumentName,
+            manifest.ProfileFingerprint,
+            manifest.ProfileGuidedNumericRegions);
         var expectedAssemblyName =
             $"Lunil.Aot.{manifest.ModuleContentId[..16]}.{manifest.OptionsFingerprint[..8]}";
         var expectedTypeName =
@@ -515,6 +527,45 @@ public static class LuaAotArtifactLoader
                 return new LuaAotDiagnostic(
                     "AOT2007",
                     "The artifact function map does not cover the canonical function.");
+            }
+
+            if (!manifest.ProfileGuidedNumericRegions && !function.NumericRegions.IsEmpty)
+            {
+                return new LuaAotDiagnostic(
+                    "AOT2007",
+                    "An unprofiled artifact contains profile-guided numeric regions.");
+            }
+
+            var occupiedProgramCounters = new HashSet<int>();
+            for (var regionIndex = 0;
+                regionIndex < function.NumericRegions.Length;
+                regionIndex++)
+            {
+                var region = function.NumericRegions[regionIndex];
+                var expectedMethodName =
+                    $"Function_{function.FunctionId}_NumericRegion_{regionIndex}";
+                if (!string.Equals(
+                        region.MethodName,
+                        expectedMethodName,
+                        StringComparison.Ordinal) ||
+                    !methodNames.Add(region.MethodName) ||
+                    region.ProgramCounters.IsDefaultOrEmpty ||
+                    !region.ProgramCounters.SequenceEqual(
+                        region.ProgramCounters.Distinct().Order()) ||
+                    region.ProgramCounters[0] < 0 ||
+                    region.ProgramCounters[^1] >= expectedStart ||
+                    !region.ProgramCounters.Contains(region.HeaderProgramCounter) ||
+                    !region.ProgramCounters.Contains(region.BackedgeProgramCounter) ||
+                    region.UnboxedNumericLocalCount <= 0 ||
+                    region.DirectNumericInstructionCount <= 0 ||
+                    region.SafepointCount <= 0 ||
+                    region.ProgramCounters.Any(programCounter =>
+                        !occupiedProgramCounters.Add(programCounter)))
+                {
+                    return new LuaAotDiagnostic(
+                        "AOT2007",
+                        "The artifact numeric-region map is malformed.");
+                }
             }
         }
 
@@ -607,16 +658,16 @@ public static class LuaAotArtifactLoader
         var result = new Dictionary<int, LuaCompiledMethod>();
         foreach (var function in manifest.Functions)
         {
+            var numericRegions = function.NumericRegions.Select(region =>
+            {
+                var method = GetCompiledMethod(generatedType, region.MethodName);
+                return new LoadedNumericRegion(
+                    region.ProgramCounters,
+                    method.CreateDelegate<LuaCompiledMethod>());
+            }).ToImmutableArray();
             var shards = function.Shards.Select(shard =>
             {
-                var method = generatedType.GetMethod(
-                    shard.MethodName,
-                    BindingFlags.Public | BindingFlags.Static,
-                    binder: null,
-                    [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)],
-                    modifiers: null) ?? throw new MissingMethodException(
-                        generatedType.FullName,
-                        shard.MethodName);
+                var method = GetCompiledMethod(generatedType, shard.MethodName);
                 return new LoadedShard(
                     shard.StartProgramCounter,
                     checked(shard.StartProgramCounter + shard.InstructionCount),
@@ -626,6 +677,14 @@ public static class LuaAotArtifactLoader
             LuaCompiledMethod dispatcher = (context, thread, frame) =>
             {
                 var programCounter = frame.ProgramCounter;
+                foreach (var region in numericRegions)
+                {
+                    if (region.ProgramCounters.BinarySearch(programCounter) >= 0)
+                    {
+                        return region.Method(context, thread, frame);
+                    }
+                }
+
                 foreach (var shard in shards)
                 {
                     if (programCounter >= shard.StartProgramCounter &&
@@ -646,6 +705,18 @@ public static class LuaAotArtifactLoader
         return result;
     }
 
+    private static MethodInfo GetCompiledMethod(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]
+        Type generatedType,
+        string methodName) => generatedType.GetMethod(
+            methodName,
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)],
+            modifiers: null) ?? throw new MissingMethodException(
+                generatedType.FullName,
+                methodName);
+
     private static LuaAotLoadResult Failure(
         string code,
         string message,
@@ -658,6 +729,10 @@ public static class LuaAotArtifactLoader
     private sealed record LoadedShard(
         int StartProgramCounter,
         int EndProgramCounter,
+        LuaCompiledMethod Method);
+
+    private sealed record LoadedNumericRegion(
+        ImmutableArray<int> ProgramCounters,
         LuaCompiledMethod Method);
 
     private sealed record ArtifactEnvelope(
