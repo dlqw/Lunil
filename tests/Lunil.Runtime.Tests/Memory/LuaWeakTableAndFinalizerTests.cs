@@ -71,6 +71,61 @@ public sealed class LuaWeakTableAndFinalizerTests
     }
 
     [Fact]
+    public void OldWeakKeyTableAppliesEphemeronRulesToYoungObjectsDuringMinorCollection()
+    {
+        var state = new LuaState();
+        var weak = CreateWeakTable(state, "k");
+        state.SetGlobal("weak", LuaValue.FromTable(weak));
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+        Assert.True(weak.Age >= LuaGcAge.Old0);
+
+        var key = state.CreateTable();
+        var value = state.CreateTable();
+        weak.Set(LuaValue.FromTable(key), LuaValue.FromTable(value));
+        state.SetGlobal("key", LuaValue.FromTable(key));
+
+        state.Heap.CollectMinor();
+        Assert.True(key.IsAlive);
+        Assert.True(value.IsAlive);
+
+        state.SetGlobal("key", LuaValue.Nil);
+        state.Heap.CollectMinor();
+        Assert.False(key.IsAlive);
+        Assert.False(value.IsAlive);
+        Assert.Equal(0, weak.HashCount);
+    }
+
+    [Fact]
+    public void WeakValueInsertedIntoOldTableDuringMinorCollectionIsNotMarkedStrongly()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                InitialMode = LuaGcMode.Generational,
+                StepObjectBudget = 1,
+            },
+        });
+        var weak = CreateWeakTable(state, "v");
+        state.SetGlobal("weak", LuaValue.FromTable(weak));
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+
+        var value = state.CreateTable();
+        state.Heap.Step(1);
+        Assert.NotEqual(LuaGcPhase.Paused, state.Heap.Phase);
+        weak.Set(LuaValue.FromInteger(1), LuaValue.FromTable(value));
+        while (state.Heap.Phase != LuaGcPhase.Paused)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.False(value.IsAlive);
+        Assert.True(weak.Get(LuaValue.FromInteger(1)).IsNil);
+    }
+
+    [Fact]
     public void StringEntriesRemainStrongInWeakTablesLikePucLua()
     {
         var state = new LuaState();
@@ -136,6 +191,40 @@ public sealed class LuaWeakTableAndFinalizerTests
         state.Heap.CollectFull();
         Assert.False(target.IsAlive);
         Assert.Equal(0, state.Heap.PendingFinalizerCount);
+    }
+
+    [Fact]
+    public void MinorCollectionSeparatesYoungFinalizerAndSupportsResurrection()
+    {
+        var state = new LuaState();
+        var metatable = state.CreateTable();
+        var finalizer = LuaValue.FromFunction(new LuaNativeFunction("__gc", static (_, _) => []));
+        metatable.Set(String(state, "__gc"), finalizer);
+        state.SetGlobal("metatable", LuaValue.FromTable(metatable));
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+
+        var target = state.CreateTable();
+        target.SetMetatable(metatable);
+        state.Heap.CollectMinor();
+
+        Assert.True(target.IsAlive);
+        Assert.Equal(LuaGcFinalizationState.Pending, target.FinalizationState);
+        LuaHandle? resurrection = null;
+        Assert.Equal(1, state.Heap.RunPendingFinalizers((value, callable) =>
+        {
+            Assert.Same(target, value);
+            Assert.Equal(finalizer, callable);
+            resurrection = state.CreateHandle(LuaValue.FromTable((LuaTable)value));
+        }));
+
+        state.Heap.CollectMinor();
+        Assert.True(target.IsAlive);
+        resurrection!.Dispose();
+        state.Heap.CollectMinor();
+        Assert.True(target.IsAlive);
+        state.Heap.CollectFull();
+        Assert.False(target.IsAlive);
     }
 
     [Fact]

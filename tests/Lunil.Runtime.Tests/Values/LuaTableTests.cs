@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
@@ -305,6 +306,45 @@ public sealed class LuaTableTests
 
         Assert.False(key.IsAlive);
         Assert.Equal(1, table.TombstoneCount);
+    }
+
+    [Fact]
+    public void TombstoneReleasesDeletedCollectableKeyToTheManagedCollector()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        state.SetGlobal("table", LuaValue.FromTable(table));
+        var weakKey = CreateDeletedKeyWeakReference(state, table);
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            ForceManagedCollection();
+        }
+
+        Assert.False(weakKey.TryGetTarget(out _));
+        Assert.Equal(1, table.TombstoneCount);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference<LuaTable> CreateDeletedKeyWeakReference(
+        LuaState state,
+        LuaTable table)
+    {
+        var key = state.CreateTable();
+        var weakKey = new WeakReference<LuaTable>(key);
+        table.Set(LuaValue.FromTable(key), LuaValue.FromInteger(1));
+        table.Set(LuaValue.FromTable(key), LuaValue.Nil);
+        state.Heap.CollectFull();
+        Assert.False(key.IsAlive);
+        return weakKey;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ForceManagedCollection()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 
     private static LuaState CreateDeterministicState() => new(new LuaStateOptions

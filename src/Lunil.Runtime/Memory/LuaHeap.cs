@@ -13,6 +13,8 @@ public sealed class LuaHeap
 
     private readonly LuaHeapOptions _options;
     private readonly List<LuaGcObject> _objects = [];
+    private readonly HashSet<LuaGcObject> _youngObjects =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<LuaGcObject, int> _permanentRoots =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<long, LuaValue> _handles = [];
@@ -20,6 +22,8 @@ public sealed class LuaHeap
     private readonly HashSet<LuaGcObject> _grayAgain =
         new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<LuaGcObject> _remembered =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<LuaGcObject> _rememberedDuringFullCycle =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<LuaTable, LuaWeakMode> _weakTables =
         new(ReferenceEqualityComparer.Instance);
@@ -80,6 +84,10 @@ public sealed class LuaHeap
 
     internal IReadOnlyList<LuaGcObject> Objects => _objects;
 
+    internal int YoungObjectCount => _youngObjects.Count;
+
+    internal int LastSweepCandidateCount { get; private set; }
+
     internal long Identity { get; }
 
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
@@ -104,7 +112,9 @@ public sealed class LuaHeap
             value.Color = LuaGcColor.Black;
         }
 
+        value.HeapIndex = _objects.Count;
         _objects.Add(value);
+        _youngObjects.Add(value);
         return checked(++_nextObjectId);
     }
 
@@ -480,6 +490,22 @@ public sealed class LuaHeap
     internal void MarkObject(LuaGcObject value)
     {
         ValidateObject(value);
+        if (_cycleKind == LuaGcCycleKind.Minor && IsOld(value))
+        {
+            return;
+        }
+
+        MarkObjectCore(value);
+    }
+
+    private void MarkRememberedObject(LuaGcObject value)
+    {
+        ValidateObject(value);
+        MarkObjectCore(value);
+    }
+
+    private void MarkObjectCore(LuaGcObject value)
+    {
         if (value.Color == LuaGcColor.White)
         {
             value.Color = LuaGcColor.Gray;
@@ -514,10 +540,16 @@ public sealed class LuaHeap
         _gray.Clear();
         _grayAgain.Clear();
         _weakTables.Clear();
+        if (kind == LuaGcCycleKind.Full)
+        {
+            _rememberedDuringFullCycle.Clear();
+        }
+
         _sweepCandidates = [];
         _sweepIndex = 0;
+        LastSweepCandidateCount = 0;
         _finalizersSeparated = false;
-        foreach (var value in _objects)
+        foreach (var value in GetCycleObjects())
         {
             value.Color = LuaGcColor.White;
         }
@@ -536,7 +568,7 @@ public sealed class LuaHeap
         {
             foreach (var remembered in _remembered)
             {
-                MarkObject(remembered);
+                MarkRememberedObject(remembered);
             }
         }
 
@@ -618,7 +650,7 @@ public sealed class LuaHeap
             }
 
             _finalizersSeparated = true;
-            foreach (var value in _objects)
+            foreach (var value in GetCycleObjects())
             {
                 if (!value.IsAlive || value.FinalizationState != LuaGcFinalizationState.None ||
                     value.Color != LuaGcColor.White ||
@@ -659,7 +691,8 @@ public sealed class LuaHeap
         }
 
         _grayAgain.Clear();
-        _sweepCandidates = _objects.ToArray();
+        _sweepCandidates = GetCycleObjects().ToArray();
+        LastSweepCandidateCount = _sweepCandidates.Length;
         _sweepIndex = 0;
         Phase = LuaGcPhase.Sweep;
         return 1;
@@ -689,6 +722,7 @@ public sealed class LuaHeap
 
             value.IsAlive = false;
             RemoveObjectByReference(value);
+            _youngObjects.Remove(value);
             _permanentRoots.Remove(value);
             _remembered.Remove(value);
             LogicalBytes = checked(LogicalBytes - value.LogicalSize);
@@ -706,9 +740,20 @@ public sealed class LuaHeap
 
     private int FinishCycle()
     {
-        foreach (var value in _objects)
+        foreach (var value in GetCycleObjects())
         {
             value.Color = LuaGcColor.White;
+        }
+
+        if (_cycleKind == LuaGcCycleKind.Minor)
+        {
+            foreach (var remembered in _remembered)
+            {
+                if (remembered.IsAlive)
+                {
+                    remembered.Color = LuaGcColor.White;
+                }
+            }
         }
 
         _remembered.RemoveWhere(static value => !value.IsAlive);
@@ -725,7 +770,11 @@ public sealed class LuaHeap
         else
         {
             _completedMinorCycles = 0;
-            _remembered.Clear();
+            // A major sweep promotes every snapshotted young survivor. Keep only owners
+            // that acquired an old-to-young edge while this full cycle was active, since
+            // allocations made after the sweep snapshot can remain young.
+            _remembered.IntersectWith(_rememberedDuringFullCycle);
+            _rememberedDuringFullCycle.Clear();
         }
 
         Phase = LuaGcPhase.Paused;
@@ -745,6 +794,19 @@ public sealed class LuaHeap
         if (IsOld(owner) && !IsOld(target))
         {
             _remembered.Add(owner);
+            if (_cycleKind == LuaGcCycleKind.Full && Phase != LuaGcPhase.Paused)
+            {
+                _rememberedDuringFullCycle.Add(owner);
+            }
+
+            if (_cycleKind == LuaGcCycleKind.Minor &&
+                Phase is LuaGcPhase.Propagate or LuaGcPhase.Atomic)
+            {
+                // Old objects are outside the ordinary minor mark domain. Force the owner
+                // through its normal traversal instead of marking the target directly so
+                // weak tables still apply their key/value and ephemeron semantics.
+                MarkRememberedObject(owner);
+            }
         }
     }
 
@@ -780,31 +842,64 @@ public sealed class LuaHeap
 
     private static bool IsOld(LuaGcObject value) => value.Age >= LuaGcAge.Old0;
 
-    private static void Promote(LuaGcObject value)
+    private void Promote(LuaGcObject value)
     {
-        value.Age = value.Age switch
+        var wasOld = IsOld(value);
+        value.Age = _cycleKind == LuaGcCycleKind.Full && !IsOld(value)
+            ? LuaGcAge.Old0
+            : value.Age switch
+            {
+                LuaGcAge.New => LuaGcAge.Survival,
+                LuaGcAge.Survival => LuaGcAge.Old0,
+                LuaGcAge.Old0 => LuaGcAge.Old1,
+                LuaGcAge.Old1 => LuaGcAge.Old,
+                _ => LuaGcAge.Old,
+            };
+
+        if (IsOld(value))
         {
-            LuaGcAge.New => LuaGcAge.Survival,
-            LuaGcAge.Survival => LuaGcAge.Old0,
-            LuaGcAge.Old0 => LuaGcAge.Old1,
-            LuaGcAge.Old1 => LuaGcAge.Old,
-            _ => LuaGcAge.Old,
-        };
+            _youngObjects.Remove(value);
+            if (!wasOld && _cycleKind == LuaGcCycleKind.Minor)
+            {
+                // The promoted object may already reference objects born after it. Those
+                // edges were created while both sides were young, so no write barrier could
+                // have remembered them at mutation time. Conservatively scan this newly old
+                // owner in later minors until the next full cycle.
+                _remembered.Add(value);
+            }
+            else if (!wasOld && _cycleKind == LuaGcCycleKind.Full)
+            {
+                // A young owner can acquire a post-snapshot young child while a major cycle
+                // is active and then be promoted by that cycle. At mutation time the edge
+                // was young-to-young, so preserve every newly old owner for the next minor.
+                _remembered.Add(value);
+                _rememberedDuringFullCycle.Add(value);
+            }
+        }
     }
 
     private void RemoveObjectByReference(LuaGcObject value)
     {
-        for (var index = 0; index < _objects.Count; index++)
+        var index = value.HeapIndex;
+        if ((uint)index >= (uint)_objects.Count || !ReferenceEquals(_objects[index], value))
         {
-            if (ReferenceEquals(_objects[index], value))
-            {
-                _objects.RemoveAt(index);
-                return;
-            }
+            throw new InvalidOperationException("The collected object has an invalid heap slot.");
         }
 
-        throw new InvalidOperationException("The collected object is not registered in the heap.");
+        var lastIndex = _objects.Count - 1;
+        if (index != lastIndex)
+        {
+            var replacement = _objects[lastIndex];
+            _objects[index] = replacement;
+            replacement.HeapIndex = index;
+        }
+
+        _objects.RemoveAt(lastIndex);
+        value.HeapIndex = -1;
     }
+
+    private IEnumerable<LuaGcObject> GetCycleObjects() =>
+        _cycleKind == LuaGcCycleKind.Minor ? _youngObjects : _objects;
 
     private readonly record struct PendingFinalizer(LuaGcObject Target);
 

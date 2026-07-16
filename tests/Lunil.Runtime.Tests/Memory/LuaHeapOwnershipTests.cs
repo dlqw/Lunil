@@ -77,4 +77,29 @@ public sealed class LuaHeapOwnershipTests
         Assert.Equal(4, state.Heap.ObjectCount);
         Assert.True(state.MemoryErrorString.IsAlive);
     }
+
+    [Fact]
+    public void SwapRemovalKeepsEveryLiveObjectDenseSlotConsistent()
+    {
+        var state = new LuaState();
+        var retained = state.CreateTable();
+        using var handle = state.CreateHandle(LuaValue.FromTable(retained));
+        var collected = Enumerable.Range(0, 64)
+            .Select(_ => state.CreateTable())
+            .ToArray();
+
+        state.Heap.CollectFull();
+
+        Assert.All(collected, static value =>
+        {
+            Assert.False(value.IsAlive);
+            Assert.Equal(-1, value.HeapIndex);
+        });
+        for (var index = 0; index < state.Heap.Objects.Count; index++)
+        {
+            Assert.Equal(index, state.Heap.Objects[index].HeapIndex);
+        }
+
+        Assert.True(retained.IsAlive);
+    }
 }
