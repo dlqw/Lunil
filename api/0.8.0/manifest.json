@@ -54,7 +54,7 @@
       "Assembly": "Lunil.Hosting",
       "Project": "src/Lunil.Hosting/Lunil.Hosting.csproj",
       "Baseline": "api/0.8.0/Lunil.Hosting.cs",
-      "Sha256": "8749E369B2F9C457A0F5F039DB860A09805A8B45B467658CF3826FC845EDFEF9"
+      "Sha256": "FD640C5AA3B21ADF80330DD285EDFB4168BACE1F54AC32B54C6A0A7EDF4F2126"
     },
     {
       "Assembly": "Lunil.IR",
@@ -66,7 +66,7 @@
       "Assembly": "Lunil.Runtime",
       "Project": "src/Lunil.Runtime/Lunil.Runtime.csproj",
       "Baseline": "api/0.8.0/Lunil.Runtime.cs",
-      "Sha256": "5EF078B76FD79CB58B828C915753EF085B694CC2843B93CDE14D3D6C3343B0CC"
+      "Sha256": "D1A73A1D71C6AF1104A2A532FE59341058DB5603D4E07B942D8C53CFBEFFFC65"
     },
     {
       "Assembly": "Lunil.Semantics",

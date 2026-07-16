@@ -44,6 +44,32 @@ namespace Lunil.Runtime
         public void Deconstruct(out string Name, out Lunil.Runtime.Values.LuaValue Value) => throw null;
     }
 
+    public enum LuaModuleLoaderKind
+    {
+        Preload = 0,
+        LuaFile = 1,
+        CustomSearcher = 2
+    }
+
+    public sealed class LuaModuleRecord : System.IEquatable<Lunil.Runtime.LuaModuleRecord>
+    {
+        public string Name { get => throw null; init { } }
+        public Lunil.Runtime.LuaModuleLoaderKind LoaderKind { get => throw null; init { } }
+        public Lunil.Runtime.Values.LuaValue Loader { get => throw null; init { } }
+        public Lunil.Runtime.Values.LuaValue LoaderData { get => throw null; init { } }
+        public Lunil.Runtime.Values.LuaValue CachedValue { get => throw null; init { } }
+        public Lunil.IR.Canonical.LuaIrModule? Module { get => throw null; init { } }
+        public long Revision { get => throw null; init { } }
+        public LuaModuleRecord(string Name, Lunil.Runtime.LuaModuleLoaderKind LoaderKind, Lunil.Runtime.Values.LuaValue Loader, Lunil.Runtime.Values.LuaValue LoaderData, Lunil.Runtime.Values.LuaValue CachedValue, Lunil.IR.Canonical.LuaIrModule? Module, long Revision) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Runtime.LuaModuleRecord? left, Lunil.Runtime.LuaModuleRecord? right) => throw null;
+        public static bool operator ==(Lunil.Runtime.LuaModuleRecord? left, Lunil.Runtime.LuaModuleRecord? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Runtime.LuaModuleRecord? other) => throw null;
+        public void Deconstruct(out string Name, out Lunil.Runtime.LuaModuleLoaderKind LoaderKind, out Lunil.Runtime.Values.LuaValue Loader, out Lunil.Runtime.Values.LuaValue LoaderData, out Lunil.Runtime.Values.LuaValue CachedValue, out Lunil.IR.Canonical.LuaIrModule? Module, out long Revision) => throw null;
+    }
+
     public sealed class LuaRuntimeException : System.Exception
     {
         public bool HasErrorValue { get => throw null; }
@@ -63,6 +89,7 @@ namespace Lunil.Runtime
         public Lunil.Runtime.Execution.LuaThread? RunningThread { get => throw null; }
         public Lunil.Runtime.Values.LuaValue RunningNativeFunction { get => throw null; }
         public bool IsRunningFinalizer { get => throw null; }
+        public bool IsIdle { get => throw null; }
         public event System.Action<Lunil.Runtime.Values.LuaValue>? WarningRaised;
         public LuaState(Lunil.Runtime.LuaStateOptions? options = null) { }
         public Lunil.Runtime.Values.LuaTable CreateTable(int arrayCapacity = 0, int hashCapacity = 0) => throw null;
@@ -72,6 +99,8 @@ namespace Lunil.Runtime
         public Lunil.Runtime.Execution.LuaThread CreateThread(Lunil.Runtime.Execution.LuaClosure entry, int initialStackCapacity = 128) => throw null;
         public Lunil.Runtime.Execution.LuaNativeClosure CreateNativeClosure(Lunil.Runtime.Execution.LuaNativeFunction descriptor, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> captures = null) => throw null;
         public Lunil.Runtime.Memory.LuaHandle CreateHandle(Lunil.Runtime.Values.LuaValue value) => throw null;
+        public bool TryGetModule(string name, out Lunil.Runtime.LuaModuleRecord? module) => throw null;
+        public System.Collections.Generic.IReadOnlyList<string> GetLoadedModuleNames() => throw null;
         public Lunil.Runtime.Values.LuaTable? GetTypeMetatable(Lunil.Runtime.Values.LuaValueKind kind) => throw null;
         public void SetTypeMetatable(Lunil.Runtime.Values.LuaValueKind kind, Lunil.Runtime.Values.LuaTable? metatable) { }
         public void RaiseWarning(Lunil.Runtime.Values.LuaValue warning) { }
