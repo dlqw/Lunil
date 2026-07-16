@@ -28,6 +28,12 @@ public abstract class LuaGcObject
 
     public LuaGcFinalizationState FinalizationState { get; internal set; }
 
+    /// <summary>
+    /// Dense slot occupied by this object in its owning heap. The slot is independent from
+    /// <see cref="ObjectId"/> and may change when another object is removed with swap-delete.
+    /// </summary>
+    internal int HeapIndex { get; set; } = -1;
+
     internal abstract void Traverse(LuaGcVisitor visitor);
 
     internal virtual bool TryGetFinalizer(out LuaValue finalizer)

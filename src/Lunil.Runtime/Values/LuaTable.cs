@@ -11,7 +11,7 @@ namespace Lunil.Runtime.Values;
 public sealed class LuaTable : LuaGcObject
 {
     private const int InitialHashCapacity = 8;
-    private const long BucketLogicalSize = 40;
+    private const long BucketLogicalSize = 48;
 
     private PooledArrayPart _array;
     private readonly LuaTableAllocationHint? _allocationHint;
@@ -273,8 +273,7 @@ public sealed class LuaTable : LuaGcObject
 
         if (value.IsNil)
         {
-            bucket.State = BucketState.Tombstone;
-            bucket.Value = LuaValue.Nil;
+            bucket.MakeTombstone();
             _hashCount--;
             _tombstoneCount++;
             IncrementShapeVersion();
@@ -546,8 +545,7 @@ public sealed class LuaTable : LuaGcObject
                 continue;
             }
 
-            bucket.State = BucketState.Tombstone;
-            bucket.Value = LuaValue.Nil;
+            bucket.MakeTombstone();
             _hashCount--;
             _tombstoneCount++;
             IncrementShapeVersion();
@@ -666,8 +664,7 @@ public sealed class LuaTable : LuaGcObject
             {
                 if (bucket.State == BucketState.Occupied)
                 {
-                    bucket.State = BucketState.Tombstone;
-                    bucket.Value = LuaValue.Nil;
+                    bucket.MakeTombstone();
                     _hashCount--;
                     _tombstoneCount++;
                     IncrementShapeVersion();
@@ -679,8 +676,7 @@ public sealed class LuaTable : LuaGcObject
 
             if (bucket.State == BucketState.Tombstone)
             {
-                bucket.State = BucketState.Occupied;
-                bucket.Value = value;
+                bucket.Reactivate(key, value);
                 _hashCount++;
                 _tombstoneCount--;
                 IncrementShapeVersion();
@@ -767,8 +763,7 @@ public sealed class LuaTable : LuaGcObject
             ref var bucket = ref _buckets[bucketIndex];
             Owner.AdjustLogicalSize(this, 16);
             _array.Add(bucket.Value);
-            bucket.State = BucketState.Tombstone;
-            bucket.Value = LuaValue.Nil;
+            bucket.MakeTombstone();
             _hashCount--;
             _tombstoneCount++;
             IncrementStorageVersion();
@@ -836,10 +831,9 @@ public sealed class LuaTable : LuaGcObject
 
     private static bool KeysMatch(in Bucket bucket, LuaValue key)
     {
-        if (bucket.State == BucketState.Tombstone &&
-            bucket.Key.TryGetGcObject() is { } deletedObject)
+        if (bucket.State == BucketState.Tombstone && bucket.TombstoneObjectId != 0)
         {
-            return ReferenceEquals(deletedObject, key.TryGetGcObject());
+            return key.TryGetGcObject()?.ObjectId == bucket.TombstoneObjectId;
         }
 
         return bucket.Key == key;
@@ -963,6 +957,27 @@ public sealed class LuaTable : LuaGcObject
             Value = value;
             Hash = hash;
             State = state;
+            TombstoneObjectId = 0;
+        }
+
+        public void MakeTombstone()
+        {
+            TombstoneObjectId = Key.TryGetGcObject()?.ObjectId ?? 0;
+            if (TombstoneObjectId != 0)
+            {
+                Key = LuaValue.Nil;
+            }
+
+            Value = LuaValue.Nil;
+            State = BucketState.Tombstone;
+        }
+
+        public void Reactivate(LuaValue key, LuaValue value)
+        {
+            Key = key;
+            Value = value;
+            TombstoneObjectId = 0;
+            State = BucketState.Occupied;
         }
 
         public LuaValue Key;
@@ -972,6 +987,8 @@ public sealed class LuaTable : LuaGcObject
         public int Hash;
 
         public BucketState State;
+
+        public long TombstoneObjectId;
     }
 }
 

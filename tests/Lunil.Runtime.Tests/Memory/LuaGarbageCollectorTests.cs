@@ -186,6 +186,105 @@ public sealed class LuaGarbageCollectorTests
     }
 
     [Fact]
+    public void MinorCollectionSweepsOnlyYoungObjectsRegardlessOfOldHeapSize()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { InitialMode = LuaGcMode.Generational },
+        });
+        var oldRoot = state.CreateTable();
+        state.SetGlobal("oldRoot", LuaValue.FromTable(oldRoot));
+        for (var index = 1; index <= 1_024; index++)
+        {
+            oldRoot.Set(LuaValue.FromInteger(index), LuaValue.FromTable(state.CreateTable()));
+        }
+
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+        Assert.Equal(0, state.Heap.YoungObjectCount);
+
+        var retained = state.CreateTable();
+        var garbage = state.CreateTable();
+        oldRoot.Set(LuaValue.FromInteger(1), LuaValue.FromTable(retained));
+
+        state.Heap.CollectMinor();
+
+        Assert.Equal(2, state.Heap.LastSweepCandidateCount);
+        Assert.True(retained.IsAlive);
+        Assert.False(garbage.IsAlive);
+        Assert.Equal(1, state.Heap.YoungObjectCount);
+
+        state.Heap.CollectMinor();
+        Assert.Equal(1, state.Heap.LastSweepCandidateCount);
+        Assert.True(retained.Age >= LuaGcAge.Old0);
+        Assert.Equal(0, state.Heap.YoungObjectCount);
+
+        oldRoot.Set(LuaValue.FromInteger(1), LuaValue.Nil);
+        state.Heap.CollectMinor();
+        Assert.True(retained.IsAlive);
+        state.Heap.CollectFull();
+        Assert.False(retained.IsAlive);
+    }
+
+    [Fact]
+    public void OldRootMutationDuringMinorCollectionMarksTheNewYoungChild()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                InitialMode = LuaGcMode.Generational,
+                StepObjectBudget = 1,
+            },
+        });
+        var parent = state.CreateTable();
+        state.SetGlobal("parent", LuaValue.FromTable(parent));
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+        Assert.True(parent.Age >= LuaGcAge.Old0);
+
+        var child = state.CreateTable();
+        state.Heap.Step(1);
+        Assert.NotEqual(LuaGcPhase.Paused, state.Heap.Phase);
+        Assert.Equal(LuaGcColor.White, child.Color);
+
+        parent.Set(LuaValue.FromInteger(1), LuaValue.FromTable(child));
+        while (state.Heap.Phase != LuaGcPhase.Paused)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.True(child.IsAlive);
+        Assert.Equal(LuaValue.FromTable(child), parent.Get(LuaValue.FromInteger(1)));
+    }
+
+    [Fact]
+    public void YoungHandleGraphSurvivesRepeatedMinorCollectionsAndPromotes()
+    {
+        var state = new LuaState();
+        var parent = state.CreateTable();
+        var child = state.CreateTable();
+        parent.Set(LuaValue.FromInteger(1), LuaValue.FromTable(child));
+        using (state.CreateHandle(LuaValue.FromTable(parent)))
+        {
+            state.Heap.CollectMinor();
+            state.Heap.CollectMinor();
+
+            Assert.True(parent.IsAlive);
+            Assert.True(child.IsAlive);
+            Assert.True(parent.Age >= LuaGcAge.Old0);
+            Assert.True(child.Age >= LuaGcAge.Old0);
+        }
+
+        state.Heap.CollectMinor();
+        Assert.True(parent.IsAlive);
+        Assert.True(child.IsAlive);
+        state.Heap.CollectFull();
+        Assert.False(parent.IsAlive);
+        Assert.False(child.IsAlive);
+    }
+
+    [Fact]
     public void InterpreterSurvivesCollectionAtEveryAllocationSafePoint()
     {
         var state = new LuaState(new LuaStateOptions
