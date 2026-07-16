@@ -11,7 +11,7 @@ namespace Lunil.Runtime.Values;
 public sealed class LuaTable : LuaGcObject
 {
     private const int InitialHashCapacity = 8;
-    private const long BucketLogicalSize = 48;
+    private const long BucketLogicalSize = 40;
 
     private PooledArrayPart _array;
     private readonly LuaTableAllocationHint? _allocationHint;

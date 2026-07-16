@@ -27,8 +27,9 @@ Every logical object has two deliberately separate identifiers:
   replaces a removed slot with the last live object and updates the replacement before removing
   the list tail. A collected object has slot `-1`.
 
-The heap maintains an exact reference-identity young set. Registration adds an object, and
-promotion from `Survival` to `Old0` removes it. Full cycles continue to use the complete dense heap.
+The heap maintains an exact reference-identity young set. Registration adds an object, ordinary
+minor survival advances `New` to `Survival` and then `Old0`, and a major sweep promotes every
+snapshotted young survivor directly to `Old0`. Full cycles continue to use the complete dense heap.
 Minor cycles whiten, scan for finalizers, snapshot, sweep, and reset only the young set.
 
 Ordinary minor marking rejects old objects. Permanent and handle roots therefore mark young roots
@@ -36,8 +37,15 @@ without walking retained old graphs. An old-to-young write records the owner in 
 remembered owners are force-traversed through their normal `Traverse` implementation, preserving
 weak-value and ephemeron rules rather than marking every target strongly. A newly remembered owner
 during incremental propagation or atomic work is queued immediately. Remembered old colors are
-reset after the minor cycle, and the remembered set is retained until a full cycle because later
-deletions must allow formerly referenced young objects to die.
+reset after the minor cycle. A completed full cycle drops remembered owners whose snapshotted young
+targets were promoted, but retains owners that acquired young edges during that cycle because
+post-snapshot allocations can remain young.
+
+Promotion itself is also a generational boundary. An owner can be older than an object assigned
+while both were still young, so no old-to-young barrier existed at the original write. Objects
+newly promoted by a minor cycle are therefore remembered conservatively until the next major
+cycle. Newly promoted owners from a major cycle are retained for one further cycle as well, which
+covers children allocated after that major cycle's sweep snapshot.
 
 Table tombstones store the deleted collectable key's `ObjectId` and clear the key `LuaValue`.
 Primitive keys remain inline. Matching a collectable tombstone compares the incoming object's
@@ -77,4 +85,6 @@ tombstones as before.
   heap size.
 - The remembered set may conservatively retain old owners until a major cycle; it does not retain
   deleted young targets by itself.
-- Hash buckets grow by one 64-bit tombstone identity field, reflected in logical heap accounting.
+- Hash buckets gain one internal 64-bit tombstone identity field. Lua logical-memory accounting
+  remains stable because the field replaces a retained managed reference as implementation
+  metadata and the Lua 5.4 memory-count contract must not change with CLR layout details.

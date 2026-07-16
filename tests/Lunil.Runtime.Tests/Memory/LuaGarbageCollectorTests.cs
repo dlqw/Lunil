@@ -285,6 +285,62 @@ public sealed class LuaGarbageCollectorTests
     }
 
     [Fact]
+    public void PromotionRemembersEdgesToObjectsBornAfterTheOwner()
+    {
+        var state = new LuaState();
+        var parent = state.CreateTable();
+        using var handle = state.CreateHandle(LuaValue.FromTable(parent));
+        state.Heap.CollectMinor();
+        Assert.Equal(LuaGcAge.Survival, parent.Age);
+
+        var youngerChild = state.CreateTable();
+        parent.Set(LuaValue.FromInteger(1), LuaValue.FromTable(youngerChild));
+        Assert.Equal(0, state.Heap.RememberedObjectCount);
+
+        state.Heap.CollectMinor();
+        Assert.True(parent.Age >= LuaGcAge.Old0);
+        Assert.Equal(LuaGcAge.Survival, youngerChild.Age);
+        Assert.True(state.Heap.RememberedObjectCount > 0);
+
+        state.Heap.CollectMinor();
+        Assert.True(youngerChild.IsAlive);
+        parent.Set(LuaValue.FromInteger(1), LuaValue.Nil);
+        state.Heap.CollectFull();
+        Assert.False(youngerChild.IsAlive);
+    }
+
+    [Fact]
+    public void FullCyclePromotionRemembersPostSnapshotYoungChildren()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StepObjectBudget = 1 },
+        });
+        var parent = state.CreateTable();
+        state.SetGlobal("parent", LuaValue.FromTable(parent));
+
+        state.Heap.Step(1);
+        while (state.Heap.Phase != LuaGcPhase.Sweep)
+        {
+            state.Heap.Step(1);
+        }
+
+        var child = state.CreateTable();
+        parent.Set(LuaValue.FromInteger(1), LuaValue.FromTable(child));
+        while (state.Heap.Phase != LuaGcPhase.Paused)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.True(parent.Age >= LuaGcAge.Old0);
+        Assert.Equal(LuaGcAge.New, child.Age);
+        Assert.True(state.Heap.RememberedObjectCount > 0);
+        state.Heap.CollectMinor();
+        Assert.True(child.IsAlive);
+        Assert.Equal(LuaGcAge.Survival, child.Age);
+    }
+
+    [Fact]
     public void InterpreterSurvivesCollectionAtEveryAllocationSafePoint()
     {
         var state = new LuaState(new LuaStateOptions
