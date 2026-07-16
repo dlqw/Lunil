@@ -41,6 +41,21 @@ public sealed class LuaCodegenAbiV1Tests
     }
 
     [Fact]
+    public void ExecutionContextAccountsBeyondTheInt32Range()
+    {
+        var (state, thread, _) = CreateFrame();
+        var expected = (long)int.MaxValue + 10;
+        var context = new LuaExecutionContext(state, thread, expected);
+
+        Assert.True(context.TryReserveInstructions(int.MaxValue));
+        Assert.True(context.TryReserveInstructions(10));
+
+        Assert.Equal(0, context.RemainingInstructionCount);
+        Assert.Equal(expected, context.InstructionsConsumed);
+        Assert.Equal(expected, LuaCompiledExit.Continue(0, expected).InstructionsConsumed);
+    }
+
+    [Fact]
     public void ExecutionContextDetectsDebugModeChanges()
     {
         var (state, thread, _) = CreateFrame();

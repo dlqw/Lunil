@@ -181,14 +181,20 @@ namespace Lunil.Runtime.CodeGen
     {
         public Lunil.Runtime.CodeGen.LuaCompiledExitKind Kind { get => throw null; }
         public int ProgramCounter { get => throw null; }
-        public int InstructionsConsumed { get => throw null; }
+        public long InstructionsConsumed { get => throw null; }
         public Lunil.Runtime.CodeGen.LuaCompiledExitReason Reason { get => throw null; }
         public static Lunil.Runtime.CodeGen.LuaCompiledExit Continue(int programCounter, int instructionsConsumed) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit Continue(int programCounter, long instructionsConsumed) => throw null;
         public static Lunil.Runtime.CodeGen.LuaCompiledExit Poll(int programCounter, int instructionsConsumed, Lunil.Runtime.CodeGen.LuaCompiledExitReason reason) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit Poll(int programCounter, long instructionsConsumed, Lunil.Runtime.CodeGen.LuaCompiledExitReason reason) => throw null;
         public static Lunil.Runtime.CodeGen.LuaCompiledExit Call(int programCounter, int instructionsConsumed) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit Call(int programCounter, long instructionsConsumed) => throw null;
         public static Lunil.Runtime.CodeGen.LuaCompiledExit TailCall(int programCounter, int instructionsConsumed) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit TailCall(int programCounter, long instructionsConsumed) => throw null;
         public static Lunil.Runtime.CodeGen.LuaCompiledExit Return(int programCounter, int instructionsConsumed) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit Return(int programCounter, long instructionsConsumed) => throw null;
         public static Lunil.Runtime.CodeGen.LuaCompiledExit Deopt(int programCounter, int instructionsConsumed, Lunil.Runtime.CodeGen.LuaCompiledExitReason reason) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCompiledExit Deopt(int programCounter, long instructionsConsumed, Lunil.Runtime.CodeGen.LuaCompiledExitReason reason) => throw null;
         #nullable disable
         public override string ToString() => throw null;
         #nullable restore

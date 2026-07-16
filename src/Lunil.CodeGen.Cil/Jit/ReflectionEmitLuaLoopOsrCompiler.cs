@@ -128,15 +128,15 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
     private static readonly MethodInfo ContinueExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo PollExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Poll),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
     private static readonly MethodInfo DeoptExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
 
     public static void PrepareRuntimeAbi()
     {

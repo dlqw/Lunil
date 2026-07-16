@@ -20,6 +20,13 @@ Beta freeze. The exact gate still rejects an unreviewed addition, removal, signa
 dependency edge, or package asset. Entering `0.8.0-beta.1` will turn the accepted snapshot into the
 frozen contract for the rest of the `0.8` line.
 
+The Alpha snapshot intentionally widens the advanced
+`LuaCompiledExit.InstructionsConsumed` code-generation ABI property from `int` to `long`. Existing
+`int` factory overloads remain available for persisted and third-party emitters; new `long`
+overloads and the scheduler's 64-bit activation budget prevent one compiled entry from overflowing
+after more than `Int32.MaxValue` canonical instructions. See
+[ADR 0013](adr/0013-64-bit-instruction-accounting.md).
+
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
 active `0.8.0-alpha.1` version they read and update only `api/0.8.0/`.
 

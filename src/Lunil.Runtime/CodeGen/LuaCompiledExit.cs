@@ -38,7 +38,7 @@ public readonly record struct LuaCompiledExit
     private LuaCompiledExit(
         LuaCompiledExitKind kind,
         int programCounter,
-        int instructionsConsumed,
+        long instructionsConsumed,
         LuaCompiledExitReason reason)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
@@ -55,31 +55,53 @@ public readonly record struct LuaCompiledExit
     public int ProgramCounter { get; }
 
     /// <summary>The number of canonical instructions completed by this entry invocation.</summary>
-    public int InstructionsConsumed { get; }
+    public long InstructionsConsumed { get; }
 
     public LuaCompiledExitReason Reason { get; }
 
     public static LuaCompiledExit Continue(int programCounter, int instructionsConsumed) =>
+        Continue(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Continue(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Continue, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Poll(
         int programCounter,
         int instructionsConsumed,
+        LuaCompiledExitReason reason) => Poll(programCounter, (long)instructionsConsumed, reason);
+
+    public static LuaCompiledExit Poll(
+        int programCounter,
+        long instructionsConsumed,
         LuaCompiledExitReason reason) =>
         new(LuaCompiledExitKind.Poll, programCounter, instructionsConsumed, ValidateReason(reason));
 
     public static LuaCompiledExit Call(int programCounter, int instructionsConsumed) =>
+        Call(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Call(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Call, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit TailCall(int programCounter, int instructionsConsumed) =>
+        TailCall(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit TailCall(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.TailCall, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Return(int programCounter, int instructionsConsumed) =>
+        Return(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Return(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Return, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Deopt(
         int programCounter,
         int instructionsConsumed,
+        LuaCompiledExitReason reason) => Deopt(programCounter, (long)instructionsConsumed, reason);
+
+    public static LuaCompiledExit Deopt(
+        int programCounter,
+        long instructionsConsumed,
         LuaCompiledExitReason reason) =>
         new(LuaCompiledExitKind.Deopt, programCounter, instructionsConsumed, ValidateReason(reason));
 
@@ -93,9 +115,9 @@ public readonly record struct LuaCompiledExit
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class LuaExecutionContext
 {
-    private int _instructionsConsumed;
+    private long _instructionsConsumed;
     private int _lastObservedProgramCounter;
-    private int _lastObservedInstructionCount;
+    private long _lastObservedInstructionCount;
 
     internal LuaExecutionContext(
         LuaState state,
@@ -125,7 +147,7 @@ public sealed class LuaExecutionContext
 
     public bool HasExactDebugHooks { get; private set; }
 
-    internal int InstructionsConsumed => _instructionsConsumed;
+    internal long InstructionsConsumed => _instructionsConsumed;
 
     internal LuaExecutionEngine? ExecutionEngine { get; private set; }
 

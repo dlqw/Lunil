@@ -419,7 +419,10 @@ dirty register、captured value、`SetTop` 的 minimum/final top、pending budge
 预算退出与 safepoint 边界统一提交。backedge 使用最大 1024 次的 local countdown；非 poll 回边只累计
 实际成本和 Loop OSR 逻辑 backedge，不调用 managed method。poll 前所有 GC 可见状态均已物化；只有
 `None` 可重新进入 quantum，debug/GC/finalizer/budget/close/unwind 结果返回 scheduler。Loop OSR 的逻辑
-backedge telemetry 在边界批量提交，因此统计不因 countdown 采样而少计。
+backedge telemetry 在边界批量提交，因此统计不因 countdown 采样而少计。`LuaExecutionContext` 与
+`LuaCompiledExit.InstructionsConsumed` 使用 64 位累计值，因而单次长时间 numeric-region 入口不会在
+`Int32.MaxValue` 处溢出；持久化 emitter 使用的既有 `int` factory overload 保持可用。详见
+[ADR 0013](adr/0013-64-bit-instruction-accounting.md)。
 
 `NumericRegionCount`、`UnboxedNumericLocalCount`、`DirectNumericInstructionCount` 与
 `NumericRegionSafepointCount` 同时发布在 Tier 2/Loop OSR plan。最后一项是生成代码中的静态 backedge

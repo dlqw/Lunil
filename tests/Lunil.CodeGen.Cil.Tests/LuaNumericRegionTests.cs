@@ -605,6 +605,18 @@ public sealed class LuaNumericRegionTests
             Assert.Equal(budget - 14, context.RemainingInstructionCount);
             Assert.Equal(LuaValue.FromInteger(0), thread.Stack[0]);
         }
+
+        var wideBudget = (long)int.MaxValue + 14;
+        var (wideContext, wideThread, wideFrame) = CreateBudgetFrame(module, wideBudget);
+        Assert.True(wideContext.TryReserveInstructions(int.MaxValue));
+
+        var wideExit = compiled.Method(wideContext, wideThread, wideFrame);
+
+        Assert.Equal(LuaCompiledExitKind.Continue, wideExit.Kind);
+        Assert.Equal(wideBudget, wideExit.InstructionsConsumed);
+        Assert.Equal(wideBudget, wideContext.InstructionsConsumed);
+        Assert.Equal(0, wideContext.RemainingInstructionCount);
+        Assert.Equal(LuaValue.FromInteger(0), wideThread.Stack[0]);
     }
 
     [Theory]
@@ -954,7 +966,7 @@ public sealed class LuaNumericRegionTests
     }
 
     private static (LuaExecutionContext Context, LuaThread Thread, LuaFrame Frame)
-        CreateBudgetFrame(LuaIrModule module, int budget)
+        CreateBudgetFrame(LuaIrModule module, long budget)
     {
         var state = new LuaState();
         var thread = state.MainThread;

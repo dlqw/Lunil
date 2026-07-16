@@ -261,27 +261,27 @@ internal static class ReflectionEmitLuaTier2Compiler
     private static readonly MethodInfo PollExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Poll),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
     private static readonly MethodInfo ReturnExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Return),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo ContinueExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo CallExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Call),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo TailCallExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.TailCall),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo DeoptExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
     [RequiresDynamicCode("Tier 2 CIL specialization requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
         "AOT",
