@@ -1560,7 +1560,8 @@ internal sealed class LuaExecutionEngine
                             thread,
                             frame.Continuation,
                             step.StateValues,
-                            step.ByteBuffer);
+                            step.ByteBuffer,
+                            step.StateValuesAreReusable);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
                         {
@@ -1595,7 +1596,8 @@ internal sealed class LuaExecutionEngine
                             thread,
                             frame.Continuation,
                             step.StateValues,
-                            step.ByteBuffer);
+                            step.ByteBuffer,
+                            step.StateValuesAreReusable);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         if (!tailCall && !programCounterAdvanced)
                         {
@@ -1659,7 +1661,8 @@ internal sealed class LuaExecutionEngine
                         thread,
                         frame.Continuation,
                         step.StateValues,
-                        step.ByteBuffer);
+                        step.ByteBuffer,
+                        step.StateValuesAreReusable);
                     thread.Owner.WriteBarrier(thread, nativeFunction);
                     if (!tailCall && !programCounterAdvanced)
                     {
@@ -1741,7 +1744,8 @@ internal sealed class LuaExecutionEngine
                             thread,
                             thread.RootContinuation,
                             step.StateValues,
-                            step.ByteBuffer);
+                            step.ByteBuffer,
+                            step.StateValuesAreReusable);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         PushFrame(thread, closure, resolved.Arguments, 0, expectedResults: -1);
                         return;
@@ -1761,7 +1765,8 @@ internal sealed class LuaExecutionEngine
                             thread,
                             thread.RootContinuation,
                             step.StateValues,
-                            step.ByteBuffer);
+                            step.ByteBuffer,
+                            step.StateValuesAreReusable);
                         thread.Owner.WriteBarrier(thread, nativeFunction);
                         PushFrame(
                             thread,
@@ -1818,7 +1823,8 @@ internal sealed class LuaExecutionEngine
                         thread,
                         thread.RootContinuation,
                         step.StateValues,
-                        step.ByteBuffer);
+                        step.ByteBuffer,
+                        step.StateValuesAreReusable);
                     thread.Owner.WriteBarrier(thread, nativeFunction);
                     thread.SetYieldedValues(step.Values);
                     scheduler.RequestYield();
@@ -1833,11 +1839,12 @@ internal sealed class LuaExecutionEngine
     private static void SaveNativeInvocationState(
         LuaThread thread,
         LuaContinuation continuation,
-        ReadOnlySpan<LuaValue> stateValues,
-        LuaNativeByteBuffer? byteBuffer)
+        LuaValue[] stateValues,
+        LuaNativeByteBuffer? byteBuffer,
+        bool stateValuesAreReusable)
     {
         byteBuffer?.ValidateOwner(thread.Owner);
-        continuation.Values = stateValues.ToArray();
+        continuation.Values = stateValuesAreReusable ? stateValues : stateValues.ToArray();
         continuation.NativeByteBuffer = byteBuffer;
         foreach (var value in continuation.Values)
         {

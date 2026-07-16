@@ -246,6 +246,27 @@ if (!backendOnly)
         """, installStandardLibrary: true));
 
     Run(
+        "interpreter_warm_table_sort_callbacks",
+        Scaled(iterations),
+        CreateWarmRunner("""
+        local values = {}
+        for i = 1, 2000 do values[i] = 2001 - i end
+        table.sort(values, function(left, right) return left < right end)
+        return values[1] + values[2000]
+        """, installStandardLibrary: true));
+
+    Run(
+        "interpreter_warm_string_format",
+        Scaled(iterations),
+        CreateWarmRunner("""
+        local total = 0
+        for i = 1, 5000 do
+            total = total + #string.format("%04d:%q:%s", i, "x\\y", true)
+        end
+        return total
+        """, installStandardLibrary: true));
+
+    Run(
         "interpreter_warm_string_gmatch",
         Scaled(iterations),
         CreateWarmRunner("""

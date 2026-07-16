@@ -17,6 +17,7 @@ namespace Lunil.StandardLibrary;
 
 internal static class LuaBasicLibrary
 {
+    private static readonly byte[] PrintSeparator = [(byte)'\t'];
     private static readonly LuaNativeFunction NextDescriptor = new("next", Next);
     private static readonly LuaNativeFunction IPairsIteratorDescriptor =
         new("ipairs iterator", IPairsIterator);
@@ -342,22 +343,25 @@ internal static class LuaBasicLibrary
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
-        LuaValue[] arguments;
+        LuaValue[]? state = null;
+        ReadOnlySpan<LuaValue> arguments;
         var index = 0;
         if (continuationId == 0)
         {
-            arguments = values.ToArray();
+            arguments = values;
         }
         else
         {
-            index = checked((int)context.InvocationState[^1].AsInteger());
-            arguments = context.InvocationState.Take(context.InvocationState.Count - 1).ToArray();
+            state = context.InvocationState as LuaValue[] ??
+                throw new InvalidOperationException("print lost its reusable state.");
+            index = checked((int)state[^1].AsInteger());
+            arguments = state.AsSpan(0, state.Length - 1);
             if (values.Length == 0 || values[0].Kind != LuaValueKind.String)
             {
                 throw new LuaRuntimeException("'__tostring' must return a string");
             }
 
-            WritePrintValue(context.State, index, values[0].AsString().ToArray());
+            WritePrintValue(context.State, index, values[0].AsString().AsMemory());
             index++;
         }
 
@@ -366,18 +370,26 @@ internal static class LuaBasicLibrary
             var metamethod = GetMetafield(context.State, arguments[index], "__tostring");
             if (!metamethod.IsNil)
             {
-                return LuaNativeStep.CallLua(
+                if (state is null)
+                {
+                    state = new LuaValue[arguments.Length + 1];
+                    arguments.CopyTo(state);
+                    arguments = state.AsSpan(0, arguments.Length);
+                }
+
+                state[^1] = LuaValue.FromInteger(index);
+                return LuaNativeStep.CallLuaWithReusableState(
                     metamethod,
                     [arguments[index]],
                     continuationId: 1,
-                    stateValues: [.. arguments, LuaValue.FromInteger(index)],
+                    stateValues: state,
                     callIsYieldable: false);
             }
 
             WritePrintValue(
                 context.State,
                 index,
-                DefaultToString(context.State, arguments[index]).AsString().ToArray());
+                DefaultToString(context.State, arguments[index]).AsString().AsMemory());
             index++;
         }
 
@@ -385,12 +397,12 @@ internal static class LuaBasicLibrary
         return LuaNativeStep.Completed();
     }
 
-    private static void WritePrintValue(LuaState state, int index, byte[] bytes)
+    private static void WritePrintValue(LuaState state, int index, ReadOnlyMemory<byte> bytes)
     {
         var console = LuaStandardLibraryContext.Get(state).Options.Console;
         if (index != 0)
         {
-            console.Write("\t"u8.ToArray());
+            console.Write(PrintSeparator);
         }
 
         console.Write(bytes);

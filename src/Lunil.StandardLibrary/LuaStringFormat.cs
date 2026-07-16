@@ -14,37 +14,50 @@ internal static class LuaStringFormat
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
-        LuaValue[] arguments;
-        List<byte> output;
+        LuaValue[]? stateValues = null;
+        ReadOnlySpan<LuaValue> arguments;
+        LuaNativeByteBuffer output;
         int index;
         int argument;
         if (continuationId == 0)
         {
-            arguments = values.ToArray();
-            var initialFormat = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "format");
-            output = new List<byte>(initialFormat.Length + 32);
+            arguments = values;
+            var initialFormatLength = LuaLibraryHelpers.Required(arguments, 0, "format").Kind ==
+                LuaValueKind.String
+                ? arguments[0].AsString().Length
+                : LuaLibraryHelpers.CheckStringBytes(arguments, 0, "format").Length;
+            output = new LuaNativeByteBuffer(context.State.Heap, initialCapacity: 0);
+            output.ReserveCapacityHint(
+                (int)Math.Min(Array.MaxLength, (long)initialFormatLength + 32));
             index = 0;
             argument = 1;
         }
         else
         {
-            var state = context.InvocationState;
-            var argumentCount = checked((int)state[6].AsInteger());
-            arguments = state.Skip(7).Take(argumentCount).ToArray();
-            output = new List<byte>(state[0].AsString().ToArray());
-            index = checked((int)state[1].AsInteger());
-            argument = checked((int)state[2].AsInteger());
+            stateValues = context.InvocationState as LuaValue[] ??
+                throw new InvalidOperationException("string.format lost its reusable state.");
+            var argumentCount = checked((int)stateValues[5].AsInteger());
+            if (stateValues.Length != 6 + argumentCount)
+            {
+                throw new InvalidOperationException("Invalid string.format continuation state.");
+            }
+
+            arguments = stateValues.AsSpan(6, argumentCount);
+            output = context.ByteBuffer ??
+                throw new InvalidOperationException("string.format lost its byte buffer.");
+            index = checked((int)stateValues[0].AsInteger());
+            argument = checked((int)stateValues[1].AsInteger());
             if (values.Length == 0 || values[0].Kind != LuaValueKind.String)
             {
                 throw new LuaRuntimeException("'__tostring' must return a string");
             }
 
-            var width = checked((int)state[3].AsInteger());
-            var encodedPrecision = checked((int)state[4].AsInteger());
+            var width = checked((int)stateValues[2].AsInteger());
+            var encodedPrecision = checked((int)stateValues[3].AsInteger());
             int? precision = encodedPrecision < 0 ? null : encodedPrecision;
-            var flags = state[5].AsString().ToString();
+            var flags = stateValues[4].AsString().ToString();
             AppendFormattedString(
-                values[0].AsString().ToArray(),
+                values[0].AsString().AsSpan(),
                 precision,
                 width,
                 flags,
@@ -53,18 +66,30 @@ internal static class LuaStringFormat
                 output);
         }
 
-        var format = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "format");
+        var formatValue = LuaLibraryHelpers.Required(arguments, 0, "format");
+        byte[]? convertedFormat = null;
+        ReadOnlySpan<byte> format;
+        if (formatValue.Kind == LuaValueKind.String)
+        {
+            format = formatValue.AsString().AsSpan();
+        }
+        else
+        {
+            convertedFormat = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "format");
+            format = convertedFormat;
+        }
+
         while (index < format.Length)
         {
             if (format[index] != (byte)'%')
             {
-                output.Add(format[index++]);
+                output.Append(format.Slice(index++, 1));
                 continue;
             }
 
             if (++index < format.Length && format[index] == (byte)'%')
             {
-                output.Add((byte)'%');
+                output.Append("%"u8);
                 index++;
                 continue;
             }
@@ -98,8 +123,8 @@ internal static class LuaStringFormat
             }
 
             var conversion = (char)format[index];
-            var modifiers = format.AsSpan(start, index - start);
-            var specifier = Encoding.ASCII.GetString(format.AsSpan(start, index - start + 1));
+            var modifiers = format.Slice(start, index - start);
+            var specifier = Encoding.ASCII.GetString(format.Slice(start, index - start + 1));
             var parsed = ParseFormat(modifiers, conversion, specifier);
             var flags = parsed.Flags;
             var width = parsed.Width;
@@ -118,33 +143,40 @@ internal static class LuaStringFormat
                     "__tostring");
                 if (!metamethod.IsNil)
                 {
-                    return LuaNativeStep.CallLua(
+                    stateValues = EncodeState(
+                        context.State,
+                        stateValues,
+                        arguments,
+                        index,
+                        argument,
+                        width,
+                        precision,
+                        flags);
+                    return LuaNativeStep.CallLuaWithReusableStateAndByteBuffer(
                         metamethod,
                         [value],
                         continuationId: 1,
-                        stateValues: EncodeState(
-                            context.State,
-                            arguments,
-                            output,
-                            index,
-                            argument,
-                            width,
-                            precision,
-                            flags),
-                        callIsYieldable: false);
+                        stateValues,
+                        callIsYieldable: false,
+                        byteBuffer: output);
                 }
 
                 var renderedString = LuaBasicLibrary.DefaultToString(context.State, value)
-                    .AsString()
-                    .ToArray();
+                    .AsString();
                 AppendFormattedString(
-                    renderedString,
+                    renderedString.AsSpan(),
                     precision,
                     width,
                     flags,
                     hasModifiers: flags.Length != 0 || width != 0 || precision.HasValue,
                     argument,
                     output);
+                continue;
+            }
+
+            if (conversion == 'q')
+            {
+                AppendQuoted(output, value);
                 continue;
             }
 
@@ -158,7 +190,6 @@ internal static class LuaStringFormat
                     flags),
                 'e' or 'E' or 'f' or 'g' or 'G' or 'a' or 'A' =>
                     FormatFloat(value, conversion, precision, flags),
-                'q' => Quote(value),
                 'p' => Encoding.ASCII.GetBytes(FormatPointer(value)),
                 _ => throw new LuaRuntimeException($"invalid conversion '%{specifier}' to 'format'"),
             };
@@ -167,11 +198,11 @@ internal static class LuaStringFormat
             var widthFlags = precision.HasValue && conversion is 'd' or 'i' or 'u' or 'o' or 'x' or 'X'
                 ? flags.Replace("0", string.Empty, StringComparison.Ordinal)
                 : flags;
-            output.AddRange(ApplyWidth(rendered, width, widthFlags));
+            AppendWithWidth(output, rendered, width, widthFlags);
         }
 
         return LuaNativeStep.Completed(
-            LuaValue.FromString(context.State.Strings.GetOrCreate(output.ToArray())));
+            LuaValue.FromString(output.MoveToString(context.State.Strings)));
     }
 
     private static bool IsGeneralFormatCharacter(byte value) =>
@@ -246,40 +277,46 @@ internal static class LuaStringFormat
 
     private static LuaValue[] EncodeState(
         LuaState state,
-        LuaValue[] arguments,
-        List<byte> output,
+        LuaValue[]? values,
+        ReadOnlySpan<LuaValue> arguments,
         int index,
         int argument,
         int width,
         int? precision,
-        string flags) =>
-        [
-            LuaValue.FromString(state.Strings.GetOrCreate(output.ToArray())),
-            LuaValue.FromInteger(index),
-            LuaValue.FromInteger(argument),
-            LuaValue.FromInteger(width),
-            LuaValue.FromInteger(precision ?? -1),
-            LuaLibraryHelpers.String(state, flags),
-            LuaValue.FromInteger(arguments.Length),
-            .. arguments,
-        ];
+        string flags)
+    {
+        values ??= new LuaValue[6 + arguments.Length];
+        if (values.Length != 6 + arguments.Length)
+        {
+            throw new InvalidOperationException("Invalid string.format continuation state.");
+        }
+
+        values[0] = LuaValue.FromInteger(index);
+        values[1] = LuaValue.FromInteger(argument);
+        values[2] = LuaValue.FromInteger(width);
+        values[3] = LuaValue.FromInteger(precision ?? -1);
+        values[4] = LuaLibraryHelpers.String(state, flags);
+        values[5] = LuaValue.FromInteger(arguments.Length);
+        arguments.CopyTo(values.AsSpan(6));
+        return values;
+    }
 
     private static void AppendFormattedString(
-        byte[] bytes,
+        ReadOnlySpan<byte> bytes,
         int? precision,
         int width,
         string flags,
         bool hasModifiers,
         int argument,
-        List<byte> output)
+        LuaNativeByteBuffer output)
     {
-        if (hasModifiers && bytes.AsSpan().Contains((byte)0))
+        if (hasModifiers && bytes.Contains((byte)0))
         {
             throw LuaLibraryHelpers.BadArgument("format", argument - 1, "string contains zeros");
         }
 
         var rendered = precision is { } limit && bytes.Length > limit ? bytes[..limit] : bytes;
-        output.AddRange(ApplyWidth(rendered, width, flags));
+        AppendWithWidth(output, rendered, width, flags);
     }
 
     private static long CheckedInteger(LuaValue value, int index, string function)
@@ -508,52 +545,92 @@ internal static class LuaStringFormat
         return $"{(negative ? "-" : string.Empty)}{prefix}{(digits.Length == 0 ? string.Empty : "." + digits)}{exponentMarker}{(exponent >= 0 ? "+" : string.Empty)}{exponent}";
     }
 
-    private static byte[] Quote(LuaValue value) => value.Kind switch
+    private static void AppendQuoted(LuaNativeByteBuffer output, LuaValue value)
     {
-        LuaValueKind.String => QuoteString(value.AsString().AsSpan()),
-        LuaValueKind.Integer => Encoding.ASCII.GetBytes(value.AsInteger() == long.MinValue
-            ? "0x8000000000000000"
-            : value.AsInteger().ToString(CultureInfo.InvariantCulture)),
-        LuaValueKind.Float => Encoding.ASCII.GetBytes(QuoteFloat(value.AsFloat())),
-        LuaValueKind.Boolean => value.AsBoolean() ? "true"u8.ToArray() : "false"u8.ToArray(),
-        LuaValueKind.Nil => "nil"u8.ToArray(),
-        _ => throw new LuaRuntimeException("value has no literal form"),
-    };
+        switch (value.Kind)
+        {
+            case LuaValueKind.String:
+                AppendQuotedString(output, value.AsString().AsSpan());
+                return;
+            case LuaValueKind.Integer:
+                AppendAscii(output, value.AsInteger() == long.MinValue
+                    ? "0x8000000000000000"
+                    : value.AsInteger().ToString(CultureInfo.InvariantCulture));
+                return;
+            case LuaValueKind.Float:
+                AppendAscii(output, QuoteFloat(value.AsFloat()));
+                return;
+            case LuaValueKind.Boolean:
+                output.Append(value.AsBoolean() ? "true"u8 : "false"u8);
+                return;
+            case LuaValueKind.Nil:
+                output.Append("nil"u8);
+                return;
+            default:
+                throw new LuaRuntimeException("value has no literal form");
+        }
+    }
 
-    private static byte[] QuoteString(ReadOnlySpan<byte> value)
+    private static void AppendQuotedString(LuaNativeByteBuffer output, ReadOnlySpan<byte> value)
     {
-        var output = new List<byte>(value.Length + 2) { (byte)'"' };
+        output.Append("\""u8);
+        Span<byte> escaped = stackalloc byte[4];
         for (var index = 0; index < value.Length; index++)
         {
             var character = value[index];
             switch (character)
             {
-                case (byte)'"': output.AddRange("\\\""u8.ToArray()); break;
-                case (byte)'\\': output.AddRange("\\\\"u8.ToArray()); break;
+                case (byte)'"': output.Append("\\\""u8); break;
+                case (byte)'\\': output.Append("\\\\"u8); break;
                 case (byte)'\n':
-                    output.Add((byte)'\\');
-                    output.Add((byte)'\n');
+                    output.Append("\\\n"u8);
                     break;
                 default:
                     if (character < 32 || character == 127)
                     {
-                        output.Add((byte)'\\');
                         var nextIsDigit = index + 1 < value.Length && IsDigit(value[index + 1]);
-                        output.AddRange(Encoding.ASCII.GetBytes(character.ToString(
-                            nextIsDigit ? "D3" : "D",
-                            CultureInfo.InvariantCulture)));
+                        escaped[0] = (byte)'\\';
+                        var digits = WriteDecimalByte(character, escaped[1..], nextIsDigit);
+                        output.Append(escaped[..(digits + 1)]);
                     }
                     else
                     {
-                        output.Add(character);
+                        output.Append(value.Slice(index, 1));
                     }
 
                     break;
             }
         }
 
-        output.Add((byte)'"');
-        return output.ToArray();
+        output.Append("\""u8);
+    }
+
+    private static int WriteDecimalByte(byte value, Span<byte> destination, bool padToThree)
+    {
+        if (padToThree || value >= 100)
+        {
+            destination[0] = (byte)('0' + (value / 100));
+            destination[1] = (byte)('0' + ((value / 10) % 10));
+            destination[2] = (byte)('0' + (value % 10));
+            return 3;
+        }
+
+        if (value >= 10)
+        {
+            destination[0] = (byte)('0' + (value / 10));
+            destination[1] = (byte)('0' + (value % 10));
+            return 2;
+        }
+
+        destination[0] = (byte)('0' + value);
+        return 1;
+    }
+
+    private static void AppendAscii(LuaNativeByteBuffer output, string text)
+    {
+        Span<byte> bytes = stackalloc byte[128];
+        var length = Encoding.ASCII.GetBytes(text.AsSpan(), bytes);
+        output.Append(bytes[..length]);
     }
 
     private static string QuoteFloat(double value)
@@ -608,20 +685,24 @@ internal static class LuaStringFormat
         return Encoding.ASCII.GetBytes(text);
     }
 
-    private static byte[] ApplyWidth(byte[] bytes, int width, string flags)
+    private static void AppendWithWidth(
+        LuaNativeByteBuffer output,
+        ReadOnlySpan<byte> bytes,
+        int width,
+        string flags)
     {
         if (bytes.Length >= width)
         {
-            return bytes;
+            output.Append(bytes);
+            return;
         }
 
         var padding = width - bytes.Length;
         var pad = flags.Contains('0') && !flags.Contains('-') ? (byte)'0' : (byte)' ';
-        var result = new byte[width];
         if (flags.Contains('-'))
         {
-            bytes.CopyTo(result, 0);
-            result.AsSpan(bytes.Length).Fill((byte)' ');
+            output.Append(bytes);
+            output.AppendRepeated((byte)' ', padding);
         }
         else if (pad == (byte)'0')
         {
@@ -634,17 +715,15 @@ internal static class LuaStringFormat
                 prefixLength += 2;
             }
 
-            bytes.AsSpan(0, prefixLength).CopyTo(result);
-            result.AsSpan(prefixLength, padding).Fill(pad);
-            bytes.AsSpan(prefixLength).CopyTo(result.AsSpan(prefixLength + padding));
+            output.Append(bytes[..prefixLength]);
+            output.AppendRepeated(pad, padding);
+            output.Append(bytes[prefixLength..]);
         }
         else
         {
-            result.AsSpan(0, padding).Fill(pad);
-            bytes.CopyTo(result, padding);
+            output.AppendRepeated(pad, padding);
+            output.Append(bytes);
         }
-
-        return result;
     }
 
     private readonly record struct ParsedFormat(string Flags, int Width, int? Precision);

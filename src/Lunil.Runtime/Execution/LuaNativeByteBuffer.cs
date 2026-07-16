@@ -57,6 +57,20 @@ internal sealed class LuaNativeByteBuffer
         Length = (int)requiredLength;
     }
 
+    internal void AppendRepeated(byte value, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        var requiredLength = (long)Length + count;
+        if (requiredLength > _maximumLength)
+        {
+            ThrowQuotaExceeded(requiredLength);
+        }
+
+        EnsureCapacity((int)requiredLength);
+        _bytes.AsSpan(Length, count).Fill(value);
+        Length = (int)requiredLength;
+    }
+
     /// <summary>
     /// Appends two adjacent spans with one capacity probe while preserving the quota failure
     /// point and requested length of two individual appends.

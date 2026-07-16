@@ -188,6 +188,24 @@ public sealed class LuaTableAndStringLibraryTests
     }
 
     [Fact]
+    public void TableUnpackReusableStateKeepsEarlierCallbackResultsGcVisible()
+    {
+        var values = ExecuteWithOptions(
+            "local source={} for i=1,256 do source[i]={value=i} end " +
+            "local proxy=setmetatable({}, {__len=function() collectgarbage(); return 256 end, " +
+            "__index=function(_,i) local value=source[i]; source[i]=nil; collectgarbage(); return value end}) " +
+            "local result={table.unpack(proxy)} collectgarbage(); " +
+            "local good=#result==256 for i=1,256 do good=good and result[i].value==i end " +
+            "return good,#result,result[1].value,result[256].value",
+            maximumLogicalBytes: 2L * 1024 * 1024);
+
+        Assert.True(values[0].AsBoolean());
+        Assert.Equal(256, values[1].AsInteger());
+        Assert.Equal(1, values[2].AsInteger());
+        Assert.Equal(256, values[3].AsInteger());
+    }
+
+    [Fact]
     public void TableCallbacksAreNonYieldableAndSortComparatorWorks()
     {
         var values = Execute(
@@ -354,7 +372,8 @@ public sealed class LuaTableAndStringLibraryTests
     {
         var values = Execute(
             "local nested='' local object=setmetatable({}, {__tostring=function() " +
-            "nested=string.format('[%s]',setmetatable({}, {__tostring=function() return 'inner' end})); " +
+            "collectgarbage(); nested=string.format('[%s]',setmetatable({}, {__tostring=function() " +
+            "collectgarbage(); return 'inner' end})); collectgarbage(); " +
             "return 'outer' end}) " +
             "local plain=string.format('a=%s b=%s',object,true); " +
             "local zero=setmetatable({}, {__tostring=function() return 'x\\0y' end}); " +

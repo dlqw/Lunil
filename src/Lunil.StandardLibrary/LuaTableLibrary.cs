@@ -565,7 +565,8 @@ internal static class LuaTableLibrary
         LuaValue target;
         long index;
         long last;
-        LuaValue[] results;
+        LuaValue[] state;
+        var resultCount = 0;
         if (continuationId == 0)
         {
             target = LuaLibraryHelpers.Required(values, 0, "unpack");
@@ -584,38 +585,37 @@ internal static class LuaTableLibrary
                     LengthContinuation.Unpack);
             }
 
-            results = [];
+            state = CreateUnpackState(target, index, last);
         }
         else if (continuationId == 1)
         {
             target = context.InvocationState[0];
             index = context.InvocationState[1].AsInteger();
             last = CallbackInteger(values, "object length is not an integer");
-            results = [];
+            state = CreateUnpackState(target, index, last);
         }
         else
         {
-            var state = context.InvocationState;
+            state = context.InvocationState as LuaValue[] ??
+                throw new InvalidOperationException("table.unpack lost its reusable state.");
             target = state[0];
             index = state[1].AsInteger();
             last = state[2].AsInteger();
-            results = state.Skip(3).Append(CallbackValue(values)).ToArray();
+            resultCount = checked((int)state[3].AsInteger());
+            state[4 + resultCount++] = CallbackValue(values);
             if (index == last)
             {
-                return LuaNativeStep.Completed(results);
+                return CompleteUnpack(state, resultCount);
             }
 
             index++;
+            state[1] = LuaValue.FromInteger(index);
+            state[3] = LuaValue.FromInteger(resultCount);
         }
 
         if (index > last)
         {
-            return LuaNativeStep.Completed(results);
-        }
-
-        if (UnpackResultCountIsTooLarge(index, last))
-        {
-            throw new LuaRuntimeException("too many results to unpack");
+            return CompleteUnpack(state, resultCount);
         }
 
         while (index <= last)
@@ -626,29 +626,55 @@ internal static class LuaTableLibrary
                 LuaValue.FromInteger(index));
             if (get.RequiresCall)
             {
-                return LuaNativeStep.CallLua(
+                state[1] = LuaValue.FromInteger(index);
+                state[3] = LuaValue.FromInteger(resultCount);
+                return LuaNativeStep.CallLuaWithReusableState(
                     get.Callable,
                     get.Arguments,
                     2,
-                    [target, LuaValue.FromInteger(index), LuaValue.FromInteger(last), .. results],
+                    state,
                     false);
             }
 
-            results = [.. results, get.Value];
+            state[4 + resultCount++] = get.Value;
             if (index == last)
             {
-                return LuaNativeStep.Completed(results);
+                return CompleteUnpack(state, resultCount);
             }
 
             index++;
         }
 
-        return LuaNativeStep.Completed(results);
+        return CompleteUnpack(state, resultCount);
     }
+
+    private static LuaValue[] CreateUnpackState(LuaValue target, long first, long last)
+    {
+        if (first > last)
+        {
+            return [target, LuaValue.FromInteger(first), LuaValue.FromInteger(last), LuaValue.FromInteger(0)];
+        }
+
+        if (UnpackResultCountIsTooLarge(first, last))
+        {
+            throw new LuaRuntimeException("too many results to unpack");
+        }
+
+        var resultCount = GetUnpackResultCount(first, last);
+        var state = new LuaValue[checked(4 + resultCount)];
+        state[0] = target;
+        state[1] = LuaValue.FromInteger(first);
+        state[2] = LuaValue.FromInteger(last);
+        state[3] = LuaValue.FromInteger(0);
+        return state;
+    }
+
+    private static LuaNativeStep CompleteUnpack(LuaValue[] state, int resultCount) =>
+        LuaNativeStep.Completed(state.AsSpan(4, resultCount).ToArray());
 
     private static bool UnpackResultCountIsTooLarge(long first, long last)
     {
-        const ulong maximumResultCount = int.MaxValue - 1UL;
+        var maximumResultCount = (ulong)Array.MaxLength - 4;
         if (first < 0 && last >= 0)
         {
             var negativeCount = (ulong)(-(first + 1)) + 1;
@@ -659,6 +685,18 @@ internal static class LuaTableLibrary
         }
 
         return (ulong)(last - first) + 1 > maximumResultCount;
+    }
+
+    private static int GetUnpackResultCount(long first, long last)
+    {
+        if (first < 0 && last >= 0)
+        {
+            var negativeCount = (ulong)(-(first + 1)) + 1;
+            var nonNegativeCount = (ulong)last + 1;
+            return checked((int)(negativeCount + nonNegativeCount));
+        }
+
+        return checked((int)((ulong)(last - first) + 1));
     }
 
     private static LuaNativeStep Sort(
@@ -1341,7 +1379,7 @@ internal static class LuaTableLibrary
         machine.ProgramCounter = continuation;
         if (get.RequiresCall)
         {
-            return LuaNativeStep.CallLua(
+            return LuaNativeStep.CallLuaWithReusableState(
                 get.Callable,
                 get.Arguments,
                 2,
@@ -1368,7 +1406,7 @@ internal static class LuaTableLibrary
         machine.ProgramCounter = continuation;
         if (set.RequiresCall)
         {
-            return LuaNativeStep.CallLua(
+            return LuaNativeStep.CallLuaWithReusableState(
                 set.Callable,
                 set.Arguments,
                 2,
@@ -1389,7 +1427,7 @@ internal static class LuaTableLibrary
         machine.ProgramCounter = continuation;
         if (!machine.Comparator.IsNil)
         {
-            return LuaNativeStep.CallLua(
+            return LuaNativeStep.CallLuaWithReusableState(
                 machine.Comparator,
                 [left, right],
                 2,
@@ -1404,7 +1442,7 @@ internal static class LuaTableLibrary
             right);
         if (comparison.RequiresCall)
         {
-            return LuaNativeStep.CallLua(
+            return LuaNativeStep.CallLuaWithReusableState(
                 comparison.Callable,
                 comparison.Arguments,
                 2,
@@ -1664,9 +1702,10 @@ internal static class LuaTableLibrary
 
     private sealed class SortMachine
     {
-        private const int FixedStateSize = 16;
+        private const int FixedStateSize = 17;
         private const int ReturnFrameSize = 4;
         private readonly List<SortReturnFrame> _returnFrames = [];
+        private LuaValue[]? _encodedState;
 
         public LuaValue Table { get; private init; }
 
@@ -1716,43 +1755,18 @@ internal static class LuaTableLibrary
 
         public static SortMachine Decode(IReadOnlyList<LuaValue> values)
         {
-            if (values.Count < FixedStateSize)
+            if (values is not LuaValue[] state || state.Length < FixedStateSize ||
+                state[0].Kind != LuaValueKind.LightUserdata ||
+                state[0].AsLightUserdata().Identity is not SortMachine machine ||
+                !ReferenceEquals(machine._encodedState, state))
             {
                 throw new InvalidOperationException("Invalid table.sort continuation state.");
             }
 
-            var machine = new SortMachine
-            {
-                Table = values[0],
-                Comparator = values[1],
-                ProgramCounter = (SortProgramCounter)values[2].AsInteger(),
-                Lo = values[3].AsInteger(),
-                Up = values[4].AsInteger(),
-                RandomSeed = unchecked((uint)values[5].AsInteger()),
-                P = values[6].AsInteger(),
-                I = values[7].AsInteger(),
-                J = values[8].AsInteger(),
-                A = values[9],
-                B = values[10],
-                Pivot = values[11],
-                ItemI = values[12],
-                ItemJ = values[13],
-                CallbackValue = values[14],
-            };
-            var frameCount = checked((int)values[15].AsInteger());
-            if (values.Count != FixedStateSize + (frameCount * ReturnFrameSize))
+            var frameCount = checked((int)state[16].AsInteger());
+            if (frameCount < 0 || state.Length < FixedStateSize + (frameCount * ReturnFrameSize))
             {
                 throw new InvalidOperationException("Invalid table.sort continuation stack.");
-            }
-
-            for (var i = 0; i < frameCount; i++)
-            {
-                var offset = FixedStateSize + (i * ReturnFrameSize);
-                machine._returnFrames.Add(new SortReturnFrame(
-                    values[offset].AsInteger(),
-                    values[offset + 1].AsInteger(),
-                    unchecked((uint)values[offset + 2].AsInteger()),
-                    values[offset + 3].AsInteger()));
             }
 
             return machine;
@@ -1760,23 +1774,36 @@ internal static class LuaTableLibrary
 
         public LuaValue[] Encode()
         {
-            var values = new LuaValue[FixedStateSize + (_returnFrames.Count * ReturnFrameSize)];
-            values[0] = Table;
-            values[1] = Comparator;
-            values[2] = LuaValue.FromInteger((long)ProgramCounter);
-            values[3] = LuaValue.FromInteger(Lo);
-            values[4] = LuaValue.FromInteger(Up);
-            values[5] = LuaValue.FromInteger(RandomSeed);
-            values[6] = LuaValue.FromInteger(P);
-            values[7] = LuaValue.FromInteger(I);
-            values[8] = LuaValue.FromInteger(J);
-            values[9] = A;
-            values[10] = B;
-            values[11] = Pivot;
-            values[12] = ItemI;
-            values[13] = ItemJ;
-            values[14] = CallbackValue;
-            values[15] = LuaValue.FromInteger(_returnFrames.Count);
+            var requiredLength = checked(FixedStateSize + (_returnFrames.Count * ReturnFrameSize));
+            if (_encodedState is null)
+            {
+                _encodedState = new LuaValue[requiredLength];
+                _encodedState[0] = LuaValue.FromLightUserdata(new LuaLightUserdata(this));
+            }
+            else if (_encodedState.Length < requiredLength)
+            {
+                var state = new LuaValue[requiredLength];
+                Array.Copy(_encodedState, state, _encodedState.Length);
+                _encodedState = state;
+            }
+
+            var values = _encodedState;
+            values[1] = Table;
+            values[2] = Comparator;
+            values[3] = LuaValue.FromInteger((long)ProgramCounter);
+            values[4] = LuaValue.FromInteger(Lo);
+            values[5] = LuaValue.FromInteger(Up);
+            values[6] = LuaValue.FromInteger(RandomSeed);
+            values[7] = LuaValue.FromInteger(P);
+            values[8] = LuaValue.FromInteger(I);
+            values[9] = LuaValue.FromInteger(J);
+            values[10] = A;
+            values[11] = B;
+            values[12] = Pivot;
+            values[13] = ItemI;
+            values[14] = ItemJ;
+            values[15] = CallbackValue;
+            values[16] = LuaValue.FromInteger(_returnFrames.Count);
             for (var i = 0; i < _returnFrames.Count; i++)
             {
                 var frame = _returnFrames[i];
