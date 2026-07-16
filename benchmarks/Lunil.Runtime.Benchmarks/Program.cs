@@ -23,6 +23,7 @@ var iterations = iterationArgument is null
     ? 1_000_000
     : int.Parse(iterationArgument, CultureInfo.InvariantCulture);
 var backendOnly = args.Contains("--backend-only", StringComparer.Ordinal);
+var microOnly = args.Contains("--micro-only", StringComparer.Ordinal);
 var reverseLoopOsrPair = args.Contains(
     "--reverse-loop-osr-pair",
     StringComparer.Ordinal);
@@ -217,6 +218,47 @@ if (!backendOnly)
         }
     });
 
+    RunMinorGcOldHeapGrowthEvidence(4_000, 500);
+
+    Run(
+        "interpreter_warm_table_insert_remove",
+        Scaled(iterations),
+        CreateWarmRunner("""
+        local values = {}
+        local total = 0
+        for i = 1, 5000 do
+            table.insert(values, i)
+        end
+        for i = 1, 5000 do
+            total = total + table.remove(values)
+        end
+        return total
+        """, installStandardLibrary: true));
+
+    Run(
+        "interpreter_warm_table_unpack",
+        Scaled(iterations),
+        CreateWarmRunner("""
+        local values = {}
+        for i = 1, 2000 do values[i] = i end
+        local function count(...) return select("#", ...) end
+        return count(table.unpack(values))
+        """, installStandardLibrary: true));
+
+    Run(
+        "interpreter_warm_string_gmatch",
+        Scaled(iterations),
+        CreateWarmRunner("""
+        local source = string.rep("abc123def456 ", 1000)
+        local total = 0
+        for word, number in string.gmatch(source, "(%a+)(%d+)") do
+            total = total + #word + #number
+        end
+        return total
+        """, installStandardLibrary: true));
+
+    RunFrontendGrowthEvidence(32);
+
     RunStringGrowthEvidence(
         "table_concat",
         10_000,
@@ -233,6 +275,11 @@ if (!backendOnly)
             local output, matches = string.gsub(source, "%d+", "X")
             return #output + matches
             """);
+}
+
+if (microOnly)
+{
+    return;
 }
 
 const int MinimumBackendEvidenceOperations = 30;
@@ -617,6 +664,92 @@ static void Run(string name, int operationCount, Action<int> action)
         $"{name}: operations={operationCount}, ns/op={nanoseconds:F2}, " +
         $"allocated={allocated}, allocated/op={allocatedPerOperation:F2}");
 }
+
+static void RunMinorGcOldHeapGrowthEvidence(int oldObjectCount, int youngObjectCount)
+{
+    var small = MeasureMinorGcWithOldHeap(oldObjectCount, youngObjectCount);
+    var large = MeasureMinorGcWithOldHeap(checked(oldObjectCount * 2), youngObjectCount);
+    Console.WriteLine(
+        $"growth name=minor_gc_old_heap, n={oldObjectCount}, two_n={oldObjectCount * 2}, " +
+        $"young={youngObjectCount}, n_ms={small.Elapsed.TotalMilliseconds:F3}, " +
+        $"two_n_ms={large.Elapsed.TotalMilliseconds:F3}, " +
+        $"time_ratio={Ratio(large.Elapsed.TotalNanoseconds, small.Elapsed.TotalNanoseconds):F3}, " +
+        $"n_allocated_bytes={small.AllocatedBytes}, " +
+        $"two_n_allocated_bytes={large.AllocatedBytes}, " +
+        $"allocation_ratio={Ratio(large.AllocatedBytes, small.AllocatedBytes):F3}");
+}
+
+static GrowthMeasurement MeasureMinorGcWithOldHeap(int oldObjectCount, int youngObjectCount)
+{
+    var state = new LuaState(new LuaStateOptions
+    {
+        Heap = LuaHeapOptions.Default with
+        {
+            HashSeed = 1,
+        },
+    });
+    state.Heap.Mode = LuaGcMode.Generational;
+    state.Heap.Stop();
+    var roots = state.CreateTable(arrayCapacity: oldObjectCount);
+    state.SetGlobal("roots", LuaValue.FromTable(roots));
+    for (var index = 1; index <= oldObjectCount; index++)
+    {
+        roots.Set(LuaValue.FromInteger(index), LuaValue.FromTable(state.CreateTable()));
+    }
+
+    // Two complete cycles promote the retained graph to Old0 before young churn is created.
+    state.Heap.CollectFull();
+    state.Heap.CollectFull();
+    for (var index = 0; index < youngObjectCount; index++)
+    {
+        _ = state.CreateTable();
+    }
+
+    var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+    var stopwatch = Stopwatch.StartNew();
+    state.Heap.CollectMinor();
+    stopwatch.Stop();
+    GC.KeepAlive(roots);
+    return new GrowthMeasurement(
+        stopwatch.Elapsed,
+        GC.GetAllocatedBytesForCurrentThread() - allocatedBefore);
+}
+
+static void RunFrontendGrowthEvidence(int symbolCount)
+{
+    _ = MeasureFrontend(symbolCount);
+    var small = MeasureFrontend(symbolCount);
+    var large = MeasureFrontend(checked(symbolCount * 2));
+    Console.WriteLine(
+        $"growth name=frontend_symbol_resolution, n={symbolCount}, two_n={symbolCount * 2}, " +
+        $"n_ms={small.Elapsed.TotalMilliseconds:F3}, " +
+        $"two_n_ms={large.Elapsed.TotalMilliseconds:F3}, " +
+        $"time_ratio={Ratio(large.Elapsed.TotalNanoseconds, small.Elapsed.TotalNanoseconds):F3}, " +
+        $"n_allocated_bytes={small.AllocatedBytes}, " +
+        $"two_n_allocated_bytes={large.AllocatedBytes}, " +
+        $"allocation_ratio={Ratio(large.AllocatedBytes, small.AllocatedBytes):F3}");
+}
+
+static GrowthMeasurement MeasureFrontend(int symbolCount)
+{
+    var declarations = string.Join(
+        Environment.NewLine,
+        Enumerable.Range(1, symbolCount).Select(index =>
+            $"local value{index} = {index}; local function function{index}() return value{index} end"));
+    var returns = string.Join(" + ", Enumerable.Range(1, symbolCount).Select(index =>
+        $"function{index}()"));
+    var source = $"{declarations}{Environment.NewLine}return {returns}";
+    var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+    var stopwatch = Stopwatch.StartNew();
+    _ = Compile(source);
+    stopwatch.Stop();
+    return new GrowthMeasurement(
+        stopwatch.Elapsed,
+        GC.GetAllocatedBytesForCurrentThread() - allocatedBefore);
+}
+
+static double Ratio(double numerator, double denominator) =>
+    denominator == 0 ? 0 : numerator / denominator;
 
 static void RunStringGrowthEvidence(
     string name,
@@ -1415,3 +1548,5 @@ sealed record StringGrowthMeasurement(
     TimeSpan Elapsed,
     long AllocatedBytes,
     long LogicalBytes);
+
+sealed record GrowthMeasurement(TimeSpan Elapsed, long AllocatedBytes);
