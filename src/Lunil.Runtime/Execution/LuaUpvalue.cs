@@ -29,18 +29,17 @@ public sealed class LuaUpvalue : LuaGcObject
 
     public LuaValue Value
     {
-        get => _thread is null ? _closedValue : _thread.Stack[_stackIndex];
+        get => _thread is null ? _closedValue : _thread.Stack.ReadUnchecked(_stackIndex);
         set
         {
-            Owner.ValidateValue(value);
-            Owner.WriteBarrier(this, value);
             if (_thread is null)
             {
+                Owner.WriteBarrier(this, value);
                 _closedValue = value;
             }
             else
             {
-                _thread.Stack[_stackIndex] = value;
+                _thread.Stack.WriteUnchecked(_stackIndex, value);
             }
         }
     }
@@ -52,7 +51,7 @@ public sealed class LuaUpvalue : LuaGcObject
             return;
         }
 
-        _closedValue = _thread.Stack[_stackIndex];
+        _closedValue = _thread.Stack.ReadUnchecked(_stackIndex);
         Owner.WriteBarrier(this, _closedValue);
         _thread = null;
         _stackIndex = -1;

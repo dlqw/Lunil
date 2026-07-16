@@ -243,8 +243,9 @@ public sealed class LuaTable : LuaGcObject
         ValidateKey(key);
         Owner.ValidateValue(key);
         Owner.ValidateValue(value);
-        Owner.WriteBarrierBack(this, key);
-        Owner.WriteBarrierBack(this, value);
+        var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
+        barrierOwner.WriteBackValidated(key);
+        barrierOwner.WriteBackValidated(value);
 
         if (entry.IsArray)
         {
@@ -291,8 +292,9 @@ public sealed class LuaTable : LuaGcObject
         ValidateKey(key);
         Owner.ValidateValue(key);
         Owner.ValidateValue(value);
-        Owner.WriteBarrierBack(this, key);
-        Owner.WriteBarrierBack(this, value);
+        var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
+        barrierOwner.WriteBackValidated(key);
+        barrierOwner.WriteBackValidated(value);
 
         if (TryGetArrayIndex(key, out var index))
         {

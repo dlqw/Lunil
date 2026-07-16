@@ -326,6 +326,66 @@ public sealed class LuaInterpreterTests
     }
 
     [Fact]
+    public void NativeResultsRejectForeignStateGcValuesOnTheInternalStackPath()
+    {
+        var state = new LuaState();
+        var foreignState = new LuaState();
+        var foreignValue = LuaValue.FromTable(foreignState.CreateTable());
+        state.SetGlobal(
+            "foreign",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "foreign",
+                (_, _) => [foreignValue])));
+        var module = Compile("local value = foreign(); return value");
+
+        Assert.Throws<LuaRuntimeException>(() =>
+            new LuaInterpreter().Execute(state, state.CreateMainClosure(module)));
+    }
+
+    [Fact]
+    public void DynamicNativeMultireturnGrowsTheStackAndPreservesEveryResult()
+    {
+        var state = new LuaState();
+        var expected = Enumerable.Range(0, 300)
+            .Select(static value => LuaValue.FromInteger(value))
+            .ToArray();
+        state.SetGlobal(
+            "many",
+            LuaValue.FromFunction(new LuaNativeFunction("many", (_, _) => expected)));
+        var module = Compile("return many()");
+
+        var result = new LuaInterpreter(new LuaInterpreterOptions
+        {
+            MaximumStackSlots = 512,
+        }).Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(expected, result.Values.ToArray());
+        Assert.True(state.MainThread.Stack.Capacity >= expected.Length);
+    }
+
+    [Fact]
+    public void DynamicNativeMultireturnHonorsTheStackSlotLimit()
+    {
+        var state = new LuaState();
+        state.SetGlobal(
+            "many",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "many",
+                static (_, _) => Enumerable.Range(0, 300)
+                    .Select(static value => LuaValue.FromInteger(value))
+                    .ToArray())));
+        var module = Compile("return many()");
+
+        var exception = Assert.Throws<LuaRuntimeException>(() =>
+            new LuaInterpreter(new LuaInterpreterOptions
+            {
+                MaximumStackSlots = 256,
+            }).Execute(state, state.CreateMainClosure(module)));
+
+        Assert.Contains("stack slot limit", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MainChunkCanReadAndReplaceItsImplicitEnvironmentUpvalue()
     {
         Assert.Equal(

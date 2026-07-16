@@ -1034,7 +1034,7 @@ internal sealed class LuaExecutionEngine
         }
     }
 
-    private static bool CompleteYield(
+    private bool CompleteYield(
         LuaScheduler scheduler,
         LuaThread thread,
         out LuaExecutionResult? result)
@@ -1062,7 +1062,7 @@ internal sealed class LuaExecutionEngine
         return false;
     }
 
-    private static bool CompleteThread(
+    private bool CompleteThread(
         LuaScheduler scheduler,
         LuaThread thread,
         ImmutableArray<LuaValue> values,
@@ -1087,7 +1087,7 @@ internal sealed class LuaExecutionEngine
         return false;
     }
 
-    private static bool FailThread(
+    private bool FailThread(
         LuaState state,
         LuaScheduler scheduler,
         LuaThread thread,
@@ -1114,7 +1114,7 @@ internal sealed class LuaExecutionEngine
         return false;
     }
 
-    private static void InjectCoroutineResult(
+    private void InjectCoroutineResult(
         LuaActivation activation,
         LuaThread resumer,
         bool succeeded,
@@ -1370,9 +1370,10 @@ internal sealed class LuaExecutionEngine
             };
             if (tailCall)
             {
+                EnsureWriteWindow(thread, returnBase, failure.Length);
                 for (var index = 0; index < failure.Length; index++)
                 {
-                    thread.Stack[returnBase + index] = failure[index];
+                    thread.Stack.WriteUnchecked(returnBase + index, failure[index]);
                 }
 
                 return ExecuteReturn(
@@ -1472,9 +1473,10 @@ internal sealed class LuaExecutionEngine
 
                     if (tailCall)
                     {
+                        EnsureWriteWindow(thread, returnBase, completedValues.Length);
                         for (var index = 0; index < completedValues.Length; index++)
                         {
-                            thread.Stack[returnBase + index] = completedValues[index];
+                            thread.Stack.WriteUnchecked(returnBase + index, completedValues[index]);
                         }
 
                         return ExecuteReturn(
@@ -1865,7 +1867,7 @@ internal sealed class LuaExecutionEngine
         var argumentCount = instruction.B < 0
             ? Math.Max(0, frame.Top - argumentStart)
             : instruction.B;
-        var directFunction = thread.Stack[functionIndex];
+        var directFunction = thread.Stack.ReadUnchecked(functionIndex);
         if (directFunction.TryGetNativeFunction() is
             {
                 Kind: LuaNativeFunctionKind.CoroutineResume or
@@ -1927,12 +1929,12 @@ internal sealed class LuaExecutionEngine
             var arguments = new LuaValue[argumentCount];
             for (var index = 0; index < argumentCount; index++)
             {
-                arguments[index] = thread.Stack[argumentStart + index];
+                arguments[index] = thread.Stack.ReadUnchecked(argumentStart + index);
             }
 
             var resolvedCall = LuaRuntimeOperations.ResolveCall(
                 state,
-                thread.Stack[functionIndex],
+                thread.Stack.ReadUnchecked(functionIndex),
                 arguments);
             function = resolvedCall.Callable;
             resolvedArguments = resolvedCall.Arguments;
@@ -1983,9 +1985,10 @@ internal sealed class LuaExecutionEngine
 
             if (tailCall)
             {
+                EnsureWriteWindow(thread, functionIndex, closeValues.Length);
                 for (var index = 0; index < closeValues.Length; index++)
                 {
-                    thread.Stack[functionIndex + index] = closeValues[index];
+                    thread.Stack.WriteUnchecked(functionIndex + index, closeValues[index]);
                 }
 
                 return ExecuteReturn(
@@ -2191,9 +2194,10 @@ internal sealed class LuaExecutionEngine
                 instruction.A,
                 results.Length,
                 span: instruction.Span);
+            EnsureWriteWindow(thread, functionIndex, results.Length);
             for (var index = 0; index < results.Length; index++)
             {
-                thread.Stack[functionIndex + index] = results[index];
+                thread.Stack.WriteUnchecked(functionIndex + index, results[index]);
             }
 
             return ExecuteReturn(state, scheduler, thread, frame, syntheticReturn);
@@ -2618,7 +2622,7 @@ internal sealed class LuaExecutionEngine
         {
             if (expectedResults > 0)
             {
-                thread.Stack[returnBase] = resolution.Value;
+                thread.Stack.WriteUnchecked(returnBase, resolution.Value);
                 frame.Top = Math.Max(frame.Top, returnBase + 1);
             }
 
@@ -3559,7 +3563,7 @@ internal sealed class LuaExecutionEngine
             frame.Continuation.Values = new LuaValue[count];
             for (var index = 0; index < count; index++)
             {
-                frame.Continuation.Values[index] = thread.Stack[start + index];
+                frame.Continuation.Values[index] = thread.Stack.ReadUnchecked(start + index);
             }
         }
 
@@ -3766,7 +3770,7 @@ internal sealed class LuaExecutionEngine
         var fixedArguments = Math.Min(arguments.Length, function.ParameterCount);
         for (var index = 0; index < fixedArguments; index++)
         {
-            thread.Stack[@base + index] = arguments[index];
+            thread.Stack.WriteUnchecked(@base + index, arguments[index]);
         }
 
         var varArgs = function.IsVarArg && arguments.Length > function.ParameterCount
@@ -3850,14 +3854,18 @@ internal sealed class LuaExecutionEngine
             {
                 for (var index = 0; index < fixedArguments; index++)
                 {
-                    thread.Stack[@base + index] = thread.Stack[argumentStart + index];
+                    thread.Stack.WriteUnchecked(
+                        @base + index,
+                        thread.Stack.ReadUnchecked(argumentStart + index));
                 }
             }
             else
             {
                 for (var index = fixedArguments - 1; index >= 0; index--)
                 {
-                    thread.Stack[@base + index] = thread.Stack[argumentStart + index];
+                    thread.Stack.WriteUnchecked(
+                        @base + index,
+                        thread.Stack.ReadUnchecked(argumentStart + index));
                 }
             }
         }
@@ -3875,7 +3883,7 @@ internal sealed class LuaExecutionEngine
             var source = argumentStart + index;
             if (source < @base || source >= frameEnd)
             {
-                thread.Stack[source] = LuaValue.Nil;
+                thread.Stack.WriteUnchecked(source, LuaValue.Nil);
             }
         }
 
@@ -3973,7 +3981,15 @@ internal sealed class LuaExecutionEngine
     {
         for (var index = 0; index < resolution.ArgumentCount; index++)
         {
-            thread.Stack[start + index] = resolution.GetArgument(index);
+            thread.Stack.WriteUnchecked(start + index, resolution.GetArgument(index));
+        }
+    }
+
+    private void EnsureWriteWindow(LuaThread thread, int start, int count)
+    {
+        if (count != 0)
+        {
+            EnsureScratchWindow(thread, start, count);
         }
     }
 
@@ -4021,7 +4037,7 @@ internal sealed class LuaExecutionEngine
                 $"Instruction {instruction.Opcode} is not a metamethod operation."),
         };
 
-    private static void WriteCallResults(
+    private void WriteCallResults(
         LuaThread thread,
         LuaFrame caller,
         int returnBase,
@@ -4029,15 +4045,18 @@ internal sealed class LuaExecutionEngine
         ReadOnlySpan<LuaValue> results)
     {
         var count = expectedResults < 0 ? results.Length : expectedResults;
+        EnsureWriteWindow(thread, returnBase, count);
         for (var index = 0; index < count; index++)
         {
-            thread.Stack[returnBase + index] = index < results.Length ? results[index] : LuaValue.Nil;
+            thread.Stack.WriteUnchecked(
+                returnBase + index,
+                index < results.Length ? results[index] : LuaValue.Nil);
         }
 
         SetFrameTop(thread, caller, returnBase + count);
     }
 
-    private static void WriteOperationResults(
+    private void WriteOperationResults(
         LuaThread thread,
         LuaFrame caller,
         int returnBase,
@@ -4046,15 +4065,18 @@ internal sealed class LuaExecutionEngine
         int preservedTop)
     {
         var count = expectedResults < 0 ? results.Length : expectedResults;
+        EnsureWriteWindow(thread, returnBase, count);
         for (var index = 0; index < count; index++)
         {
-            thread.Stack[returnBase + index] = index < results.Length ? results[index] : LuaValue.Nil;
+            thread.Stack.WriteUnchecked(
+                returnBase + index,
+                index < results.Length ? results[index] : LuaValue.Nil);
         }
 
         caller.Top = Math.Max(preservedTop, returnBase + count);
     }
 
-    private static void WriteProtectedResults(
+    private void WriteProtectedResults(
         LuaThread thread,
         LuaFrame caller,
         int returnBase,
@@ -4064,14 +4086,17 @@ internal sealed class LuaExecutionEngine
     {
         var available = checked(results.Length + 1);
         var count = expectedResults < 0 ? available : expectedResults;
+        EnsureWriteWindow(thread, returnBase, count);
         for (var index = 0; index < count; index++)
         {
-            thread.Stack[returnBase + index] = index switch
-            {
-                0 => LuaValue.FromBoolean(succeeded),
-                _ when index - 1 < results.Length => results[index - 1],
-                _ => LuaValue.Nil,
-            };
+            thread.Stack.WriteUnchecked(
+                returnBase + index,
+                index switch
+                {
+                    0 => LuaValue.FromBoolean(succeeded),
+                    _ when index - 1 < results.Length => results[index - 1],
+                    _ => LuaValue.Nil,
+                });
         }
 
         SetFrameTop(thread, caller, returnBase + count);
@@ -4085,7 +4110,9 @@ internal sealed class LuaExecutionEngine
     {
         if (transform == LuaResultTransform.LogicalNot)
         {
-            thread.Stack[returnBase] = LuaValue.FromBoolean(!thread.Stack[returnBase].IsTruthy);
+            thread.Stack.WriteUnchecked(
+                returnBase,
+                LuaValue.FromBoolean(!thread.Stack.ReadUnchecked(returnBase).IsTruthy));
         }
 
         if (frame.Continuation.Kind == LuaContinuationKind.LuaCall)
@@ -4130,7 +4157,7 @@ internal sealed class LuaExecutionEngine
         {
             table.Set(
                 LuaValue.FromInteger(instruction.B + index),
-                thread.Stack[source + index]);
+                thread.Stack.ReadUnchecked(source + index));
         }
     }
 
@@ -4363,7 +4390,7 @@ internal sealed class LuaExecutionEngine
                 continue;
             }
 
-            var value = thread.Stack[slot];
+            var value = thread.Stack.ReadUnchecked(slot);
             frame.ToBeClosedSlots.RemoveAt(index);
             if (!value.IsTruthy)
             {
@@ -4940,12 +4967,12 @@ internal sealed class LuaExecutionEngine
     }
 
     internal static LuaValue Read(LuaThread thread, LuaFrame frame, int register) =>
-        thread.Stack[frame.Base + register];
+        thread.Stack.ReadUnchecked(frame.Base + register);
 
     internal static void Write(LuaThread thread, LuaFrame frame, int register, LuaValue value)
     {
         var index = frame.Base + register;
-        thread.Stack[index] = value;
+        thread.Stack.WriteUnchecked(index, value);
         frame.Top = Math.Max(frame.Top, index + 1);
     }
 

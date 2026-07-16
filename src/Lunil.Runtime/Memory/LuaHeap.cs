@@ -139,6 +139,11 @@ public sealed class LuaHeap
             return;
         }
 
+        ValidateValueObject(gcObject);
+    }
+
+    private void ValidateValueObject(LuaGcObject gcObject)
+    {
         if (!ReferenceEquals(gcObject.Owner, this))
         {
             throw new LuaRuntimeException("Cannot move a collectable value between different LuaState instances.");
@@ -358,7 +363,27 @@ public sealed class LuaHeap
     {
         ValidateObject(owner);
         ValidateValue(value);
-        var target = value.TryGetGcObject();
+        WriteBarrierBackCore(owner, value.TryGetGcObject());
+    }
+
+    internal void WriteBarrierBack(LuaGcObject owner, LuaGcObject target)
+    {
+        ValidateObject(owner);
+        ValidateValueObject(target);
+        WriteBarrierBackCore(owner, target);
+    }
+
+    internal ValidatedWriteBarrierOwner ValidateWriteBarrierOwner(LuaGcObject owner)
+    {
+        ValidateObject(owner);
+        return new ValidatedWriteBarrierOwner(this, owner);
+    }
+
+    private void WriteBarrierBackValidated(LuaGcObject owner, LuaValue value) =>
+        WriteBarrierBackCore(owner, value.TryGetGcObject());
+
+    private void WriteBarrierBackCore(LuaGcObject owner, LuaGcObject? target)
+    {
         if (target is not null)
         {
             RememberOldToYoung(owner, target);
@@ -381,6 +406,21 @@ public sealed class LuaHeap
             owner.Color = LuaGcColor.Gray;
             _gray.Enqueue(owner);
         }
+    }
+
+    internal readonly struct ValidatedWriteBarrierOwner
+    {
+        private readonly LuaHeap _heap;
+        private readonly LuaGcObject _owner;
+
+        internal ValidatedWriteBarrierOwner(LuaHeap heap, LuaGcObject owner)
+        {
+            _heap = heap;
+            _owner = owner;
+        }
+
+        internal void WriteBackValidated(LuaValue value) =>
+            _heap.WriteBarrierBackValidated(_owner, value);
     }
 
     internal void AddPermanentRoot(LuaGcObject value)
