@@ -46,6 +46,15 @@ public sealed class LuaTableAndStringLibraryTests
     }
 
     [Fact]
+    public void GmatchKeepsSourceAndPatternBorrowedAcrossIteratorCalls()
+    {
+        var allocation = MeasureGmatchAllocation(4_096, out var positions);
+
+        Assert.Equal(4_097, positions);
+        Assert.InRange(allocation, 0, 4L * 1024 * 1024);
+    }
+
+    [Fact]
     public void LinearStringBuffersSurviveCallbacksGcBinaryDataAndReentrancy()
     {
         var values = Execute(
@@ -636,6 +645,30 @@ public sealed class LuaTableAndStringLibraryTests
             "subject",
             LuaValue.FromString(state.Strings.GetOrCreate(subject)));
         return MeasureStoppedHeapGrowth(state, "return string.gsub(subject,'x','yy')");
+    }
+
+    private static long MeasureGmatchAllocation(int length, out long positions)
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallAll(state);
+        var subject = new byte[length];
+        subject.AsSpan().Fill((byte)'x');
+        state.SetGlobal(
+            "subject",
+            LuaValue.FromString(state.Strings.GetOrCreate(subject)));
+        var lowering = LuaLowerer.Lower(LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(
+            "local count=0 for position in string.gmatch(subject,'()') do count=count+1 end " +
+            "return count"))));
+        Assert.Empty(lowering.Diagnostics);
+        var closure = state.CreateMainClosure(lowering.Module!);
+        var interpreter = new LuaInterpreter();
+        _ = interpreter.Execute(state, closure);
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var result = interpreter.Execute(state, closure);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        positions = Assert.Single(result.Values).AsInteger();
+        return allocated;
     }
 
     private static (int Objects, long Bytes) MeasureStoppedHeapGrowth(

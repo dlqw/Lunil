@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Lunil.Runtime;
 using Lunil.Runtime.Values;
 
@@ -13,7 +14,7 @@ internal ref struct LuaPatternMatcher
 
     private readonly ReadOnlySpan<byte> _source;
     private readonly ReadOnlySpan<byte> _pattern;
-    private readonly Capture[] _captures = new Capture[MaximumCaptures];
+    private CaptureBuffer _captures;
     private int _captureCount;
     private int _depth;
 
@@ -21,6 +22,9 @@ internal ref struct LuaPatternMatcher
     {
         _source = source;
         _pattern = pattern;
+        _captures = default;
+        _captureCount = 0;
+        _depth = 0;
     }
 
     public PatternMatch? Find(int initial, bool anchored)
@@ -449,6 +453,12 @@ internal ref struct LuaPatternMatcher
 
     private static bool IsAlphaNumeric(byte value) => IsAlpha(value) ||
         value is >= (byte)'0' and <= (byte)'9';
+
+    [InlineArray(MaximumCaptures)]
+    private struct CaptureBuffer
+    {
+        private Capture _element0;
+    }
 
     private readonly record struct Capture(int Start, int Length);
 }

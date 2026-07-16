@@ -234,8 +234,8 @@ internal static class LuaStringLibrary
         var closure = context.Closure ?? throw new LuaRuntimeException("invalid gmatch iterator");
         var sourceValue = closure.GetCapture(0);
         var patternValue = closure.GetCapture(1);
-        var source = sourceValue.AsString().ToArray();
-        var pattern = patternValue.AsString().ToArray();
+        var source = sourceValue.AsString().AsSpan();
+        var pattern = patternValue.AsString().AsSpan();
         var offset = closure.GetCapture(2).AsInteger();
         var lastEnd = closure.GetCapture(3).AsInteger();
         if (offset > source.Length)

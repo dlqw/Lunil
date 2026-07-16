@@ -2,6 +2,7 @@ using Lunil.Core.Text;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
+using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
 using Lunil.Semantics.Binding;
 using Lunil.Semantics.Lowering;
@@ -11,6 +12,42 @@ namespace Lunil.Runtime.Tests.Operations;
 
 public sealed class LuaMetamethodTests
 {
+    [Fact]
+    public void ExistingTableEntryUpdateBypassesNewIndexAndPreservesMutationVersions()
+    {
+        var state = CreateStateWithSetMetatable();
+        var table = state.CreateTable();
+        var key = String(state, "existing");
+        table.Set(key, LuaValue.FromInteger(1));
+        var newIndex = LuaValue.FromFunction(new LuaNativeFunction(
+            "__newindex",
+            static (_, _) => throw new InvalidOperationException("Existing keys must not call __newindex.")));
+        var metatable = state.CreateTable();
+        metatable.Set(String(state, "__newindex"), newIndex);
+        table.SetMetatable(metatable);
+        var shape = table.ShapeVersion;
+        var content = table.ContentVersion;
+
+        var resolved = LuaRuntimeOperations.SetIndex(
+            state,
+            LuaValue.FromTable(table),
+            key,
+            LuaValue.FromInteger(2));
+
+        Assert.False(resolved.RequiresCall);
+        Assert.Equal(LuaValue.FromInteger(2), table.Get(key));
+        Assert.Equal(shape, table.ShapeVersion);
+        Assert.True(table.ContentVersion > content);
+
+        var absent = LuaRuntimeOperations.SetIndex(
+            state,
+            LuaValue.FromTable(table),
+            String(state, "absent"),
+            LuaValue.FromInteger(3));
+        Assert.True(absent.RequiresCall);
+        Assert.Equal(newIndex, absent.Callable);
+    }
+
     [Fact]
     public void ExecutesLuaClosureArithmeticLengthAndConcatenationMetamethods()
     {

@@ -63,7 +63,11 @@ public static class LuaBinder
                 isVarArg: true,
                 _syntax.Root.Span,
                 activeSymbolBase: 0);
-            _currentScope = new ScopeFrame(parent: null, depth: 0, entryActiveSymbolCount: 0);
+            _currentScope = new ScopeFrame(
+                parent: null,
+                depth: 0,
+                entryActiveSymbolCount: 0,
+                entryActiveLocalCount: 0);
 
             var environment = CreateSymbol(
                 "_ENV",
@@ -570,7 +574,11 @@ public static class LuaBinder
                 functionSpan,
                 activeBase);
             _currentFunction = function;
-            _currentScope = new ScopeFrame(parent: null, depth: 0, activeBase);
+            _currentScope = new ScopeFrame(
+                parent: null,
+                depth: 0,
+                activeBase,
+                entryActiveLocalCount: 0);
             _loopDepth = 0;
 
             try
@@ -755,9 +763,12 @@ public static class LuaBinder
         private void ActivateSymbol(LuaSymbol symbol)
         {
             _activeSymbols.Add(symbol);
-            var activeInFunction = _activeSymbols.Count(candidate =>
-                candidate.FunctionId == _currentFunction.Id &&
-                candidate.Kind != LuaSymbolKind.Environment);
+            if (symbol.Kind == LuaSymbolKind.Environment)
+            {
+                return;
+            }
+
+            var activeInFunction = ++_currentFunction.ActiveLocalCount;
             if (activeInFunction == _options.MaximumActiveLocalsPerFunction + 1)
             {
                 var functionLine = _syntax.Source.GetLocation(_currentFunction.Span.Start).Line + 1;
@@ -788,7 +799,8 @@ public static class LuaBinder
             _currentScope = new ScopeFrame(
                 previous,
                 previous.Depth + 1,
-                _activeSymbols.Count);
+                _activeSymbols.Count,
+                _currentFunction.ActiveLocalCount);
             return previous;
         }
 
@@ -800,6 +812,7 @@ public static class LuaBinder
                 _activeSymbols.RemoveRange(_currentScope.EntryActiveSymbolCount, count);
             }
 
+            _currentFunction.ActiveLocalCount = _currentScope.EntryActiveLocalCount;
             _currentScope = previous;
         }
 
@@ -861,6 +874,8 @@ public static class LuaBinder
 
             public int ActiveSymbolBase { get; }
 
+            public int ActiveLocalCount { get; set; }
+
             public List<LuaSymbol> Symbols { get; } = [];
 
             public List<LuaSymbol> Captures { get; } = [];
@@ -872,11 +887,16 @@ public static class LuaBinder
 
         private sealed class ScopeFrame
         {
-            public ScopeFrame(ScopeFrame? parent, int depth, int entryActiveSymbolCount)
+            public ScopeFrame(
+                ScopeFrame? parent,
+                int depth,
+                int entryActiveSymbolCount,
+                int entryActiveLocalCount)
             {
                 Parent = parent;
                 Depth = depth;
                 EntryActiveSymbolCount = entryActiveSymbolCount;
+                EntryActiveLocalCount = entryActiveLocalCount;
             }
 
             public ScopeFrame? Parent { get; }
@@ -884,6 +904,8 @@ public static class LuaBinder
             public int Depth { get; }
 
             public int EntryActiveSymbolCount { get; }
+
+            public int EntryActiveLocalCount { get; }
 
             public Dictionary<string, LabelRecord> Labels { get; } =
                 new(StringComparer.Ordinal);
