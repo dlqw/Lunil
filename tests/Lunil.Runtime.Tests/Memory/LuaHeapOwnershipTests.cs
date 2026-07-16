@@ -74,6 +74,7 @@ public sealed class LuaHeapOwnershipTests
 
         Assert.Throws<LuaRuntimeException>(() =>
             state.Strings.GetOrCreate(new byte[100]));
-        Assert.Equal(3, state.Heap.ObjectCount);
+        Assert.Equal(4, state.Heap.ObjectCount);
+        Assert.True(state.MemoryErrorString.IsAlive);
     }
 }

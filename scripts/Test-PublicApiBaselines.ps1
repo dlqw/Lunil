@@ -13,7 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$compatibilityLine = '0.7.0'
+$compatibilityLine = (& (Join-Path $PSScriptRoot 'Get-LunilCompatibilityLine.ps1')).Trim()
 $generatorVersion = '2.0.2'
 $baselineDirectory = Join-Path $repositoryRoot "api/$compatibilityLine"
 $generatedDirectory = Join-Path $repositoryRoot 'artifacts/public-api/generated'
@@ -78,7 +78,7 @@ try {
     $projects = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') `
         -Recurse -Filter 'Lunil.*.csproj' | Sort-Object Name)
     if ($projects.Count -ne 14) {
-        throw "Expected the frozen 0.7.0 package scope to contain 14 projects, found $($projects.Count)."
+        throw "Expected the active $compatibilityLine package scope to contain 14 projects, found $($projects.Count)."
     }
 
     $resolvedGeneratedDirectory = [System.IO.Path]::GetFullPath($generatedDirectory)
@@ -133,7 +133,7 @@ try {
     $manifest = [ordered]@{
         SchemaVersion = 1
         CompatibilityLine = $compatibilityLine
-        ChangePolicy = 'exact-public-api-freeze'
+        ChangePolicy = 'reviewed-public-api-snapshot'
         Generator = [ordered]@{
             Package = 'Meziantou.Framework.PublicApiGenerator.Tool'
             Version = $generatorVersion
@@ -153,7 +153,7 @@ try {
     }
     else {
         Assert-TextMatches $manifestPath $manifestText
-        Write-Host "Verified $($assemblies.Count) frozen public API baselines."
+        Write-Host "Verified $($assemblies.Count) reviewed public API baselines for $compatibilityLine."
     }
 }
 finally {

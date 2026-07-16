@@ -13,13 +13,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$compatibilityLine = '0.7.0'
+$compatibilityLine = (& (Join-Path $PSScriptRoot 'Get-LunilCompatibilityLine.ps1')).Trim()
 $baselinePath = Join-Path $repositoryRoot "api/$compatibilityLine/packages.json"
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
 }
-if ($Version -notmatch '^0\.7\.0(?:-[0-9A-Za-z.-]+)?$') {
-    throw "Package compatibility validation only accepts the 0.7.0 line: $Version"
+$escapedCompatibilityLine = [Regex]::Escape($compatibilityLine)
+if ($Version -notmatch "^$escapedCompatibilityLine(?:-[0-9A-Za-z.-]+)?$") {
+    throw "Package compatibility validation only accepts the active $compatibilityLine line: $Version"
 }
 if ([string]::IsNullOrWhiteSpace($PackageDirectory)) {
     $PackageDirectory = Join-Path $repositoryRoot 'artifacts/package-compatibility/packages'
@@ -273,7 +274,7 @@ $manifest = [ordered]@{
 $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10)
 if ($Update) {
     Write-NormalizedText $baselinePath $manifestText
-    Write-Host "Updated the frozen 14-package baseline at $baselinePath."
+    Write-Host "Updated the reviewed 14-package baseline at $baselinePath."
 }
 else {
     if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) {
@@ -281,9 +282,9 @@ else {
     }
     $expected = ConvertTo-NormalizedText ([System.IO.File]::ReadAllText($baselinePath))
     if (-not [string]::Equals($expected, $manifestText, [StringComparison]::Ordinal)) {
-        throw 'NuGet package metadata, dependencies, or assets differ from api/0.7.0/packages.json.'
+        throw "NuGet package metadata, dependencies, or assets differ from api/$compatibilityLine/packages.json."
     }
-    Write-Host 'Verified the frozen 14-package metadata, dependency, and asset baseline.'
+    Write-Host "Verified the reviewed 14-package metadata, dependency, and asset baseline for $compatibilityLine."
 }
 
 Invoke-ConsumerSmoke $packages.ToArray()

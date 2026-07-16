@@ -35,7 +35,9 @@ public sealed class BackendContractTests
             """
             local mt = { __close = function() end }
             local function run()
-                local value <close> = setmetatable({}, mt)
+                do
+                    local value <close> = setmetatable({}, mt)
+                end
                 local total = 0
                 for i = 1, 3 do total = total + i end
                 return total

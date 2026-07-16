@@ -488,8 +488,14 @@ public static class Lua54PrototypeConverter
 
         private void EmitConstantBinary(Lua54Instruction instruction, LuaIrBinaryOperator op)
         {
+            var metamethod = Prototype.Code[_sourceProgramCounter + 1];
             Emit(LuaIrOpcode.LoadConstant, Scratch0, instruction.C);
-            Emit(LuaIrOpcode.Binary, instruction.A, instruction.B, Scratch0, (int)op);
+            Emit(
+                LuaIrOpcode.Binary,
+                instruction.A,
+                metamethod.K ? Scratch0 : instruction.B,
+                metamethod.K ? instruction.B : Scratch0,
+                (int)op);
         }
 
         private void EmitRegisterBinary(Lua54Instruction instruction, LuaIrBinaryOperator op) =>

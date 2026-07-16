@@ -1,0 +1,124 @@
+name: Cross-runtime performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Balanced sample rounds per engine and workload
+        required: false
+        default: "6"
+      target-milliseconds:
+        description: Minimum CPU milliseconds used during calibration
+        required: false
+        default: "250"
+  schedule:
+    - cron: "23 3 * * 1"
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "perf/**"
+    paths:
+      - ".github/workflows/cross-runtime-performance.yml"
+      - "benchmarks/cross-runtime/**"
+      - "benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/**"
+      - "scripts/Install-CrossRuntimeBenchmarkTools.ps1"
+      - "scripts/Measure-CrossRuntimePerformance.ps1"
+      - "scripts/Merge-CrossRuntimePerformanceEvidence.ps1"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/cross-runtime-performance.yml"
+      - "benchmarks/cross-runtime/**"
+      - "benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/**"
+      - "scripts/Install-CrossRuntimeBenchmarkTools.ps1"
+      - "scripts/Measure-CrossRuntimePerformance.ps1"
+      - "scripts/Merge-CrossRuntimePerformanceEvidence.ps1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-runtime-performance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BENCHMARK_ROUNDS: ${{ inputs.rounds || '6' }}
+  BENCHMARK_TARGET_MS: ${{ inputs.target-milliseconds || '250' }}
+
+jobs:
+  measure:
+    name: Measure (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Restore and build benchmark host
+        run: >-
+          dotnet build
+          benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
+          --configuration Release
+          -p:ContinuousIntegrationBuild=true
+      - name: Build pinned native Lua and LuaJIT
+        shell: pwsh
+        run: >-
+          ./scripts/Install-CrossRuntimeBenchmarkTools.ps1
+          -RuntimeIdentifier '${{ matrix.rid }}'
+      - name: Run balanced cross-runtime benchmark
+        shell: pwsh
+        run: >-
+          ./scripts/Measure-CrossRuntimePerformance.ps1
+          -RuntimeIdentifier '${{ matrix.rid }}'
+          -Rounds $env:BENCHMARK_ROUNDS
+          -TargetMilliseconds $env:BENCHMARK_TARGET_MS
+          -Configuration Release -NoProvision -NoBuild
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cross-runtime-performance-${{ matrix.rid }}
+          path: artifacts/cross-runtime-performance/${{ matrix.rid }}/**
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    name: Aggregate native-Lua and MoonSharp gates
+    needs: measure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cross-runtime-performance-*
+          path: artifacts/cross-runtime-performance
+      - name: Validate and merge all six RIDs
+        shell: pwsh
+        run: ./scripts/Merge-CrossRuntimePerformanceEvidence.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cross-runtime-performance-six-rid-report
+          path: |
+            artifacts/cross-runtime-performance/cross-runtime-six-rid-report.json
+            artifacts/cross-runtime-performance/cross-runtime-six-rid-report.md
+          if-no-files-found: error
+          retention-days: 90

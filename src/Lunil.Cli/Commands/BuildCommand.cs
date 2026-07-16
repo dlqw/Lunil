@@ -47,8 +47,8 @@ internal static class BuildCommand
         }
         else
         {
-            using var host = context.CreateHost([input], out _);
-            var workspace = await host.AnalyzeWorkspaceAsync(
+            using var workspaceService = context.CreateWorkspace([input], out _);
+            var workspace = await workspaceService.AnalyzeAsync(
                 [input.ToWorkspaceDocument()],
                 context.CancellationToken).ConfigureAwait(false);
             var diagnostics = CliDiagnosticWriter.FromWorkspace(

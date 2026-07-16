@@ -1,4 +1,5 @@
 using Lunil.Runtime.Memory;
+using Lunil.Runtime.Operations;
 
 namespace Lunil.Runtime.Values;
 
@@ -75,7 +76,7 @@ public sealed class LuaUserdata : LuaGcObject
 
     internal override bool TryGetFinalizer(out LuaValue finalizer)
     {
-        finalizer = _metatable?.GetStringField("__gc"u8) ?? LuaValue.Nil;
+        finalizer = _metatable?.GetMetamethodField(LuaMetamethod.GarbageCollect) ?? LuaValue.Nil;
         return !finalizer.IsNil;
     }
 

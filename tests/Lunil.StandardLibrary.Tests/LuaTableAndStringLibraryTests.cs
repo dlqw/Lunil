@@ -1,4 +1,5 @@
 using Lunil.Core.Text;
+using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
@@ -11,6 +12,86 @@ namespace Lunil.StandardLibrary.Tests;
 
 public sealed class LuaTableAndStringLibraryTests
 {
+    [Fact]
+    public void Issue30StringHeavyReproductionsCompleteUnderSmallLogicalQuotas()
+    {
+        var concat = ExecuteWithOptions(
+            "local parts={} for i=1,50000 do parts[i]='item'..i end " +
+            "local s=table.concat(parts,',') return #s",
+            maximumLogicalBytes: 16L * 1024 * 1024);
+        var pattern = ExecuteWithOptions(
+            "local s=string.rep('abc123def456 ',5000) local count=0 " +
+            "for i=1,50 do local n=select(2,s:gsub('%d+','X')); count=count+n end " +
+            "return count",
+            maximumLogicalBytes: 16L * 1024 * 1024);
+
+        Assert.Equal(488_893, Assert.Single(concat).AsInteger());
+        Assert.Equal(500_000, Assert.Single(pattern).AsInteger());
+    }
+
+    [Fact]
+    public void ConcatAndGsubKeepLinearLogicalAllocationAtNAndTwoN()
+    {
+        var concatN = MeasureConcatGrowth(2_048);
+        var concatTwoN = MeasureConcatGrowth(4_096);
+        var gsubN = MeasureGsubGrowth(2_048);
+        var gsubTwoN = MeasureGsubGrowth(4_096);
+
+        Assert.InRange(concatN.Objects, 1, 3);
+        Assert.InRange(concatTwoN.Objects, 1, 3);
+        Assert.InRange(gsubN.Objects, 1, 3);
+        Assert.InRange(gsubTwoN.Objects, 1, 3);
+        Assert.InRange((double)concatTwoN.Bytes / concatN.Bytes, 1.9, 2.1);
+        Assert.InRange((double)gsubTwoN.Bytes / gsubN.Bytes, 1.9, 2.1);
+    }
+
+    [Fact]
+    public void LinearStringBuffersSurviveCallbacksGcBinaryDataAndReentrancy()
+    {
+        var values = Execute(
+            "local log={} local backing={'a'..string.char(0),2,'c'} " +
+            "local proxy=setmetatable({}, {" +
+            "__len=function() log[#log+1]='len'; collectgarbage(); return 3 end," +
+            "__index=function(_,i) log[#log+1]='get'..i; collectgarbage(); " +
+            "local nested=table.concat({'n','e','s','t'}); assert(nested=='nest'); return backing[i] end}) " +
+            "local joined=table.concat(proxy,string.char(0)) " +
+            "local transformed,n=string.gsub('x'..string.char(0)..'a1y','%z(%a)(%d)',function(a,d) " +
+            "collectgarbage(); local inner=string.gsub('ab','.',string.upper); assert(inner=='AB'); " +
+            "return d..string.char(0)..a end) " +
+            "local replacements=setmetatable({}, {__index=function(_,key) " +
+            "collectgarbage(); log[#log+1]='key'..key; return '['..key..']' end}) " +
+            "local mapped,m=string.gsub('a'..string.char(0)..'b','%a',replacements) " +
+            "local anchored,aCount=string.gsub('aa','^a',function() collectgarbage(); return 'x' end) " +
+            "return joined,transformed,n,mapped,m,table.concat(log,','),anchored,aCount");
+
+        Assert.Equal(
+            new byte[] { (byte)'a', 0, 0, (byte)'2', 0, (byte)'c' },
+            values[0].AsString().ToArray());
+        Assert.Equal(
+            new byte[] { (byte)'x', (byte)'1', 0, (byte)'a', (byte)'y' },
+            values[1].AsString().ToArray());
+        Assert.Equal(1, values[2].AsInteger());
+        Assert.Equal(
+            new byte[] { (byte)'[', (byte)'a', (byte)']', 0, (byte)'[', (byte)'b', (byte)']' },
+            values[3].AsString().ToArray());
+        Assert.Equal(2, values[4].AsInteger());
+        Assert.Equal("len,get1,get2,get3,keya,keyb", values[5].AsString().ToString());
+        Assert.Equal("xa", values[6].AsString().ToString());
+        Assert.Equal(1, values[7].AsInteger());
+    }
+
+    [Fact]
+    public void LinearStringBufferStillRejectsAResultLargerThanTheHeapQuota()
+    {
+        var values = ExecuteWithOptions(
+            "local source=string.rep('a',1024) local replacement=string.rep('b',4096) " +
+            "local ok,message=pcall(string.gsub,source,'a',replacement) return ok,message",
+            maximumLogicalBytes: 1024 * 1024);
+
+        Assert.False(values[0].AsBoolean());
+        Assert.Contains("heap quota exceeded", values[1].AsString().ToString());
+    }
+
     [Fact]
     public void StringConstantsShareModuleIdentityWithoutInterningRuntimeLongStrings()
     {
@@ -114,6 +195,28 @@ public sealed class LuaTableAndStringLibraryTests
         Assert.Equal("4:8", values[3].AsString().ToString());
         Assert.False(values[4].AsBoolean());
         Assert.True(values[5].AsBoolean());
+    }
+
+    [Fact]
+    public void ResumableNativeMetamethodOperationsPreserveCallbacksYieldBarrierAndLiveSlots()
+    {
+        var values = ExecuteRoundTripped(
+            "local backing={'a','b'} " +
+            "local mt={__concat=table.concat," +
+            "__len=function() collectgarbage(); return #backing end," +
+            "__index=function(_,i) collectgarbage(); return backing[i] end} " +
+            "local result=setmetatable({},mt) local high='alive' result=result..':' " +
+            "local indexed=setmetatable({'x','y'},{__index=table.concat}) " +
+            "local co=coroutine.create(function() local yielding=setmetatable({}, {" +
+            "__concat=table.concat,__len=function() return 1 end," +
+            "__index=function() coroutine.yield(); return 'z' end}); return yielding..',' end) " +
+            "local ok,e=coroutine.resume(co) return result,indexed['/'],high,ok,e~=nil");
+
+        Assert.Equal("a:b", values[0].AsString().ToString());
+        Assert.Equal("x/y", values[1].AsString().ToString());
+        Assert.Equal("alive", values[2].AsString().ToString());
+        Assert.False(values[3].AsBoolean());
+        Assert.True(values[4].AsBoolean());
     }
 
     [Fact]
@@ -468,5 +571,88 @@ public sealed class LuaTableAndStringLibraryTests
             .Execute(state, state.CreateMainClosure(lowering.Module!))
             .Values
             .ToArray();
+    }
+
+    private static LuaValue[] ExecuteRoundTripped(string source)
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallBasic(state);
+        LuaStandardLibrary.InstallCoroutine(state);
+        LuaStandardLibrary.InstallTable(state);
+        LuaStandardLibrary.InstallString(state);
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        var original = lowering.Module!;
+        var bytes = Lua54CanonicalPrototypeWriter.Write(original, original.MainFunctionId);
+        var module = Lua54PrototypeConverter.Convert(bytes);
+        return new LuaInterpreter()
+            .Execute(state, state.CreateMainClosure(module))
+            .Values
+            .ToArray();
+    }
+
+    private static LuaValue[] ExecuteWithOptions(string source, long maximumLogicalBytes)
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                MaximumLogicalBytes = maximumLogicalBytes,
+            },
+        });
+        LuaStandardLibrary.InstallAll(state);
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        return new LuaInterpreter(LuaInterpreterOptions.Default with
+        {
+            MaximumInstructionCount = long.MaxValue,
+        }).Execute(state, state.CreateMainClosure(lowering.Module!)).Values.ToArray();
+    }
+
+    private static (int Objects, long Bytes) MeasureConcatGrowth(int length)
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallAll(state);
+        var parts = state.CreateTable(arrayCapacity: length);
+        var item = LuaValue.FromString(state.Strings.GetOrCreate("x"u8));
+        for (var index = 1; index <= length; index++)
+        {
+            parts.Set(LuaValue.FromInteger(index), item);
+        }
+
+        state.SetGlobal("parts", LuaValue.FromTable(parts));
+        return MeasureStoppedHeapGrowth(state, "return table.concat(parts,',')");
+    }
+
+    private static (int Objects, long Bytes) MeasureGsubGrowth(int length)
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallAll(state);
+        var subject = new byte[length];
+        subject.AsSpan().Fill((byte)'x');
+        state.SetGlobal(
+            "subject",
+            LuaValue.FromString(state.Strings.GetOrCreate(subject)));
+        return MeasureStoppedHeapGrowth(state, "return string.gsub(subject,'x','yy')");
+    }
+
+    private static (int Objects, long Bytes) MeasureStoppedHeapGrowth(
+        LuaState state,
+        string source)
+    {
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        Assert.Empty(lowering.Diagnostics);
+        var closure = state.CreateMainClosure(lowering.Module!);
+        state.Heap.Stop();
+        var objects = state.Heap.ObjectCount;
+        var bytes = state.Heap.LogicalBytes;
+
+        var result = new LuaInterpreter().Execute(state, closure);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        return (state.Heap.ObjectCount - objects, state.Heap.LogicalBytes - bytes);
     }
 }

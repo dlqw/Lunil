@@ -127,6 +127,9 @@ $tier2Result = [pscustomobject]@{
         $tier2Selected | Measure-Object Tier2LivenessCacheHitRate -Minimum).Minimum
     MaximumTier2CompileAllocatedP95Bytes = (
         $tier2Selected | Measure-Object Tier2CompileAllocatedP95Bytes -Maximum).Maximum
+    MaximumTier2NumericRegionHotInstructionBudgetCheckCount = (
+        $tier2Selected |
+            Measure-Object Tier2NumericRegionHotInstructionBudgetCheckCount -Maximum).Maximum
     MaximumAbsoluteAllocationSlopeBytesIteration = (
         $tier2Selected | ForEach-Object {
             [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
@@ -136,6 +139,9 @@ $tier2Result = [pscustomobject]@{
     }).Count -eq 0
     AllRidsAcceptAutomaticExactNumericTier2 = @($tier2Selected | Where-Object {
         $_.Tier2EligibilityAccepted -le 0
+    }).Count -eq 0
+    AllRidsAvoidHotInstructionBudgetChecks = @($tier2Selected | Where-Object {
+        $_.Tier2NumericRegionHotInstructionBudgetCheckCount -ne 0
     }).Count -eq 0
     AllRidsRejectNegativeAutomaticTier2 = @($tier2Selected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0
@@ -195,6 +201,9 @@ $loopOsrResult = [pscustomobject]@{
         $loopOsrSelected | Measure-Object LoopOsrLivenessCacheHitRate -Minimum).Minimum
     MaximumLoopOsrCompileAllocatedP95Bytes = (
         $loopOsrSelected | Measure-Object LoopOsrCompileAllocatedP95Bytes -Maximum).Maximum
+    MaximumLoopOsrNumericRegionHotInstructionBudgetCheckCount = (
+        $loopOsrSelected |
+            Measure-Object LoopOsrNumericRegionHotInstructionBudgetCheckCount -Maximum).Maximum
     MaximumAbsoluteAllocationSlopeBytesIteration = (
         $loopOsrSelected | ForEach-Object {
             [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
@@ -207,6 +216,9 @@ $loopOsrResult = [pscustomobject]@{
     }).Count -eq 0
     AllRidsAcceptAutomaticExactNumericOsr = @($loopOsrSelected | Where-Object {
         $_.LoopOsrEligibilityAccepted -le 0
+    }).Count -eq 0
+    AllRidsAvoidHotInstructionBudgetChecks = @($loopOsrSelected | Where-Object {
+        $_.LoopOsrNumericRegionHotInstructionBudgetCheckCount -ne 0
     }).Count -eq 0
     AllRidsRejectNegativeAutomaticOsr = @($loopOsrSelected | Where-Object {
         @($_.NegativeWorkloadComparisons | Where-Object {

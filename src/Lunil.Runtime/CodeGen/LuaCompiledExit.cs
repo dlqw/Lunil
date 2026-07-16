@@ -35,51 +35,81 @@ public enum LuaCompiledExitReason : byte
 [EditorBrowsable(EditorBrowsableState.Never)]
 public readonly record struct LuaCompiledExit
 {
+    // Keep the 64-bit counter first and the byte tags last so the complete control payload
+    // remains 16 bytes. A declaration-order layout would otherwise pad this value to 24 bytes
+    // and force a hidden return buffer on common 64-bit ABIs.
+    private readonly long _instructionsConsumed;
+    private readonly int _programCounter;
+    private readonly LuaCompiledExitKind _kind;
+    private readonly LuaCompiledExitReason _reason;
+
     private LuaCompiledExit(
         LuaCompiledExitKind kind,
         int programCounter,
-        int instructionsConsumed,
+        long instructionsConsumed,
         LuaCompiledExitReason reason)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
         ArgumentOutOfRangeException.ThrowIfNegative(instructionsConsumed);
-        Kind = kind;
-        ProgramCounter = programCounter;
-        InstructionsConsumed = instructionsConsumed;
-        Reason = reason;
+        _instructionsConsumed = instructionsConsumed;
+        _programCounter = programCounter;
+        _kind = kind;
+        _reason = reason;
     }
 
-    public LuaCompiledExitKind Kind { get; }
+    public LuaCompiledExitKind Kind => _kind;
 
     /// <summary>The committed or restart program counter in canonical IR coordinates.</summary>
-    public int ProgramCounter { get; }
+    public int ProgramCounter => _programCounter;
 
     /// <summary>The number of canonical instructions completed by this entry invocation.</summary>
-    public int InstructionsConsumed { get; }
+    public long InstructionsConsumed => _instructionsConsumed;
 
-    public LuaCompiledExitReason Reason { get; }
+    public LuaCompiledExitReason Reason => _reason;
 
     public static LuaCompiledExit Continue(int programCounter, int instructionsConsumed) =>
+        Continue(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Continue(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Continue, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Poll(
         int programCounter,
         int instructionsConsumed,
+        LuaCompiledExitReason reason) => Poll(programCounter, (long)instructionsConsumed, reason);
+
+    public static LuaCompiledExit Poll(
+        int programCounter,
+        long instructionsConsumed,
         LuaCompiledExitReason reason) =>
         new(LuaCompiledExitKind.Poll, programCounter, instructionsConsumed, ValidateReason(reason));
 
     public static LuaCompiledExit Call(int programCounter, int instructionsConsumed) =>
+        Call(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Call(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Call, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit TailCall(int programCounter, int instructionsConsumed) =>
+        TailCall(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit TailCall(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.TailCall, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Return(int programCounter, int instructionsConsumed) =>
+        Return(programCounter, (long)instructionsConsumed);
+
+    public static LuaCompiledExit Return(int programCounter, long instructionsConsumed) =>
         new(LuaCompiledExitKind.Return, programCounter, instructionsConsumed, LuaCompiledExitReason.None);
 
     public static LuaCompiledExit Deopt(
         int programCounter,
         int instructionsConsumed,
+        LuaCompiledExitReason reason) => Deopt(programCounter, (long)instructionsConsumed, reason);
+
+    public static LuaCompiledExit Deopt(
+        int programCounter,
+        long instructionsConsumed,
         LuaCompiledExitReason reason) =>
         new(LuaCompiledExitKind.Deopt, programCounter, instructionsConsumed, ValidateReason(reason));
 
@@ -93,9 +123,9 @@ public readonly record struct LuaCompiledExit
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class LuaExecutionContext
 {
-    private int _instructionsConsumed;
+    private long _instructionsConsumed;
     private int _lastObservedProgramCounter;
-    private int _lastObservedInstructionCount;
+    private long _lastObservedInstructionCount;
 
     internal LuaExecutionContext(
         LuaState state,
@@ -109,9 +139,10 @@ public sealed class LuaExecutionContext
         LuaExecutionEngine executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
-        ResetCore(executionEngine, state, thread, remainingInstructionCount);
+        ResetCore(executionEngine, state, thread, remainingInstructionCount, scheduler);
     }
 
     public LuaState State { get; private set; } = null!;
@@ -124,9 +155,11 @@ public sealed class LuaExecutionContext
 
     public bool HasExactDebugHooks { get; private set; }
 
-    internal int InstructionsConsumed => _instructionsConsumed;
+    internal long InstructionsConsumed => _instructionsConsumed;
 
     internal LuaExecutionEngine? ExecutionEngine { get; private set; }
+
+    internal LuaScheduler? Scheduler { get; private set; }
 
     internal void Reset(
         LuaState state,
@@ -140,16 +173,18 @@ public sealed class LuaExecutionContext
         LuaExecutionEngine executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
-        ResetCore(executionEngine, state, thread, remainingInstructionCount);
+        ResetCore(executionEngine, state, thread, remainingInstructionCount, scheduler);
     }
 
     private void ResetCore(
         LuaExecutionEngine? executionEngine,
         LuaState state,
         LuaThread thread,
-        long remainingInstructionCount)
+        long remainingInstructionCount,
+        LuaScheduler? scheduler = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(thread);
@@ -159,6 +194,7 @@ public sealed class LuaExecutionContext
         _lastObservedProgramCounter = -1;
         _lastObservedInstructionCount = -1;
         ExecutionEngine = executionEngine;
+        Scheduler = scheduler;
         State = state;
         Thread = thread;
         RemainingInstructionCount = remainingInstructionCount;

@@ -13,6 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$expectedVersion = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
 $project = Join-Path $repositoryRoot 'src/Lunil.Cli/Lunil.Cli.csproj'
 $executableName = if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Ordinal)) {
     'lunil.exe'
@@ -59,7 +60,11 @@ foreach ($mode in $Modes) {
     Push-Location $outputDirectory
     try {
         $versionOutput = (& $executable --version | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch '^0\.7\.0(?:-|$)') {
+        if ($LASTEXITCODE -ne 0 -or
+            -not [string]::Equals(
+                $versionOutput,
+                $expectedVersion,
+                [StringComparison]::Ordinal)) {
             throw "$mode CLI version smoke failed: $versionOutput"
         }
 

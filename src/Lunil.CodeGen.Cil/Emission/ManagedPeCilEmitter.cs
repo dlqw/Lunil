@@ -365,6 +365,8 @@ internal static class ManagedPeCilEmitter
                     types.CodegenAbiV1,
                 _ when target.Id.StartsWith("LuaCodegenAbiV2.", StringComparison.Ordinal) =>
                     types.CodegenAbiV2,
+                _ when target.Id.StartsWith("LuaCodegenAbiV3.", StringComparison.Ordinal) =>
+                    types.CodegenAbiV3,
                 _ when target.Id.StartsWith("LuaCompiledExit.", StringComparison.Ordinal) =>
                     types.CompiledExit,
                 _ => throw new InvalidOperationException(
@@ -420,7 +422,11 @@ internal static class ManagedPeCilEmitter
             "LuaCodegenAbiV2.CanExecuteCompiledFrame" or
             "LuaCodegenAbiV2.CanSkipClose" or
             "LuaCodegenAbiV2.CanExecuteUnaryPrimitive" or
-            "LuaCodegenAbiV2.CanExecuteBinaryPrimitive")
+            "LuaCodegenAbiV2.CanExecuteBinaryPrimitive" or
+            "LuaCodegenAbiV3.ExecuteGetTable" or
+            "LuaCodegenAbiV3.ExecuteSetTable" or
+            "LuaCodegenAbiV3.CanContinueAfterFramelessCall" or
+            "LuaCodegenAbiV3.PollGcSafepoint")
         {
             encoder.Type().Boolean();
             return;
@@ -499,7 +505,8 @@ internal static class ManagedPeCilEmitter
             Add(typeof(LuaCompiledExit)),
             Add(typeof(LuaCompiledExitReason)),
             Add(typeof(LuaCodegenAbiV1)),
-            Add(typeof(LuaCodegenAbiV2)));
+            Add(typeof(LuaCodegenAbiV2)),
+            Add(typeof(LuaCodegenAbiV3)));
     }
 
     private static AssemblyReferenceHandle AddAssemblyReference(
@@ -668,7 +675,8 @@ internal static class ManagedPeCilEmitter
         TypeReferenceHandle CompiledExit,
         TypeReferenceHandle CompiledExitReason,
         TypeReferenceHandle CodegenAbiV1,
-        TypeReferenceHandle CodegenAbiV2);
+        TypeReferenceHandle CodegenAbiV2,
+        TypeReferenceHandle CodegenAbiV3);
 
     private sealed record EmittedMethod(
         MethodDefinitionHandle Handle,

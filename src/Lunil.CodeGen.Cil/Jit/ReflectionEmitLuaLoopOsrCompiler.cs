@@ -62,7 +62,7 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
     private static readonly MethodInfo CanSkipClose = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanSkipClose),
-        [typeof(LuaFrame), typeof(int)]);
+        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
     private static readonly MethodInfo MaterializeConstant = Method(
         typeof(LuaCodegenAbiV1),
         nameof(LuaCodegenAbiV1.MaterializeConstant),
@@ -128,15 +128,15 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
     private static readonly MethodInfo ContinueExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(int)]);
+        [typeof(int), typeof(long)]);
     private static readonly MethodInfo PollExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Poll),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
     private static readonly MethodInfo DeoptExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
-        [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
+        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
 
     public static void PrepareRuntimeAbi()
     {
@@ -641,6 +641,7 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
         int register,
         Label guardExit)
     {
+        generator.Emit(OpCodes.Ldarg_1);
         generator.Emit(OpCodes.Ldarg_2);
         EmitInt32(generator, register);
         generator.Emit(OpCodes.Call, CanSkipClose);

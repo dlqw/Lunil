@@ -16,10 +16,16 @@ public static class LuaRuntimeOperations
         {
             if (target.Kind == LuaValueKind.Table)
             {
-                var value = target.AsTable().Get(key);
+                var table = target.AsTable();
+                var value = table.Get(key);
                 if (!value.IsNil)
                 {
                     return LuaOperationResolution.Immediate(value);
+                }
+
+                if (table.Metatable is null)
+                {
+                    return LuaOperationResolution.Immediate(LuaValue.Nil);
                 }
             }
 
@@ -59,6 +65,12 @@ public static class LuaRuntimeOperations
             {
                 var table = target.AsTable();
                 if (!table.Get(key).IsNil)
+                {
+                    table.Set(key, value);
+                    return LuaOperationResolution.Immediate(LuaValue.Nil);
+                }
+
+                if (table.Metatable is null)
                 {
                     table.Set(key, value);
                     return LuaOperationResolution.Immediate(LuaValue.Nil);
@@ -261,7 +273,7 @@ public static class LuaRuntimeOperations
             LuaValueKind.Userdata => value.AsUserdata().Metatable,
             _ => state.GetTypeMetatable(value.Kind),
         };
-        return metatable?.GetStringField(LuaMetamethodFacts.GetName(metamethod)) ?? LuaValue.Nil;
+        return metatable?.GetMetamethodField(metamethod) ?? LuaValue.Nil;
     }
 
     private static LuaOperationResolution Equal(
@@ -373,7 +385,7 @@ public static class LuaRuntimeOperations
             LuaIrUnaryOperator.Length => operand.Kind == LuaValueKind.String ||
                 operand.Kind == LuaValueKind.Table &&
                 (operand.AsTable().Metatable is not { } metatable ||
-                    metatable.GetStringField("__len"u8).IsNil),
+                    metatable.GetMetamethodField(LuaMetamethod.Length).IsNil),
             _ => false,
         };
 

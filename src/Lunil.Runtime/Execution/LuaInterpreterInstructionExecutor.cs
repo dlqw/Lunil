@@ -68,18 +68,23 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.NewTable:
+                var allocationHint = frame.Closure.GetOrCreateTableAllocationHint(
+                    frame.ProgramCounter);
                 LuaExecutionEngine.Write(
                     thread,
                     frame,
                     instruction.A,
-                    LuaValue.FromTable(state.CreateTable(
+                    LuaValue.FromTable(state.CreateTableForAllocationSite(
                         instruction.C,
-                        instruction.B == 0 ? 0 : 1 << (instruction.B - 1))));
+                        instruction.B == 0 ? 0 : 1 << (instruction.B - 1),
+                        allocationHint)));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.GetTable:
                 engine.ExecuteOperation(
                     state,
+                    context.Scheduler ??
+                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
                     thread,
                     frame,
                     LuaRuntimeOperations.GetIndex(
@@ -92,6 +97,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             case LuaIrOpcode.SetTable:
                 engine.ExecuteOperation(
                     state,
+                    context.Scheduler ??
+                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
                     thread,
                     frame,
                     LuaRuntimeOperations.SetIndex(
@@ -118,6 +125,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             case LuaIrOpcode.Unary:
                 engine.ExecuteOperation(
                     state,
+                    context.Scheduler ??
+                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
                     thread,
                     frame,
                     LuaRuntimeOperations.Unary(
@@ -130,6 +139,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             case LuaIrOpcode.Binary:
                 engine.ExecuteOperation(
                     state,
+                    context.Scheduler ??
+                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
                     thread,
                     frame,
                     LuaRuntimeOperations.Binary(

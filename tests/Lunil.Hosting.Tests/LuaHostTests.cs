@@ -1,4 +1,6 @@
 using System.Text;
+using Lunil.CodeGen.Cil.Jit;
+using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Workspace;
 
@@ -9,7 +11,7 @@ public sealed class LuaHostTests
     [Fact]
     public void RunCompilesAndExecutesThroughOnePublicBoundary()
     {
-        var host = new LuaHost();
+        using var host = new LuaHost();
 
         var result = host.RunUtf8(
             "local total=0; for i=1,10 do total=total+i end; return total",
@@ -25,7 +27,7 @@ public sealed class LuaHostTests
     [Fact]
     public void ReusableHostPreservesStateAcrossCompilations()
     {
-        var host = new LuaHost();
+        using var host = new LuaHost();
 
         var first = host.RunUtf8("answer=41");
         var second = host.RunUtf8("return answer+1");
@@ -38,7 +40,7 @@ public sealed class LuaHostTests
     [Fact]
     public void CompileFailureDoesNotStartExecution()
     {
-        var host = new LuaHost();
+        using var host = new LuaHost();
 
         var result = host.RunUtf8("local =");
 
@@ -51,7 +53,7 @@ public sealed class LuaHostTests
     [Fact]
     public void RestrictedProfileDeniesFileSystemAndCapturesConsole()
     {
-        var host = new LuaHost(LuaHostOptions.Restricted);
+        using var host = new LuaHost(LuaHostOptions.Restricted);
 
         var result = host.RunUtf8(
             "local file,err=io.open('secret','r'); print('sandbox'); " +
@@ -67,8 +69,8 @@ public sealed class LuaHostTests
     [Fact]
     public void DeterministicProfileFixesTimeZoneClockAndHashSeed()
     {
-        var first = new LuaHost(LuaHostOptions.Deterministic);
-        var second = new LuaHost(LuaHostOptions.Deterministic);
+        using var first = new LuaHost(LuaHostOptions.Deterministic);
+        using var second = new LuaHost(LuaHostOptions.Deterministic);
 
         var result = first.RunUtf8(
             "return os.clock(),os.time(),os.date('!%Y-%m-%d %H:%M:%S',os.time())");
@@ -92,7 +94,7 @@ public sealed class LuaHostTests
                 Console = console,
             },
         };
-        var host = new LuaHost(options);
+        using var host = new LuaHost(options);
 
         var result = host.RunUtf8("print('custom')");
 
@@ -104,7 +106,7 @@ public sealed class LuaHostTests
     [Fact]
     public void AnnotationsAreErasedFromRuntimeExecution()
     {
-        var host = new LuaHost();
+        using var host = new LuaHost();
 
         var result = host.RunUtf8("---@type string\nreturn 42");
 
@@ -130,5 +132,83 @@ public sealed class LuaHostTests
         Assert.True(result.Succeeded);
         Assert.Equal("integer", result.GetModule("app")!.ExportedType.DisplayName);
         Assert.Equal(2, result.Graph.Nodes.Length);
+    }
+
+    [Fact]
+    public void InterpreterBackendRemainsAnExplicitDeterministicOptOut()
+    {
+        using var host = new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8("return 6 * 7");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(LuaHostExecutionBackend.Interpreter, host.SelectedExecutionBackend);
+        Assert.Null(host.JitStatistics);
+        Assert.Equal(42, Assert.Single(result.Execution!.Values).AsInteger());
+    }
+
+    [Fact]
+    public void QualifiedJitBackendCompilesEligibleCodeAndPreservesBudgets()
+    {
+        using var host = new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Jit,
+            Execution = LuaInterpreterOptions.Default with
+            {
+                MaximumInstructionCount = 10_000,
+            },
+            Jit = LuaJitExecutorOptions.Default with
+            {
+                FunctionEntryThreshold = 1,
+                BackedgeThreshold = 1,
+                SynchronousCompilation = true,
+                EnableTier2 = false,
+                EnableLoopOsr = false,
+            },
+        });
+        Assert.Null(host.JitStatistics);
+
+        var result = host.RunUtf8(
+            "local total=0; for i=1,100 do total=total+i end; return total");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(LuaHostExecutionBackend.Jit, host.SelectedExecutionBackend);
+        Assert.True(host.IsDynamicCodeAvailable);
+        Assert.NotNull(host.JitStatistics);
+        Assert.True(host.JitStatistics!.CompilationCompleted > 0);
+        Assert.True(host.JitStatistics.CompiledInvocations > 0);
+        Assert.Equal(5_050, Assert.Single(result.Execution!.Values).AsInteger());
+        Assert.Throws<Lunil.Runtime.LuaRuntimeException>(() => host.RunUtf8("while true do end"));
+    }
+
+    [Fact]
+    public void DumpLoadPreservesConstantLeftMetamethodOperandOrder()
+    {
+        const string source = """
+            local rhs
+            local mt = {
+                __add = function(left, right)
+                    return left == 5.25 and right == rhs
+                end,
+            }
+            rhs = setmetatable({}, mt)
+            return 5.25 + rhs
+            """;
+        using var host = new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+        var compilation = host.CompileUtf8(source, "@metamethod-order.lua");
+        Assert.True(compilation.Succeeded);
+        var module = Assert.IsType<Lunil.IR.Canonical.LuaIrModule>(compilation.Module);
+        var binary = Lua54CanonicalPrototypeWriter.Write(module, module.MainFunctionId);
+
+        var result = host.ExecuteBinaryChunk(binary);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.True(Assert.Single(result.Values).AsBoolean());
     }
 }

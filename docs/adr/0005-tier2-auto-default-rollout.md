@@ -5,6 +5,7 @@
 - Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0003](0003-tier1-auto-default-rollout.md),
   [ADR 0004](0004-tier2-exact-numeric-productionization.md)
+- Extended by: [ADR 0012](0012-guarded-table-call-fastpaths.md)
 
 ## Context
 
@@ -39,19 +40,23 @@ only when:
 
 Stable branches and dead moves may coexist with exact numeric sites. A polymorphic numeric profile
 or a managed semantic boundary is a permanent rejection because accumulated profile facts only
-widen. A profile with no numeric hotspot is reconsidered with exponential sample backoff so a
-previously cold numeric path can still qualify later. Imported profiles can satisfy hotness but
-must pass the same eligibility check.
+widen. A profile with no numeric hotspot receives one exponentially larger second sample window so
+a previously cold numeric path can still qualify; a second no-hotspot result is terminal and moves
+to plain Tier 1. Imported profiles can satisfy hotness but must pass the same eligibility check.
 
 `LuaJitTier2Eligibility`, `GetTier2PromotionEligibility`,
 `Tier2EligibilityAccepted`/`Tier2EligibilityRejected` events, independent statistics, and stable
-`JIT2101`-`JIT2105` diagnostics expose the decision. The registry also rejects a successful
+`JIT2101`-`JIT2106` diagnostics expose the decision. `JIT2106` denotes a function whose canonical
+CFG contains an instruction the exact emitter cannot execute without leaving the method. The
+registry also rejects a successful
 compiler result unless its installed code kind is `ExactNumericSpecializedCil`; a custom compiler
 cannot publish a managed method through the automatic path.
 
-Runtime profile collection begins only after Tier 1 has been installed. Functions rejected by the
-Tier 1 `Auto` benefit filter do not pay per-instruction Tier 2 observation cost; imported profiles
-may still seed a later eligible Tier 1 function before its first compiled invocation.
+Runtime profile collection begins only after Tier 1 has been installed. The Tier 1 cache entry owns
+profiled and plain delegates; a terminal Tier 2 eligibility rejection publishes the plain delegate,
+so later invocations do not retain a per-instruction observer call. Functions rejected by the Tier 1
+`Auto` benefit filter do not pay per-instruction Tier 2 observation cost; imported profiles may still
+seed a later eligible Tier 1 function before its first compiled invocation.
 
 Tier 2 is effective only when both dynamic-code capability flags are true. NativeAOT and other
 restricted deployments report Tier 2 as disabled, do not collect Tier 2 profiles, reject profile

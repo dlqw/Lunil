@@ -131,7 +131,7 @@ public static class CilWellKnownCalls
 
     public static CilCallTarget CanSkipClose { get; } = Call(
         "LuaCodegenAbiV2.CanSkipClose",
-        [CilStackValueKind.Frame, CilStackValueKind.Int32],
+        [CilStackValueKind.Thread, CilStackValueKind.Frame, CilStackValueKind.Int32],
         CilStackValueKind.Int32);
 
     public static CilCallTarget ObserveCanonicalInstruction { get; } = Call(
@@ -220,6 +220,112 @@ public static class CilWellKnownCalls
         ],
         CilStackValueKind.Void);
 
+    public static CilCallTarget ExecuteNewTable { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteNewTable",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void,
+        isGcSafePoint: true);
+
+    public static CilCallTarget ExecuteGetTable { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteGetTable",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
+    public static CilCallTarget ExecuteSetTable { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteSetTable",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
+    public static CilCallTarget ExecuteSetList { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteSetList",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void,
+        isGcSafePoint: true);
+
+    public static CilCallTarget ExecuteClosure { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteClosure",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void,
+        isGcSafePoint: true);
+
+    public static CilCallTarget ExecuteVarArg { get; } = Call(
+        "LuaCodegenAbiV3.ExecuteVarArg",
+        [
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Void);
+
+    public static CilCallTarget TryExecuteFramelessCall { get; } = Call(
+        "LuaCodegenAbiV3.TryExecuteFramelessCall",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+            CilStackValueKind.Int32,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
+    public static CilCallTarget CanContinueAfterFramelessCall { get; } = Call(
+        "LuaCodegenAbiV3.CanContinueAfterFramelessCall",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+        ],
+        CilStackValueKind.Int32);
+
+    public static CilCallTarget PollGcSafepoint { get; } = Call(
+        "LuaCodegenAbiV3.PollGcSafepoint",
+        [
+            CilStackValueKind.ExecutionContext,
+            CilStackValueKind.Thread,
+            CilStackValueKind.Frame,
+        ],
+        CilStackValueKind.Int32,
+        isGcSafePoint: true);
+
     public static CilCallTarget ExitPoll { get; } = Call(
         "LuaCompiledExit.Poll",
         [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
@@ -232,6 +338,16 @@ public static class CilWellKnownCalls
 
     public static CilCallTarget ExitReturn { get; } = Call(
         "LuaCompiledExit.Return",
+        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        CilStackValueKind.CompiledExit);
+
+    public static CilCallTarget ExitCall { get; } = Call(
+        "LuaCompiledExit.Call",
+        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        CilStackValueKind.CompiledExit);
+
+    public static CilCallTarget ExitTailCall { get; } = Call(
+        "LuaCompiledExit.TailCall",
         [CilStackValueKind.Int32, CilStackValueKind.Int32],
         CilStackValueKind.CompiledExit);
 
@@ -269,8 +385,19 @@ public static class CilWellKnownCalls
             ExecuteBinaryPrimitive,
             ExecuteNumericForPrepare,
             ExecuteNumericForLoop,
+            ExecuteNewTable,
+            ExecuteGetTable,
+            ExecuteSetTable,
+            ExecuteSetList,
+            ExecuteClosure,
+            ExecuteVarArg,
+            TryExecuteFramelessCall,
+            CanContinueAfterFramelessCall,
+            PollGcSafepoint,
             ExitContinue,
             ExitPoll,
+            ExitCall,
+            ExitTailCall,
             ExitReturn,
             ExitDeopt,
         ];

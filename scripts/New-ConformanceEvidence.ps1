@@ -14,8 +14,8 @@ $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $version = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
-if ($version -notmatch '^0\.7\.0(?:-[0-9A-Za-z.-]+)?$') {
-    throw "Could not resolve the active 0.7.0 release version: $version"
+if ([string]::IsNullOrWhiteSpace($version)) {
+    throw 'Could not resolve the active Lunil release version.'
 }
 $releaseGate = "$version-conformance"
 $detectedRid = [System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier.Trim().ToLowerInvariant()

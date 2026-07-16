@@ -1,4 +1,5 @@
 using Lunil.Core.Text;
+using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -122,12 +123,138 @@ public sealed class LuaMetamethodTests
         Assert.Contains("chain is too long", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LuaClosureOperationResultPreservesHigherLiveRegisters()
+    {
+        const string source = """
+            local mt = {}
+            function mt.__sub() return 123 end
+            local low = setmetatable({}, mt)
+            local keep = "alive"
+            low = low - 3
+            return low, keep
+            """;
+        var state = CreateStateWithSetMetatable();
+
+        var values = ExecuteRoundTripped(source, state);
+
+        Assert.Equal(LuaValue.FromInteger(123), values[0]);
+        Assert.Equal("alive", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void NativeOperationResultPreservesHigherLiveRegisters()
+    {
+        const string source = """
+            local low = object
+            local keep = "alive"
+            low = low - 3
+            return low, keep
+            """;
+        var state = CreateStateWithSetMetatable();
+        var value = state.CreateTable();
+        var metatable = state.CreateTable();
+        metatable.Set(
+            String(state, "__sub"),
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "native.__sub",
+                static (_, _) => [LuaValue.FromInteger(321)])));
+        value.SetMetatable(metatable);
+        state.SetGlobal("object", LuaValue.FromTable(value));
+
+        var values = ExecuteRoundTripped(source, state);
+
+        Assert.Equal(LuaValue.FromInteger(321), values[0]);
+        Assert.Equal("alive", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void ResumableNativeEqualityMetamethodPreservesLogicalNotTransform()
+    {
+        var state = CreateStateWithSetMetatable();
+        var callback = state.CreateMainClosure(Compile("return true"));
+        var equality = state.CreateNativeClosure(
+            new LuaNativeFunction("resumable.__eq", ResumableEqualityStep),
+            [LuaValue.FromFunction(callback)]);
+        var metatable = state.CreateTable();
+        metatable.Set(String(state, "__eq"), LuaValue.FromFunction(equality));
+        var left = state.CreateTable();
+        var right = state.CreateTable();
+        left.SetMetatable(metatable);
+        right.SetMetatable(metatable);
+        state.SetGlobal("left", LuaValue.FromTable(left));
+        state.SetGlobal("right", LuaValue.FromTable(right));
+
+        var values = ExecuteRoundTripped(
+            "local high='alive'; return left ~= right,high",
+            state);
+
+        Assert.False(values[0].AsBoolean());
+        Assert.Equal("alive", values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void YieldingNativeArithmeticMetamethodResumesOperationAndPreservesLiveSlots()
+    {
+        var state = CreateStateWithSetMetatable();
+        var addition = state.CreateNativeClosure(
+            new LuaNativeFunction("yielding.__add", YieldingAdditionStep));
+        var metatable = state.CreateTable();
+        metatable.Set(String(state, "__add"), LuaValue.FromFunction(addition));
+        var left = state.CreateTable();
+        var right = state.CreateTable();
+        left.SetMetatable(metatable);
+        right.SetMetatable(metatable);
+        state.SetGlobal("left", LuaValue.FromTable(left));
+        state.SetGlobal("right", LuaValue.FromTable(right));
+        var module = CompileRoundTripped(
+            "local value=left; local high='alive'; value=value+right; return value,high");
+        var thread = state.CreateThread(LuaValue.FromFunction(state.CreateMainClosure(module)));
+        var interpreter = new LuaInterpreter();
+
+        var yielded = interpreter.Start(state, thread);
+        var completed = interpreter.Resume(state, thread, [LuaValue.FromInteger(42)]);
+
+        Assert.Equal(LuaVmSignal.Yielded, yielded.Signal);
+        Assert.Equal(41, Assert.Single(yielded.Values).AsInteger());
+        Assert.Equal(LuaVmSignal.Completed, completed.Signal);
+        Assert.Equal(42, completed.Values[0].AsInteger());
+        Assert.Equal("alive", completed.Values[1].AsString().ToString());
+    }
+
     private static LuaValue[] Execute(string source, LuaState? state = null)
     {
         state ??= CreateStateWithSetMetatable();
         var module = Compile(source);
         return new LuaInterpreter().Execute(state, state.CreateMainClosure(module)).Values.ToArray();
     }
+
+    private static LuaValue[] ExecuteRoundTripped(string source, LuaState state)
+    {
+        var module = CompileRoundTripped(source);
+        return new LuaInterpreter().Execute(state, state.CreateMainClosure(module)).Values.ToArray();
+    }
+
+    private static Lunil.IR.Canonical.LuaIrModule CompileRoundTripped(string source)
+    {
+        var original = Compile(source);
+        var bytes = Lua54CanonicalPrototypeWriter.Write(original, original.MainFunctionId);
+        return Lua54PrototypeConverter.Convert(bytes);
+    }
+
+    private static LuaNativeStep ResumableEqualityStep(
+        LuaNativeCallContext context,
+        int continuation,
+        ReadOnlySpan<LuaValue> values) => continuation == 0
+            ? LuaNativeStep.CallLua(context.Captures[0], [], continuationId: 1)
+            : LuaNativeStep.Completed(values[0]);
+
+    private static LuaNativeStep YieldingAdditionStep(
+        LuaNativeCallContext context,
+        int continuation,
+        ReadOnlySpan<LuaValue> values) => continuation == 0
+            ? LuaNativeStep.Yielded([LuaValue.FromInteger(41)], continuationId: 1)
+            : LuaNativeStep.Completed(values[0]);
 
     private static LuaState CreateStateWithSetMetatable()
     {

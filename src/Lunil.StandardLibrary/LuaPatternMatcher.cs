@@ -4,20 +4,20 @@ using Lunil.Runtime.Values;
 namespace Lunil.StandardLibrary;
 
 /// <summary>Byte-oriented Lua 5.4 pattern virtual machine.</summary>
-internal sealed class LuaPatternMatcher
+internal ref struct LuaPatternMatcher
 {
     private const int MaximumCaptures = 32;
     private const int MaximumDepth = 200;
     private const int Unfinished = -1;
     private const int PositionCapture = -2;
 
-    private readonly byte[] _source;
-    private readonly byte[] _pattern;
+    private readonly ReadOnlySpan<byte> _source;
+    private readonly ReadOnlySpan<byte> _pattern;
     private readonly Capture[] _captures = new Capture[MaximumCaptures];
     private int _captureCount;
     private int _depth;
 
-    public LuaPatternMatcher(byte[] source, byte[] pattern)
+    public LuaPatternMatcher(ReadOnlySpan<byte> source, ReadOnlySpan<byte> pattern)
     {
         _source = source;
         _pattern = pattern;
@@ -296,8 +296,8 @@ internal sealed class LuaPatternMatcher
 
         var length = _captures[capture].Length;
         return length >= 0 && source + length <= _source.Length &&
-            _source.AsSpan(source, length).SequenceEqual(
-                _source.AsSpan(_captures[capture].Start, length))
+            _source.Slice(source, length).SequenceEqual(
+                _source.Slice(_captures[capture].Start, length))
             ? source + length
             : -1;
     }
@@ -457,7 +457,7 @@ internal sealed record PatternMatch(int Start, int End, PatternCapture[] Capture
 
 internal readonly record struct PatternCapture(int Start, int Length, bool IsPosition)
 {
-    public LuaValue ToLuaValue(LuaState state, byte[] source) => IsPosition
+    public LuaValue ToLuaValue(LuaState state, ReadOnlySpan<byte> source) => IsPosition
         ? LuaValue.FromInteger(Start + 1L)
-        : LuaValue.FromString(state.Strings.GetOrCreate(source.AsSpan(Start, Length)));
+        : LuaValue.FromString(state.Strings.GetOrCreate(source.Slice(Start, Length)));
 }

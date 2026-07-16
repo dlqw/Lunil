@@ -36,9 +36,18 @@ internal sealed class LuaContinuation
 
     public LuaResultTransform Transform { get; set; }
 
+    /// <summary>
+    /// Absolute exclusive caller top preserved by a resumable native runtime operation, or -1
+    /// for an ordinary native call.
+    /// </summary>
+    public int NativeOperationTop { get; set; } = -1;
+
     public LuaValue Value { get; set; }
 
     public LuaValue[] Values { get; set; } = [];
+
+    /// <summary>Byte-only native state; it never contains Lua values or CLR continuations.</summary>
+    public LuaNativeByteBuffer? NativeByteBuffer { get; set; }
 
     public LuaProtectedCallKind ProtectionKind { get; set; }
 
@@ -70,9 +79,25 @@ internal sealed class LuaContinuation
         Count = 0;
         ExpectedResults = 0;
         Transform = LuaResultTransform.None;
+        NativeOperationTop = -1;
         Value = LuaValue.Nil;
         Values = [];
+        NativeByteBuffer = null;
         IsYieldBarrier = false;
         NativeCallbackIsProtected = false;
+    }
+
+    /// <summary>Clears both transient continuation state and frame-lifetime protection state.</summary>
+    internal void ResetForFrameReuse()
+    {
+        Reset();
+        ProtectionKind = LuaProtectedCallKind.None;
+        ProtectionFunction = LuaValue.Nil;
+        ErrorHandler = LuaValue.Nil;
+        IsCloseHandler = false;
+        IsNativeProtectedBoundary = false;
+        NativeProtectedReturnBase = 0;
+        NativeProtectedExpectedResults = 0;
+        NativeProtectedTailCall = false;
     }
 }

@@ -24,6 +24,13 @@ internal enum CliProfile
     Deterministic,
 }
 
+internal enum CliExecutionBackend
+{
+    Auto,
+    Interpreter,
+    Jit,
+}
+
 internal enum CliBuildTarget
 {
     Chunk,
@@ -66,6 +73,8 @@ internal sealed record CliOptions
 
     public CliProfile Profile { get; init; } = CliProfile.Trusted;
 
+    public CliExecutionBackend ExecutionBackend { get; init; } = CliExecutionBackend.Auto;
+
     public CliBuildTarget BuildTarget { get; init; } = CliBuildTarget.Chunk;
 
     public CliDumpKind DumpKind { get; init; } = CliDumpKind.Summary;
@@ -96,6 +105,8 @@ internal sealed record CliConfiguration
     public CliDiagnosticFormat? DiagnosticFormat { get; init; }
 
     public CliProfile? Profile { get; init; }
+
+    public CliExecutionBackend? ExecutionBackend { get; init; }
 
     public CliBuildTarget? BuildTarget { get; init; }
 

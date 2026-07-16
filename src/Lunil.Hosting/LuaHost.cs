@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
@@ -15,7 +17,10 @@ namespace Lunil.Hosting;
 /// </summary>
 public sealed class LuaHost : IDisposable
 {
-    private readonly LuaExecutor _executor;
+    private readonly LuaExecutor _interpreterExecutor;
+    private readonly object _jitLock = new();
+    private LuaJitExecutor? _jitExecutor;
+    private int _disposed;
 
     public LuaHost(LuaHostOptions? options = null)
     {
@@ -23,11 +28,39 @@ public sealed class LuaHost : IDisposable
         ArgumentNullException.ThrowIfNull(Options.Compiler);
         ArgumentNullException.ThrowIfNull(Options.State);
         ArgumentNullException.ThrowIfNull(Options.Execution);
+        ArgumentNullException.ThrowIfNull(Options.Jit);
         ArgumentNullException.ThrowIfNull(Options.Workspace);
         if (!Enum.IsDefined(Options.Profile))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The host profile is invalid.");
         }
+
+        if (!Enum.IsDefined(Options.ExecutionBackend))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "The host execution backend is invalid.");
+        }
+
+        if (!Enum.IsDefined(Options.Jit.Policy))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "The JIT policy is invalid.");
+        }
+
+        if (Options.ExecutionBackend == LuaHostExecutionBackend.Jit &&
+            Options.Jit.Policy == LuaJitPolicy.InterpreterOnly)
+        {
+            throw new ArgumentException(
+                "The JIT backend cannot use the interpreter-only JIT policy.",
+                nameof(options));
+        }
+
+        IsDynamicCodeAvailable = RuntimeFeature.IsDynamicCodeSupported &&
+            RuntimeFeature.IsDynamicCodeCompiled;
+        SelectedExecutionBackend = ResolveExecutionBackend(
+            Options.ExecutionBackend,
+            IsDynamicCodeAvailable,
+            Options.Jit.Policy);
 
         Compiler = new LuaCompiler(Options.Compiler);
         Workspace = new LuaWorkspace(
@@ -35,7 +68,10 @@ public sealed class LuaHost : IDisposable
             Options.ModuleResolver);
         StateOptions = ResolveStateOptions(Options);
         State = new LuaState(StateOptions);
-        _executor = new LuaExecutor(new LuaExecutorOptions { Interpreter = Options.Execution });
+        _interpreterExecutor = new LuaExecutor(new LuaExecutorOptions
+        {
+            Interpreter = Options.Execution,
+        });
 
         if (Options.InstallStandardLibrary)
         {
@@ -46,6 +82,18 @@ public sealed class LuaHost : IDisposable
     }
 
     public LuaHostOptions Options { get; }
+
+    /// <summary>Gets whether the current runtime can compile and execute dynamic code.</summary>
+    public bool IsDynamicCodeAvailable { get; }
+
+    /// <summary>Gets the concrete execution backend selected for this host.</summary>
+    public LuaHostExecutionBackend SelectedExecutionBackend { get; }
+
+    /// <summary>
+    /// Gets JIT statistics after the JIT executor has been initialized, or null when the host uses
+    /// the interpreter or has not executed any code yet.
+    /// </summary>
+    public LuaJitStatistics? JitStatistics => _jitExecutor?.Statistics;
 
     public LuaCompiler Compiler { get; }
 
@@ -112,21 +160,78 @@ public sealed class LuaHost : IDisposable
         ReadOnlySpan<LuaValue> arguments = default)
     {
         ArgumentNullException.ThrowIfNull(module);
-        return _executor.Execute(State, State.CreateMainClosure(module), arguments);
+        ThrowIfDisposed();
+        var closure = State.CreateMainClosure(module);
+        return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+            ? GetJitExecutor().Execute(State, closure, arguments)
+            : _interpreterExecutor.Execute(State, closure, arguments);
     }
 
     public LuaExecutionResult ExecuteBinaryChunk(
         ReadOnlySpan<byte> binaryChunk,
         ReadOnlySpan<LuaValue> arguments = default,
-        Lua54ChunkReaderOptions? readerOptions = null) =>
-        _executor.ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions);
+        Lua54ChunkReaderOptions? readerOptions = null)
+    {
+        ThrowIfDisposed();
+        return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+            ? GetJitExecutor().ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions)
+            : _interpreterExecutor.ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions);
+    }
 
     public Task<LuaWorkspaceResult> AnalyzeWorkspaceAsync(
         IEnumerable<LuaWorkspaceDocument> roots,
         CancellationToken cancellationToken = default) =>
         Workspace.AnalyzeAsync(roots, cancellationToken);
 
-    public void Dispose() => Workspace.Dispose();
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        LuaJitExecutor? jit;
+        lock (_jitLock)
+        {
+            jit = _jitExecutor;
+            _jitExecutor = null;
+        }
+
+        jit?.Dispose();
+        Workspace.Dispose();
+    }
+
+    private LuaJitExecutor GetJitExecutor()
+    {
+        lock (_jitLock)
+        {
+            ThrowIfDisposed();
+            return _jitExecutor ??= new LuaJitExecutor(Options.Jit with
+            {
+                Interpreter = Options.Execution,
+            });
+        }
+    }
+
+    private void ThrowIfDisposed() =>
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+    private static LuaHostExecutionBackend ResolveExecutionBackend(
+        LuaHostExecutionBackend requested,
+        bool isDynamicCodeAvailable,
+        LuaJitPolicy jitPolicy) => requested switch
+        {
+            LuaHostExecutionBackend.Auto when jitPolicy == LuaJitPolicy.InterpreterOnly =>
+                LuaHostExecutionBackend.Interpreter,
+            LuaHostExecutionBackend.Auto => isDynamicCodeAvailable
+                ? LuaHostExecutionBackend.Jit
+                : LuaHostExecutionBackend.Interpreter,
+            LuaHostExecutionBackend.Interpreter => LuaHostExecutionBackend.Interpreter,
+            LuaHostExecutionBackend.Jit when isDynamicCodeAvailable => LuaHostExecutionBackend.Jit,
+            LuaHostExecutionBackend.Jit => throw new PlatformNotSupportedException(
+                "The JIT execution backend requires dynamic-code support."),
+            _ => throw new ArgumentOutOfRangeException(nameof(requested)),
+        };
 
     private static LuaStateOptions ResolveStateOptions(LuaHostOptions options)
     {

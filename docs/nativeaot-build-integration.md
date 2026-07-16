@@ -15,7 +15,7 @@ fixed-point/cache 路径可在无 reflection/dynamic code 环境中运行。
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0-alpha.4" />
+  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.1" />
   <LunilCompile Include="Modules/main.lua"
                 ModuleName="app.main"
                 InputKind="Auto"

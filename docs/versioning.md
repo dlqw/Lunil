@@ -5,11 +5,12 @@ Git tags, changelog names, binary bundle names, and GitHub releases all derive f
 one version declared in `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.7.0</VersionPrefix>
+<VersionPrefix>0.8.0</VersionPrefix>
+<VersionSuffix>alpha.1</VersionSuffix>
 ```
 
-The resulting stable version is `0.7.0` and its tag is `v0.7.0`. A prerelease adds
-`VersionSuffix`; the accepted candidate used `rc.1` before that property was removed.
+The resulting source/package version is `0.8.0-alpha.1` and its eventual immutable tag is
+`v0.8.0-alpha.1`. A stable release omits `VersionSuffix` only after an accepted RC.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -34,12 +35,12 @@ actual maturity and allowed-change policy.
 
 | Development work | Version action |
 | --- | --- |
-| Add or redesign a planned `0.7.0` feature while scope is still open | Publish the next `0.7.0-alpha.N` |
-| Freeze the complete `0.7.0` feature/API scope | Promote to `0.7.0-beta.1` |
-| Fix compatibility, diagnostics, docs, or performance during beta | Publish the next `0.7.0-beta.N` |
-| Declare the hardened beta ready for release-candidate validation | Promote to `0.7.0-rc.1` |
-| Fix a release blocker during RC | Publish the next `0.7.0-rc.N` |
-| Accept an RC without further code changes | Remove the suffix and publish `0.7.0` from the accepted commit |
+| Add or redesign a planned `0.8.0` feature while scope is still open | Publish the next `0.8.0-alpha.N` |
+| Freeze the complete `0.8.0` feature/API scope | Promote to `0.8.0-beta.1` |
+| Fix compatibility, diagnostics, docs, or performance during beta | Publish the next `0.8.0-beta.N` |
+| Declare the hardened beta ready for release-candidate validation | Promote to `0.8.0-rc.1` |
+| Fix a release blocker during RC | Publish the next `0.8.0-rc.N` |
+| Accept an RC without further code changes | Remove the suffix and publish `0.8.0` from the accepted commit |
 | Fix a backward-compatible defect after stable `0.7.0` | Publish `0.7.1` |
 | Begin the next feature/API milestone after `0.7.0` | Start `0.8.0-alpha.1` |
 
@@ -69,7 +70,7 @@ metadata correction uses the next number in that channel or a later appropriate 
 Promotion for this milestone is therefore:
 
 ```text
-0.7.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.7.0
+0.8.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.8.0
 ```
 
 Numbers increase monotonically within a channel and restart at `1` when the milestone
@@ -119,6 +120,20 @@ and no release blocker was found.
 Stable `0.7.0` removes the suffix from that accepted candidate without product-code,
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
+
+## Current `0.8.0-alpha.1` decision
+
+`0.8.0-alpha.1` is the active performance and execution-product milestone. It improves PUC Lua
+chunk generation and canonical lowering, makes qualified JIT selection available through Hosting
+and the CLI, removes quadratic string-library construction, gives terminal JIT rejection a bounded
+reference-interpreter route, and develops continuous/unboxed numeric regions plus guarded
+table/call paths. The exact scope and evidence are recorded in
+[`changelogs/0.8.0-alpha.1.md`](../changelogs/0.8.0-alpha.1.md).
+
+The `api/0.8.0` declarations and package data are reviewed Alpha snapshots, not a compatibility
+freeze. `api/0.7.0` remains identical to stable `v0.7.0`. Promotion beyond Alpha requires the full
+format, test, conformance, package, publish-mode, six-RID, and performance gates; the suffix will
+not be removed directly from Alpha.
 
 ## Release procedure
 

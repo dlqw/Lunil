@@ -48,8 +48,10 @@ The generated `DynamicMethod` uses the liveness-derived canonical register map a
 open-upvalue state, and to-be-closed state materialized. Entry and every loop header validate the
 debug/hook epoch, instruction budget, GC/finalizer poll, close/unwind state, canonical PC, and
 required value tags. All exits report the exact materialized PC and consumed instruction count.
-Guard failure, budget exhaustion, polling, invalidation, and leaving the natural loop return to the
-shared scheduler without replaying completed effects.
+Guard failure, budget exhaustion, runtime polling, and leaving the natural loop return to the shared
+scheduler without replaying completed effects. Registry invalidation does not actively interrupt a
+delegate already acquired by a caller; that invocation may finish, while later dispatch cannot
+re-enter the invalidated method.
 
 Loop OSR reuses the common bounded compilation queue, concurrent request deduplication,
 owner-scoped register-liveness cache, code-byte LRU, cancellation, disposal, module invalidation,

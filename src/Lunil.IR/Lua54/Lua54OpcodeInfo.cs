@@ -91,7 +91,7 @@ public readonly record struct Lua54OpcodeInfo(
         Abc(usesTop: true),                 // SETLIST
         ABx(a: true),                       // CLOSURE
         Abc(a: true, setsTop: true),        // VARARG
-        Abc(a: true, usesTop: true),        // VARARGPREP
+        Abc(usesTop: true),                 // VARARGPREP
         Ax(),                               // EXTRAARG
     ];
 

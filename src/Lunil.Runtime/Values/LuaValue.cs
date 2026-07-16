@@ -62,6 +62,12 @@ public readonly struct LuaValue : IEquatable<LuaValue>
 
     internal bool IsFloat => ReferenceEquals(_tagOrReference, FloatTag);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal LuaString? TryGetString() => _tagOrReference as LuaString;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal LuaTable? TryGetTable() => _tagOrReference as LuaTable;
+
     public static LuaValue Nil => default;
 
     public static LuaValue FromBoolean(bool value) => new(BooleanTag, value ? 1 : 0);

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
@@ -28,6 +29,12 @@ public sealed class LuaCodegenAbiV1Tests
     }
 
     [Fact]
+    public void CompiledExitKeepsARegisterSizedControlPayload()
+    {
+        Assert.Equal(16, Unsafe.SizeOf<LuaCompiledExit>());
+    }
+
+    [Fact]
     public void ExecutionContextReservesOnlyWholeCanonicalInstructionRanges()
     {
         var (state, thread, _) = CreateFrame();
@@ -38,6 +45,21 @@ public sealed class LuaCodegenAbiV1Tests
         Assert.False(context.TryReserveInstructions(2));
         Assert.Equal(1, context.RemainingInstructionCount);
         Assert.Equal(2, context.InstructionsConsumed);
+    }
+
+    [Fact]
+    public void ExecutionContextAccountsBeyondTheInt32Range()
+    {
+        var (state, thread, _) = CreateFrame();
+        var expected = (long)int.MaxValue + 10;
+        var context = new LuaExecutionContext(state, thread, expected);
+
+        Assert.True(context.TryReserveInstructions(int.MaxValue));
+        Assert.True(context.TryReserveInstructions(10));
+
+        Assert.Equal(0, context.RemainingInstructionCount);
+        Assert.Equal(expected, context.InstructionsConsumed);
+        Assert.Equal(expected, LuaCompiledExit.Continue(0, expected).InstructionsConsumed);
     }
 
     [Fact]

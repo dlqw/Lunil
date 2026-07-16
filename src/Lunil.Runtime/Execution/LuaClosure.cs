@@ -7,6 +7,10 @@ namespace Lunil.Runtime.Execution;
 public sealed class LuaClosure : LuaGcObject
 {
     private readonly LuaUpvalue[] _upvalues;
+    private readonly LuaString?[] _materializedStringConstants;
+    private readonly LuaTableAllocationHint?[] _tableAllocationHints;
+    private readonly object _constantGate = new();
+    private int _framelessCallEntries;
 
     internal LuaClosure(
         LuaHeap owner,
@@ -19,17 +23,96 @@ public sealed class LuaClosure : LuaGcObject
         ArgumentNullException.ThrowIfNull(stringConstants);
         Module = module;
         Function = function;
+        HasSourceLineInformation = function.Instructions.Any(
+            static instruction => instruction.SourceLine > 0);
         _upvalues = [.. upvalues];
+        _materializedStringConstants = new LuaString?[function.Constants.Length];
+        _tableAllocationHints = new LuaTableAllocationHint?[function.Instructions.Length];
         StringConstants = stringConstants;
+        FramelessInstructionCount = GetFramelessInstructionCount(function);
     }
 
     public LuaIrModule Module { get; }
 
     public LuaIrFunction Function { get; }
 
+    internal bool HasSourceLineInformation { get; }
+
+    internal int FramelessInstructionCount { get; }
+
+    internal bool SupportsFramelessCall => FramelessInstructionCount != 0;
+
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
 
     internal LuaModuleStringConstants StringConstants { get; }
+
+    internal LuaString GetOrCreateStringConstant(LuaState state, int constantIndex)
+    {
+        var existing = Volatile.Read(ref _materializedStringConstants[constantIndex]);
+        if (existing is not null && existing.IsAlive)
+        {
+            return existing;
+        }
+
+        lock (_constantGate)
+        {
+            existing = _materializedStringConstants[constantIndex];
+            if (existing is not null && existing.IsAlive)
+            {
+                return existing;
+            }
+
+            var constant = Function.Constants[constantIndex];
+            if (constant.Kind != LuaIrConstantKind.String)
+            {
+                throw new InvalidOperationException("The cached constant is not a string.");
+            }
+
+            if (!ReferenceEquals(state.Heap, Owner))
+            {
+                throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
+            }
+
+            existing = StringConstants.GetOrCreate(state, constant.Bytes.AsSpan());
+            Owner.WriteBarrier(this, existing);
+            Volatile.Write(ref _materializedStringConstants[constantIndex], existing);
+            return existing;
+        }
+    }
+
+    internal bool TryEnterFramelessCall()
+    {
+        if (!SupportsFramelessCall)
+        {
+            return false;
+        }
+
+        // Preserve the normal frame/backend entry for the first two invocations so profiling,
+        // tier installation, and diagnostics observe the function before the leaf fast path
+        // starts bypassing scheduler frames. Once warm, avoid an atomic write on every leaf call
+        // and keep the counter from wrapping in a long-lived state.
+        if (Volatile.Read(ref _framelessCallEntries) > 2)
+        {
+            return true;
+        }
+
+        return Interlocked.Increment(ref _framelessCallEntries) > 2;
+    }
+
+    internal LuaTableAllocationHint GetOrCreateTableAllocationHint(int programCounter)
+    {
+        var existing = Volatile.Read(ref _tableAllocationHints[programCounter]);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var candidate = new LuaTableAllocationHint();
+        return Interlocked.CompareExchange(
+            ref _tableAllocationHints[programCounter],
+            candidate,
+            null) ?? candidate;
+    }
 
     public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
 
@@ -54,6 +137,13 @@ public sealed class LuaClosure : LuaGcObject
         }
 
         StringConstants.Traverse(visitor);
+        foreach (var constant in _materializedStringConstants)
+        {
+            if (constant is not null && constant.IsAlive)
+            {
+                visitor.Visit(constant);
+            }
+        }
     }
 
     private static LuaHeap Validate(
@@ -80,6 +170,45 @@ public sealed class LuaClosure : LuaGcObject
         }
 
         return owner;
+    }
+
+    private static int GetFramelessInstructionCount(LuaIrFunction function)
+    {
+        const int maximumInstructions = 16;
+        const int maximumRegisters = 32;
+        if (function.IsVarArg || function.Upvalues.Length != 0 ||
+            function.Instructions.Length is 0 or > maximumInstructions ||
+            function.RegisterCount > maximumRegisters)
+        {
+            return 0;
+        }
+
+        for (var programCounter = 0; programCounter < function.Instructions.Length;
+             programCounter++)
+        {
+            var instruction = function.Instructions[programCounter];
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.Move:
+                case LuaIrOpcode.LoadNil:
+                    break;
+                case LuaIrOpcode.Unary when
+                    (LuaIrUnaryOperator)instruction.C is LuaIrUnaryOperator.Negate or
+                        LuaIrUnaryOperator.BitwiseNot or LuaIrUnaryOperator.LogicalNot:
+                    break;
+                case LuaIrOpcode.Binary when
+                    (LuaIrBinaryOperator)instruction.D is not
+                        (LuaIrBinaryOperator.Concatenate or LuaIrBinaryOperator.FloorDivide or
+                            LuaIrBinaryOperator.Modulo):
+                    break;
+                case LuaIrOpcode.Return when instruction.B >= 0:
+                    return programCounter + 1;
+                default:
+                    return 0;
+            }
+        }
+
+        return 0;
     }
 }
 
@@ -160,7 +289,8 @@ public readonly struct LuaNativeStep
         int continuationId,
         LuaValue[] stateValues,
         bool callIsYieldable,
-        bool callIsProtected)
+        bool callIsProtected,
+        LuaNativeByteBuffer? byteBuffer)
     {
         Kind = kind;
         Callable = callable;
@@ -169,6 +299,7 @@ public readonly struct LuaNativeStep
         StateValues = stateValues;
         CallIsYieldable = callIsYieldable;
         CallIsProtected = callIsProtected;
+        ByteBuffer = byteBuffer;
     }
 
     public LuaNativeStepKind Kind { get; }
@@ -195,8 +326,14 @@ public readonly struct LuaNativeStep
     /// </summary>
     public bool CallIsProtected { get; }
 
+    /// <summary>
+    /// Optional byte-only state retained across a Lua callback or yield. Unlike
+    /// <see cref="StateValues"/>, it cannot hide logically collectable Lua objects.
+    /// </summary>
+    internal LuaNativeByteBuffer? ByteBuffer { get; }
+
     public static LuaNativeStep Completed(params LuaValue[] values) =>
-        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false);
+        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false, null);
 
     public static LuaNativeStep CallLua(
         LuaValue callable,
@@ -212,7 +349,26 @@ public readonly struct LuaNativeStep
             continuationId,
             stateValues ?? [],
             callIsYieldable,
-            callIsProtected);
+            callIsProtected,
+            null);
+
+    internal static LuaNativeStep CallLuaWithByteBuffer(
+        LuaValue callable,
+        LuaValue[] arguments,
+        int continuationId,
+        LuaValue[] stateValues,
+        bool callIsYieldable,
+        LuaNativeByteBuffer byteBuffer,
+        bool callIsProtected = false) =>
+        new(
+            LuaNativeStepKind.CallLua,
+            callable,
+            arguments,
+            continuationId,
+            stateValues,
+            callIsYieldable,
+            callIsProtected,
+            byteBuffer);
 
     public static LuaNativeStep Yielded(
         LuaValue[] values,
@@ -225,7 +381,23 @@ public readonly struct LuaNativeStep
             continuationId,
             stateValues ?? [],
             true,
-            false);
+            false,
+            null);
+
+    internal static LuaNativeStep YieldedWithByteBuffer(
+        LuaValue[] values,
+        int continuationId,
+        LuaValue[] stateValues,
+        LuaNativeByteBuffer byteBuffer) =>
+        new(
+            LuaNativeStepKind.Yielded,
+            LuaValue.Nil,
+            values,
+            continuationId,
+            stateValues,
+            true,
+            false,
+            byteBuffer);
 }
 
 /// <summary>Owner-aware context supplied to a resumable native descriptor.</summary>
@@ -235,12 +407,14 @@ public readonly struct LuaNativeCallContext
         LuaState state,
         LuaThread thread,
         LuaNativeClosure? closure,
-        IReadOnlyList<LuaValue>? invocationState = null)
+        IReadOnlyList<LuaValue>? invocationState = null,
+        LuaNativeByteBuffer? byteBuffer = null)
     {
         State = state;
         Thread = thread;
         Closure = closure;
         InvocationState = invocationState ?? [];
+        ByteBuffer = byteBuffer;
     }
 
     public LuaState State { get; }
@@ -254,13 +428,20 @@ public readonly struct LuaNativeCallContext
     /// <summary>Per-invocation values preserved by the preceding resumable native step.</summary>
     public IReadOnlyList<LuaValue> InvocationState { get; }
 
+    /// <summary>Byte-only state preserved by the preceding resumable native step.</summary>
+    internal LuaNativeByteBuffer? ByteBuffer { get; }
+
+    /// <summary>Creates owner-bound byte-only state for a resumable native operation.</summary>
+    internal LuaNativeByteBuffer CreateByteBuffer(int initialCapacity = 0) =>
+        new(State.Heap, initialCapacity);
+
     /// <summary>
     /// Creates a context for an immediate continuation of the same native activation.
     /// This keeps state-machine code identical whether a runtime operation completed
     /// immediately or required a Lua callback.
     /// </summary>
     public LuaNativeCallContext WithInvocationState(IReadOnlyList<LuaValue> invocationState) =>
-        new(State, Thread, Closure, invocationState);
+        new(State, Thread, Closure, invocationState, ByteBuffer);
 }
 
 public sealed class LuaNativeFunction

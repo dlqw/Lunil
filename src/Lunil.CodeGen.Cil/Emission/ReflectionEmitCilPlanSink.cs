@@ -363,7 +363,7 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         "LuaCodegenAbiV2.CanSkipClose" => Method(
             typeof(LuaCodegenAbiV2),
             nameof(LuaCodegenAbiV2.CanSkipClose),
-            [typeof(LuaFrame), typeof(int)]),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
         "LuaCodegenAbiV1.ObserveCanonicalInstruction" => Method(
             typeof(LuaCodegenAbiV1),
             nameof(LuaCodegenAbiV1.ObserveCanonicalInstruction),
@@ -421,6 +421,70 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             typeof(LuaCodegenAbiV2),
             nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
             [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV3.ExecuteNewTable" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteNewTable),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV3.ExecuteGetTable" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteGetTable),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV3.ExecuteSetTable" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteSetTable),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV3.ExecuteSetList" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteSetList),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV3.ExecuteClosure" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteClosure),
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV3.ExecuteVarArg" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.ExecuteVarArg),
+            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
+        "LuaCodegenAbiV3.TryExecuteFramelessCall" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.TryExecuteFramelessCall),
+            [
+                typeof(LuaExecutionContext),
+                typeof(LuaThread),
+                typeof(LuaFrame),
+                typeof(int),
+                typeof(int),
+                typeof(int),
+            ]),
+        "LuaCodegenAbiV3.CanContinueAfterFramelessCall" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.CanContinueAfterFramelessCall),
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
+        "LuaCodegenAbiV3.PollGcSafepoint" => Method(
+            typeof(LuaCodegenAbiV3),
+            nameof(LuaCodegenAbiV3.PollGcSafepoint),
+            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
         "LuaCompiledExit.Poll" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Poll),
@@ -432,6 +496,14 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         "LuaCompiledExit.Return" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Return),
+            [typeof(int), typeof(int)]),
+        "LuaCompiledExit.Call" => Method(
+            typeof(LuaCompiledExit),
+            nameof(LuaCompiledExit.Call),
+            [typeof(int), typeof(int)]),
+        "LuaCompiledExit.TailCall" => Method(
+            typeof(LuaCompiledExit),
+            nameof(LuaCompiledExit.TailCall),
             [typeof(int), typeof(int)]),
         "LuaCompiledExit.Deopt" => Method(
             typeof(LuaCompiledExit),

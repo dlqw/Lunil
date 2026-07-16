@@ -27,7 +27,9 @@ internal sealed record LuaTier1CompilationResult(
     LuaCompiledMethod? Method,
     long EstimatedCodeBytes,
     ImmutableArray<string> Diagnostics,
-    LuaJitCompilationMetrics? Metrics = null)
+    LuaJitCompilationMetrics? Metrics = null,
+    LuaCompiledMethod? PlainMethod = null,
+    long PlainEstimatedCodeBytes = 0)
 {
     public bool Succeeded => Method is not null && Diagnostics.IsEmpty;
 }
@@ -148,11 +150,72 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
                 metrics);
         }
 
-        return new LuaTier1CompilationResult(
+        var result = new LuaTier1CompilationResult(
             emission.Method,
             estimatedCodeBytes,
             [],
             metrics);
+        if (!includeInstructionObservation)
+        {
+            return result;
+        }
+
+        // Tier 2 profiling is intentionally a replaceable Tier 1 variant. Once promotion is
+        // terminally rejected, the registry can switch delegates without another compilation or
+        // leaving an ObserveCanonicalInstruction call in every canonical instruction.
+        var plain = Compile(
+            module,
+            functionId,
+            includeInstructionObservation: false,
+            cancellationToken);
+        if (!plain.Succeeded)
+        {
+            return new LuaTier1CompilationResult(
+                null,
+                0,
+                [.. plain.Diagnostics.Select(static diagnostic =>
+                    $"Plain Tier 1 variant: {diagnostic}")],
+                CombineMetrics(metrics, plain.Metrics));
+        }
+
+        return result with
+        {
+            PlainMethod = plain.Method,
+            PlainEstimatedCodeBytes = plain.EstimatedCodeBytes,
+            EstimatedCodeBytes = checked(estimatedCodeBytes + plain.EstimatedCodeBytes),
+            Metrics = CombineMetrics(metrics, plain.Metrics),
+        };
+    }
+
+    private static LuaJitCompilationMetrics? CombineMetrics(
+        LuaJitCompilationMetrics? first,
+        LuaJitCompilationMetrics? second)
+    {
+        if (first is not { } left)
+        {
+            return second;
+        }
+
+        if (second is not { } right)
+        {
+            return first;
+        }
+
+        return new LuaJitCompilationMetrics(
+            left.CanonicalVerificationDuration + right.CanonicalVerificationDuration,
+            left.ControlFlowAnalysisDuration + right.ControlFlowAnalysisDuration,
+            left.MethodPlanBuildDuration + right.MethodPlanBuildDuration,
+            left.PlanVerificationDuration + right.PlanVerificationDuration,
+            left.ReflectionEmitDuration + right.ReflectionEmitDuration,
+            left.DelegateCreationDuration + right.DelegateCreationDuration,
+            checked(left.AllocatedBytes + right.AllocatedBytes),
+            checked(left.CanonicalInstructionCount + right.CanonicalInstructionCount),
+            checked(left.DirectCanonicalInstructionCount +
+                right.DirectCanonicalInstructionCount),
+            checked(left.SlowPathCanonicalInstructionCount +
+                right.SlowPathCanonicalInstructionCount),
+            checked(left.PlanInstructionCount + right.PlanInstructionCount),
+            checked(left.EstimatedCodeBytes + right.EstimatedCodeBytes));
     }
 
     [UnconditionalSuppressMessage(

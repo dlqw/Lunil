@@ -120,10 +120,16 @@ public static class LuaCodegenAbiV2
         return truthy;
     }
 
-    public static bool CanSkipClose(LuaFrame frame, int register)
+    public static bool CanSkipClose(LuaThread thread, LuaFrame frame, int register)
     {
+        ArgumentNullException.ThrowIfNull(thread);
         ArgumentNullException.ThrowIfNull(frame);
         var absolute = frame.Base + register;
+        if (thread.HasOpenUpvalueAtOrAbove(absolute))
+        {
+            return false;
+        }
+
         for (var index = frame.ToBeClosedSlots.Count - 1; index >= 0; index--)
         {
             if (frame.ToBeClosedSlots[index] >= absolute)
@@ -184,6 +190,12 @@ public static class LuaCodegenAbiV2
         var left = ReadRegisterUnchecked(thread, frame, leftRegister);
         var right = ReadRegisterUnchecked(thread, frame, rightRegister);
         var binary = (LuaIrBinaryOperator)operation;
+        if (binary == LuaIrBinaryOperator.Concatenate)
+        {
+            return (left.TryGetString() is not null || left.IsInteger || left.IsFloat) &&
+                (right.TryGetString() is not null || right.IsInteger || right.IsFloat);
+        }
+
         if (binary is LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual)
         {
             return left == right || left.Kind != right.Kind ||
@@ -195,8 +207,8 @@ public static class LuaCodegenAbiV2
             LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
             LuaIrBinaryOperator.Power)
         {
-            return LuaValueOperations.TryToNumber(left, out _) &&
-                LuaValueOperations.TryToNumber(right, out _);
+            return (IsNumber(left) || LuaValueOperations.TryToNumber(left, out _)) &&
+                (IsNumber(right) || LuaValueOperations.TryToNumber(right, out _));
         }
 
         if (binary is LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
@@ -226,18 +238,53 @@ public static class LuaCodegenAbiV2
         int rightRegister)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var resolution = LuaRuntimeOperations.Binary(
-            context.State,
-            (LuaIrBinaryOperator)operation,
-            ReadRegisterUnchecked(thread, frame, leftRegister),
-            ReadRegisterUnchecked(thread, frame, rightRegister));
-        if (resolution.RequiresCall)
+        var binary = (LuaIrBinaryOperator)operation;
+        var left = ReadRegisterUnchecked(thread, frame, leftRegister);
+        var right = ReadRegisterUnchecked(thread, frame, rightRegister);
+        LuaValue result;
+        if (binary == LuaIrBinaryOperator.Concatenate)
         {
-            throw new InvalidOperationException(
-                "The verified binary primitive guard admitted a metamethod path.");
+            result = LuaValueOperations.Concatenate(context.State, left, right);
+        }
+        else if (binary is LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or
+            LuaIrBinaryOperator.Multiply or LuaIrBinaryOperator.Divide or
+            LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
+            LuaIrBinaryOperator.Power)
+        {
+            var numericLeft = left;
+            var numericRight = right;
+            if ((!IsNumber(numericLeft) &&
+                    !LuaValueOperations.TryToNumber(numericLeft, out numericLeft)) ||
+                (!IsNumber(numericRight) &&
+                    !LuaValueOperations.TryToNumber(numericRight, out numericRight)))
+            {
+                throw new InvalidOperationException(
+                    "The verified arithmetic primitive guard admitted a non-number.");
+            }
+
+            result = numericLeft.Kind == LuaValueKind.Integer &&
+                numericRight.Kind == LuaValueKind.Integer
+                    ? LuaValueOperations.BinaryIntegerSpecialized(
+                        binary,
+                        numericLeft,
+                        numericRight)
+                    : numericLeft.Kind == LuaValueKind.Float &&
+                        numericRight.Kind == LuaValueKind.Float
+                        ? LuaValueOperations.BinaryFloatSpecialized(
+                            binary,
+                            numericLeft,
+                            numericRight)
+                        : LuaValueOperations.BinaryMixedNumericSpecialized(
+                            binary,
+                            numericLeft,
+                            numericRight);
+        }
+        else
+        {
+            result = LuaValueOperations.Binary(context.State, binary, left, right);
         }
 
-        WriteRegisterUnchecked(thread, frame, destinationRegister, resolution.Value);
+        WriteRegisterUnchecked(thread, frame, destinationRegister, result);
     }
 
     public static void ExecuteNumericForPrepare(
@@ -255,21 +302,64 @@ public static class LuaCodegenAbiV2
                 exitProgramCounter));
     }
 
+    public static void ExecuteVarArg(
+        LuaThread thread,
+        LuaFrame frame,
+        int destinationRegister,
+        int resultCount)
+    {
+        LuaExecutionEngine.ExecuteVarArg(
+            thread,
+            frame,
+            new LuaIrInstruction(
+                LuaIrOpcode.VarArg,
+                destinationRegister,
+                resultCount));
+    }
+
     public static void ExecuteNumericForLoop(
         LuaThread thread,
         LuaFrame frame,
         int baseRegister,
         int bodyProgramCounter)
     {
-        LuaExecutionEngine.ExecuteNumericForLoop(
-            thread,
-            frame,
-            new LuaIrInstruction(
-                LuaIrOpcode.NumericForLoop,
-                baseRegister,
-                bodyProgramCounter));
+        var index = ReadRegisterUnchecked(thread, frame, baseRegister);
+        var counterOrLimit = ReadRegisterUnchecked(thread, frame, baseRegister + 1);
+        var step = ReadRegisterUnchecked(thread, frame, baseRegister + 2);
+        bool continues;
+        if (step.Kind == LuaValueKind.Integer)
+        {
+            var count = unchecked((ulong)counterOrLimit.AsInteger());
+            continues = count > 0;
+            if (continues)
+            {
+                index = LuaValue.FromInteger(unchecked(index.AsInteger() + step.AsInteger()));
+                WriteRegisterUnchecked(
+                    thread,
+                    frame,
+                    baseRegister + 1,
+                    LuaValue.FromInteger(unchecked((long)(count - 1))));
+            }
+        }
+        else
+        {
+            index = LuaValue.FromFloat(index.AsFloat() + step.AsFloat());
+            continues = 0 < step.AsFloat()
+                ? index.AsFloat() <= counterOrLimit.AsFloat()
+                : counterOrLimit.AsFloat() <= index.AsFloat();
+        }
+
+        if (continues)
+        {
+            WriteRegisterUnchecked(thread, frame, baseRegister, index);
+            WriteRegisterUnchecked(thread, frame, baseRegister + 3, index);
+            frame.ProgramCounter = bodyProgramCounter;
+        }
+        else
+        {
+            frame.ProgramCounter++;
+        }
     }
 
-    private static bool IsNumber(LuaValue value) =>
-        value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
+    private static bool IsNumber(LuaValue value) => value.IsInteger || value.IsFloat;
 }

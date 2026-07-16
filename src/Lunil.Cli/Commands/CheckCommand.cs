@@ -41,8 +41,8 @@ internal static class CheckCommand
         var sources = inputs.Where(static input => !input.IsBinaryChunk).ToArray();
         if (sources.Length > 0)
         {
-            using var host = context.CreateHost(sources, out _);
-            var workspace = await host.AnalyzeWorkspaceAsync(
+            using var workspaceService = context.CreateWorkspace(sources, out _);
+            var workspace = await workspaceService.AnalyzeAsync(
                 sources.Select(static input => input.ToWorkspaceDocument()),
                 context.CancellationToken).ConfigureAwait(false);
             diagnostics.AddRange(CliDiagnosticWriter.FromWorkspace(

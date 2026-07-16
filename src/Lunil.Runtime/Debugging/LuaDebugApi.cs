@@ -237,7 +237,7 @@ public static class LuaDebugApi
         if (index < 0)
         {
             var vararg = -index;
-            if (vararg > frame.VarArgStorage.Length)
+            if (vararg > frame.VarArgStorage.Count)
             {
                 return null;
             }

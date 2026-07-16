@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Hosting\Lunil.Hosting.csproj" />
   </ItemGroup>
 

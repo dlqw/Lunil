@@ -375,6 +375,276 @@ public sealed class Lua54ChunkTests
             error => error.Message.Contains("to-be-closed", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void CanonicalWriterAndConverterPreserveFlippedConstantArithmeticOperands()
+    {
+        var module = CreateConstantLeftArithmeticModule(LuaIrConstant.FromFloat(5.25));
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(module, module.MainFunctionId);
+
+        var arithmetic = Assert.Single(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.AddConstant);
+        var metamethod = Assert.Single(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.MetamethodBinaryConstant);
+        Assert.True(metamethod.K);
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+
+        var converted = Lua54PrototypeConverter.Convert(chunk).Functions[0];
+        var load = Assert.Single(
+            converted.Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.LoadConstant);
+        var binary = Assert.Single(
+            converted.Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.Binary);
+        Assert.Equal(arithmetic.A, binary.A);
+        Assert.Equal(load.A, binary.B);
+        Assert.Equal(0, binary.C);
+    }
+
+    [Fact]
+    public void VerifierAndConverterAcceptFlippedAddImmediateOperands()
+    {
+        var module = CreateConstantLeftArithmeticModule(LuaIrConstant.FromInteger(5));
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(module, module.MainFunctionId);
+
+        Assert.Contains(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.AddImmediate);
+        var metamethod = Assert.Single(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.MetamethodBinaryImmediate);
+        Assert.True(metamethod.K);
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+
+        var converted = Lua54PrototypeConverter.Convert(chunk).Functions[0];
+        var load = Assert.Single(
+            converted.Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.LoadConstant);
+        var binary = Assert.Single(
+            converted.Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.Binary);
+        Assert.Equal(load.A, binary.B);
+        Assert.Equal(0, binary.C);
+    }
+
+    [Fact]
+    public void CanonicalWriterDoesNotAliasComparisonMaterializationWithPreservedOperand()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.Move, 1, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                0,
+                0,
+                1,
+                (int)LuaIrBinaryOperator.LessThan,
+                sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.JumpIfTrue, 0, 5, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 0, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 2,
+            instructions,
+            constants: [LuaIrConstant.FromInteger(7)]);
+        var module = new LuaIrModule { Functions = [function] };
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(module, 0);
+
+        Assert.Equal(Lua54Opcode.Move, chunk.MainPrototype.Code[0].Opcode);
+        Assert.Equal(1, chunk.MainPrototype.Code[0].A);
+        Assert.Equal(0, chunk.MainPrototype.Code[0].B);
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+    }
+
+    [Fact]
+    public void CanonicalWriterDoesNotUseIntegerOnlyBitwiseConstantOpcodeForFloat()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 1, 0, sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                2,
+                0,
+                1,
+                (int)LuaIrBinaryOperator.BitwiseAnd,
+                sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 2, 1, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 3,
+            instructions,
+            constants: [LuaIrConstant.FromFloat(1.0)],
+            parameterCount: 1);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        Assert.DoesNotContain(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.BitwiseAndConstant);
+        Assert.Contains(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.BitwiseAnd);
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+    }
+
+    [Fact]
+    public void CanonicalWriterPreservesComparisonDebugLocalBoundary()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                2,
+                0,
+                1,
+                (int)LuaIrBinaryOperator.LessThan,
+                sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.JumpIfTrue, 2, 3, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 0, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 3,
+            instructions,
+            localVariables: [new LuaIrLocalVariable([(byte)'x'], 1, 2)]);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        var local = Assert.Single(chunk.MainPrototype.LocalVariables);
+        Assert.True(local.StartProgramCounter > 0);
+        Assert.True(local.EndProgramCounter > local.StartProgramCounter);
+    }
+
+    [Fact]
+    public void CanonicalWriterDoesNotCollapseBinaryPreparationAcrossSourceLines()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 1, 0, sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                2,
+                0,
+                1,
+                (int)LuaIrBinaryOperator.Add,
+                sourceLine: 2),
+            new LuaIrInstruction(LuaIrOpcode.Return, 2, 1, sourceLine: 2));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 3,
+            instructions,
+            constants: [LuaIrConstant.FromFloat(5.25)],
+            parameterCount: 1);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        Assert.Contains(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.LoadConstant);
+        Assert.DoesNotContain(
+            chunk.MainPrototype.Code,
+            static instruction => instruction.Opcode == Lua54Opcode.AddConstant);
+    }
+
+    [Fact]
+    public void CanonicalWriterTreatsParametersAsLocalsWithoutDebugMetadata()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.Move, 1, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 1, 1, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 2,
+            instructions,
+            parameterCount: 1);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        Assert.Equal(Lua54Opcode.Move, chunk.MainPrototype.Code[0].Opcode);
+        Assert.Equal(0, chunk.MainPrototype.Code[0].B);
+    }
+
+    [Fact]
+    public void CanonicalWriterPreservesCapturedRegisterWritesWithoutDebugMetadata()
+    {
+        var parentInstructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 2, 1, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Closure, 1, 1, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 0, 2, sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                3,
+                0,
+                2,
+                (int)LuaIrBinaryOperator.Add,
+                sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Call,
+                1,
+                0,
+                1,
+                (int)LuaIrCallKind.Regular,
+                sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 1, 1, sourceLine: 1));
+        var parent = CreateIrFunction(
+            0,
+            registerCount: 4,
+            parentInstructions,
+            constants:
+            [
+                LuaIrConstant.FromInteger(10),
+                LuaIrConstant.FromInteger(1),
+                LuaIrConstant.FromInteger(42),
+            ]);
+        var childInstructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.GetUpvalue, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 1, sourceLine: 1));
+        var child = CreateIrFunction(
+            1,
+            registerCount: 1,
+            childInstructions,
+            parentFunctionId: 0,
+            upvalues:
+            [
+                new LuaIrUpvalue("x", -1, LuaIrUpvalueSourceKind.Register, 0),
+            ]);
+        var module = new LuaIrModule { Functions = [parent, child] };
+
+        var bytes = Lua54CanonicalPrototypeWriter.Write(
+            module,
+            0,
+            stripDebugInformation: true);
+        var chunk = Lua54ChunkReader.Read(bytes);
+
+        Assert.Empty(chunk.MainPrototype.LocalVariables);
+        var closure = Array.FindIndex(
+            chunk.MainPrototype.Code.ToArray(),
+            static instruction => instruction.Opcode == Lua54Opcode.Closure);
+        Assert.True(closure >= 0);
+        Assert.Contains(
+            chunk.MainPrototype.Code.Skip(closure + 1),
+            static instruction => instruction.Opcode == Lua54Opcode.LoadInteger &&
+                                  instruction.A == 0 && instruction.SignedBx == 42);
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+
+        if (IsPucLuaAvailable())
+        {
+            Assert.Equal("42", ExecutePucChunk(bytes));
+        }
+    }
+
     private static Lua54Prototype CreatePrototype() => new()
     {
         Source = Lua54String.FromUtf8("@roundtrip.lua"),
@@ -398,6 +668,84 @@ public sealed class Lua54ChunkTests
         ],
         UpvalueNames = [],
     };
+
+    private static LuaIrModule CreateConstantLeftArithmeticModule(LuaIrConstant constant)
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 1, 0, sourceLine: 1),
+            new LuaIrInstruction(
+                LuaIrOpcode.Binary,
+                2,
+                1,
+                0,
+                (int)LuaIrBinaryOperator.Add,
+                sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 2, 1, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 3,
+            instructions,
+            constants: [constant],
+            parameterCount: 1);
+        return new LuaIrModule { Functions = [function] };
+    }
+
+    private static LuaIrFunction CreateIrFunction(
+        int id,
+        int registerCount,
+        ImmutableArray<LuaIrInstruction> instructions,
+        ImmutableArray<LuaIrConstant> constants = default,
+        int parameterCount = 0,
+        int parentFunctionId = -1,
+        ImmutableArray<LuaIrUpvalue> upvalues = default,
+        ImmutableArray<LuaIrLocalVariable> localVariables = default)
+    {
+        var function = new LuaIrFunction
+        {
+            Id = id,
+            ParentFunctionId = parentFunctionId,
+            Span = default,
+            ParameterCount = parameterCount,
+            RegisterCount = registerCount,
+            Constants = constants.IsDefault ? [] : constants,
+            Upvalues = upvalues.IsDefault ? [] : upvalues,
+            Instructions = instructions,
+            LocalVariables = localVariables.IsDefault ? [] : localVariables,
+            BasicBlocks = [],
+        };
+        return function with { BasicBlocks = LuaIrControlFlow.Build(function.Instructions) };
+    }
+
+    private static string ExecutePucChunk(byte[] bytes)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"canonical-writer-{Guid.NewGuid():N}.luac");
+        try
+        {
+            File.WriteAllBytes(path, bytes);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "lua",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("-e");
+            startInfo.ArgumentList.Add(
+                $"local f=assert(loadfile([==[{path}]==], 'b')); print(f())");
+            using var process = Process.Start(startInfo) ??
+                throw new InvalidOperationException("Could not start PUC Lua.");
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+            return output.Trim();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 
     private static bool IsPucLuaAvailable()
     {

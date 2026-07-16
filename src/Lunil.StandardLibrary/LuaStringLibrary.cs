@@ -273,12 +273,13 @@ internal static class LuaStringLibrary
         LuaValue sourceValue;
         LuaValue patternValue;
         LuaValue replacement;
-        LuaValue outputValue;
+        LuaNativeByteBuffer output;
         long maximum;
         long count;
         long scan;
         long copied;
         long lastMatch;
+        var resumedReplacement = continuationId != 0;
         var changed = false;
         if (continuationId == 0)
         {
@@ -302,7 +303,7 @@ internal static class LuaStringLibrary
                 3,
                 sourceValue.AsString().Length + 1L,
                 "gsub");
-            outputValue = String(context.State, []);
+            output = context.CreateByteBuffer(sourceValue.AsString().Length);
             count = 0;
             scan = 0;
             copied = 0;
@@ -314,42 +315,46 @@ internal static class LuaStringLibrary
             sourceValue = state[0];
             patternValue = state[1];
             replacement = state[2];
-            outputValue = state[3];
-            maximum = state[4].AsInteger();
-            count = state[5].AsInteger();
-            scan = state[6].AsInteger();
-            copied = state[7].AsInteger();
-            lastMatch = state[8].AsInteger();
-            changed = state[9].AsBoolean();
-            var matchStart = state[10].AsInteger();
-            var matchEnd = state[11].AsInteger();
+            maximum = state[3].AsInteger();
+            count = state[4].AsInteger();
+            scan = state[5].AsInteger();
+            copied = state[6].AsInteger();
+            lastMatch = state[7].AsInteger();
+            changed = state[8].AsBoolean();
+            var matchStart = state[9].AsInteger();
+            var matchEnd = state[10].AsInteger();
+            output = context.ByteBuffer ??
+                throw new InvalidOperationException("string.gsub lost its byte buffer.");
             var replacementValue = values.Length == 0 ? LuaValue.Nil : values[0];
-            var replacementBytes = NormalizeDynamicReplacement(
+            output.Append(sourceValue.AsString().AsSpan().Slice(
+                (int)copied,
+                (int)(matchStart - copied)));
+            changed |= AppendDynamicReplacement(
+                output,
                 replacementValue,
                 sourceValue.AsString().AsSpan().Slice(
                     (int)matchStart,
                     (int)(matchEnd - matchStart)));
-            outputValue = Append(
-                context.State,
-                outputValue,
-                sourceValue.AsString().AsSpan().Slice(
-                    (int)copied,
-                    (int)(matchStart - copied)),
-                replacementBytes);
-            changed |= replacementValue.IsTruthy;
             copied = matchEnd;
             scan = matchEnd;
             lastMatch = matchEnd;
             count++;
         }
 
-        var source = sourceValue.AsString().ToArray();
-        var pattern = patternValue.AsString().ToArray();
+        var source = sourceValue.AsString().AsSpan();
+        var pattern = patternValue.AsString().AsSpan();
         var anchored = pattern.Length != 0 && pattern[0] == (byte)'^';
-        while (count < maximum && scan <= source.Length)
+        var matcher = new LuaPatternMatcher(source, pattern);
+        while ((!resumedReplacement || !anchored) &&
+            count < maximum && scan <= source.Length)
         {
-            var match = new LuaPatternMatcher(source, pattern).Find((int)scan, anchored);
-            if (match is null || match.End == lastMatch)
+            var match = matcher.Find((int)scan, anchored);
+            if (match is null)
+            {
+                break;
+            }
+
+            if (match.End == lastMatch)
             {
                 if (scan < source.Length)
                 {
@@ -363,51 +368,56 @@ internal static class LuaStringLibrary
             LuaValue replacementValue;
             if (replacement.Kind == LuaValueKind.Function)
             {
-                return LuaNativeStep.CallLua(
+                return LuaNativeStep.CallLuaWithByteBuffer(
                     replacement,
                     CaptureValues(context.State, source, match),
                     1,
-                    GSubState(sourceValue, patternValue, replacement, outputValue, maximum,
+                    GSubState(sourceValue, patternValue, replacement, maximum,
                         count, scan, copied, lastMatch, changed, match.Start, match.End),
-                    false);
+                    false,
+                    byteBuffer: output);
             }
 
             if (replacement.Kind == LuaValueKind.Table)
             {
-                var captures = CaptureValues(context.State, source, match);
-                var key = captures.Length == 0
-                    ? String(context.State, source.AsSpan(match.Start, match.End - match.Start))
-                    : captures[0];
+                var key = match.Captures[0].ToLuaValue(context.State, source);
                 var get = LuaRuntimeOperations.GetIndex(context.State, replacement, key);
                 if (get.RequiresCall)
                 {
-                    return LuaNativeStep.CallLua(
+                    return LuaNativeStep.CallLuaWithByteBuffer(
                         get.Callable,
                         get.Arguments,
                         1,
-                        GSubState(sourceValue, patternValue, replacement, outputValue, maximum,
+                        GSubState(sourceValue, patternValue, replacement, maximum,
                             count, scan, copied, lastMatch, changed, match.Start, match.End),
-                        false);
+                        false,
+                        byteBuffer: output);
                 }
 
                 replacementValue = get.Value;
             }
             else
             {
-                var template = LuaLibraryHelpers.CheckStringBytes([replacement], 0, "gsub");
-                var expanded = ExpandReplacement(context.State, template, source, match);
-                replacementValue = String(context.State, expanded);
+                output.Append(source.Slice((int)copied, match.Start - (int)copied));
+                AppendTemplateReplacement(output, replacement, source, match);
+                changed = true;
+                copied = match.End;
+                scan = match.End;
+                lastMatch = match.End;
+                count++;
+                if (anchored)
+                {
+                    break;
+                }
+
+                continue;
             }
 
-            var normalized = NormalizeDynamicReplacement(
+            output.Append(source.Slice((int)copied, match.Start - (int)copied));
+            changed |= AppendDynamicReplacement(
+                output,
                 replacementValue,
-                source.AsSpan(match.Start, match.End - match.Start));
-            outputValue = Append(
-                context.State,
-                outputValue,
-                source.AsSpan((int)copied, match.Start - (int)copied),
-                normalized);
-            changed |= replacementValue.IsTruthy;
+                source.Slice(match.Start, match.End - match.Start));
             copied = match.End;
             scan = match.End;
             lastMatch = match.End;
@@ -423,8 +433,10 @@ internal static class LuaStringLibrary
             return LuaNativeStep.Completed(sourceValue, LuaValue.FromInteger(count));
         }
 
-        outputValue = Append(context.State, outputValue, source.AsSpan((int)copied), []);
-        return LuaNativeStep.Completed(outputValue, LuaValue.FromInteger(count));
+        output.Append(source[(int)copied..]);
+        return LuaNativeStep.Completed(
+            String(context.State, output.WrittenSpan),
+            LuaValue.FromInteger(count));
     }
 
     private static LuaNativeStep Format(
@@ -475,14 +487,24 @@ internal static class LuaStringLibrary
         }
     }
 
-    private static LuaValue[] CaptureValues(LuaState state, byte[] source, PatternMatch match) =>
-        match.Captures.Select(capture => capture.ToLuaValue(state, source)).ToArray();
+    private static LuaValue[] CaptureValues(
+        LuaState state,
+        ReadOnlySpan<byte> source,
+        PatternMatch match)
+    {
+        var values = new LuaValue[match.Captures.Length];
+        for (var index = 0; index < values.Length; index++)
+        {
+            values[index] = match.Captures[index].ToLuaValue(state, source);
+        }
+
+        return values;
+    }
 
     private static LuaValue[] GSubState(
         LuaValue source,
         LuaValue pattern,
         LuaValue replacement,
-        LuaValue output,
         long maximum,
         long count,
         long scan,
@@ -491,25 +513,41 @@ internal static class LuaStringLibrary
         bool changed,
         int matchStart,
         int matchEnd) =>
-        [source, pattern, replacement, output, LuaValue.FromInteger(maximum),
+        [source, pattern, replacement, LuaValue.FromInteger(maximum),
             LuaValue.FromInteger(count), LuaValue.FromInteger(scan), LuaValue.FromInteger(copied),
             LuaValue.FromInteger(lastMatch), LuaValue.FromBoolean(changed),
             LuaValue.FromInteger(matchStart), LuaValue.FromInteger(matchEnd)];
 
-    private static byte[] ExpandReplacement(
-        LuaState state,
-        byte[] template,
-        byte[] source,
+    private static void AppendTemplateReplacement(
+        LuaNativeByteBuffer output,
+        LuaValue replacement,
+        ReadOnlySpan<byte> source,
         PatternMatch match)
     {
-        var output = new List<byte>(template.Length);
+        if (replacement.Kind == LuaValueKind.Integer)
+        {
+            output.Append(Encoding.ASCII.GetBytes(
+                replacement.AsInteger().ToString(CultureInfo.InvariantCulture)));
+            return;
+        }
+
+        if (replacement.Kind == LuaValueKind.Float)
+        {
+            output.Append(Encoding.ASCII.GetBytes(
+                LuaValueOperations.FormatFloat(replacement.AsFloat())));
+            return;
+        }
+
+        var template = replacement.AsString().AsSpan();
+        var literalStart = 0;
         for (var index = 0; index < template.Length; index++)
         {
             if (template[index] != (byte)'%')
             {
-                output.Add(template[index]);
                 continue;
             }
+
+            output.Append(template.Slice(literalStart, index - literalStart));
 
             if (++index == template.Length)
             {
@@ -519,7 +557,8 @@ internal static class LuaStringLibrary
             var code = template[index];
             if (code == (byte)'%')
             {
-                output.Add(code);
+                output.Append(template.Slice(index, 1));
+                literalStart = index + 1;
                 continue;
             }
 
@@ -531,47 +570,62 @@ internal static class LuaStringLibrary
             var capture = code - (byte)'0';
             if (capture == 0)
             {
-                output.AddRange(source.AsSpan(match.Start, match.End - match.Start).ToArray());
+                output.Append(source.Slice(match.Start, match.End - match.Start));
             }
             else if (capture <= match.Captures.Length)
             {
-                var value = match.Captures[capture - 1].ToLuaValue(state, source);
-                output.AddRange(value.Kind == LuaValueKind.Integer
-                    ? Encoding.ASCII.GetBytes(value.AsInteger().ToString(CultureInfo.InvariantCulture))
-                    : value.AsString().ToArray());
+                var captured = match.Captures[capture - 1];
+                if (captured.IsPosition)
+                {
+                    output.Append(Encoding.ASCII.GetBytes(
+                        (captured.Start + 1L).ToString(CultureInfo.InvariantCulture)));
+                }
+                else
+                {
+                    output.Append(source.Slice(captured.Start, captured.Length));
+                }
             }
             else
             {
                 throw new LuaRuntimeException($"invalid capture index %{capture}");
             }
+
+            literalStart = index + 1;
         }
 
-        return output.ToArray();
+        output.Append(template[literalStart..]);
     }
 
-    private static byte[] NormalizeDynamicReplacement(LuaValue value, ReadOnlySpan<byte> original)
+    private static bool AppendDynamicReplacement(
+        LuaNativeByteBuffer output,
+        LuaValue value,
+        ReadOnlySpan<byte> original)
     {
         if (!value.IsTruthy)
         {
-            return original.ToArray();
+            output.Append(original);
+            return false;
         }
 
-        return value.Kind switch
+        switch (value.Kind)
         {
-            LuaValueKind.String => value.AsString().ToArray(),
-            LuaValueKind.Integer => Encoding.ASCII.GetBytes(value.AsInteger().ToString(CultureInfo.InvariantCulture)),
-            LuaValueKind.Float => Encoding.ASCII.GetBytes(LuaValueOperations.FormatFloat(value.AsFloat())),
-            _ => throw new LuaRuntimeException($"invalid replacement value (a {LuaLibraryHelpers.TypeName(value)})"),
-        };
-    }
+            case LuaValueKind.String:
+                output.Append(value.AsString().AsSpan());
+                break;
+            case LuaValueKind.Integer:
+                output.Append(Encoding.ASCII.GetBytes(
+                    value.AsInteger().ToString(CultureInfo.InvariantCulture)));
+                break;
+            case LuaValueKind.Float:
+                output.Append(Encoding.ASCII.GetBytes(
+                    LuaValueOperations.FormatFloat(value.AsFloat())));
+                break;
+            default:
+                throw new LuaRuntimeException(
+                    $"invalid replacement value (a {LuaLibraryHelpers.TypeName(value)})");
+        }
 
-    private static LuaValue Append(LuaState state, LuaValue prefix, ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
-    {
-        var bytes = new byte[checked(prefix.AsString().Length + first.Length + second.Length)];
-        prefix.AsString().AsSpan().CopyTo(bytes);
-        first.CopyTo(bytes.AsSpan(prefix.AsString().Length));
-        second.CopyTo(bytes.AsSpan(prefix.AsString().Length + first.Length));
-        return String(state, bytes);
+        return true;
     }
 
     private static byte[] CheckBytes(ReadOnlySpan<LuaValue> arguments, int index, string function) =>

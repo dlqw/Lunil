@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.7.0-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.8.0--alpha.1-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,13 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is stable **`0.7.0`**. The `0.6.0` line ended at the
-> immutable `0.6.0-alpha.14` execution-backend preview without a stable `0.6.0` release.
-> Public Compiler/Hosting boundaries, the LuaLS/legacy EmmyLua annotation front end, and
-> bounded type/control-flow analysis, incremental module workspace, and the `lunil` CLI are now
-> available. The official Lua 5.4.8 user-mode suite and six-RID evidence pass, and all 14 public
-> assemblies/packages are frozen by compatibility baselines. The accepted release candidate had
-> no product-code, public-API-baseline, or package-scope changes before stable promotion.
+> The current source version is **`0.8.0-alpha.1`**; stable `0.7.0` and its API/package baselines
+> remain immutable. This Alpha develops faster PUC chunk lowering, qualified Hosting/CLI JIT
+> selection, linear string-library construction, bounded JIT fallback, continuous unboxed numeric
+> regions, and guarded table/call paths. Its `api/0.8.0` data is a reviewed snapshot rather than a
+> Beta freeze, and the full conformance, package, six-RID, and performance gates remain mandatory.
 
 ## Table of contents
 
@@ -77,18 +75,18 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | Stable | Tier 1, exact-numeric Tier 2, and guarded exact-numeric loop OSR have six-RID rollout evidence and are enabled automatically; persisted CIL has validated collectible loading/execution and six-RID production performance gates; managed semantic fallbacks remain experimental opt-ins |
+| JIT / AOT backends | `0.8` Alpha | Qualified Tier 1/Tier 2/loop OSR and persisted CIL retain the stable gates; this milestone adds bounded terminal fallback, continuous/unboxed numeric regions, and guarded table/call specialization |
 | Compiler product API | Stable `0.7` | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
 | Hosting product API | Stable `0.7` | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
 | Annotation product API | Stable `0.7` | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
 | Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
 | CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Stable release | Backward-compatible fixes on this line use `0.7.1`; the next feature/API milestone is `0.8.0` |
+| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.1` permits reviewed feature/API work and cannot promote directly to stable |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | Readiness accepted for stable `0.7.0` |
+| Execution path | Release behavior | `0.8.0-alpha.1` readiness |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -97,9 +95,9 @@ collector.
 | Persisted CIL AOT | Explicit artifact compile, validation, collectible load, and execution | Runtime path and production performance gates qualified on all six release RIDs |
 | Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
 
-These results closed the `0.6.0-alpha.14` JIT/AOT productionization milestone and remain
-regression gates for `0.7.0`. The stable release retains the frozen compiler, analysis, hosting,
-CLI, conformance, and package surface described by the [0.7.0 roadmap](docs/roadmap-0.7.0.md).
+The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.1` layers the work described
+in its [changelog](changelogs/0.8.0-alpha.1.md) on top without changing the frozen `api/0.7.0`
+contract.
 
 ## Features
 
@@ -171,6 +169,9 @@ CLI, conformance, and package surface described by the [0.7.0 roadmap](docs/road
 - Defaults, `lunil.json`, `LUNIL_*` environment variables, response files, and direct CLI options
   have defined precedence. Trusted, root-confined read-only sandbox, and deterministic profiles
   share explicit input, instruction, stack, call-depth, and heap budgets.
+- `--execution auto|interpreter|jit`, JSON `execution`, and `LUNIL_EXECUTION` select the qualified
+  execution backend. `auto` uses the JIT when dynamic code is available and the interpreter on
+  NativeAOT; check/build/dump avoid initializing an execution host.
 - The `Lunil.Cli` .NET tool package and RID bundles are smoke-tested; NativeAOT, trimmed
   single-file, and ReadyToRun CLI publications run parser/configuration/JSON/build checks in CI.
 
@@ -189,7 +190,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.7.0
+dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -221,6 +222,21 @@ dotnet run --configuration Release \
   --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
 ```
 
+The cross-runtime workflow builds pinned native Lua 5.4.8 and LuaJIT, then compares them with
+MoonSharp and all Lunil configurations using identical Lua source. Native Lua is always the
+`1.000x` baseline. Lunil Auto and Tier 2 are release-gated per workload at a median of at least
+`1.05x` versus MoonSharp with a paired CI95 lower bound of at least `1.00x`:
+
+```powershell
+./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier win-x64
+./scripts/Measure-CrossRuntimePerformance.ps1 `
+  -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
+```
+
+The qualified Windows x64 matrix and six-RID CI run `29459923109` pass every workload gate; CI
+rejects any missing, incomplete, or failed RID report. See the
+[cross-runtime performance workflow](docs/cross-runtime-performance.md) for results and evidence.
+
 ## Using Lunil as a library
 
 Tagged releases provide six RID bundles and publish the corresponding `Lunil.*`
@@ -228,12 +244,13 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.7.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.1" />
 ```
 
-The high-level host compiles, verifies, installs the standard library, and executes through
-one reusable state. The default profile is restricted; trusted access and deterministic
-execution are explicit options:
+The high-level host compiles, verifies, installs the standard library, and executes through one
+reusable state. The default profile is restricted and the default execution backend is `Auto`:
+qualified JIT on dynamic-code runtimes, reference interpreter otherwise. Trusted access,
+deterministic capabilities, and a forced execution backend are explicit options:
 
 ```csharp
 using Lunil.Hosting;
@@ -266,7 +283,12 @@ if (run.Execution?.Signal != LuaVmSignal.Completed)
 }
 
 Console.WriteLine(run.Execution.Values[0].AsInteger()); // 55
+Console.WriteLine(host.SelectedExecutionBackend);       // Jit or Interpreter
 ```
+
+Set `LuaHostOptions.ExecutionBackend` to `Interpreter` for an explicit Tier 0 route or to `Jit`
+to require dynamic-code support. `LuaHost.IsDynamicCodeAvailable` reports the runtime capability;
+`LuaHost.JitStatistics` exposes telemetry after the lazily created JIT executor first runs.
 
 To execute a validated PUC Lua 5.4 binary chunk:
 
@@ -300,10 +322,12 @@ reference backend.
 
 `LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
 in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
-for Tier 1 compilation. Exact integer, float, and mixed-numeric profiles are then automatically
-promoted only when eligibility analysis guarantees `ExactNumericSpecializedCil`; table, closure,
-call, upvalue, and to-be-closed profile sites remain on Tier 1. Guard failure deoptimizes exactly
-to canonical execution and re-runs eligibility against the widened profile. Set
+for Tier 1 compilation. Exact integer, float, and mixed-numeric profiles are automatically
+promoted when eligibility analysis guarantees `ExactNumericSpecializedCil`. Stable table PIC and
+known-closure call sites use `GuardedSpecializedCil`; the same method can compose those guarded
+outer paths with unboxed numeric regions. Unsupported or widened polymorphic shapes remain on
+Tier 1. Guard failure deoptimizes exactly to canonical execution and re-runs eligibility against
+the widened profile. Set
 `EnableTier2=false` to disable Tier 2 profiling and profile import completely, or explicitly set
 `EnableTier2ManagedFallback=true` to allow the still-experimental `ManagedProfileProgram` path.
 Dynamic-code-unavailable deployments, including NativeAOT, keep exact interpreter fallback and do
@@ -357,7 +381,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.7.0" />
+  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.1" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -475,18 +499,17 @@ describe different things:
 | `rc.N` | A stable-release candidate; only release-blocking fixes may enter |
 | no suffix | Stable release, promoted only from an accepted RC |
 
-The `0.7.0` promotion sequence is:
+The active `0.8.0` promotion sequence is:
 
 ```text
-0.7.0-alpha.N -> 0.7.0-beta.N -> 0.7.0-rc.N -> 0.7.0
+0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
 ```
 
-The current version is stable **`0.7.0`**. The `0.6.0` line was explicitly
-superseded at `0.6.0-alpha.14`; its published tag remains immutable and no suffix-free
-`0.6.0` will be created. Prerelease counters increase for every published build within a
-channel and restart at `1` when entering a new channel. The accepted Beta entered RC, and the
-accepted `0.7.0-rc.1` entered stable without product-code or frozen API/package-scope changes.
-Backward-compatible fixes use `0.7.1`; new feature/API work starts at `0.8.0-alpha.1`.
+The current source version is **`0.8.0-alpha.1`**. Stable `0.7.0`, its tag, and `api/0.7.0`
+remain immutable; backward-compatible fixes on that stable line use `0.7.1`. Alpha prerelease
+counters increase for every published build, and promotion restarts at `beta.1` only after the
+complete `0.8` feature and public-API scope is accepted. The current reviewed `api/0.8.0`
+snapshot is not a Beta freeze.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
@@ -499,7 +522,7 @@ suffix are automatically marked as prereleases. See the
 | --- | --- |
 | [Compiler design](docs/compiler-design.md) | Architecture, compatibility contract, IR and backend design |
 | [0.7.0 roadmap](docs/roadmap-0.7.0.md) | Compiler/hosting foundation, annotations, analysis, workspace, CLI and promotion gates |
-| [0.7.0 API/package compatibility](docs/api-compatibility.md) | Frozen assembly APIs, NuGet assets, validation policy, and update commands |
+| [Versioned API/package compatibility](docs/api-compatibility.md) | Frozen `0.7` data, reviewed `0.8` snapshots, NuGet assets, validation policy, and update commands |
 | [CLI reference](docs/cli.md) | Commands, configuration precedence, profiles, diagnostics, artifacts, and exit codes |
 | [Execution backend ABI](docs/adr/0001-execution-backend-abi-v1.md) | Frozen scheduler, PC, budget, safe-point and code-generation contract |
 | [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
@@ -507,6 +530,7 @@ suffix are automatically marked as prereleases. See the
 | [Loop OSR automatic default rollout](docs/adr/0009-loop-osr-auto-default-rollout.md) | Six-RID authorization, release default, and explicit opt-out contract |
 | [Persisted CIL AOT productionization](docs/adr/0010-persisted-cil-aot-performance-productionization.md) | Collectible runtime execution, loader attribution, fallback, and six-RID performance gates |
 | [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
+| [Cross-runtime performance](docs/cross-runtime-performance.md) | Native Lua baseline, LuaJIT/MoonSharp/Lunil matrix, reproducible toolchain, and six-RID reports |
 | [Backend cache contract](docs/backend-cache-contract.md) | Cache keys, disk layout, profile format, quotas and corruption behavior |
 | [NativeAOT and MSBuild](docs/nativeaot-build-integration.md) | `Lunil.Build`, static registries, diagnostics and publish modes |
 | [Runtime continuation ABI](docs/runtime-continuation-abi.md) | Frozen continuation and yield boundary from `0.3.0` |

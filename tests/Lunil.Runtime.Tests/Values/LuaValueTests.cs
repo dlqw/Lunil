@@ -50,4 +50,70 @@ public sealed class LuaValueTests
         Assert.Same(pool.GetOrCreate(shortBytes), pool.GetOrCreate(shortBytes));
         Assert.NotSame(pool.GetOrCreate(longBytes), pool.GetOrCreate(longBytes));
     }
+
+    [Fact]
+    public void CachesBoundedShortStringIntegerConcatenationsInBothOrders()
+    {
+        var state = new LuaState();
+        var text = state.Strings.GetOrCreate("item"u8);
+
+        Assert.True(state.Strings.TryGetOrCreateIntegerConcat(
+            text,
+            -12,
+            textFirst: true,
+            out var suffix));
+        Assert.True(state.Strings.TryGetOrCreateIntegerConcat(
+            text,
+            -12,
+            textFirst: true,
+            out var repeatedSuffix));
+        Assert.True(state.Strings.TryGetOrCreateIntegerConcat(
+            text,
+            -12,
+            textFirst: false,
+            out var prefix));
+
+        Assert.Same(suffix, repeatedSuffix);
+        Assert.Equal("item-12", suffix.ToString());
+        Assert.Equal("-12item", prefix.ToString());
+        Assert.NotSame(suffix, prefix);
+        Assert.False(state.Strings.TryGetOrCreateIntegerConcat(
+            text,
+            4097,
+            textFirst: true,
+            out _));
+    }
+
+    [Fact]
+    public void IntegerConcatenationCacheRejectsForeignStringsAndNeverRevivesDeadEntries()
+    {
+        var state = new LuaState();
+        var foreignState = new LuaState();
+        var foreign = foreignState.Strings.GetOrCreate("item"u8);
+        Assert.False(state.Strings.TryGetOrCreateIntegerConcat(
+            foreign,
+            7,
+            textFirst: true,
+            out _));
+
+        var originalText = state.Strings.GetOrCreate("item"u8);
+        Assert.True(state.Strings.TryGetOrCreateIntegerConcat(
+            originalText,
+            7,
+            textFirst: true,
+            out var originalResult));
+        state.Heap.CollectFull();
+        Assert.False(originalText.IsAlive);
+        Assert.False(originalResult.IsAlive);
+
+        var replacementText = state.Strings.GetOrCreate("item"u8);
+        Assert.True(state.Strings.TryGetOrCreateIntegerConcat(
+            replacementText,
+            7,
+            textFirst: true,
+            out var replacementResult));
+        Assert.True(replacementResult.IsAlive);
+        Assert.NotSame(originalResult, replacementResult);
+        Assert.Equal("item7", replacementResult.ToString());
+    }
 }

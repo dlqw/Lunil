@@ -4,6 +4,14 @@ This document records local reference measurements for JIT/AOT backend work. The
 evidence from one machine, not portable pass/fail limits. CI publishes the same benchmark output
 for every native RID without failing a build on timing variance.
 
+These Lunil-internal qualification measurements are intentionally separate from the
+[cross-runtime workflow](cross-runtime-performance.md). The cross-runtime suite pins native Lua
+5.4.8 as the per-RID baseline and compares LuaJIT, MoonSharp, and all Lunil configurations using
+the same portable source, balanced rounds, correctness validation, raw CSV/JSON evidence, and a
+six-RID aggregate report.
+Unlike the internal hosted-runner timing evidence, the cross-runtime workflow applies a hard
+MoonSharp-relative product gate to Auto and Tier 2 on every workload and RID.
+
 ## M0 Windows x64 baseline
 
 - Date: 2026-07-12
@@ -606,3 +614,162 @@ methods with zero artifact fallback and zero unexpected deoptimization; all maxi
 were the expected 1,550,120 `DebugModeChanged` exits per RID. The aggregate records
 `AllRidsExecutePersistedAot=true`, `AllRidsAttributeExpectedDebugDeoptimization=true`, and
 `AllRidsQualify=true`.
+
+## M18 continuous Tier 2 numeric-for dispatch
+
+M18 removes the scheduler round trip previously taken by every
+`NumericForPrepare`/`NumericForLoop` execution in exact-numeric Tier 2. The exact emitter now keeps
+canonical PC dispatch inside one generated method and rejects any function CFG that would require
+an unsupported slow path. Evidence distinguishes method entries, completed Lua invocations, and
+unsupported exits; arithmetic records one completed Tier 2 entry per warm execution rather than one
+entry per loop iteration.
+
+The runner adds iterative Fibonacci and floating-point Mandelbrot rows and pairs each Tier 2 process
+with its Tier 1 process. A local win-x64 Release smoke run (30 warm operations, three cold samples)
+produced:
+
+| Workload | Tier 1 warm | Tier 2 warm | Tier 2 / Tier 1 | Allocation |
+|---|---:|---:|---:|---:|
+| arithmetic (5,000 iterations) | 6.022 ms | 1.516 ms | **3.97x** | 1,913 B / 1,913 B |
+| fib_iter (1,000 calls) | 6.843 ms | 6.251 ms | **1.09x** | 330,838 B / 330,854 B |
+| mandelbrot (48x48, 50 max iterations) | 86.513 ms | 11.330 ms | **7.64x** | 759,783 B / 759,839 B |
+
+The arithmetic Tier 2 row reported `method_entries=34`, `completed_invocations=34`, and
+`unsupported_exits=0`; its 5,075,350 compiled canonical instructions produced only 35 total
+scheduler exits across warmup and measurement. The six-RID decision now additionally requires
+arithmetic Tier 2 not to regress Tier 1 (paired median at least 1.0x and CI95 lower at least 0.95x),
+fib_iter at least 0.95x, Mandelbrot at least 0.90x, completed-entry parity, and zero unsupported
+exits. Each paired allocation median must remain within 1.10x of Tier 1. These local measurements
+are smoke evidence; the protected six-RID run remains the rollout
+authority.
+
+## M19 cross-runtime table, call, and string throughput
+
+M19 adds a separate common-source comparison against native Lua 5.4.8, LuaJIT, and MoonSharp.
+Native Lua is always normalized to `1.000x`; MoonSharp is the hard managed product reference.
+Auto and Tier 2 must exceed MoonSharp by at least 1.05x median on every workload, with a paired
+bootstrap CI95 lower bound of at least 1.00x, one stable route, and clean timed-region fallback and
+deoptimization telemetry.
+
+Targeted sampled-CPU traces, rather than repeated full-suite runs, identified three dominant
+non-numeric costs:
+
+1. sieve spent most compiled time routing existing integer array slots through generic table-key
+   normalization and probing;
+2. string construction repeated numeric parsing/conversion after the primitive guard had already
+   established exact numeric kinds; and
+3. Tier 2 known-closure calls returned to the scheduler even after a frameless leaf completed,
+   while Tier 1 already continued inside its emitted method.
+
+The runtime now updates/reads proven dense slots directly, uses exact numeric operations after the
+primitive guard, pools table/string backing storage with allocation-site capacity feedback, and
+continues successful known frameless calls inside the same Tier 2 method. Table ownership, logical
+quota, mutation versions, write barriers, exact instruction budget, GC/debug/finalizer, and
+fallback contracts remain covered by focused tests.
+
+The final complete win-x64 Release record at
+`artifacts/cross-runtime-performance/win-x64/final-full-v20` ran nine engines, eight workloads, and
+six balanced rounds (432 validated samples). Auto/Tier 2 achieved a 1.655x/1.691x geometric mean
+versus MoonSharp. Their per-workload paired medians were:
+
+| Workload | Auto / MoonSharp | Tier 2 / MoonSharp |
+|---|---:|---:|
+| arithmetic | 2.388x | 2.372x |
+| fib_iter | 1.463x | 1.484x |
+| mandelbrot | 1.352x | 1.339x |
+| control_flow | 1.960x | 1.918x |
+| function_calls | 1.970x | 2.198x |
+| table_access | 1.915x | 2.015x |
+| sieve | 1.304x | 1.352x |
+| string_build | 1.233x | 1.233x |
+
+Every paired CI95 lower bound exceeded 1.00x; `string_build` was the narrowest at 1.126x for Auto
+and 1.145x for Tier 2. See [cross-runtime-performance.md](cross-runtime-performance.md) for the
+pinned supply chain, paired estimator, raw report schema, and six-RID fail-closed aggregation.
+
+Hosted CI run [`29459923109`](https://github.com/dlqw/Lunil/actions/runs/29459923109) then passed
+all six RID measurement jobs and the fail-closed aggregate. All 96 Auto/Tier 2 workload/RID gates
+passed. Across 48 measurements per candidate, Auto/Tier 2 reached 1.980x/1.979x geometric means
+versus MoonSharp; the minimum paired medians were 1.067x/1.054x on win-x64 `string_build`, whose
+CI95 lower bounds remained above one at 1.026x/1.010x.
+
+## M20 linear unboxed numeric regions
+
+M20 replaces the hot-loop portion of exact-numeric Tier 2 and Loop OSR with one reducible-CFG
+numeric-region emitter. The emitted loop uses versioned unboxed CLR locals, direct arithmetic CIL,
+local instruction accounting, boundary-only PC/materialization, and a bounded backedge countdown.
+The arithmetic evidence row now reports these five plan facts independently for both backends:
+
+- `numeric_region_count`;
+- `unboxed_numeric_local_count`;
+- `direct_numeric_instruction_count`;
+- `numeric_region_safepoint_count` (static backedge poll sites, not dynamic poll executions);
+- `numeric_region_hot_instruction_budget_check_count` (qualified hot path only; cold slow-tail
+  checks are excluded).
+
+The four structural facts must be nonzero and the hot budget-check count must be exactly zero. The
+numeric-region planner cuts backedges and proves a conservative instruction quantum; admitted hot
+execution charges actual work at basic-block boundaries. Budgets too small for that quantum use a
+separate per-instruction cold slow tail, retaining exact budget PCs without contaminating hot-path
+telemetry. This prevents the legacy helper/switch emitter, or a region that regressed to a hot
+per-instruction budget branch, from satisfying the gate under the same public code-kind name. The
+Tier 2 preparation fixture includes a real natural loop, so the `<10 ms` compilation gate measures a
+warmed production pipeline instead of the CLR's one-time JIT of the planner.
+
+The old 64 KiB Loop OSR allocation limit applied to the previous compact single-block emitter and
+would force every CFG region back to legacy code. The implementation first removed duplicated
+per-PC materialization IL and replaced reaching-definition `HashSet` graphs plus sparse immutable
+dictionaries with compact immutable definition vectors and dense kind maps. Warm arithmetic Loop
+OSR compilation then measured roughly 162 KiB instead of about 1 MiB. The gate is replaced with two
+strict dimensions rather than removed:
+
+| Gate | Tier 2 | Loop OSR |
+|---|---:|---:|
+| Compile allocation p95 | < 256 KiB | < 192 KiB |
+| 1-op to 8-op region allocation slope | < 32 KiB/direct instruction | < 32 KiB/direct instruction |
+| Compilation p95 | < 10 ms | < 10 ms |
+
+The local sizing smoke measured about 21.4 KiB/direct instruction for Tier 2 and 14.4 KiB/direct
+instruction for Loop OSR. Execution allocation slope remains independently constrained, so the new
+compile bound cannot hide per-iteration allocation. See
+[ADR 0011](adr/0011-linear-numeric-regions.md).
+
+The completed six-process win-x64 Release record for the linear-region emitter is
+`artifacts/backend-performance/win-x64/20260715-173950`. Both arithmetic paths installed one numeric
+region with eight unboxed locals, five direct numeric instructions, one static safepoint site, and
+zero hot instruction-budget checks. Median arithmetic time fell from the saved pre-change WIP's
+205.403/191.895 microseconds for Tier 2/Loop OSR to 31.747/39.118 microseconds, improvements of
+6.47x/4.91x. The resulting interpreter speedups were 240.945x and 196.688x respectively.
+
+Tier 2/Loop OSR compilation p95 was 1.789/2.228 ms, compile allocation p95 was 240,280/191,672 B,
+and allocation growth was 20,712/15,694 B per added direct instruction. These satisfy the `<10 ms`,
+`<256 KiB`/`<192 KiB`, and `<32 KiB/direct instruction` numeric-region gates with zero execution
+allocation slope. Tier 1, Tier 2, and persisted-AOT decisions qualified. The first protected six-RID
+run then isolated a non-region regression in the Loop OSR disabled-control comparison: before the
+1024-backedge threshold, every interpreted backedge re-entered the tier controller, no-backedge
+callees created frame observations, and one-time structural rejection could fall after the five
+warmup operations. This affected `lua_calls`, `metamethod`, and other structurally rejected loops;
+it did not change numeric-region shape or arithmetic throughput.
+
+The corrected six-process win-x64 Release record is
+`artifacts/backend-performance/win-x64/20260716-031813`. Pre-qualification backedges are now counted
+by a frame-local countdown, partial counts are committed on return/tail-call/unwind, no-backedge
+functions skip frame observations, and a repeated structurally impossible loop is rejected after at
+least four entries and 64 backedges. Structural exact-numeric candidates still publish nothing
+before the configured 1024-backedge threshold. Loop OSR arithmetic reached **200.499x** interpreter
+and **198.231x** disabled-control median speedup; compilation p95 was **2.171 ms**, compile allocation
+p95 was **191,672 B**, region growth was **15,694 B/direct instruction**, execution allocation slope
+was zero, all four region-shape facts were nonzero, and hot instruction-budget checks remained zero.
+
+The corrected rejected-workload on/off medians were `lua_calls` **0.999x**, `table_access`
+**0.987x**, `metamethod` **0.996x**, and `coroutine_error_hook` **1.007x**. Every allocation comparison
+was at parity and the local Tier 1, Tier 2, Loop OSR, and persisted-AOT decisions all qualified.
+
+The final protected run is [CI 29468655163](https://github.com/dlqw/Lunil/actions/runs/29468655163).
+All six RIDs qualified for Tier 1, Tier 2, Loop OSR, and persisted AOT. The minimum Loop OSR
+arithmetic CI95 lower bound was **108.615x** versus interpreter and **133.644x** versus the disabled
+control; maximum Loop OSR compilation p95 was **3.448 ms** and maximum compile allocation p95 was
+**191,136 B**. The minimum Tier 2 arithmetic CI95 lower bound was **84.039x**, maximum compilation
+p95 was **2.797 ms**, and maximum compile allocation p95 was **241,648 B**. Every RID installed the
+required numeric region with zero hot instruction-budget checks, and every rejected-workload
+timing, startup, allocation, eligibility, managed-installation, and guard-failure gate passed.

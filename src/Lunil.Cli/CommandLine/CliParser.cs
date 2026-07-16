@@ -18,6 +18,7 @@ internal static class CliParser
         var command = CliCommand.None;
         var diagnosticFormat = configuration.DiagnosticFormat ?? CliDiagnosticFormat.Text;
         var profile = configuration.Profile ?? CliProfile.Trusted;
+        var executionBackend = configuration.ExecutionBackend ?? CliExecutionBackend.Auto;
         var buildTarget = configuration.BuildTarget ?? CliBuildTarget.Chunk;
         var dumpKind = configuration.DumpKind ?? CliDumpKind.Summary;
         var dumpFormat = configuration.DumpFormat ?? CliDumpFormat.Text;
@@ -110,6 +111,10 @@ internal static class CliParser
                     break;
                 case "--profile":
                     profile = ParseProfile(ReadValue(arguments, ref index, name, inlineValue));
+                    break;
+                case "--execution":
+                    executionBackend = ParseExecutionBackend(
+                        ReadValue(arguments, ref index, name, inlineValue));
                     break;
                 case "--sandbox":
                     EnsureNoValue(name, inlineValue);
@@ -217,6 +222,7 @@ internal static class CliParser
             PathPatterns = pathPatterns.ToImmutable(),
             DiagnosticFormat = diagnosticFormat,
             Profile = profile,
+            ExecutionBackend = executionBackend,
             BuildTarget = buildTarget,
             DumpKind = dumpKind,
             DumpFormat = dumpFormat,
@@ -354,6 +360,14 @@ internal static class CliParser
         "sandbox" or "restricted" => CliProfile.Sandbox,
         "deterministic" => CliProfile.Deterministic,
         _ => throw new CliUsageException("Profile must be 'trusted', 'sandbox', or 'deterministic'."),
+    };
+
+    internal static CliExecutionBackend ParseExecutionBackend(string value) => value switch
+    {
+        "auto" => CliExecutionBackend.Auto,
+        "interpreter" => CliExecutionBackend.Interpreter,
+        "jit" => CliExecutionBackend.Jit,
+        _ => throw new CliUsageException("Execution backend must be 'auto', 'interpreter', or 'jit'."),
     };
 
     internal static CliBuildTarget ParseBuildTarget(string value) => value switch
