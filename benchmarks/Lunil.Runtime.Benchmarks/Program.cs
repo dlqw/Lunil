@@ -267,6 +267,20 @@ if (!backendOnly)
         """, installStandardLibrary: true));
 
     Run(
+        "interpreter_warm_print",
+        Scaled(iterations),
+        CreateWarmRunner(
+            """
+            for i = 1, 5000 do print("x", i, true) end
+            return true
+            """,
+            installStandardLibrary: true,
+            standardLibraryOptions: new LuaStandardLibraryOptions
+            {
+                Console = NullLuaConsole.Instance,
+            }));
+
+    Run(
         "interpreter_warm_string_gmatch",
         Scaled(iterations),
         CreateWarmRunner("""
@@ -610,13 +624,14 @@ static int Scaled(int iterations) => Math.Max(1, iterations / 100_000);
 static Action<int> CreateWarmRunner(
     string source,
     bool installStandardLibrary = false,
-    LuaStateOptions? stateOptions = null)
+    LuaStateOptions? stateOptions = null,
+    LuaStandardLibraryOptions? standardLibraryOptions = null)
 {
     var module = Compile(source);
     var state = new LuaState(stateOptions);
     if (installStandardLibrary)
     {
-        LuaStandardLibrary.InstallAll(state);
+        LuaStandardLibrary.InstallAll(state, standardLibraryOptions);
     }
 
     var closure = state.CreateMainClosure(module);
@@ -1571,3 +1586,18 @@ sealed record StringGrowthMeasurement(
     long LogicalBytes);
 
 sealed record GrowthMeasurement(TimeSpan Elapsed, long AllocatedBytes);
+
+sealed class NullLuaConsole : ILuaConsole
+{
+    public static NullLuaConsole Instance { get; } = new();
+
+    public byte[] ReadStandardInput() => [];
+
+    public void Write(ReadOnlyMemory<byte> bytes)
+    {
+    }
+
+    public void WriteLine()
+    {
+    }
+}
