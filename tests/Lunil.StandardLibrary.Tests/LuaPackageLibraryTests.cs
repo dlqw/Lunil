@@ -42,8 +42,9 @@ public sealed class LuaPackageLibraryTests
             ["mods/alpha.lua"] =
                 Encoding.UTF8.GetBytes("local n,p=...; return {name=n,path=p}"),
         };
-        var values = Execute(
-            files,
+        var state = CreateState(files, new Dictionary<string, string?>());
+        var values = Run(
+            state,
             "package.path='missing/?.lua;mods/?.lua' " +
             "local m,data=require('alpha'); local cached=require('alpha') " +
             "local found=package.searchpath('alpha','missing/?.lua;mods/?.lua') " +
@@ -63,6 +64,20 @@ public sealed class LuaPackageLibraryTests
         Assert.True(values[7].IsNil);
         Assert.Contains("dynamic libraries are not enabled", values[8].AsString().ToString());
         Assert.Equal("absent", values[9].AsString().ToString());
+
+        Assert.True(state.TryGetModule("alpha", out var module));
+        Assert.Equal(LuaModuleLoaderKind.LuaFile, module!.LoaderKind);
+        Assert.Equal(expected, module.LoaderData.AsString().ToString());
+        Assert.NotNull(module.Module);
+        Assert.Equal(LuaValueKind.Table, module.CachedValue.Kind);
+        Assert.Equal(["alpha"], state.GetLoadedModuleNames());
+        var handlesWithRecord = state.Heap.HandleCount;
+
+        _ = Run(state, "package.loaded.alpha=nil; assert(loadfile('mods/alpha.lua'))");
+
+        Assert.False(state.TryGetModule("alpha", out _));
+        Assert.Empty(state.GetLoadedModuleNames());
+        Assert.Equal(handlesWithRecord - 3, state.Heap.HandleCount);
     }
 
     [Fact]

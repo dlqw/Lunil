@@ -15,7 +15,7 @@ must continue to match the stable `v0.7.0` tag; later feature work never rewrite
 ### Active `0.8.0`
 
 [`api/0.8.0/`](../api/0.8.0/) records the reviewed public API and package snapshot for
-`0.8.0-alpha.7`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
+`0.8.0-alpha.8`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
 Beta freeze. The exact gate still rejects an unreviewed addition, removal, signature change,
 dependency edge, or package asset. Entering `0.8.0-beta.1` will turn the accepted snapshot into the
 frozen contract for the rest of the `0.8` line.
@@ -28,7 +28,7 @@ after more than `Int32.MaxValue` canonical instructions. See
 [ADR 0013](adr/0013-64-bit-instruction-accounting.md).
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
-active `0.8.0-alpha.7` version they read and update only `api/0.8.0/`.
+active `0.8.0-alpha.8` version they read and update only `api/0.8.0/`.
 
 ## Public API baseline
 

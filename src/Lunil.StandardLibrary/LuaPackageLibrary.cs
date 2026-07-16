@@ -27,6 +27,7 @@ internal static class LuaPackageLibrary
     public static LuaTable Install(LuaState state)
     {
         var loaded = GetOrCreateRegistryTable(state, LoadedRegistryKey);
+        state.AttachLoadedModuleCache(loaded);
         var preload = GetOrCreateRegistryTable(state, PreloadRegistryKey);
         var package = state.CreateTable(hashCapacity: 16);
         var searchers = state.CreateTable(arrayCapacity: 4);
@@ -116,12 +117,13 @@ internal static class LuaPackageLibrary
             var errors = state[2].AsString().ToString();
             if (values.Length > 0 && values[0].Kind == LuaValueKind.Function)
             {
+                var selectedLoader = values[0];
                 var loaderData = values.Length > 1 ? values[1] : LuaValue.Nil;
                 return LuaNativeStep.CallLua(
-                    values[0],
+                    selectedLoader,
                     [moduleName, loaderData],
                     continuationId: 2,
-                    stateValues: [moduleName, loaderData],
+                    stateValues: [moduleName, loaderData, selectedLoader, state[3]],
                     callIsYieldable: false);
             }
 
@@ -145,6 +147,16 @@ internal static class LuaPackageLibrary
             loadedResult = LuaValue.FromBoolean(true);
             loaded.Set(moduleName, loadedResult);
         }
+
+        var loader = state[2];
+        var loaderKind = (LuaModuleLoaderKind)state[3].AsInteger();
+        context.State.RegisterLoadedModule(
+            moduleName.AsString().ToString(),
+            loaderKind,
+            loader,
+            state[1],
+            loadedResult,
+            loader.TryGetClosure()?.Module);
 
         return LuaNativeStep.Completed(loadedResult, state[1]);
     }
@@ -177,8 +189,22 @@ internal static class LuaPackageLibrary
                 moduleName,
                 LuaValue.FromInteger(index),
                 LuaLibraryHelpers.String(context.State, errors),
+                LuaValue.FromInteger((long)GetLoaderKind(searcher)),
             ],
             callIsYieldable: false);
+    }
+
+    private static LuaModuleLoaderKind GetLoaderKind(LuaValue searcher)
+    {
+        var descriptor = searcher.TryGetNativeFunction();
+        if (ReferenceEquals(descriptor, PreloadSearcherDescriptor))
+        {
+            return LuaModuleLoaderKind.Preload;
+        }
+
+        return ReferenceEquals(descriptor, LuaSearcherDescriptor)
+            ? LuaModuleLoaderKind.LuaFile
+            : LuaModuleLoaderKind.CustomSearcher;
     }
 
     private static LuaValue[] PreloadSearcher(LuaState state, ReadOnlySpan<LuaValue> values)

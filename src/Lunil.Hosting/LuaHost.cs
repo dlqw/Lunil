@@ -15,10 +15,11 @@ namespace Lunil.Hosting;
 /// Reusable embedding boundary that composes compilation, runtime ownership, capabilities, and
 /// reference execution without requiring consumers to assemble individual compiler layers.
 /// </summary>
-public sealed class LuaHost : IDisposable
+public sealed partial class LuaHost : IDisposable
 {
     private readonly LuaExecutor _interpreterExecutor;
     private readonly object _jitLock = new();
+    private readonly object _executionGate = new();
     private LuaJitExecutor? _jitExecutor;
     private int _disposed;
 
@@ -160,11 +161,12 @@ public sealed class LuaHost : IDisposable
         ReadOnlySpan<LuaValue> arguments = default)
     {
         ArgumentNullException.ThrowIfNull(module);
-        ThrowIfDisposed();
-        var closure = State.CreateMainClosure(module);
-        return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
-            ? GetJitExecutor().Execute(State, closure, arguments)
-            : _interpreterExecutor.Execute(State, closure, arguments);
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            var closure = State.CreateMainClosure(module);
+            return ExecuteClosure(closure, arguments);
+        }
     }
 
     public LuaExecutionResult ExecuteBinaryChunk(
@@ -172,10 +174,17 @@ public sealed class LuaHost : IDisposable
         ReadOnlySpan<LuaValue> arguments = default,
         Lua54ChunkReaderOptions? readerOptions = null)
     {
-        ThrowIfDisposed();
-        return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
-            ? GetJitExecutor().ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions)
-            : _interpreterExecutor.ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions);
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+                ? GetJitExecutor().ExecuteBinaryChunk(State, binaryChunk, arguments, readerOptions)
+                : _interpreterExecutor.ExecuteBinaryChunk(
+                    State,
+                    binaryChunk,
+                    arguments,
+                    readerOptions);
+        }
     }
 
     public Task<LuaWorkspaceResult> AnalyzeWorkspaceAsync(
@@ -185,21 +194,31 @@ public sealed class LuaHost : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_executionGate)
         {
-            return;
-        }
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
 
-        LuaJitExecutor? jit;
-        lock (_jitLock)
-        {
-            jit = _jitExecutor;
-            _jitExecutor = null;
-        }
+            LuaJitExecutor? jit;
+            lock (_jitLock)
+            {
+                jit = _jitExecutor;
+                _jitExecutor = null;
+            }
 
-        jit?.Dispose();
-        Workspace.Dispose();
+            jit?.Dispose();
+            Workspace.Dispose();
+        }
     }
+
+    private LuaExecutionResult ExecuteClosure(
+        LuaClosure closure,
+        ReadOnlySpan<LuaValue> arguments) =>
+        SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+            ? GetJitExecutor().Execute(State, closure, arguments)
+            : _interpreterExecutor.Execute(State, closure, arguments);
 
     private LuaJitExecutor GetJitExecutor()
     {
