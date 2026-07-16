@@ -4163,6 +4163,10 @@ public sealed class LuaJitExecutorTests
         release.Set();
         AssertValues(await active, LuaValue.FromInteger(2500));
         Assert.True(returned.Wait(TimeSpan.FromSeconds(10)));
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            await executor.WaitForIdleAsync(timeout.Token);
+        }
 
         Assert.True(compiler.CallCount >= 1);
         Assert.Equal(
