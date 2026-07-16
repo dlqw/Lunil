@@ -282,11 +282,6 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Deopt),
         [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]);
-    private static readonly MethodInfo ContinueExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(int)]);
-
     [RequiresDynamicCode("Tier 2 CIL specialization requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
         "AOT",

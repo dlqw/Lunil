@@ -214,7 +214,9 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         region.Metrics.DelegateCreationDuration.Ticks)));
             plan = plan with
             {
-                CodeKind = LuaJitTier2CodeKind.ExactNumericSpecializedCil,
+                CodeKind = HasNonNumericSpecialization(optimized)
+                    ? LuaJitTier2CodeKind.GuardedSpecializedCil
+                    : LuaJitTier2CodeKind.ExactNumericSpecializedCil,
                 NumericRegionCount = numericRegions.Length,
                 UnboxedNumericLocalCount = numericRegions.Sum(static region =>
                     region.Plan.Registers.Count(static register => register.Kind is
@@ -722,6 +724,17 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         AddConstantFolds(function, liveness, result);
         foreach (var site in profile.Sites)
         {
+            if ((uint)site.ProgramCounter >= (uint)function.Instructions.Length)
+            {
+                continue;
+            }
+
+            var instruction = function.Instructions[site.ProgramCounter];
+            if (site.Opcode != instruction.Opcode)
+            {
+                continue;
+            }
+
             if (result.ContainsKey(site.ProgramCounter) || result.Values.Any(
                 optimization => optimization.Kind == LuaJitOptimizationKind.ConstantFold &&
                     site.ProgramCounter > optimization.ProgramCounter &&
@@ -731,7 +744,6 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 continue;
             }
 
-            var instruction = function.Instructions[site.ProgramCounter];
             switch (instruction.Opcode)
             {
                 case LuaIrOpcode.Move when

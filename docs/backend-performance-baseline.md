@@ -693,9 +693,9 @@ passed. Across 48 measurements per candidate, Auto/Tier 2 reached 1.980x/1.979x 
 versus MoonSharp; the minimum paired medians were 1.067x/1.054x on win-x64 `string_build`, whose
 CI95 lower bounds remained above one at 1.026x/1.010x.
 
-## M19 linear unboxed numeric regions
+## M20 linear unboxed numeric regions
 
-M19 replaces the hot-loop portion of exact-numeric Tier 2 and Loop OSR with one reducible-CFG
+M20 replaces the hot-loop portion of exact-numeric Tier 2 and Loop OSR with one reducible-CFG
 numeric-region emitter. The emitted loop uses versioned unboxed CLR locals, direct arithmetic CIL,
 local instruction accounting, boundary-only PC/materialization, and a bounded backedge countdown.
 The arithmetic evidence row now reports these five plan facts independently for both backends:

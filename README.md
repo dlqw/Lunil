@@ -322,10 +322,12 @@ reference backend.
 
 `LuaJitExecutor` is the CoreCLR dynamic backend. Its release default is `Auto`: execution starts
 in the interpreter and only deterministic, repeatedly hot, benefit-qualified functions are queued
-for Tier 1 compilation. Exact integer, float, and mixed-numeric profiles are then automatically
-promoted only when eligibility analysis guarantees `ExactNumericSpecializedCil`; table, closure,
-call, upvalue, and to-be-closed profile sites remain on Tier 1. Guard failure deoptimizes exactly
-to canonical execution and re-runs eligibility against the widened profile. Set
+for Tier 1 compilation. Exact integer, float, and mixed-numeric profiles are automatically
+promoted when eligibility analysis guarantees `ExactNumericSpecializedCil`. Stable table PIC and
+known-closure call sites use `GuardedSpecializedCil`; the same method can compose those guarded
+outer paths with unboxed numeric regions. Unsupported or widened polymorphic shapes remain on
+Tier 1. Guard failure deoptimizes exactly to canonical execution and re-runs eligibility against
+the widened profile. Set
 `EnableTier2=false` to disable Tier 2 profiling and profile import completely, or explicitly set
 `EnableTier2ManagedFallback=true` to allow the still-experimental `ManagedProfileProgram` path.
 Dynamic-code-unavailable deployments, including NativeAOT, keep exact interpreter fallback and do

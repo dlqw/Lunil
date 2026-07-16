@@ -67,9 +67,10 @@ LuaJitProfileImportResult result = warmed.ImportProfile(module, payload);
 
 release 默认 policy 是 `Auto`，同时默认设置 `EnableTier2=true`，因此动态代码可用的 CoreCLR
 宿主可直接导入 profile。导入数据只能提前满足 hotness：自动 Tier 2 仍会重新检查 profile，只有可
-保证生成 `ExactNumericSpecializedCil` 且未观察到 table/closure/call/upvalue/to-be-closed managed
-semantic site 的函数才会晋升。`EnableTier2=false` 会让导入返回 `Disabled`；动态代码不可用时也不会
-合并 profile 或采集运行时反馈。
+保证生成 `ExactNumericSpecializedCil` 或 `GuardedSpecializedCil` 的函数才会晋升。后者只接受有界
+table shape PIC 与已知闭包 call guard；无法由 native emitter 覆盖或已扩宽为多态的 profile 仍会
+拒绝。`EnableTier2=false` 会让导入返回 `Disabled`；动态代码不可用时也不会合并 profile 或采集
+运行时反馈。
 
 `EnableTier2ManagedFallback` 默认是 `false`。宿主只有显式将其设为 `true`，才允许导入的 profile
 进入 `ManagedProfileProgram`；自动默认路径在安装方法时还会再次校验 code kind，不能被自定义

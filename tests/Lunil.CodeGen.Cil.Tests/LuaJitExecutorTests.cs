@@ -2955,6 +2955,54 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void Tier2CombinesNumericRegionsWithGuardedTableSites()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("""
+            local target, key, limit = ...
+            local total = 0
+            local index = 1
+            while index <= limit do
+                total = total + index
+                index = index + 1
+            end
+            return total + target[key]
+            """);
+        var state = new LuaState();
+        var table = state.CreateTable();
+        var key = LuaValue.FromString(state.Strings.GetOrCreate("value"u8));
+        table.Set(key, LuaValue.FromInteger(5));
+        var closure = state.CreateMainClosure(module);
+        var arguments = new[]
+        {
+            LuaValue.FromTable(table),
+            key,
+            LuaValue.FromInteger(4),
+        };
+
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(15));
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(15));
+
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2CodeKind.GuardedSpecializedCil, plan.CodeKind);
+        Assert.True(plan.NumericRegionCount > 0);
+        Assert.True(plan.UnboxedNumericLocalCount > 0);
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization => optimization.Kind == LuaJitOptimizationKind.TableGetPic);
+
+        table.Set(key, LuaValue.FromInteger(6));
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(16));
+    }
+
+    [Fact]
     public void Tier2DirectlyDispatchesKnownTailCallsAndDefersToExactDebugHooks()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with

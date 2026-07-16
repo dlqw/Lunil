@@ -1326,7 +1326,8 @@ namespace Lunil.CodeGen.Cil.Jit
     public enum LuaJitTier2CodeKind
     {
         ManagedProfileProgram = 0,
-        ExactNumericSpecializedCil = 1
+        ExactNumericSpecializedCil = 1,
+        GuardedSpecializedCil = 2
     }
 
     public readonly struct LuaJitTier2CompilationMetrics : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2CompilationMetrics>
@@ -1365,6 +1366,8 @@ namespace Lunil.CodeGen.Cil.Jit
         public const string UnexpectedCodeKind = "JIT2104";
         public const string ManagedSemanticBoundary = "JIT2105";
         public const string UnsupportedInstruction = "JIT2106";
+        public const string InsufficientTier2Work = "JIT2107";
+        public const string HotLoopCallBoundary = "JIT2108";
     }
 
     public sealed class LuaJitTier2Eligibility : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Eligibility>
@@ -1393,7 +1396,9 @@ namespace Lunil.CodeGen.Cil.Jit
         PolymorphicNumericProfile = 2,
         ManagedOptimizationRequired = 3,
         ManagedSemanticBoundary = 4,
-        UnsupportedInstruction = 5
+        UnsupportedInstruction = 5,
+        InsufficientTier2Work = 6,
+        HotLoopCallBoundary = 7
     }
 
     public sealed class LuaJitTier2Plan : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan>
@@ -1788,9 +1793,20 @@ namespace Lunil.CodeGen.Cil.Planning
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteBinaryPrimitive { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNumericForPrepare { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNumericForLoop { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteNewTable { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteGetTable { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteSetTable { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteSetList { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteClosure { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExecuteVarArg { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget TryExecuteFramelessCall { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget CanContinueAfterFramelessCall { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget PollGcSafepoint { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitPoll { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitContinue { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitReturn { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitCall { get => throw null; }
+        public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitTailCall { get => throw null; }
         public static Lunil.CodeGen.Cil.Planning.CilCallTarget ExitDeopt { get => throw null; }
         public static System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilCallTarget> All { get => throw null; }
         public static bool TryGet(string id, out Lunil.CodeGen.Cil.Planning.CilCallTarget target) => throw null;

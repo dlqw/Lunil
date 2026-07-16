@@ -133,7 +133,7 @@ namespace Lunil.Runtime.CodeGen
         public static void ClearRegistersUnchecked(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int firstRegister, int count) { }
         public static void SetFrameTopUnchecked(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int registerCount) { }
         public static bool ReadTruthyAndSetFrameTopUnchecked(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int register, int registerCount) => throw null;
-        public static bool CanSkipClose(Lunil.Runtime.Execution.LuaFrame frame, int register) => throw null;
+        public static bool CanSkipClose(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int register) => throw null;
         public static bool CanExecuteUnaryPrimitive(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int operation, int operandRegister) => throw null;
         public static void ExecuteUnaryPrimitive(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int operation, int operandRegister) { }
         public static bool CanExecuteBinaryPrimitive(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int operation, int leftRegister, int rightRegister) => throw null;
@@ -141,6 +141,40 @@ namespace Lunil.Runtime.CodeGen
         public static void ExecuteNumericForPrepare(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int baseRegister, int exitProgramCounter) { }
         public static void ExecuteVarArg(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int resultCount) { }
         public static void ExecuteNumericForLoop(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int baseRegister, int bodyProgramCounter) { }
+    }
+
+    public static class LuaCodegenAbiV3
+    {
+        public const int RuntimeAbiVersion = 3;
+        public static void ExecuteNewTable(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int hashCapacityBits, int arrayCapacity) { }
+        public static bool ExecuteGetTable(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int targetRegister, int keyRegister) => throw null;
+        public static bool ExecuteSetTable(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int targetRegister, int keyRegister, int valueRegister) => throw null;
+        public static void ExecuteSetList(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int tableRegister, int sourceRegister, int count, int offset) { }
+        public static void ExecuteClosure(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int functionId) { }
+        public static void ExecuteVarArg(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int destinationRegister, int count) { }
+        public static Lunil.Runtime.CodeGen.LuaCodegenPicExecutionResult TryExecuteTableGetPic(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, int destinationRegister, int targetRegister, int keyRegister) => throw null;
+        public static Lunil.Runtime.CodeGen.LuaCodegenPicExecutionResult TryExecuteTableSetPic(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, int targetRegister, int keyRegister, int valueRegister) => throw null;
+        public static bool CanExecuteKnownClosureCall(Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, Lunil.Runtime.CodeGen.LuaCodegenCallSiteCache cache, int functionRegister, int expectedFunctionId) => throw null;
+        public static int TryExecuteFramelessCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int functionRegister, int argumentCount, int expectedResults) => throw null;
+        public static bool CanContinueAfterFramelessCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame) => throw null;
+        public static bool PollGcSafepoint(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame) => throw null;
+        public static void ExecuteKnownClosureCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int functionRegister, int argumentCount, int expectedResults) { }
+        public static void ExecuteKnownClosureTailCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int functionRegister, int argumentCount) { }
+    }
+
+    public sealed class LuaCodegenCallSiteCache
+    {
+    }
+
+    public enum LuaCodegenPicExecutionResult
+    {
+        GuardFailure = 0,
+        InstructionBudget = 1,
+        Executed = 2
+    }
+
+    public sealed class LuaCodegenTableSiteCache
+    {
     }
 
     public readonly struct LuaCompiledExit : System.IEquatable<Lunil.Runtime.CodeGen.LuaCompiledExit>

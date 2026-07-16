@@ -306,9 +306,10 @@ Console.WriteLine(workspace.GetModule("app")!.ExportedType.DisplayName); // inte
 
 `LuaJitExecutor` 是 CoreCLR 动态后端。release 默认 policy 为 `Auto`：先由解释器执行，只有
 确定性收益检查通过且重复变热的函数才会进入 Tier 1 编译队列。稳定的整数、浮点与混合数值
-profile 只有在资格分析可保证生成 `ExactNumericSpecializedCil` 时才会继续自动晋升；table、closure、
-call、upvalue 与 to-be-closed profile site 继续留在 Tier 1。guard 失败时精确 deopt 回 canonical
-execution，并用扩宽后的 profile 重新执行资格检查。设置 `EnableTier2=false` 可完全关闭 Tier 2
+profile 会在资格分析可保证生成 `ExactNumericSpecializedCil` 时自动晋升；稳定的 table PIC 与已知
+闭包 call site 使用 `GuardedSpecializedCil`，并可在同一个方法中把 guarded 外层路径与 unboxed
+数值区域组合。无法原生发射或 profile 扩宽为多态的 shape 继续留在 Tier 1。guard 失败时精确 deopt
+回 canonical execution，并用扩宽后的 profile 重新执行资格检查。设置 `EnableTier2=false` 可完全关闭 Tier 2
 profile 采集与导入；只有显式设置 `EnableTier2ManagedFallback=true` 才会允许仍属实验性的
 `ManagedProfileProgram` 路径。NativeAOT 等动态代码不可用环境继续精确回退解释器且不采集 Tier 2
 profile。
