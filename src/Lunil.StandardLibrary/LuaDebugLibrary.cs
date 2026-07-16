@@ -625,7 +625,11 @@ internal static class LuaDebugLibrary
         var table = state.CreateTable();
         var closure = function.TryGetClosure();
         var native = function.TryGetNativeFunction();
-        var luaFunction = frame?.FunctionVersion.Function ?? closure?.Function;
+        var luaFunction = closure is null
+            ? null
+            : frame is not null && ReferenceEquals(frame.Closure, closure)
+                ? frame.FunctionVersion.Function
+                : closure.Function;
         if (options.Contains('S'))
         {
             if (luaFunction is null)
