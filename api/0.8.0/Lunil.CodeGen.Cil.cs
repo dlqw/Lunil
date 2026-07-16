@@ -171,8 +171,9 @@ namespace Lunil.CodeGen.Cil.Artifacts
     public sealed class LuaAotArtifactManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest>
     {
         public const string CurrentMagic = "LUNIL-CIL-AOT";
-        public const int CurrentArtifactSchemaVersion = 1;
-        public const int CurrentCodegenVersion = 1;
+        public const int CurrentArtifactSchemaVersion = 2;
+        public const int CurrentCodegenVersion = 2;
+        public const int CurrentProfilePolicyVersion = 1;
         public required string Magic { get => throw null; init { } }
         public required int ArtifactSchemaVersion { get => throw null; init { } }
         public required int IrFormatVersion { get => throw null; init { } }
@@ -181,6 +182,9 @@ namespace Lunil.CodeGen.Cil.Artifacts
         public required string ModuleContentId { get => throw null; init { } }
         public required string ModuleChecksum { get => throw null; init { } }
         public required string OptionsFingerprint { get => throw null; init { } }
+        public required bool ProfileGuidedNumericRegions { get => throw null; init { } }
+        public required int ProfilePolicyVersion { get => throw null; init { } }
+        public required string ProfileFingerprint { get => throw null; init { } }
         public required bool EmitPortablePdb { get => throw null; init { } }
         public required int MaximumCanonicalInstructionsPerMethod { get => throw null; init { } }
         public required int MaximumMethodBodyBytes { get => throw null; init { } }
@@ -209,6 +213,7 @@ namespace Lunil.CodeGen.Cil.Artifacts
         public int MaximumMetadataTokens { get => throw null; init { } }
         public int MaximumBranchInstructionsPerMethod { get => throw null; init { } }
         public Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? SourceDocument { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitModuleProfile? Profile { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? right) => throw null;
         public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? right) => throw null;
@@ -252,6 +257,7 @@ namespace Lunil.CodeGen.Cil.Artifacts
     {
         public int FunctionId { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest> Shards { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest> NumericRegions { get => throw null; init { } }
         public LuaAotFunctionManifest(int FunctionId, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest> Shards) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? right) => throw null;
@@ -275,6 +281,25 @@ namespace Lunil.CodeGen.Cil.Artifacts
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? other) => throw null;
         public void Deconstruct(out string MethodName, out int StartProgramCounter, out int InstructionCount) => throw null;
+    }
+
+    public sealed class LuaAotNumericRegionManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest>
+    {
+        public string MethodName { get => throw null; init { } }
+        public int HeaderProgramCounter { get => throw null; init { } }
+        public int BackedgeProgramCounter { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<int> ProgramCounters { get => throw null; init { } }
+        public int UnboxedNumericLocalCount { get => throw null; init { } }
+        public int DirectNumericInstructionCount { get => throw null; init { } }
+        public int SafepointCount { get => throw null; init { } }
+        public LuaAotNumericRegionManifest(string MethodName, int HeaderProgramCounter, int BackedgeProgramCounter, System.Collections.Immutable.ImmutableArray<int> ProgramCounters, int UnboxedNumericLocalCount, int DirectNumericInstructionCount, int SafepointCount) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? other) => throw null;
+        public void Deconstruct(out string MethodName, out int HeaderProgramCounter, out int BackedgeProgramCounter, out System.Collections.Immutable.ImmutableArray<int> ProgramCounters, out int UnboxedNumericLocalCount, out int DirectNumericInstructionCount, out int SafepointCount) => throw null;
     }
 
     public static class LuaAotPortablePdbMetadata

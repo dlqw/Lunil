@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Emission;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.CodeGen.Cil.Verification;
 using Lunil.IR.Canonical;
@@ -46,24 +47,91 @@ public static class LuaAotCompiler
         var sourceChecksum = LuaCanonicalModuleSerializer.Sha256Hex(sourceBytes);
         var sourceName = options.SourceDocument?.LogicalName ??
             $"lunil://{moduleContentId}/module.lua";
+        byte[] profileBytes;
+        Dictionary<int, LuaJitFunctionProfileEntry> profileByFunction;
+        if (options.Profile is null)
+        {
+            profileBytes = [];
+            profileByFunction = new Dictionary<int, LuaJitFunctionProfileEntry>();
+        }
+        else
+        {
+            if (!string.Equals(
+                options.Profile.ModuleContentId,
+                moduleContentId,
+                StringComparison.Ordinal))
+            {
+                return new LuaAotCompilationResult(
+                    null,
+                    [new LuaAotDiagnostic(
+                        "AOT1005",
+                        "The persisted AOT profile belongs to a different canonical module.")]);
+            }
+
+            if (options.Profile.Functions.IsDefault ||
+                options.Profile.Functions.Any(static entry =>
+                    entry is null || entry.Profile is null))
+            {
+                return new LuaAotCompilationResult(
+                    null,
+                    [new LuaAotDiagnostic(
+                        "AOT1006",
+                        "The persisted AOT profile is malformed or incomplete.")]);
+            }
+
+            try
+            {
+                profileByFunction = options.Profile.Functions.ToDictionary(
+                    static entry => entry.FunctionId);
+                var orderedProfiles = module.Functions
+                    .Select(function => profileByFunction[function.Id].Profile)
+                    .ToArray();
+                profileBytes = LuaJitProfileCodec.Serialize(module, orderedProfiles);
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException or
+                KeyNotFoundException)
+            {
+                return new LuaAotCompilationResult(
+                    null,
+                    [new LuaAotDiagnostic(
+                        "AOT1006",
+                        $"The persisted AOT profile is malformed or incompatible: " +
+                        $"{exception.Message}")]);
+            }
+        }
+
+        var profileFingerprint = LuaCanonicalModuleSerializer.Sha256Hex(profileBytes);
         var optionsFingerprint = LuaAotManifestCodec.FingerprintOptions(
             options,
             sourceChecksum,
-            sourceName);
+            sourceName,
+            profileFingerprint,
+            options.Profile is not null);
         var assemblyName = $"Lunil.Aot.{moduleContentId[..16]}.{optionsFingerprint[..8]}";
         var typeName = $"Lunil.Generated.Module_{moduleContentId[..16]}";
 
         var methods = new List<PersistedCilMethod>();
+        var numericMethods = new List<PersistedNumericCilMethod>();
         var functionManifests = ImmutableArray.CreateBuilder<LuaAotFunctionManifest>();
         var diagnostics = ImmutableArray.CreateBuilder<LuaAotDiagnostic>();
         foreach (var function in module.Functions)
         {
+            var numericRegions = profileByFunction.TryGetValue(
+                function.Id,
+                out var functionProfile)
+                ? ProfileGuidedLuaTier2Compiler.BuildNumericRegionPlans(
+                    module,
+                    function,
+                    functionProfile.Profile,
+                    CancellationToken.None)
+                : [];
             var shards = ImmutableArray.CreateBuilder<LuaAotMethodShardManifest>();
             var blockLayout = CilBlockLayout.Build(function);
             var liveness = LuaRegisterLiveness.AnalyzeCached(module, function, out _);
             var ranges = PartitionFunction(
                 function,
-                options.MaximumCanonicalInstructionsPerMethod);
+                options.MaximumCanonicalInstructionsPerMethod,
+                numericRegions);
             for (var shardIndex = 0; shardIndex < ranges.Length; shardIndex++)
             {
                 var range = ranges[shardIndex];
@@ -102,9 +170,35 @@ public static class LuaAotCompiler
                     range.InstructionCount));
             }
 
+            var numericRegionManifests = ImmutableArray.CreateBuilder<
+                LuaAotNumericRegionManifest>();
+            for (var regionIndex = 0; regionIndex < numericRegions.Length; regionIndex++)
+            {
+                var numericRegion = numericRegions[regionIndex];
+                var methodName = $"Function_{function.Id}_NumericRegion_{regionIndex}";
+                numericMethods.Add(new PersistedNumericCilMethod(
+                    methodName,
+                    function,
+                    numericRegion));
+                numericRegionManifests.Add(new LuaAotNumericRegionManifest(
+                    methodName,
+                    numericRegion.Region.HeaderProgramCounter,
+                    numericRegion.Region.BackedgeProgramCounter,
+                    numericRegion.Region.ProgramCounters,
+                    numericRegion.Registers.Count(static register => register.Kind is
+                        LuaNumericRegionValueKind.Integer or
+                        LuaNumericRegionValueKind.Float or
+                        LuaNumericRegionValueKind.Boolean),
+                    numericRegion.DirectNumericInstructionCount,
+                    numericRegion.BackedgeProgramCounters.Length));
+            }
+
             functionManifests.Add(new LuaAotFunctionManifest(
                 function.Id,
-                shards.ToImmutable()));
+                shards.ToImmutable())
+            {
+                NumericRegions = numericRegionManifests.ToImmutable(),
+            });
         }
 
         if (diagnostics.Count != 0)
@@ -117,11 +211,14 @@ public static class LuaAotCompiler
             Magic = LuaAotArtifactManifest.CurrentMagic,
             ArtifactSchemaVersion = LuaAotArtifactManifest.CurrentArtifactSchemaVersion,
             IrFormatVersion = module.FormatVersion,
-            RuntimeAbiVersion = LuaCodegenAbiV3.RuntimeAbiVersion,
+            RuntimeAbiVersion = LuaCodegenAbiV4.RuntimeAbiVersion,
             CodegenVersion = LuaAotArtifactManifest.CurrentCodegenVersion,
             ModuleContentId = moduleContentId,
             ModuleChecksum = moduleChecksum,
             OptionsFingerprint = optionsFingerprint,
+            ProfileGuidedNumericRegions = options.Profile is not null,
+            ProfilePolicyVersion = LuaAotArtifactManifest.CurrentProfilePolicyVersion,
+            ProfileFingerprint = profileFingerprint,
             EmitPortablePdb = options.EmitPortablePdb,
             MaximumCanonicalInstructionsPerMethod =
                 options.MaximumCanonicalInstructionsPerMethod,
@@ -143,6 +240,7 @@ public static class LuaAotCompiler
             moduleBytes,
             sourceBytes,
             methods,
+            numericMethods,
             options);
         if (!emission.Diagnostics.IsEmpty)
         {
@@ -189,7 +287,8 @@ public static class LuaAotCompiler
 
     private static ImmutableArray<MethodShardRange> PartitionFunction(
         LuaIrFunction function,
-        int maximumInstructions)
+        int maximumInstructions,
+        ImmutableArray<LuaNumericRegionPlan> numericRegions)
     {
         var ranges = ImmutableArray.CreateBuilder<MethodShardRange>();
         var pendingStart = 0;
@@ -237,7 +336,60 @@ public static class LuaAotCompiler
             ranges.Add(new MethodShardRange(pendingStart, pendingLength));
         }
 
-        return ranges.ToImmutable();
+        if (numericRegions.IsEmpty || ranges.Count == 0)
+        {
+            return ranges.ToImmutable();
+        }
+
+        // A canonical shard can execute several instructions before returning to the shared
+        // dispatcher. Split it whenever execution enters or leaves a profiled numeric region so
+        // the dispatcher gets an opportunity to select the persisted specialized method. Keep
+        // canonical coverage for every PC: a guard deoptimization still resumes precisely through
+        // the interpreter, and the manifest remains a complete compatibility fallback map.
+        var isNumericProgramCounter = new bool[function.Instructions.Length];
+        foreach (var region in numericRegions)
+        {
+            foreach (var programCounter in region.Region.ProgramCounters)
+            {
+                isNumericProgramCounter[programCounter] = true;
+            }
+        }
+
+        var boundaries = new SortedSet<int>();
+        for (var programCounter = 1;
+             programCounter < isNumericProgramCounter.Length;
+             programCounter++)
+        {
+            if (isNumericProgramCounter[programCounter] !=
+                isNumericProgramCounter[programCounter - 1])
+            {
+                boundaries.Add(programCounter);
+            }
+        }
+
+        if (boundaries.Count == 0)
+        {
+            return ranges.ToImmutable();
+        }
+
+        var splitRanges = ImmutableArray.CreateBuilder<MethodShardRange>();
+        foreach (var range in ranges)
+        {
+            var start = range.StartProgramCounter;
+            var end = checked(start + range.InstructionCount);
+            if (range.InstructionCount > 1)
+            {
+                foreach (var boundary in boundaries.GetViewBetween(start + 1, end - 1))
+                {
+                    splitRanges.Add(new MethodShardRange(start, boundary - start));
+                    start = boundary;
+                }
+            }
+
+            splitRanges.Add(new MethodShardRange(start, end - start));
+        }
+
+        return splitRanges.ToImmutable();
     }
 
     private readonly record struct MethodShardRange(

@@ -30,7 +30,7 @@
       "Assembly": "Lunil.CodeGen.Cil",
       "Project": "src/Lunil.CodeGen.Cil/Lunil.CodeGen.Cil.csproj",
       "Baseline": "api/0.8.0/Lunil.CodeGen.Cil.cs",
-      "Sha256": "4C49C5F55423A1A664B8BBA4B6452F9CD11B9ADED3AC2E2F822CC296D03E735C"
+      "Sha256": "18AC94A1CF17E56CD9E1689FD957141334776512392B3093F07C3E7F9F3AACBF"
     },
     {
       "Assembly": "Lunil.Compiler",
@@ -66,7 +66,7 @@
       "Assembly": "Lunil.Runtime",
       "Project": "src/Lunil.Runtime/Lunil.Runtime.csproj",
       "Baseline": "api/0.8.0/Lunil.Runtime.cs",
-      "Sha256": "568DE00E4A6ABA417FCC1D811B2BF4ECA7CD8DC291D7B661F2ACE25B1961CDA3"
+      "Sha256": "5EF078B76FD79CB58B828C915753EF085B694CC2843B93CDE14D3D6C3343B0CC"
     },
     {
       "Assembly": "Lunil.Semantics",

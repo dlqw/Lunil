@@ -2230,6 +2230,42 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void ProfileExportTracksReusedFramesByCurrentClosure()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+            SynchronousCompilation = true,
+        });
+        var module = Compile("""
+            local function add(a, b) return a + b end
+            local function values(a, ...) return a, ... end
+            local total = 0
+            for index = 1, 1000 do
+                local a, b, c = values(index, index + 1, index + 2)
+                total = total + add(a, b) + c
+            end
+            return total
+            """);
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+
+        AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(1_504_500));
+        AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(1_504_500));
+
+        var payload = executor.ExportProfile(module);
+        var profile = LuaJitProfileCodec.Deserialize(module, payload);
+
+        Assert.Equal(module.Functions.Length, profile.Functions.Length);
+        Assert.All(profile.Functions, static function =>
+            Assert.True(function.Profile.Samples > 0));
+    }
+
+    [Fact]
     public void ProfileImportRejectsDifferentCanonicalModule()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with

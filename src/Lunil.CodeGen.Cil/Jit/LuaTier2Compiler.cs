@@ -388,7 +388,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaJitOptimizationKind.TableSetPic or
             LuaJitOptimizationKind.KnownClosureCall);
 
-    private static ImmutableArray<LuaNumericRegionPlan> BuildNumericRegionPlans(
+    internal static ImmutableArray<LuaNumericRegionPlan> BuildNumericRegionPlans(
         LuaIrModule module,
         LuaIrFunction function,
         LuaJitFunctionProfile profile,

@@ -154,6 +154,10 @@ function ConvertTo-BackendRecord([string] $Line, [int] $Round) {
         AotLoadAllocatedP95Bytes = [double]::Parse($values.aot_load_allocated_p95_bytes, [Globalization.CultureInfo]::InvariantCulture)
         AotPeBytes = [long]$values.aot_pe_bytes
         AotPdbBytes = [long]$values.aot_pdb_bytes
+        AotNumericRegionCount = [int]$values.aot_numeric_region_count
+        AotUnboxedNumericLocalCount = [int]$values.aot_unboxed_numeric_local_count
+        AotDirectNumericInstructionCount = [int]$values.aot_direct_numeric_instruction_count
+        AotNumericRegionSafepointCount = [int]$values.aot_numeric_region_safepoint_count
         AotCompiledInvocations = [long]$values.aot_compiled_invocations
         AotInterpreterFallbacks = [long]$values.aot_interpreter_fallbacks
         AotDeoptimizations = [long]$values.aot_deoptimizations
@@ -277,7 +281,7 @@ finally {
     Pop-Location
 }
 
-$expectedRecords = $Rounds * 10 * 6
+$expectedRecords = $Rounds * 10 * 7
 if ($records.Count -ne $expectedRecords) {
     throw "Expected $expectedRecords backend evidence records, found $($records.Count)."
 }
@@ -366,6 +370,13 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
         AotLoadAllocatedP95Bytes = Get-Median @($group.Group.AotLoadAllocatedP95Bytes)
         AotPeBytes = Get-Median @($group.Group.AotPeBytes)
         AotPdbBytes = Get-Median @($group.Group.AotPdbBytes)
+        AotNumericRegionCount = Get-Median @($group.Group.AotNumericRegionCount)
+        AotUnboxedNumericLocalCount = Get-Median @(
+            $group.Group.AotUnboxedNumericLocalCount)
+        AotDirectNumericInstructionCount = Get-Median @(
+            $group.Group.AotDirectNumericInstructionCount)
+        AotNumericRegionSafepointCount = Get-Median @(
+            $group.Group.AotNumericRegionSafepointCount)
         AotCompiledInvocations = (
             $group.Group.AotCompiledInvocations | Measure-Object -Minimum).Minimum
         AotInterpreterFallbacks = (
@@ -460,6 +471,10 @@ $aotControlFlow = $summary | Where-Object {
     $_.Workload -eq 'control_flow' -and $_.Name -eq 'persisted_aot'
 } | Select-Object -First 1
 $aotRows = @($summary | Where-Object { $_.Name -eq 'persisted_aot' })
+$profiledAotRows = @($summary | Where-Object { $_.Name -eq 'persisted_aot_pgo' })
+$profiledAotNumericWorkloads = @('arithmetic', 'control_flow', 'fib_iter', 'mandelbrot')
+$profiledAotMaximumTier2SlowdownMedian = 1.50
+$profiledAotMaximumTier2SlowdownCi95Upper = 1.75
 $tier2Tier1Comparisons = foreach ($workload in @('arithmetic', 'fib_iter', 'mandelbrot')) {
     $ratios = [Collections.Generic.List[double]]::new()
     $allocationRatios = [Collections.Generic.List[double]]::new()
@@ -815,6 +830,92 @@ $loopOsrDecision = [pscustomobject]@{
 }
 $loopOsrDecision | ConvertTo-Json -Depth 8 | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'loop-osr-decision.json') -Encoding utf8
+$profiledAotTier2Comparisons = foreach ($workload in $profiledAotNumericWorkloads) {
+    $slowdownRatios = [Collections.Generic.List[double]]::new()
+    $unprofiledSpeedups = [Collections.Generic.List[double]]::new()
+    foreach ($record in $records | Where-Object {
+        $_.Workload -eq $workload -and $_.Name -eq 'persisted_aot_pgo'
+    }) {
+        $tier2Record = $records | Where-Object {
+            $_.Round -eq $record.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'tier2'
+        } | Select-Object -First 1
+        $unprofiledRecord = $records | Where-Object {
+            $_.Round -eq $record.Round -and
+            $_.Workload -eq $workload -and
+            $_.Name -eq 'persisted_aot'
+        } | Select-Object -First 1
+        if ($null -eq $tier2Record -or $null -eq $unprofiledRecord) {
+            throw "Missing persisted AOT PGO comparison pair for round $($record.Round), workload $workload."
+        }
+
+        $slowdownRatios.Add($record.WarmNsOp / $tier2Record.WarmNsOp)
+        $unprofiledSpeedups.Add($unprofiledRecord.WarmNsOp / $record.WarmNsOp)
+    }
+
+    $interval = Get-BootstrapMedianInterval $slowdownRatios.ToArray()
+    $profiled = $profiledAotRows | Where-Object {
+        $_.Workload -eq $workload
+    } | Select-Object -First 1
+    [pscustomobject]@{
+        Workload = $workload
+        SlowdownVsTier2Median = Get-Median $slowdownRatios.ToArray()
+        SlowdownVsTier2Ci95Lower = $interval.Lower
+        SlowdownVsTier2Ci95Upper = $interval.Upper
+        SpeedupVsUnprofiledAotMedian = Get-Median $unprofiledSpeedups.ToArray()
+        NumericRegionCount = $profiled.AotNumericRegionCount
+        UnboxedNumericLocalCount = $profiled.AotUnboxedNumericLocalCount
+        DirectNumericInstructionCount = $profiled.AotDirectNumericInstructionCount
+        NumericRegionSafepointCount = $profiled.AotNumericRegionSafepointCount
+        ArtifactBytes = $profiled.AotPeBytes + $profiled.AotPdbBytes
+        CompiledInvocations = $profiled.AotCompiledInvocations
+        InterpreterFallbacks = $profiled.AotInterpreterFallbacks
+        UnexpectedDeoptimizations = $profiled.AotUnexpectedDeoptimizations
+    }
+}
+$profiledAotGateFailures = [Collections.Generic.List[string]]::new()
+foreach ($comparison in $profiledAotTier2Comparisons) {
+    if ($comparison.SlowdownVsTier2Median -gt $profiledAotMaximumTier2SlowdownMedian) {
+        $profiledAotGateFailures.Add(
+            "$($comparison.Workload) PGO AOT/Tier 2 median slowdown is $($comparison.SlowdownVsTier2Median).")
+    }
+    if ($comparison.SlowdownVsTier2Ci95Upper -gt $profiledAotMaximumTier2SlowdownCi95Upper) {
+        $profiledAotGateFailures.Add(
+            "$($comparison.Workload) PGO AOT/Tier 2 CI95 upper slowdown is $($comparison.SlowdownVsTier2Ci95Upper).")
+    }
+    if ($comparison.NumericRegionCount -le 0 -or
+        $comparison.UnboxedNumericLocalCount -le 0 -or
+        $comparison.DirectNumericInstructionCount -le 0 -or
+        $comparison.NumericRegionSafepointCount -le 0) {
+        $profiledAotGateFailures.Add(
+            "$($comparison.Workload) did not persist a complete numeric-region structure.")
+    }
+}
+foreach ($record in $profiledAotRows) {
+    if ($record.Operations -lt 30) {
+        $profiledAotGateFailures.Add(
+            "$($record.Workload) PGO AOT measured only $($record.Operations) warm operations.")
+    }
+    if (($record.AotPeBytes + $record.AotPdbBytes) -ge 65536) {
+        $profiledAotGateFailures.Add(
+            "$($record.Workload) PGO AOT artifact is $($record.AotPeBytes + $record.AotPdbBytes) bytes.")
+    }
+    if ($record.AotCompiledInvocations -le 0 -or $record.AotInterpreterFallbacks -ne 0 -or
+        $record.AotUnexpectedDeoptimizations -ne 0) {
+        $profiledAotGateFailures.Add(
+            "$($record.Workload) PGO AOT did not stay on the validated compiled path.")
+    }
+}
+$profiledAotArithmetic = $profiledAotRows | Where-Object {
+    $_.Workload -eq 'arithmetic'
+} | Select-Object -First 1
+if ([Math]::Abs($profiledAotArithmetic.AllocationSlopeBytesIteration) -gt 0.01 -or
+    $profiledAotArithmetic.AllocationRatioVsInterpreterMedian -gt 1.10) {
+    $profiledAotGateFailures.Add(
+        'Arithmetic PGO AOT allocation slope or per-operation allocation ratio regressed.')
+}
+
 $aotNegativeGateFailures = [Collections.Generic.List[string]]::new()
 $aotWorkloadComparisons = foreach ($workload in @(
     'lua_calls', 'table_access', 'metamethod', 'coroutine_error_hook')) {
@@ -958,6 +1059,13 @@ $aotDecision = [pscustomobject]@{
         $aotRows | Measure-Object AotUnexpectedDeoptimizations -Sum).Sum
     WorkloadEvidence = @($aotWorkloadEvidence)
     NegativeWorkloadComparisons = @($aotWorkloadComparisons)
+    ProfileGuidedMaximumTier2SlowdownMedian =
+        $profiledAotMaximumTier2SlowdownMedian
+    ProfileGuidedMaximumTier2SlowdownCi95Upper =
+        $profiledAotMaximumTier2SlowdownCi95Upper
+    ProfileGuidedTier2Comparisons = @($profiledAotTier2Comparisons)
+    ProfileGuidedGateFailures = $profiledAotGateFailures.ToArray()
+    ProfileGuidedQualifiesThisRid = $profiledAotGateFailures.Count -eq 0
     ExecutionGateFailures = $aotExecutionGateFailures.ToArray()
     NegativeWorkloadGateFailures = $aotNegativeGateFailures.ToArray()
     QualifiesThisRid =
@@ -968,6 +1076,7 @@ $aotDecision = [pscustomobject]@{
         $aotArithmetic.Operations -ge 30 -and
         [Math]::Abs($aotArithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
         $aotArithmetic.AllocationRatioVsInterpreterMedian -le 1.10 -and
+        $profiledAotGateFailures.Count -eq 0 -and
         $aotExecutionGateFailures.Count -eq 0 -and
         $aotNegativeGateFailures.Count -eq 0
 }

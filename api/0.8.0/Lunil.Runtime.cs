@@ -162,6 +162,16 @@ namespace Lunil.Runtime.CodeGen
         public static void ExecuteKnownClosureTailCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame, int functionRegister, int argumentCount) { }
     }
 
+    public static class LuaCodegenAbiV4
+    {
+        public const int RuntimeAbiVersion = 4;
+        public static void SetProgramCounter(Lunil.Runtime.Execution.LuaFrame frame, int programCounter) { }
+        public static long GetInstructionsConsumed(Lunil.Runtime.CodeGen.LuaExecutionContext context) => throw null;
+        public static long Shift(long value, long count, bool left) => throw null;
+        public static double FloatingModulo(double dividend, double divisor) => throw null;
+        public static bool CompareMixed(long integerValue, double floatingPoint, bool integerOnLeft, int operationValue) => throw null;
+    }
+
     public sealed class LuaCodegenCallSiteCache
     {
     }
