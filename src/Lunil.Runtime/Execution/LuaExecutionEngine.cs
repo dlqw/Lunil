@@ -3893,7 +3893,7 @@ internal sealed class LuaExecutionEngine
     private void CommitPendingBackedges(LuaFrame frame) =>
         _frameInstructionRouter?.CommitPendingBackedges(frame);
 
-    private static bool ShouldUseReferenceInterpreter(
+    private bool ShouldUseReferenceInterpreter(
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
@@ -3914,11 +3914,16 @@ internal sealed class LuaExecutionEngine
             return frame.BackendBackedgeProbeCountdown > 0;
         }
 
-        // Commit a partial countdown when the frame leaves normally. This preserves cumulative
-        // hotness across short invocations without routing every interpreted backedge through the
-        // tier controller.
-        return frame.UnreportedBackendBackedgeCount == 0 ||
-            instruction.Opcode is not (LuaIrOpcode.Return or LuaIrOpcode.TailCall);
+        if (frame.UnreportedBackendBackedgeCount != 0 &&
+            instruction.Opcode is LuaIrOpcode.Return or LuaIrOpcode.TailCall)
+        {
+            // A terminal instruction has no remaining repeated work for a newly published method.
+            // Commit the partial countdown directly rather than entering such a method at Return
+            // and incorrectly treating that terminal fragment as a profiled Tier 1 invocation.
+            CommitPendingBackedges(frame);
+        }
+
+        return true;
     }
 
     private static long GetActiveCallDepth(LuaThread thread)
