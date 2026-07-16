@@ -64,9 +64,9 @@ public static class LuaRuntimeOperations
             if (target.Kind == LuaValueKind.Table)
             {
                 var table = target.AsTable();
-                if (!table.Get(key).IsNil)
+                if (table.TryGetExistingEntry(key, out _, out var entry))
                 {
-                    table.Set(key, value);
+                    table.SetExistingEntry(entry, key, value);
                     return LuaOperationResolution.Immediate(LuaValue.Nil);
                 }
 

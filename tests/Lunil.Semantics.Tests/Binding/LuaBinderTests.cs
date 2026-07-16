@@ -221,6 +221,20 @@ public sealed class LuaBinderTests
         Assert.Single(upvalues.Diagnostics, diagnostic => diagnostic.Code == "LUA3010");
     }
 
+    [Fact]
+    public void ActiveLocalLimitCounterResetsAcrossScopesAndFunctions()
+    {
+        var options = LuaBinderOptions.Default with { MaximumActiveLocalsPerFunction = 2 };
+
+        var model = Bind(
+            "do local a,b end; do local c,d end; " +
+            "local function first(x,y) return x+y end " +
+            "local function second(x,y) return x+y end",
+            options);
+
+        Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3009");
+    }
+
     private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null) =>
         LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source)), options);
 }

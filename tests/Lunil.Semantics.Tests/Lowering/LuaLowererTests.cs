@@ -201,6 +201,25 @@ public sealed class LuaLowererTests
     }
 
     [Fact]
+    public void IndexedFunctionAndSymbolLookupsPreserveLargeCapturedPrograms()
+    {
+        var declarations = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 64).Select(index =>
+                $"local value{index}={index}; " +
+                $"local function function{index}() return value{index} end"));
+        var returns = string.Join(",", Enumerable.Range(1, 64).Select(index =>
+            $"function{index}()"));
+
+        var result = Lower($"{declarations}{Environment.NewLine}return {returns}");
+
+        var module = Assert.IsType<LuaIrModule>(result.Module);
+        Assert.Empty(result.Diagnostics);
+        Assert.Empty(LuaIrVerifier.Verify(module));
+        Assert.Equal(65, module.Functions.Length);
+    }
+
+    [Fact]
     public void CanonicalWriterMatchesCompactPucNumericLoopShape()
     {
         const string source = """

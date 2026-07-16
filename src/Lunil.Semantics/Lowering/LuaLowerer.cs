@@ -28,6 +28,10 @@ public static class LuaLowerer
     {
         private readonly LuaSemanticModel _model;
         private readonly LuaIrFunction?[] _functions;
+        private readonly Dictionary<int, LuaFunctionInfo> _functionsById;
+        private readonly Dictionary<TextSpan, LuaFunctionInfo> _nestedFunctionsBySpan;
+        private readonly Dictionary<(int FunctionId, TextSpan Span), LuaSymbol>
+            _declaredSymbolsByLocation;
         private readonly Dictionary<TextSpan, LuaNameReference> _references;
         private readonly ImmutableArray<Diagnostic>.Builder _diagnostics =
             ImmutableArray.CreateBuilder<Diagnostic>();
@@ -37,6 +41,12 @@ public static class LuaLowerer
         {
             _model = model;
             _functions = new LuaIrFunction[model.Functions.Length];
+            _functionsById = model.Functions.ToDictionary(static function => function.Id);
+            _nestedFunctionsBySpan = model.Functions
+                .Where(static function => function.Id != 0)
+                .ToDictionary(static function => function.Span);
+            _declaredSymbolsByLocation = model.Symbols.ToDictionary(static symbol =>
+                (symbol.FunctionId, symbol.DeclaringSpan));
             _references = model.References.ToDictionary(static reference => reference.Span);
         }
 
@@ -44,7 +54,7 @@ public static class LuaLowerer
         {
             var mainBlock = _model.Syntax.Root.ChildNodes()
                 .Single(static node => node.Kind == LuaSyntaxKind.Block);
-            CompileFunction(_model.Functions.Single(static function => function.Id == 0), mainBlock, null);
+            CompileFunction(_functionsById[0], mainBlock, null);
 
             if (_diagnostics.Count != 0)
             {
@@ -90,9 +100,16 @@ public static class LuaLowerer
             _functions[info.Id] = builder.Build();
         }
 
-        private LuaFunctionInfo FindNestedFunction(TextSpan span) =>
-            _model.Functions.Single(function =>
-                function.Id != 0 && function.Span == span && !_compiledFunctions.Contains(function.Id));
+        private LuaFunctionInfo FindNestedFunction(TextSpan span)
+        {
+            if (_nestedFunctionsBySpan.TryGetValue(span, out var function) &&
+                !_compiledFunctions.Contains(function.Id))
+            {
+                return function;
+            }
+
+            throw new InvalidOperationException($"No uncompiled nested function exists at {span}.");
+        }
 
         private LuaNameReference GetReference(LuaSyntaxToken token)
         {
@@ -105,8 +122,10 @@ public static class LuaLowerer
         }
 
         private LuaSymbol GetDeclaredSymbol(LuaSyntaxToken token, int functionId) =>
-            _model.Symbols.Single(symbol =>
-                symbol.FunctionId == functionId && symbol.DeclaringSpan == token.Span);
+            _declaredSymbolsByLocation.TryGetValue((functionId, token.Span), out var symbol)
+                ? symbol
+                : throw new InvalidOperationException(
+                    $"No declared symbol exists for function {functionId} at {token.Span}.");
 
         private sealed class FunctionBuilder
         {
@@ -120,6 +139,7 @@ public static class LuaLowerer
             private readonly List<LuaIrUpvalue> _upvalues = [];
             private readonly Dictionary<int, int> _upvalueBySymbol = [];
             private readonly Dictionary<int, int> _symbolRegisters = [];
+            private readonly Dictionary<int, LuaSymbol> _symbolsById;
             private readonly List<int> _activeSymbolIds = [];
             private readonly List<int> _activeSyntheticCloseRegisters = [];
             private readonly List<int> _activeToBeClosedRegisters = [];
@@ -137,6 +157,7 @@ public static class LuaLowerer
                 _owner = owner;
                 _info = info;
                 _parent = parent;
+                _symbolsById = info.Symbols.ToDictionary(static symbol => symbol.Id);
                 InitializeUpvalues();
                 EnterScope();
                 InitializeParameters();
@@ -1367,7 +1388,7 @@ public static class LuaLowerer
                         continue;
                     }
 
-                    var symbol = _info.Symbols.Single(candidate => candidate.Id == symbolId);
+                    var symbol = _symbolsById[symbolId];
                     if (register >= lowerBound &&
                         (symbol.IsCaptured || symbol.Attribute == LuaLocalAttributeKind.ToBeClosed))
                     {

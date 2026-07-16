@@ -63,7 +63,16 @@ public static class LuaParser
             return new LuaParseResult(_lexResult.Source, root, _diagnostics.ToImmutable());
         }
 
-        private LuaSyntaxNode ParseBlock(params LuaTokenKind[] terminators)
+        private LuaSyntaxNode ParseBlock(LuaTokenKind terminator) =>
+            ParseBlock(TokenSet.Create(terminator));
+
+        private LuaSyntaxNode ParseBlock(
+            LuaTokenKind terminator0,
+            LuaTokenKind terminator1,
+            LuaTokenKind terminator2) =>
+            ParseBlock(TokenSet.Create(terminator0, terminator1, terminator2));
+
+        private LuaSyntaxNode ParseBlock(TokenSet terminators)
         {
             var start = Current.Span.Start;
             if (!TryEnterRecursion("block"))
@@ -79,7 +88,7 @@ public static class LuaParser
                 var statements = new List<LuaSyntaxElement>();
                 var sawReturn = false;
 
-                while (Current.Kind != LuaTokenKind.EndOfFile && !AtAny(terminators))
+                while (Current.Kind != LuaTokenKind.EndOfFile && !terminators.Contains(Current.Kind))
                 {
                     if (_nodeBudgetExceeded)
                     {
@@ -796,11 +805,11 @@ public static class LuaParser
             return CreateNode(LuaSyntaxKind.Error, [token], token.Span.Start);
         }
 
-        private LuaSyntaxNode ConsumeErrorUntil(params LuaTokenKind[] terminators)
+        private LuaSyntaxNode ConsumeErrorUntil(TokenSet terminators)
         {
             var start = Current.Span.Start;
             var children = new List<LuaSyntaxElement>();
-            while (Current.Kind != LuaTokenKind.EndOfFile && !AtAny(terminators))
+            while (Current.Kind != LuaTokenKind.EndOfFile && !terminators.Contains(Current.Kind))
             {
                 children.Add(Consume());
             }
@@ -896,17 +905,19 @@ public static class LuaParser
 
         private LuaSyntaxToken Current => Peek(0);
 
-        private bool AtAny(ReadOnlySpan<LuaTokenKind> kinds)
+        private readonly record struct TokenSet(UInt128 Bits)
         {
-            foreach (var kind in kinds)
-            {
-                if (Current.Kind == kind)
-                {
-                    return true;
-                }
-            }
+            public static TokenSet Create(LuaTokenKind kind) => new(Bit(kind));
 
-            return false;
+            public static TokenSet Create(
+                LuaTokenKind kind0,
+                LuaTokenKind kind1,
+                LuaTokenKind kind2) =>
+                new(Bit(kind0) | Bit(kind1) | Bit(kind2));
+
+            public bool Contains(LuaTokenKind kind) => (Bits & Bit(kind)) != 0;
+
+            private static UInt128 Bit(LuaTokenKind kind) => UInt128.One << (int)kind;
         }
 
         private void AddDiagnostic(string code, TextSpan span, string message)
