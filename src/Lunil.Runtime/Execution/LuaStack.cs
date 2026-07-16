@@ -46,9 +46,9 @@ public sealed class LuaStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void WriteUnchecked(int index, LuaValue value)
     {
-        if (value.TryGetGcObject() is not null)
+        if (value.TryGetGcObject() is { } target)
         {
-            _owner.Owner.WriteBarrierBack(_owner, value);
+            _owner.Owner.WriteBarrierBack(_owner, target);
         }
 
         _values[index] = value;

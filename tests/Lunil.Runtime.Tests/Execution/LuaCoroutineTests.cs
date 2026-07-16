@@ -330,6 +330,44 @@ public sealed class LuaCoroutineTests
     }
 
     [Fact]
+    public void OpenUpvalueStackWritesRememberYoungValuesInGenerationalMode()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { InitialMode = LuaGcMode.Generational },
+        });
+        state.InstallCoroutineModule();
+        var entry = Compile(
+            state,
+            """
+            local captured
+            local function read() return captured end
+            captured = coroutine.yield(read)
+            coroutine.yield(true)
+            return read()
+            """);
+        var thread = state.CreateThread(entry);
+        using var threadRoot = state.CreateHandle(LuaValue.FromThread(thread));
+        var interpreter = new LuaInterpreter();
+
+        var firstYield = interpreter.Resume(state, thread);
+        using var closureRoot = state.CreateHandle(firstYield.Values[0]);
+        state.Heap.CollectFull();
+        state.Heap.CollectFull();
+        Assert.True(thread.Age >= LuaGcAge.Old0);
+
+        var young = state.CreateTable();
+        var secondYield = interpreter.Resume(state, thread, [LuaValue.FromTable(young)]);
+        Assert.Equal([LuaValue.FromBoolean(true)], secondYield.Values.ToArray());
+
+        state.Heap.CollectMinor();
+        Assert.True(young.IsAlive);
+
+        var completed = interpreter.Resume(state, thread);
+        Assert.Equal([LuaValue.FromTable(young)], completed.Values.ToArray());
+    }
+
+    [Fact]
     public void NativeFunctionsCanBeCoroutineEntries()
     {
         var state = new LuaState();

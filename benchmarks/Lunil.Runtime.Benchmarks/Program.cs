@@ -42,6 +42,29 @@ Console.WriteLine(
 
 if (!backendOnly)
 {
+    Run("lua_value_mixed_kind", iterations, static count =>
+    {
+        var state = new LuaState();
+        var values = new LuaValue[]
+        {
+            LuaValue.Nil,
+            LuaValue.FromBoolean(true),
+            LuaValue.FromInteger(42),
+            LuaValue.FromFloat(3.5),
+            LuaValue.FromString(state.Strings.GetOrCreate("kind"u8)),
+            LuaValue.FromTable(state.CreateTable()),
+            LuaValue.FromThread(state.MainThread),
+            LuaValue.FromLightUserdata(new LuaLightUserdata(new object())),
+        };
+        var checksum = 0;
+        for (var index = 0; index < count; index++)
+        {
+            checksum += (int)values[index & 7].Kind;
+        }
+
+        GC.KeepAlive(checksum);
+    });
+
     Run("table_integer_get_set", iterations, static count =>
     {
         var state = new LuaState(new LuaStateOptions
