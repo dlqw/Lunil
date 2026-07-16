@@ -68,7 +68,15 @@ Focused coverage requires:
   instruction-budget failure, Portable PDB validation, and zero unexpected deoptimization on
   matching profiles; and
 - backend evidence rows named `persisted_aot_pgo` that report artifact size and structural numeric
-  metrics beside the unprofiled persisted, Tier 1, Tier 2, Loop OSR, and interpreter rows.
+  metrics beside the unprofiled persisted, Tier 1, Tier 2, Loop OSR, and interpreter rows. Every
+  measured result is compared with the reference interpreter before it contributes timing data.
+
+For `arithmetic`, `control_flow`, `fib_iter`, and `mandelbrot`, each RID requires persisted numeric
+regions, unboxed locals, direct numeric instructions, and safepoints; zero interpreter fallback and
+zero unexpected deoptimization; and an artifact smaller than 64 KiB. Balanced paired samples gate
+the median PGO-AOT/Tier-2 slowdown at no more than `1.50x` and the bootstrap CI95 upper bound at no
+more than `1.75x`. The six-RID aggregate publishes the worst paired ratio and fails qualification
+unless every RID satisfies the same thresholds.
 
 The release gate remains the repository's formatting/package job plus all six supported RID jobs
 and their aggregate conformance and backend-evidence decisions.

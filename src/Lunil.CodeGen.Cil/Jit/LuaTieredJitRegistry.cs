@@ -218,8 +218,7 @@ internal sealed class LuaTieredJitRegistry :
             frameObservation = _observedFrames.GetValue(
                 frame,
                 static _ => new FunctionEntryObservation());
-            frameObservation.Entry = entry;
-            frameObservation.Route = functionRoute;
+            frameObservation.Bind(frame.Closure, entry, functionRoute);
         }
         Interlocked.Exchange(
             ref entry.LastAccessStamp,
@@ -347,6 +346,7 @@ internal sealed class LuaTieredJitRegistry :
         FunctionEntry entry;
         FunctionRoute functionRoute;
         if (!_observedFrames.TryGetValue(frame, out var frameObservation) ||
+            !frameObservation.IsBoundTo(frame.Closure) ||
             frameObservation.Entry is not { } observedEntry ||
             frameObservation.Route is not { } observedRoute)
         {
@@ -359,8 +359,7 @@ internal sealed class LuaTieredJitRegistry :
             frameObservation = _observedFrames.GetValue(
                 frame,
                 static _ => new FunctionEntryObservation());
-            frameObservation.Entry = entry;
-            frameObservation.Route = functionRoute;
+            frameObservation.Bind(frame.Closure, entry, functionRoute);
         }
         else
         {
@@ -3551,6 +3550,8 @@ internal sealed class LuaTieredJitRegistry :
 
     private sealed class FunctionEntryObservation
     {
+        private WeakReference<LuaClosure>? _closure;
+
         public Lock Gate { get; } = new();
 
         public int HasPendingLoop;
@@ -3560,5 +3561,28 @@ internal sealed class LuaTieredJitRegistry :
         public FunctionEntry? Entry { get; set; }
 
         public FunctionRoute? Route { get; set; }
+
+        public bool IsBoundTo(LuaClosure closure) =>
+            _closure is not null &&
+            _closure.TryGetTarget(out var observedClosure) &&
+            ReferenceEquals(observedClosure, closure);
+
+        public void Bind(
+            LuaClosure closure,
+            FunctionEntry entry,
+            FunctionRoute route)
+        {
+            if (_closure is null)
+            {
+                _closure = new WeakReference<LuaClosure>(closure);
+            }
+            else
+            {
+                _closure.SetTarget(closure);
+            }
+
+            Entry = entry;
+            Route = route;
+        }
     }
 }

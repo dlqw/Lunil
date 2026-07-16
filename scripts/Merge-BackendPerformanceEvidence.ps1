@@ -301,6 +301,18 @@ $persistedAotResult = [pscustomobject]@{
     MaximumAotTotalArtifactBytes = (
         $persistedAotSelected |
             Measure-Object MaximumAotTotalArtifactBytes -Maximum).Maximum
+    MaximumProfileGuidedAotSlowdownVsTier2Median = (
+        $persistedAotSelected | ForEach-Object {
+            $_.ProfileGuidedTier2Comparisons
+        } | Measure-Object SlowdownVsTier2Median -Maximum).Maximum
+    MaximumProfileGuidedAotSlowdownVsTier2Ci95Upper = (
+        $persistedAotSelected | ForEach-Object {
+            $_.ProfileGuidedTier2Comparisons
+        } | Measure-Object SlowdownVsTier2Ci95Upper -Maximum).Maximum
+    MinimumProfileGuidedAotSpeedupVsUnprofiled = (
+        $persistedAotSelected | ForEach-Object {
+            $_.ProfileGuidedTier2Comparisons
+        } | Measure-Object SpeedupVsUnprofiledAotMedian -Minimum).Minimum
     MaximumAbsoluteAllocationSlopeBytesIteration = (
         $persistedAotSelected | ForEach-Object {
             [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
@@ -327,6 +339,19 @@ $persistedAotResult = [pscustomobject]@{
     AllRidsPassNegativeWorkloadGate = @($persistedAotSelected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0
     }).Count -eq 0
+    AllRidsPassProfileGuidedAotGate = @($persistedAotSelected | Where-Object {
+        -not $_.ProfileGuidedQualifiesThisRid -or
+            @($_.ProfileGuidedGateFailures).Count -ne 0
+    }).Count -eq 0
+    AllProfileGuidedNumericWorkloadsPersistSpecializedRegions = @(
+        $persistedAotSelected | Where-Object {
+            @($_.ProfileGuidedTier2Comparisons | Where-Object {
+                $_.NumericRegionCount -le 0 -or
+                    $_.UnboxedNumericLocalCount -le 0 -or
+                    $_.DirectNumericInstructionCount -le 0 -or
+                    $_.NumericRegionSafepointCount -le 0
+            }).Count -ne 0
+        }).Count -eq 0
     AllRidsQualify = @($persistedAotSelected | Where-Object {
         -not $_.QualifiesThisRid
     }).Count -eq 0
