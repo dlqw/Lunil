@@ -135,6 +135,20 @@ public sealed class LuaTableTests
     }
 
     [Fact]
+    public void DenseArrayFastPathsRejectMetatableBackedTables()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        Assert.True(table.TryAppendArray(1, LuaValue.FromInteger(10)));
+        table.SetMetatable(state.CreateTable());
+
+        Assert.False(table.TrySetArrayValue(1, LuaValue.FromInteger(20)));
+        Assert.False(table.TryAppendArray(2, LuaValue.FromInteger(30)));
+        Assert.Equal(LuaValue.FromInteger(10), table.Get(LuaValue.FromInteger(1)));
+        Assert.True(table.Get(LuaValue.FromInteger(2)).IsNil);
+    }
+
+    [Fact]
     public void SequentialArrayAppendFastPathMigratesTheContiguousHashTail()
     {
         var state = CreateDeterministicState();

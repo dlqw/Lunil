@@ -31,6 +31,12 @@ assumption failure returns to the original canonical PC before any duplicated ob
 The slow path preserves normalization, array/hash migration, mutation versions, logical quota,
 write barriers, and `__index`/`__newindex` behavior.
 
+Dense array append/update helpers are restricted to tables without a metatable. Their edges are
+therefore strong and use the logical heap's forward barrier, marking the inserted child directly
+instead of re-graying and re-traversing the full growing array at a later incremental step. A
+metatable-backed table, including any table that can acquire weak semantics through `__mode`,
+fails the helper and retains the general backward-barrier path.
+
 Known Lua-call sites guard the closure identity and verified fixed-result window. Eligible leaf
 calls use the frameless ABI and, when the scheduler state remains clean, continue in the same Tier 1
 or Tier 2 method. Debug hooks, yieldable or protected calls, close/unwind state, finalizers, pending
@@ -48,6 +54,8 @@ fail closed before optimization planning.
   or call.
 - Dense access preserves logical heap accounting and GC barriers independently of pooled physical
   capacity.
+- Incremental collection preserves newly inserted children without repeatedly traversing the same
+  growing strong array; weak-table marking and clearing remain on the general mutation path.
 - Frameless calls preserve exact instruction budgets, live roots, multi-result windows, hooks,
   finalizers, and coroutine/close restrictions.
 - Runtime-site caches are method-owned, bounded, thread-safe, and do not retain module/state/closure

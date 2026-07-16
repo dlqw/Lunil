@@ -81,6 +81,38 @@ public sealed class LuaGarbageCollectorTests
     }
 
     [Fact]
+    public void StrongDenseArrayFastPathMarksTheChildWithoutRegrayingTheTable()
+    {
+        var options = new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with { StepObjectBudget = 1 },
+        };
+        var state = new LuaState(options);
+        var parent = state.CreateTable();
+        var child = state.CreateTable();
+        state.SetGlobal("parent", LuaValue.FromTable(parent));
+
+        state.Heap.Step(1);
+        while (parent.Color != LuaGcColor.Black)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.Equal(LuaGcColor.White, child.Color);
+        Assert.True(parent.TryAppendArray(1, LuaValue.FromTable(child)));
+        Assert.Equal(LuaGcColor.Black, parent.Color);
+        Assert.Equal(LuaGcColor.Gray, child.Color);
+
+        while (state.Heap.Phase != LuaGcPhase.Paused)
+        {
+            state.Heap.Step(1);
+        }
+
+        Assert.True(child.IsAlive);
+        Assert.Equal(LuaValue.FromTable(child), parent.Get(LuaValue.FromInteger(1)));
+    }
+
+    [Fact]
     public void BackwardBarrierDuringSweepPreservesANewChild()
     {
         var options = new LuaStateOptions

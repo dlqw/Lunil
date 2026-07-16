@@ -319,7 +319,7 @@ yield 返回显式 `VmSignal.Yield`，而不是保留 CLR 调用栈。resume 从
 
 `LuaHeap` 已实现 incremental/generational 三色状态机、gray/gray-again、old-to-young remembered set、逻辑分配债务、配额、安全点、每次分配触发的 stress 模式、minor/major promotion，以及独立于 CLR GC 的 sweep。atomic 阶段处理动态 `__mode`、弱键/弱值、PUC 字符串强引用例外、ephemeron fixed point 和 finalizer separation；finalizer 在解释器安全点执行，可通过 `LuaHandle` 复活对象，且异常进入 warning 通道。
 
-`LuaTable` 使用连续 array part 与开放寻址 hash part，hash 删除保留 tombstone 以支持 `next(table, deletedKey)`，rehash 后失效的键按 Lua 错误拒绝。键实现 integer/float 归一、NaN 拒绝、每 state 随机 seed，并分别维护 storage、shape、metatable version。逻辑容量变化计入 heap quota，所有强弱边及 metatable 写入都经过 barrier。
+`LuaTable` 使用连续 array part 与开放寻址 hash part，hash 删除保留 tombstone 以支持 `next(table, deletedKey)`，rehash 后失效的键按 Lua 错误拒绝。键实现 integer/float 归一、NaN 拒绝、每 state 随机 seed，并分别维护 storage、shape、metatable version。逻辑容量变化计入 heap quota，所有强弱边及 metatable 写入都经过 barrier。无 metatable 的强 array 快路径使用 forward barrier 直接标记新子对象，避免增量 GC 反复扫描增长中的 dense table；潜在 weak/metatable table 回退到通用 backward-barrier 路径。
 
 `LuaInterpreter` 直接执行 canonical IR，Lua 调用和 Lua 元方法只压入显式 frame。共享调度覆盖 `__index`、`__newindex`、`__call`、算术/位运算、`__len`、`__concat`、`__eq`、`__lt`、`__le` 及其 fallback；类型元表与对象元表走同一路径，并具有 2,000 层链预算。普通算术和 numeric-for 使用与 lexer 共享的 Lua 数字解析器转换完整数字字符串，integer loop 在边界处用宽中间值判定，避免 64 位回绕造成额外迭代。
 
@@ -421,7 +421,8 @@ dirty register、captured value、`SetTop` 的 minimum/final top、pending budge
 `None` 可重新进入 quantum，debug/GC/finalizer/budget/close/unwind 结果返回 scheduler。Loop OSR 的逻辑
 backedge telemetry 在边界批量提交，因此统计不因 countdown 采样而少计。`LuaExecutionContext` 与
 `LuaCompiledExit.InstructionsConsumed` 使用 64 位累计值，因而单次长时间 numeric-region 入口不会在
-`Int32.MaxValue` 处溢出；持久化 emitter 使用的既有 `int` factory overload 保持可用。详见
+`Int32.MaxValue` 处溢出；exit 内部按 `long`、PC、byte tags 排列，控制载荷仍为 16 bytes，避免常见
+64 位 ABI 上的隐藏返回缓冲区；持久化 emitter 使用的既有 `int` factory overload 保持可用。详见
 [ADR 0013](adr/0013-64-bit-instruction-accounting.md)。
 
 `NumericRegionCount`、`UnboxedNumericLocalCount`、`DirectNumericInstructionCount` 与

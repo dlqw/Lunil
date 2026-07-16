@@ -141,13 +141,15 @@ public sealed class LuaTable : LuaGcObject
     internal bool TrySetArrayValue(long index, LuaValue value)
     {
         var offset = index - 1;
-        if ((ulong)offset >= (ulong)_array.Count)
+        if (_metatable is not null || (ulong)offset >= (ulong)_array.Count)
         {
             return false;
         }
 
-        Owner.ValidateValue(value);
-        Owner.WriteBarrierBack(this, value);
+        // This path is restricted to ordinary strong tables, so a forward barrier can mark
+        // the inserted child directly instead of re-graying and rescanning the entire dense
+        // array at the next incremental GC step.
+        Owner.WriteBarrier(this, value);
         SetArray((int)offset, value);
         return true;
     }
@@ -289,13 +291,14 @@ public sealed class LuaTable : LuaGcObject
     /// </summary>
     internal bool TryAppendArray(long index, LuaValue value)
     {
-        Owner.ValidateValue(value);
-        if (value.IsNil || index != _array.Count + 1L)
+        if (_metatable is not null || value.IsNil || index != _array.Count + 1L)
         {
             return false;
         }
 
-        Owner.WriteBarrierBack(this, value);
+        // See TrySetArrayValue: metatable-backed (and therefore potentially weak) tables
+        // fall through to Set, while this strong-table path can use a forward barrier.
+        Owner.WriteBarrier(this, value);
         Owner.AdjustLogicalSize(this, 16);
         EnsureArrayAppendCapacity();
         _array.Add(value);
