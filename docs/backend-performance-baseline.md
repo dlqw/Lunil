@@ -752,17 +752,17 @@ warmup operations. This affected `lua_calls`, `metamethod`, and other structural
 it did not change numeric-region shape or arithmetic throughput.
 
 The corrected six-process win-x64 Release record is
-`artifacts/backend-performance/win-x64/20260716-022711`. Pre-qualification backedges are now counted
+`artifacts/backend-performance/win-x64/20260716-031813`. Pre-qualification backedges are now counted
 by a frame-local countdown, partial counts are committed on return/tail-call/unwind, no-backedge
 functions skip frame observations, and a repeated structurally impossible loop is rejected after at
 least four entries and 64 backedges. Structural exact-numeric candidates still publish nothing
-before the configured 1024-backedge threshold. Loop OSR arithmetic reached **213.057x** interpreter
-and **210.098x** disabled-control median speedup; compilation p95 was **2.162 ms**, compile allocation
+before the configured 1024-backedge threshold. Loop OSR arithmetic reached **200.499x** interpreter
+and **198.231x** disabled-control median speedup; compilation p95 was **2.171 ms**, compile allocation
 p95 was **191,672 B**, region growth was **15,694 B/direct instruction**, execution allocation slope
 was zero, all four region-shape facts were nonzero, and hot instruction-budget checks remained zero.
 
-The corrected rejected-workload on/off medians were `lua_calls` **1.003x**, `table_access`
-**1.006x**, `metamethod` **0.990x**, and `coroutine_error_hook` **0.990x**. Every allocation comparison
+The corrected rejected-workload on/off medians were `lua_calls` **0.999x**, `table_access`
+**0.987x**, `metamethod` **0.996x**, and `coroutine_error_hook` **1.007x**. Every allocation comparison
 was at parity and the local Tier 1, Tier 2, Loop OSR, and persisted-AOT decisions all qualified. A
 fresh protected six-RID aggregate remains the cross-architecture authority for this final probe
 batching change.
