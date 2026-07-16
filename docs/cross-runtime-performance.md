@@ -112,6 +112,22 @@ incomplete or failed. Only when all six reports qualify does it emit
 `cross-runtime-six-rid-report.json` and `cross-runtime-six-rid-report.md` with per-RID,
 per-workload, and all-platform geometric means. One failed workload on one RID fails the workflow.
 
+## Qualified six-RID CI report
+
+Hosted run [`29459923109`](https://github.com/dlqw/Lunil/actions/runs/29459923109) completed the
+win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64 jobs plus the fail-closed
+aggregate. All 96 Auto/Tier 2 workload/RID gates passed. The aggregate evidence contains 48
+workload/RID measurements for each engine:
+
+| Candidate | Geomean vs native Lua | Geomean vs MoonSharp | Minimum vs MoonSharp |
+|---|---:|---:|---:|
+| Lunil Auto | 0.138x | **1.980x** | **1.067x** |
+| Lunil Tier 2 | 0.138x | **1.979x** | **1.054x** |
+
+The minimum was win-x64 `string_build`; its paired CI95 lower bounds were 1.026x for Auto and
+1.010x for Tier 2. Thus even the narrowest hosted-run result remained above MoonSharp, rather than
+passing only through an unpaired or aggregate average.
+
 ## Qualified Windows x64 report
 
 The final local Release acceptance run on 2026-07-16 used six balanced rounds, a 250 ms calibration

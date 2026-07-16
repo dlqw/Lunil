@@ -733,6 +733,8 @@ managed warmup 后在计时区外显式完成 CLR GC reset，避免将上一 run
 相对 MoonSharp 的 geomean 为 1.655/1.691 倍，逐 workload 最低为 `string_build` 的
 1.233/1.233 倍，其 CI95 下界为 1.126/1.145。六 RID 聚合对缺失、重复、schema 不兼容、
 incomplete 或任一 workload gate 失败均 fail closed；原生 Lua 始终保持报告中的 `1.000x` 基准。
+真实 hosted run `29459923109` 的六个 RID 与 aggregate 全部通过：96 个 Auto/Tier 2 门禁无失败，
+跨 48 个 measurement 的 MoonSharp-relative geomean 为 1.980/1.979 倍。
 
 ## 15. 可观测性与失败模型
 

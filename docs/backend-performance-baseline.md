@@ -686,3 +686,9 @@ versus MoonSharp. Their per-workload paired medians were:
 Every paired CI95 lower bound exceeded 1.00x; `string_build` was the narrowest at 1.126x for Auto
 and 1.145x for Tier 2. See [cross-runtime-performance.md](cross-runtime-performance.md) for the
 pinned supply chain, paired estimator, raw report schema, and six-RID fail-closed aggregation.
+
+Hosted CI run [`29459923109`](https://github.com/dlqw/Lunil/actions/runs/29459923109) then passed
+all six RID measurement jobs and the fail-closed aggregate. All 96 Auto/Tier 2 workload/RID gates
+passed. Across 48 measurements per candidate, Auto/Tier 2 reached 1.980x/1.979x geometric means
+versus MoonSharp; the minimum paired medians were 1.067x/1.054x on win-x64 `string_build`, whose
+CI95 lower bounds remained above one at 1.026x/1.010x.

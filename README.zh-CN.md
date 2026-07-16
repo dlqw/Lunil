@@ -221,8 +221,8 @@ MoonSharp 和 Lunil 全部配置。原生 Lua 始终是 `1.000x` 基准；Lunil 
   -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
 ```
 
-已验收的 Windows x64 矩阵八项 workload 全部通过；六 RID CI 会拒绝任何缺失、不完整或门禁
-失败的 RID 报告。完整结果与证据契约见
+已验收的 Windows x64 矩阵与六 RID CI run `29459923109` 的全部 workload 门禁均通过；CI 会拒绝
+任何缺失、不完整或门禁失败的 RID 报告。完整结果与证据契约见
 [跨运行时性能工作流](docs/cross-runtime-performance.md)。
 
 ## 将 Lunil 用作库

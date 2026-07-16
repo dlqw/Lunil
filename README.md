@@ -233,8 +233,8 @@ MoonSharp and all Lunil configurations using identical Lua source. Native Lua is
   -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
 ```
 
-The qualified Windows x64 matrix passes all eight workloads; six-RID CI rejects any missing,
-incomplete, or failed RID report. See the
+The qualified Windows x64 matrix and six-RID CI run `29459923109` pass every workload gate; CI
+rejects any missing, incomplete, or failed RID report. See the
 [cross-runtime performance workflow](docs/cross-runtime-performance.md) for results and evidence.
 
 ## Using Lunil as a library
