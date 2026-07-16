@@ -1,5 +1,6 @@
 using Lunil.Runtime.Values;
 using Lunil.Runtime.Operations;
+using Lunil.IR.Canonical;
 
 namespace Lunil.Runtime.Execution;
 
@@ -46,6 +47,16 @@ public sealed class LuaFrame
     }
 
     public LuaClosure Closure { get; private set; } = null!;
+
+    /// <summary>
+    /// Gets the immutable function version captured when this activation entered. A suspended
+    /// frame retains this version even if its closure publishes a successor.
+    /// </summary>
+    public LuaFunctionVersion FunctionVersion { get; private set; } = null!;
+
+    internal LuaIrModule Module => FunctionVersion.Module;
+
+    internal LuaIrFunction Function => FunctionVersion.Function;
 
     public int Base { get; private set; }
 
@@ -118,10 +129,12 @@ public sealed class LuaFrame
         LuaValue errorHandler = default,
         bool isCloseHandler = false,
         bool isDebugHook = false,
-        bool isHidden = false)
+        bool isHidden = false,
+        LuaFunctionVersion? functionVersion = null)
     {
         ArgumentNullException.ThrowIfNull(closure);
         Closure = closure;
+        FunctionVersion = functionVersion ?? closure.FunctionVersion;
         Base = @base;
         Top = top;
         ProgramCounter = 0;
@@ -138,12 +151,13 @@ public sealed class LuaFrame
         BackendEntryObserved = false;
         BackendBackedgeProbeCountdown = 1;
         UnreportedBackendBackedgeCount = 0;
-        HasSourceLineInformation = closure.HasSourceLineInformation;
+        HasSourceLineInformation = FunctionVersion.HasSourceLineInformation;
     }
 
     internal void ResetForPool()
     {
         Closure = null!;
+        FunctionVersion = null!;
         Base = 0;
         Top = 0;
         ProgramCounter = 0;
@@ -177,6 +191,24 @@ public sealed class LuaFrame
     internal int BackendBackedgeProbeCountdown { get; set; } = 1;
 
     internal int UnreportedBackendBackedgeCount { get; set; }
+
+    internal LuaString GetOrCreateStringConstant(
+        LuaState state,
+        LuaThread thread,
+        int constantIndex)
+    {
+        if (!ReferenceEquals(state.Heap, Closure.Owner) || !ReferenceEquals(thread.Owner, state.Heap))
+        {
+            throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
+        }
+
+        var value = FunctionVersion.GetOrCreateStringConstant(state, constantIndex);
+        Closure.Owner.WriteBarrier(thread, value);
+        return value;
+    }
+
+    internal LuaTableAllocationHint GetOrCreateTableAllocationHint(int programCounter) =>
+        FunctionVersion.GetOrCreateTableAllocationHint(programCounter);
 
 }
 

@@ -89,7 +89,7 @@ internal static class LuaBasicLibrary
             if (line > 0)
             {
                 var prefix = Encoding.UTF8.GetBytes(
-                    $"{LuaLibraryHelpers.ShortSource(frame.Closure.Function.SourceName)}:{line}: ");
+                    $"{LuaLibraryHelpers.ShortSource(frame.Function.SourceName)}:{line}: ");
                 var message = error.AsString().AsSpan();
                 var bytes = new byte[prefix.Length + message.Length];
                 prefix.CopyTo(bytes, 0);

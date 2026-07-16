@@ -262,8 +262,8 @@ internal sealed class PersistedAotInstructionExecutor : ILuaInstructionExecutor
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        return GetOrLoad(frame.Closure.Module)
-            .GetFunction(frame.Closure.Function.Id)(context, thread, frame);
+        return GetOrLoad(frame.FunctionVersion.Module)
+            .GetFunction(frame.FunctionVersion.Function.Id)(context, thread, frame);
     }
 
     private LuaAotLoadedModule GetOrLoad(LuaIrModule module)

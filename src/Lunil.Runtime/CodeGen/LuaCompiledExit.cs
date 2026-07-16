@@ -126,6 +126,8 @@ public sealed class LuaExecutionContext
     private long _instructionsConsumed;
     private int _lastObservedProgramCounter;
     private long _lastObservedInstructionCount;
+    private LuaBackendGeneration? _backendGeneration;
+    private long _backendGenerationToken;
 
     internal LuaExecutionContext(
         LuaState state,
@@ -216,6 +218,44 @@ public sealed class LuaExecutionContext
     }
 
     public bool IsDebugModeCurrent() => DebugModeVersion == Thread.DebugModeVersion;
+
+    /// <summary>
+    /// Returns whether the generated delegate still owns the module generation admitted at
+    /// entry. Persisted and static backends that do not bind a generation return
+    /// <see langword="true"/>.
+    /// </summary>
+    public bool IsBackendGenerationCurrent() => _backendGeneration is null ||
+        _backendGeneration.IsCurrent(_backendGenerationToken);
+
+    internal bool TryEnterBackendGeneration(
+        LuaBackendGeneration generation,
+        long expectedGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(generation);
+        if (_backendGeneration is not null)
+        {
+            throw new InvalidOperationException(
+                "The execution context already owns a backend generation lease.");
+        }
+
+        if (!generation.TryEnter(expectedGeneration))
+        {
+            return false;
+        }
+
+        _backendGenerationToken = expectedGeneration;
+        _backendGeneration = generation;
+        return true;
+    }
+
+    internal void ExitBackendGeneration()
+    {
+        var generation = _backendGeneration ?? throw new InvalidOperationException(
+            "The execution context has no backend generation lease.");
+        _backendGeneration = null;
+        _backendGenerationToken = 0;
+        generation.Exit();
+    }
 
     internal bool TryBeginInstructionObservation(int programCounter)
     {

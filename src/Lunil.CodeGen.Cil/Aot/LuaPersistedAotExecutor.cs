@@ -72,8 +72,8 @@ public sealed class LuaPersistedAotExecutor
             LuaFrame frame,
             LuaIrInstruction instruction)
         {
-            if (MatchesArtifact(frame.Closure.Module) &&
-                loadedModule.TryGetFunction(frame.Closure.Function.Id, out var function) &&
+            if (MatchesArtifact(frame.Module) &&
+                loadedModule.TryGetFunction(frame.Function.Id, out var function) &&
                 function is not null)
             {
                 Interlocked.Increment(ref _compiledInvocations);

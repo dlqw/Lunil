@@ -225,10 +225,9 @@ public sealed class LuaState
 
         return new LuaClosure(
             Heap,
-            module,
+            new LuaModuleRuntimeData(module),
             function,
-            upvalues,
-            new LuaModuleStringConstants());
+            upvalues);
     }
 
     public LuaClosure LoadBinaryChunk(

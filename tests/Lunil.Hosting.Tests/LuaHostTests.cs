@@ -278,6 +278,104 @@ public sealed class LuaHostTests
     }
 
     [Fact]
+    public void ReloadModuleMigratesCompatibleExportedClosureSlotsAndPreservesUpvalues()
+    {
+        var files = new MutableMemoryFileSystem(new Dictionary<string, string>
+        {
+            ["mods/value.lua"] =
+                "local state=0; local function next() state=state+1; return state end; " +
+                "return {next=next}",
+        });
+        using var host = CreateReloadHost(files, LuaHostExecutionBackend.Jit);
+        var initial = host.RunUtf8(
+            "package.path='mods/?.lua'; local m=require('value'); alias=m.next; return alias()");
+        Assert.Equal(1, initial.Execution!.Values[0].AsInteger());
+        var alias = host.State.GetGlobal("alias").TryGetClosure()!;
+        var previousVersion = alias.FunctionVersion;
+        files.Set(
+            "mods/value.lua",
+            "local state=0; local function next() state=state+2; return state end; " +
+            "return {next=next}");
+
+        var reload = host.ReloadModule("value");
+        var current = host.RunUtf8("return alias(),require('value').next()");
+
+        Assert.True(reload.Succeeded, reload.Message);
+        var migration = Assert.Single(reload.FunctionMigrations);
+        Assert.Equal(LuaFunctionMigrationStatus.Updated, migration.Status);
+        Assert.Equal(1, reload.UpdatedFunctionCount);
+        Assert.Equal(0, reload.IncompatibleFunctionCount);
+        Assert.Same(alias, host.State.GetGlobal("alias").TryGetClosure());
+        Assert.NotSame(previousVersion, alias.FunctionVersion);
+        Assert.Equal(previousVersion.Generation + 1, alias.FunctionVersion.Generation);
+        Assert.Equal(3, current.Execution!.Values[0].AsInteger());
+        Assert.Equal(2, current.Execution.Values[1].AsInteger());
+    }
+
+    [Fact]
+    public void ReloadModuleReportsIncompatibleExportedClosureUpvalues()
+    {
+        var files = new MutableMemoryFileSystem(new Dictionary<string, string>
+        {
+            ["mods/value.lua"] =
+                "local state=1; local function get() return state end; return {get=get}",
+        });
+        using var host = CreateReloadHost(files);
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; local m=require('value'); alias=m.get").Succeeded);
+        files.Set(
+            "mods/value.lua",
+            "local state,extra=2,3; local function get() return state+extra end; " +
+            "return {get=get}");
+
+        var reload = host.ReloadModule("value");
+        var current = host.RunUtf8("return alias(),require('value').get()");
+
+        Assert.True(reload.Succeeded, reload.Message);
+        var migration = Assert.Single(reload.FunctionMigrations);
+        Assert.Equal(LuaFunctionMigrationStatus.UpvalueLayoutMismatch, migration.Status);
+        Assert.Equal(0, reload.UpdatedFunctionCount);
+        Assert.Equal(1, reload.IncompatibleFunctionCount);
+        Assert.Equal(1, current.Execution!.Values[0].AsInteger());
+        Assert.Equal(5, current.Execution.Values[1].AsInteger());
+    }
+
+    [Fact]
+    public void SuspendedFrameKeepsOldFunctionVersionAfterCompatibleSlotMigration()
+    {
+        var files = new MutableMemoryFileSystem(new Dictionary<string, string>
+        {
+            ["mods/value.lua"] =
+                "local state=1; local function get() coroutine.yield('pause'); return state end; " +
+                "return {get=get}",
+        });
+        using var host = CreateReloadHost(files);
+        var suspended = host.RunUtf8(
+            "package.path='mods/?.lua'; local m=require('value'); alias=m.get; " +
+            "co=coroutine.create(alias); return coroutine.resume(co)");
+        Assert.True(suspended.Execution!.Values[0].AsBoolean());
+        Assert.Equal("pause", suspended.Execution.Values[1].AsString().ToString());
+        var alias = host.State.GetGlobal("alias").TryGetClosure()!;
+        files.Set(
+            "mods/value.lua",
+            "local state=2; local function get() local _=coroutine; return state+10 end; " +
+            "return {get=get}");
+
+        var reload = host.ReloadModule("value");
+        var resumed = host.RunUtf8("return coroutine.resume(co)");
+        Assert.Same(reload.CurrentRecord!.Module, alias.FunctionVersion.Module);
+        var current = host.RunUtf8("return alias(),require('value').get()");
+
+        Assert.True(reload.Succeeded, reload.Message);
+        Assert.Equal(LuaFunctionMigrationStatus.Updated, Assert.Single(
+            reload.FunctionMigrations).Status);
+        Assert.True(resumed.Execution!.Values[0].AsBoolean());
+        Assert.Equal(1, resumed.Execution.Values[1].AsInteger());
+        Assert.Equal(11, current.Execution!.Values[0].AsInteger());
+        Assert.Equal(12, current.Execution.Values[1].AsInteger());
+    }
+
+    [Fact]
     public void ReloadModuleUsesCandidateLoadedValueWhenLoaderReturnsNil()
     {
         var files = new MutableMemoryFileSystem(new Dictionary<string, string>

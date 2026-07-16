@@ -163,7 +163,7 @@ public sealed class LuaCodegenAbiV3Tests
 
         var callCache = new LuaCodegenCallSiteCache();
         var closures = Enumerable.Range(0, 5)
-            .Select(_ => state.CreateMainClosure(frame.Closure.Module))
+            .Select(_ => state.CreateMainClosure(frame.FunctionVersion.Module))
             .ToArray();
         Assert.All(closures[..4], closure => Assert.True(callCache.TryMatchOrAdd(closure)));
         Assert.False(callCache.TryMatchOrAdd(closures[4]));

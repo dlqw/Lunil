@@ -22,7 +22,7 @@ internal interface ILuaInstructionExecutor
 /// </summary>
 internal interface ILuaFrameInstructionRouter
 {
-    LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaClosure closure);
+    LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame);
 
     void CommitPendingBackedges(LuaFrame frame);
 }

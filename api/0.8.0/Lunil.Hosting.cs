@@ -15,6 +15,32 @@ namespace Lunil.Hosting
         public void Clear() { }
     }
 
+    public sealed class LuaFunctionMigrationResult : System.IEquatable<Lunil.Hosting.LuaFunctionMigrationResult>
+    {
+        public string LogicalKey { get => throw null; init { } }
+        public Lunil.Hosting.LuaFunctionMigrationStatus Status { get => throw null; init { } }
+        public long PreviousGeneration { get => throw null; init { } }
+        public long CurrentGeneration { get => throw null; init { } }
+        public string PreviousUpvalueLayoutFingerprint { get => throw null; init { } }
+        public string? CandidateUpvalueLayoutFingerprint { get => throw null; init { } }
+        public LuaFunctionMigrationResult(string LogicalKey, Lunil.Hosting.LuaFunctionMigrationStatus Status, long PreviousGeneration, long CurrentGeneration, string PreviousUpvalueLayoutFingerprint, string? CandidateUpvalueLayoutFingerprint) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaFunctionMigrationResult? left, Lunil.Hosting.LuaFunctionMigrationResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaFunctionMigrationResult? left, Lunil.Hosting.LuaFunctionMigrationResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaFunctionMigrationResult? other) => throw null;
+        public void Deconstruct(out string LogicalKey, out Lunil.Hosting.LuaFunctionMigrationStatus Status, out long PreviousGeneration, out long CurrentGeneration, out string PreviousUpvalueLayoutFingerprint, out string? CandidateUpvalueLayoutFingerprint) => throw null;
+    }
+
+    public enum LuaFunctionMigrationStatus
+    {
+        Updated = 0,
+        ReplacementMissing = 1,
+        UpvalueLayoutMismatch = 2,
+        ConcurrentUpdate = 3
+    }
+
     public sealed class LuaHost : System.IDisposable
     {
         public Lunil.Hosting.LuaHostOptions Options { get => throw null; }
@@ -154,15 +180,18 @@ namespace Lunil.Hosting
         public int UpvalueMismatchCount { get => throw null; init { } }
         public int PatchedExportCount { get => throw null; init { } }
         public int RemovedExportCount { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaFunctionMigrationResult> FunctionMigrations { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
-        public LuaModuleReloadResult(string ModuleName, Lunil.Hosting.LuaModuleReloadStatus Status, Lunil.Runtime.LuaModuleRecord? PreviousRecord, Lunil.Runtime.LuaModuleRecord? CurrentRecord, Lunil.Compiler.LuaCompilationResult? Compilation, Lunil.Runtime.Execution.LuaExecutionResult? Execution, string? Message, bool SideEffectsMayHaveOccurred, int ReusedUpvalueCount, int UpvalueMismatchCount, int PatchedExportCount, int RemovedExportCount) { }
+        public int UpdatedFunctionCount { get => throw null; }
+        public int IncompatibleFunctionCount { get => throw null; }
+        public LuaModuleReloadResult(string ModuleName, Lunil.Hosting.LuaModuleReloadStatus Status, Lunil.Runtime.LuaModuleRecord? PreviousRecord, Lunil.Runtime.LuaModuleRecord? CurrentRecord, Lunil.Compiler.LuaCompilationResult? Compilation, Lunil.Runtime.Execution.LuaExecutionResult? Execution, string? Message, bool SideEffectsMayHaveOccurred, int ReusedUpvalueCount, int UpvalueMismatchCount, int PatchedExportCount, int RemovedExportCount, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaFunctionMigrationResult> FunctionMigrations = null) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaModuleReloadResult? left, Lunil.Hosting.LuaModuleReloadResult? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaModuleReloadResult? left, Lunil.Hosting.LuaModuleReloadResult? right) => throw null;
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaModuleReloadResult? other) => throw null;
-        public void Deconstruct(out string ModuleName, out Lunil.Hosting.LuaModuleReloadStatus Status, out Lunil.Runtime.LuaModuleRecord? PreviousRecord, out Lunil.Runtime.LuaModuleRecord? CurrentRecord, out Lunil.Compiler.LuaCompilationResult? Compilation, out Lunil.Runtime.Execution.LuaExecutionResult? Execution, out string? Message, out bool SideEffectsMayHaveOccurred, out int ReusedUpvalueCount, out int UpvalueMismatchCount, out int PatchedExportCount, out int RemovedExportCount) => throw null;
+        public void Deconstruct(out string ModuleName, out Lunil.Hosting.LuaModuleReloadStatus Status, out Lunil.Runtime.LuaModuleRecord? PreviousRecord, out Lunil.Runtime.LuaModuleRecord? CurrentRecord, out Lunil.Compiler.LuaCompilationResult? Compilation, out Lunil.Runtime.Execution.LuaExecutionResult? Execution, out string? Message, out bool SideEffectsMayHaveOccurred, out int ReusedUpvalueCount, out int UpvalueMismatchCount, out int PatchedExportCount, out int RemovedExportCount, out System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaFunctionMigrationResult> FunctionMigrations) => throw null;
     }
 
     public enum LuaModuleReloadStatus

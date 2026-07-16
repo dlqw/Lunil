@@ -47,7 +47,7 @@ public static class LuaCodegenAbiV1
         ArgumentOutOfRangeException.ThrowIfNegative(registerCount);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             registerCount,
-            frame.Closure.Function.RegisterCount);
+            frame.Function.RegisterCount);
         LuaExecutionEngine.SetFrameTop(thread, frame, checked(frame.Base + registerCount));
     }
 
@@ -63,12 +63,12 @@ public static class LuaCodegenAbiV1
         int constant)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(constant);
-        var constants = frame.Closure.Function.Constants;
+        var constants = frame.Function.Constants;
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(constant, constants.Length);
         if (constants[constant].Kind == LuaIrConstantKind.String)
         {
             return LuaValue.FromString(
-                frame.Closure.GetOrCreateStringConstant(context.State, constant));
+                frame.GetOrCreateStringConstant(context.State, context.Thread, constant));
         }
 
         return LuaExecutionEngine.MaterializeConstant(
@@ -174,7 +174,7 @@ public static class LuaCodegenAbiV1
         ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(
             programCounter,
-            frame.Closure.Function.Instructions.Length);
+            frame.Function.Instructions.Length);
         frame.ProgramCounter = programCounter;
     }
 
@@ -183,13 +183,13 @@ public static class LuaCodegenAbiV1
         ArgumentOutOfRangeException.ThrowIfNegative(register);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
             register,
-            frame.Closure.Function.RegisterCount);
+            frame.Function.RegisterCount);
     }
 
     private static void ValidateRegisterRange(LuaFrame frame, int firstRegister, int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(firstRegister);
-        var registerCount = frame.Closure.Function.RegisterCount;
+        var registerCount = frame.Function.RegisterCount;
         ArgumentOutOfRangeException.ThrowIfGreaterThan(firstRegister, registerCount);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(count, registerCount - firstRegister);
     }

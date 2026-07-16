@@ -302,6 +302,35 @@ public sealed class LuaDebugLibraryTests
     }
 
     [Fact]
+    public void ErrorCloseHandlersExposeProtectedNativeBoundaryInfo()
+    {
+        var state = new LuaState();
+        LuaStandardLibrary.InstallBasic(state);
+        LuaStandardLibrary.InstallTable(state);
+        LuaStandardLibrary.InstallCoroutine(state);
+        LuaStandardLibrary.InstallDebug(state);
+
+        var values = Execute(
+            state,
+            "local received,info " +
+            "local function foo() " +
+            "local value <close> = setmetatable({}, {__close=function(_,err) " +
+            "received=err info=debug.getinfo(2) end}) " +
+            "error(43) end " +
+            "local co=coroutine.create(function() return pcall(foo) end) " +
+            "local resumed,ok,err=coroutine.resume(co) " +
+            "return resumed,ok,err,received,info.what,info.func==pcall,info.currentline");
+
+        Assert.True(values[0].AsBoolean());
+        Assert.False(values[1].AsBoolean());
+        Assert.Equal(43, values[2].AsInteger());
+        Assert.Equal(43, values[3].AsInteger());
+        Assert.Equal("C", values[4].AsString().ToString());
+        Assert.True(values[5].AsBoolean());
+        Assert.Equal(-1, values[6].AsInteger());
+    }
+
+    [Fact]
     public void DebugInfoNamesLuaMetamethodFrames()
     {
         var values = Execute(

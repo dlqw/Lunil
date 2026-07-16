@@ -28,7 +28,7 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.8.0-alpha.8`**; stable `0.7.0` and its API/package baselines
+> The current source version is **`0.8.0-alpha.9`**; stable `0.7.0` and its API/package baselines
 > remain immutable. This Alpha develops faster PUC chunk lowering, qualified Hosting/CLI JIT
 > selection, linear string-library construction, bounded JIT fallback, continuous unboxed numeric
 > regions, and guarded table/call paths. Its `api/0.8.0` data is a reviewed snapshot rather than a
@@ -82,11 +82,11 @@ collector.
 | Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
 | CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.8` permits reviewed feature/API work and cannot promote directly to stable |
+| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.9` permits reviewed feature/API work and cannot promote directly to stable |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | `0.8.0-alpha.8` readiness |
+| Execution path | Release behavior | `0.8.0-alpha.9` readiness |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -95,8 +95,8 @@ collector.
 | Persisted CIL AOT | Explicit artifact compile, validation, collectible load, and execution | Qualified on all six release RIDs; exact-module profiles can persist guarded unboxed numeric regions with precise fallback |
 | Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
 
-The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.8` layers the work described
-in its [changelog](changelogs/0.8.0-alpha.8.md) on top without changing the frozen `api/0.7.0`
+The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.9` layers the work described
+in its [changelog](changelogs/0.8.0-alpha.9.md) on top without changing the frozen `api/0.7.0`
 contract.
 
 ## Features
@@ -190,7 +190,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.8
+dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.9
 lunil --version
 
 lunil run app.lua -- one two
@@ -244,7 +244,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.8" />
+<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.9" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through one
@@ -319,8 +319,11 @@ references, and `Custom` delegates the cache merge to the host. Compile failures
 execution/policy failures restore the old `package.loaded` value and record, while
 `SideEffectsMayHaveOccurred` reports that arbitrary Lua or host effects cannot be rolled back.
 Preload and custom-searcher loaders are replayed with their recorded loader data. `loadfile` and
-`dofile` are deliberately not registered as named modules. Existing local function references and
-suspended closures remain on their old code version.
+`dofile` are deliberately not registered as named modules. Reload now updates existing aliases to
+exported Lua closures when the stable lexical key and complete upvalue layout match. The closure
+keeps its original upvalue cells; active and suspended frames keep the immutable function version
+captured on entry, while later calls observe the atomically published version. Incompatible
+layouts remain on old code and are reported through `FunctionMigrations`.
 
 The same host exposes a reusable incremental workspace without changing runtime `package` or
 `require` behavior:
@@ -356,6 +359,13 @@ the widened profile. Set
 `EnableTier2ManagedFallback=true` to allow the still-experimental `ManagedProfileProgram` path.
 Dynamic-code-unavailable deployments, including NativeAOT, keep exact interpreter fallback and do
 not collect Tier 2 profiles.
+
+`Invalidate`, `ClearCache`, and executor disposal form a strict module-generation quiescence
+boundary for the dynamic JIT: old delegates stop admitting entries, generated backedges return
+`BackendInvalidated`, and invalidation waits for every old lease to exit. For source revisions,
+`LuaJitProfileRemapper.Remap` can create a target-identity payload only for functions whose lexical
+identity, signature, upvalue layout, and complete canonical `Opcode/A/B/C/D` stream are unchanged;
+self-module call targets are rewritten and all other changed functions receive empty profiles.
 
 Loop OSR is independently enabled by default, but admits only verified natural loops whose
 hotness-delayed eligibility analysis guarantees
@@ -409,7 +419,7 @@ Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` ite
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.8" />
+  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.9" />
   <LunilCompile Include="Modules/math.lua"
                 ModuleName="app.math"
                 InputKind="Source"
@@ -533,7 +543,7 @@ The active `0.8.0` promotion sequence is:
 0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
 ```
 
-The current source version is **`0.8.0-alpha.8`**. Stable `0.7.0`, its tag, and `api/0.7.0`
+The current source version is **`0.8.0-alpha.9`**. Stable `0.7.0`, its tag, and `api/0.7.0`
 remain immutable; backward-compatible fixes on that stable line use `0.7.1`. Alpha prerelease
 counters increase for every published build, and promotion restarts at `beta.1` only after the
 complete `0.8` feature and public-API scope is accepted. The current reviewed `api/0.8.0`

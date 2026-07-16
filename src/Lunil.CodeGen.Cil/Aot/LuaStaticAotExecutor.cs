@@ -51,8 +51,8 @@ public sealed class LuaStaticAotExecutor
             Lunil.IR.Canonical.LuaIrInstruction instruction)
         {
             if (LuaStaticAotRegistry.TryGetFunction(
-                frame.Closure.Module,
-                frame.Closure.Function.Id,
+                frame.Module,
+                frame.Function.Id,
                 out var function) && function is not null)
             {
                 return function(context, thread, frame);

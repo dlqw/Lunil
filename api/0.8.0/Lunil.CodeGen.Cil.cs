@@ -1232,6 +1232,38 @@ namespace Lunil.CodeGen.Cil.Jit
         Disabled = 3
     }
 
+    public sealed class LuaJitProfileRemapResult : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult>
+    {
+        public Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapStatus Status { get => throw null; init { } }
+        public byte[]? Payload { get => throw null; init { } }
+        public int RemappedFunctionCount { get => throw null; init { } }
+        public int IncompatibleFunctionCount { get => throw null; init { } }
+        public int AddedFunctionCount { get => throw null; init { } }
+        public int RemovedFunctionCount { get => throw null; init { } }
+        public string? DiagnosticCode { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaJitProfileRemapResult(Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapStatus Status, byte[]? Payload, int RemappedFunctionCount, int IncompatibleFunctionCount, int AddedFunctionCount, int RemovedFunctionCount, string? DiagnosticCode = null, string? Message = null) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult? left, Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult? left, Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult? other) => throw null;
+        public void Deconstruct(out Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapStatus Status, out byte[]? Payload, out int RemappedFunctionCount, out int IncompatibleFunctionCount, out int AddedFunctionCount, out int RemovedFunctionCount, out string? DiagnosticCode, out string? Message) => throw null;
+    }
+
+    public enum LuaJitProfileRemapStatus
+    {
+        Remapped = 0,
+        Rejected = 1
+    }
+
+    public static class LuaJitProfileRemapper
+    {
+        public static Lunil.CodeGen.Cil.Jit.LuaJitProfileRemapResult Remap(Lunil.IR.Canonical.LuaIrModule sourceModule, Lunil.IR.Canonical.LuaIrModule targetModule, System.ReadOnlySpan<byte> sourcePayload) => throw null;
+    }
+
     public sealed class LuaJitSiteProfile : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitSiteProfile>
     {
         public int ProgramCounter { get => throw null; init { } }
