@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
@@ -193,6 +194,11 @@ public sealed partial class LuaHost
 
         LuaValue committedValue;
         LuaTablePatch? tablePatch = null;
+        var functionMigrations = LuaFunctionMigrationPlan.Create(
+            previousCache,
+            previous.Module,
+            candidateValue,
+            candidateModule);
         try
         {
             switch (options.CachePolicy)
@@ -244,6 +250,8 @@ public sealed partial class LuaHost
                 _jitExecutor?.Invalidate(previous.Module);
             }
 
+            var migrationResults = functionMigrations.Apply();
+
             return new LuaModuleReloadResult(
                 name,
                 LuaModuleReloadStatus.Reloaded,
@@ -256,7 +264,8 @@ public sealed partial class LuaHost
                 upvalues.Snapshots.Count,
                 upvalues.MismatchCount,
                 tablePatch?.PatchedExportCount ?? 0,
-                tablePatch?.RemovedExportCount ?? 0);
+                tablePatch?.RemovedExportCount ?? 0,
+                migrationResults);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and
             not StackOverflowException and not AccessViolationException)
@@ -363,7 +372,8 @@ public sealed partial class LuaHost
             reusedUpvalueCount,
             upvalueMismatchCount,
             PatchedExportCount: 0,
-            RemovedExportCount: 0);
+            RemovedExportCount: 0,
+            FunctionMigrations: []);
 
     private static void ValidateReloadOptions(LuaModuleReloadOptions options)
     {
@@ -472,4 +482,229 @@ public sealed partial class LuaHost
         int MismatchCount);
 
     private readonly record struct UpvalueSnapshot(LuaUpvalue Cell, LuaValue Value);
+
+    private sealed class LuaFunctionMigrationPlan
+    {
+        private readonly List<PreparedFunctionMigration> _prepared;
+        private readonly List<LuaFunctionMigrationResult> _rejected;
+
+        private LuaFunctionMigrationPlan(
+            List<PreparedFunctionMigration> prepared,
+            List<LuaFunctionMigrationResult> rejected)
+        {
+            _prepared = prepared;
+            _rejected = rejected;
+        }
+
+        public static LuaFunctionMigrationPlan Create(
+            LuaValue previous,
+            LuaIrModule? previousModule,
+            LuaValue candidate,
+            LuaIrModule? candidateModule)
+        {
+            if (previousModule is null || candidateModule is null ||
+                ReferenceEquals(previousModule, candidateModule))
+            {
+                return new LuaFunctionMigrationPlan([], []);
+            }
+
+            var previousSlots = new HashSet<LuaFunctionSlot>();
+            var candidateVersions = new Dictionary<string, List<LuaFunctionVersion>>(
+                StringComparer.Ordinal);
+            CollectPrevious(
+                previous,
+                previousModule,
+                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                previousSlots);
+            CollectCandidates(
+                candidate,
+                candidateModule,
+                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                candidateVersions);
+
+            var prepared = new List<PreparedFunctionMigration>();
+            var rejected = new List<LuaFunctionMigrationResult>();
+            foreach (var slot in previousSlots)
+            {
+                var current = slot.Current;
+                if (!candidateVersions.TryGetValue(current.LogicalKey, out var candidates))
+                {
+                    rejected.Add(Result(
+                        current,
+                        LuaFunctionMigrationStatus.ReplacementMissing));
+                    continue;
+                }
+
+                var replacement = candidates.FirstOrDefault(candidateVersion => string.Equals(
+                    candidateVersion.UpvalueLayoutFingerprint,
+                    current.UpvalueLayoutFingerprint,
+                    StringComparison.Ordinal));
+                if (replacement is null)
+                {
+                    rejected.Add(Result(
+                        current,
+                        LuaFunctionMigrationStatus.UpvalueLayoutMismatch,
+                        candidates[0]));
+                    continue;
+                }
+
+                prepared.Add(new PreparedFunctionMigration(
+                    slot,
+                    current,
+                    replacement.CreateSuccessor(checked(current.Generation + 1))));
+            }
+
+            return new LuaFunctionMigrationPlan(prepared, rejected);
+        }
+
+        public ImmutableArray<LuaFunctionMigrationResult> Apply()
+        {
+            var results = ImmutableArray.CreateBuilder<LuaFunctionMigrationResult>(
+                _prepared.Count + _rejected.Count);
+            results.AddRange(_rejected);
+            foreach (var migration in _prepared)
+            {
+                var updated = migration.Slot.TryPublish(
+                    migration.Previous,
+                    migration.Replacement);
+                results.Add(new LuaFunctionMigrationResult(
+                    migration.Previous.LogicalKey,
+                    updated
+                        ? LuaFunctionMigrationStatus.Updated
+                        : LuaFunctionMigrationStatus.ConcurrentUpdate,
+                    migration.Previous.Generation,
+                    updated
+                        ? migration.Replacement.Generation
+                        : migration.Slot.Current.Generation,
+                    migration.Previous.UpvalueLayoutFingerprint,
+                    migration.Replacement.UpvalueLayoutFingerprint));
+            }
+
+            return results
+                .OrderBy(static result => result.LogicalKey, StringComparer.Ordinal)
+                .ThenBy(static result => result.Status)
+                .ThenBy(static result => result.PreviousGeneration)
+                .ToImmutableArray();
+        }
+
+        private static LuaFunctionMigrationResult Result(
+            LuaFunctionVersion previous,
+            LuaFunctionMigrationStatus status,
+            LuaFunctionVersion? candidate = null) => new(
+            previous.LogicalKey,
+            status,
+            previous.Generation,
+            previous.Generation,
+            previous.UpvalueLayoutFingerprint,
+            candidate?.UpvalueLayoutFingerprint);
+
+        private static void CollectPrevious(
+            LuaValue value,
+            LuaIrModule module,
+            HashSet<object> visited,
+            HashSet<LuaFunctionSlot> slots)
+        {
+            if (value.Kind == LuaValueKind.Table)
+            {
+                var table = value.AsTable();
+                if (!visited.Add(table))
+                {
+                    return;
+                }
+
+                if (table.Metatable is not null)
+                {
+                    CollectPrevious(LuaValue.FromTable(table.Metatable), module, visited, slots);
+                }
+
+                TraverseTable(table, item => CollectPrevious(item, module, visited, slots));
+                return;
+            }
+
+            var closure = value.TryGetClosure();
+            if (closure is null || !visited.Add(closure))
+            {
+                return;
+            }
+
+            if (ReferenceEquals(closure.FunctionVersion.Module, module))
+            {
+                slots.Add(closure.FunctionSlot);
+            }
+            foreach (var upvalue in closure.Upvalues)
+            {
+                CollectPrevious(upvalue.Value, module, visited, slots);
+            }
+        }
+
+        private static void CollectCandidates(
+            LuaValue value,
+            LuaIrModule module,
+            HashSet<object> visited,
+            Dictionary<string, List<LuaFunctionVersion>> versions)
+        {
+            if (value.Kind == LuaValueKind.Table)
+            {
+                var table = value.AsTable();
+                if (!visited.Add(table))
+                {
+                    return;
+                }
+
+                if (table.Metatable is not null)
+                {
+                    CollectCandidates(
+                        LuaValue.FromTable(table.Metatable),
+                        module,
+                        visited,
+                        versions);
+                }
+
+                TraverseTable(table, item => CollectCandidates(item, module, visited, versions));
+                return;
+            }
+
+            var closure = value.TryGetClosure();
+            if (closure is null || !visited.Add(closure))
+            {
+                return;
+            }
+
+            var version = closure.FunctionVersion;
+            if (ReferenceEquals(version.Module, module))
+            {
+                if (!versions.TryGetValue(version.LogicalKey, out var candidates))
+                {
+                    candidates = [];
+                    versions.Add(version.LogicalKey, candidates);
+                }
+
+                if (!candidates.Contains(version, ReferenceEqualityComparer.Instance))
+                {
+                    candidates.Add(version);
+                }
+            }
+
+            foreach (var upvalue in closure.Upvalues)
+            {
+                CollectCandidates(upvalue.Value, module, visited, versions);
+            }
+        }
+
+        private static void TraverseTable(LuaTable table, Action<LuaValue> visit)
+        {
+            var key = LuaValue.Nil;
+            while (table.Next(key, out var nextKey, out var value))
+            {
+                visit(nextKey);
+                visit(value);
+                key = nextKey;
+            }
+        }
+
+        private sealed record PreparedFunctionMigration(
+            LuaFunctionSlot Slot,
+            LuaFunctionVersion Previous,
+            LuaFunctionVersion Replacement);
+    }
 }

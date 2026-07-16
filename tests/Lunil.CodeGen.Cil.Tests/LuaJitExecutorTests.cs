@@ -2286,6 +2286,123 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void ProfileRemapPreservesExactStructureAndRewritesSelfCallTargets()
+    {
+        var source = Compile(
+            "local function add(value) return value+1 end; return add(40)");
+        var target = Compile(
+            "local function add(value) return value+2 end; return add(39)");
+        using var training = CreateProfileTrainingExecutor();
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+
+        var result = LuaJitProfileRemapper.Remap(
+            source,
+            target,
+            training.ExportProfile(source));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(target.Functions.Length, result.RemappedFunctionCount);
+        Assert.Equal(0, result.IncompatibleFunctionCount);
+        var profile = LuaJitProfileCodec.Deserialize(target, result.Payload!);
+        var main = profile.Functions.Single(entry => entry.FunctionId == target.MainFunctionId);
+        var callTarget = Assert.Single(
+            main.Profile.Sites.SelectMany(static site => site.CallTargets),
+            static call => call.Kind == LuaJitCallTargetKind.Lua);
+        var nested = target.Functions.Single(function =>
+            LuaFunctionIdentity.GetLogicalKey(target, function.Id) == "root/0");
+        Assert.Equal(profile.ModuleContentId, callTarget.ModuleContentId);
+        Assert.Equal(nested.Id, callTarget.FunctionId);
+        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default);
+        Assert.True(warmed.ImportProfile(target, result.Payload).Succeeded);
+    }
+
+    [Fact]
+    public void ProfileRemapRejectsOnlyFunctionsWhoseCanonicalOperandsChanged()
+    {
+        var source = Compile(
+            "local function transform(value) return value+1 end; return transform(40)");
+        var target = Compile(
+            "local function transform(value) return value*2 end; return transform(40)");
+        using var training = CreateProfileTrainingExecutor();
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+
+        var result = LuaJitProfileRemapper.Remap(
+            source,
+            target,
+            training.ExportProfile(source));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(1, result.RemappedFunctionCount);
+        Assert.Equal(1, result.IncompatibleFunctionCount);
+        var profile = LuaJitProfileCodec.Deserialize(target, result.Payload!);
+        var transformed = target.Functions.Single(function =>
+            LuaFunctionIdentity.GetLogicalKey(target, function.Id) == "root/0");
+        Assert.Equal(0, profile.Functions.Single(entry =>
+            entry.FunctionId == transformed.Id).Profile.Samples);
+        Assert.True(profile.Functions.Single(entry =>
+            entry.FunctionId == target.MainFunctionId).Profile.Samples > 0);
+    }
+
+    [Fact]
+    public void ProfileRemapUsesLexicalIdentityWhenDenseFunctionIdsShift()
+    {
+        var source = Compile("""
+            local function first() return 1 end
+            local function second(value) return value + 1 end
+            return second(40)
+            """);
+        var target = Compile("""
+            local function first()
+                local function nested() return 1 end
+                return nested()
+            end
+            local function second(value) return value + 1 end
+            return second(40)
+            """);
+        var sourceSecond = source.Functions.Single(function =>
+            LuaFunctionIdentity.GetLogicalKey(source, function.Id) == "root/1");
+        var targetSecond = target.Functions.Single(function =>
+            LuaFunctionIdentity.GetLogicalKey(target, function.Id) == "root/1");
+        Assert.NotEqual(sourceSecond.Id, targetSecond.Id);
+        using var training = CreateProfileTrainingExecutor();
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+        AssertValues(ExecuteFresh(training, source), LuaValue.FromInteger(41));
+
+        var result = LuaJitProfileRemapper.Remap(
+            source,
+            target,
+            training.ExportProfile(source));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(1, result.AddedFunctionCount);
+        var profile = LuaJitProfileCodec.Deserialize(target, result.Payload!);
+        Assert.True(profile.Functions.Single(entry =>
+            entry.FunctionId == targetSecond.Id).Profile.Samples > 0);
+    }
+
+    [Fact]
+    public void ProfileRemapRejectsMalformedOrWrongSourcePayload()
+    {
+        var source = Compile("return 1");
+        var other = Compile("return 2");
+        var target = Compile("return 3");
+        using var training = CreateProfileTrainingExecutor();
+        var payload = training.ExportProfile(source);
+        var malformed = payload.ToArray();
+        malformed[^1] ^= 0xff;
+
+        var malformedResult = LuaJitProfileRemapper.Remap(source, target, malformed);
+        var incompatibleResult = LuaJitProfileRemapper.Remap(other, target, payload);
+
+        Assert.Equal(LuaJitProfileRemapStatus.Rejected, malformedResult.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Malformed, malformedResult.DiagnosticCode);
+        Assert.Equal(LuaJitProfileRemapStatus.Rejected, incompatibleResult.Status);
+        Assert.Equal(LuaJitProfileDiagnosticCodes.Incompatible, incompatibleResult.DiagnosticCode);
+    }
+
+    [Fact]
     public void ProfileImportRejectsVersionMismatchEvenWithValidChecksum()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
@@ -2820,7 +2937,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public async Task ActiveTier2DelegateFinishesAcrossInvalidationButCannotBeReentered()
+    public async Task InvalidationWaitsForActiveTier2DelegateAndPreventsReentry()
     {
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -2851,14 +2968,61 @@ public sealed class LuaJitExecutorTests
             LuaValue.FromInteger(3)));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
 
-        executor.Invalidate(module);
+        var invalidating = Task.Run(() => executor.Invalidate(module));
+        var earlyCompletion = await Task.WhenAny(invalidating, Task.Delay(100));
+        Assert.NotSame(invalidating, earlyCompletion);
         release.Set();
 
         AssertValues(await active, LuaValue.FromInteger(23));
+        await invalidating;
         Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
-        Assert.Equal(LuaJitFunctionState.Invalidated, executor.GetFunctionState(module, 0));
         AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(4)), LuaValue.FromInteger(24));
         Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
+    }
+
+    [Fact]
+    public async Task DisposeWaitsForActiveTier2GenerationLease()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var compiler = new BlockingInvocationTier2Compiler(
+            ProfileGuidedLuaTier2Compiler.Instance,
+            entered,
+            release);
+        var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                SynchronousCompilation = true,
+                EnableTier2 = true,
+                EnableLoopOsr = false,
+                Tier2InvocationThreshold = 1,
+                Tier2BackedgeThreshold = int.MaxValue,
+            },
+            tier2Compiler: compiler);
+        var module = Compile(
+            "local n=...; local i=0; while i<20 do n=n+1; i=i+1 end; return n");
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(1)),
+            LuaValue.FromInteger(21));
+        AssertValues(
+            ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(22));
+        compiler.Arm();
+        var active = Task.Run(() => ExecuteFresh(
+            executor,
+            module,
+            LuaValue.FromInteger(3)));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+
+        var disposing = Task.Run(executor.Dispose);
+        var earlyCompletion = await Task.WhenAny(disposing, Task.Delay(100));
+        Assert.NotSame(disposing, earlyCompletion);
+        release.Set();
+
+        AssertValues(await active, LuaValue.FromInteger(23));
+        await disposing;
+        Assert.Equal(0, executor.Statistics.EstimatedCodeBytes);
     }
 
     [Fact]
@@ -4270,7 +4434,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public async Task ActiveLoopOsrDelegateFinishesAcrossInvalidationButCannotBeReentered()
+    public async Task InvalidationWaitsForActiveLoopOsrDelegateAndPreventsReentry()
     {
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
@@ -4304,10 +4468,13 @@ public sealed class LuaJitExecutorTests
         var active = Task.Run(() => ExecuteFresh(executor, module));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
 
-        executor.Invalidate(module);
+        var invalidating = Task.Run(() => executor.Invalidate(module));
+        var earlyCompletion = await Task.WhenAny(invalidating, Task.Delay(100));
+        Assert.NotSame(invalidating, earlyCompletion);
         release.Set();
 
         AssertValues(await active, LuaValue.FromInteger(2500));
+        await invalidating;
         Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
         AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(2500));
         Assert.Equal(firstGenerationBefore + 1, compiler.FirstGenerationEntries);
@@ -4456,6 +4623,19 @@ public sealed class LuaJitExecutorTests
         Assert.All(references, reference => Assert.False(reference.IsAlive));
         Assert.True(executor.Statistics.LoopOsrCompilationCompleted >= 1);
     }
+
+    private static LuaJitExecutor CreateProfileTrainingExecutor() => CreateExecutor(
+        LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
 
     private static LuaJitExecutor CreateExecutor(
         LuaJitExecutorOptions options,

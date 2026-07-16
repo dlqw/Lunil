@@ -154,7 +154,7 @@ public static class LuaDebugApi
             return -1;
         }
 
-        var instructions = frame.Closure.Function.Instructions;
+        var instructions = frame.Function.Instructions;
         if (instructions.IsEmpty)
         {
             return -1;
@@ -173,7 +173,7 @@ public static class LuaDebugApi
             return -1;
         }
 
-        var instructions = frame.Closure.Function.Instructions;
+        var instructions = frame.Function.Instructions;
         if (instructions.IsEmpty)
         {
             return -1;
@@ -280,7 +280,7 @@ public static class LuaDebugApi
         LuaFrame frame)
     {
         var pc = EffectiveProgramCounter(thread, frame);
-        return frame.Closure.Function.LocalVariables.Where(local =>
+        return frame.Function.LocalVariables.Where(local =>
             local.StartProgramCounter <= pc && pc < local.EndProgramCounter);
     }
 
@@ -322,7 +322,7 @@ public static class LuaDebugApi
         LuaFrame frame,
         int localCount)
     {
-        var function = frame.Closure.Function;
+        var function = frame.Function;
         var defined = new bool[function.RegisterCount];
         var limit = Math.Clamp(
             EffectiveProgramCounter(thread, frame),
@@ -421,7 +421,7 @@ public static class LuaDebugApi
     private static int EffectiveProgramCounter(LuaThread thread, LuaFrame frame)
     {
         var pc = frame.ProgramCounter;
-        var instructions = frame.Closure.Function.Instructions;
+        var instructions = frame.Function.Instructions;
         if (thread.Status != LuaThreadStatus.Suspended || pc <= 0 || pc > instructions.Length)
         {
             return pc;

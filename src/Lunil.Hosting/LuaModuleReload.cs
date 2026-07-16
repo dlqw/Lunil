@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -61,10 +62,38 @@ public enum LuaModuleReloadStatus : byte
     CachePolicyFailed,
 }
 
+/// <summary>Outcome for one old closure slot discovered below the previous module cache.</summary>
+public enum LuaFunctionMigrationStatus : byte
+{
+    /// <summary>The old closure now publishes the compatible replacement version.</summary>
+    Updated,
+
+    /// <summary>No replacement with the same stable lexical key was produced.</summary>
+    ReplacementMissing,
+
+    /// <summary>The lexical key matched but the captured-upvalue layout did not.</summary>
+    UpvalueLayoutMismatch,
+
+    /// <summary>The slot changed concurrently before the prepared replacement was published.</summary>
+    ConcurrentUpdate,
+}
+
+/// <summary>Structured closure-version migration evidence from one reload.</summary>
+public sealed record LuaFunctionMigrationResult(
+    string LogicalKey,
+    LuaFunctionMigrationStatus Status,
+    long PreviousGeneration,
+    long CurrentGeneration,
+    string PreviousUpvalueLayoutFingerprint,
+    string? CandidateUpvalueLayoutFingerprint);
+
 /// <summary>Structured outcome of one manual module reload attempt.</summary>
 /// <param name="SideEffectsMayHaveOccurred">
 /// Whether a failed reload executed candidate or policy code whose arbitrary side effects could
 /// not be rolled back. Successful reloads report <see langword="false"/>.
+/// </param>
+/// <param name="FunctionMigrations">
+/// Compatible and rejected old-closure slot migrations discovered below the module cache.
 /// </param>
 public sealed record LuaModuleReloadResult(
     string ModuleName,
@@ -78,7 +107,17 @@ public sealed record LuaModuleReloadResult(
     int ReusedUpvalueCount,
     int UpvalueMismatchCount,
     int PatchedExportCount,
-    int RemovedExportCount)
+    int RemovedExportCount,
+    ImmutableArray<LuaFunctionMigrationResult> FunctionMigrations = default)
 {
     public bool Succeeded => Status == LuaModuleReloadStatus.Reloaded;
+
+    public int UpdatedFunctionCount => FunctionMigrations.IsDefaultOrEmpty
+        ? 0
+        : FunctionMigrations.Count(
+            static migration => migration.Status == LuaFunctionMigrationStatus.Updated);
+
+    public int IncompatibleFunctionCount => FunctionMigrations.IsDefaultOrEmpty
+        ? 0
+        : FunctionMigrations.Length - UpdatedFunctionCount;
 }

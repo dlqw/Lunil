@@ -17,6 +17,30 @@ public sealed class LuaCodegenAbiV2Tests
     }
 
     [Fact]
+    public async Task BackendGenerationInvalidationIsObservableAndWaitsForActiveLease()
+    {
+        var (state, thread, _) = CreateFrame();
+        var context = new LuaExecutionContext(state, thread, remainingInstructionCount: 1);
+        var generation = new LuaBackendGeneration();
+        var previousGeneration = generation.Current;
+        Assert.True(context.TryEnterBackendGeneration(generation, previousGeneration));
+        Assert.True(context.IsBackendGenerationCurrent());
+
+        generation.BeginInvalidation();
+        Assert.False(context.IsBackendGenerationCurrent());
+        var completing = Task.Run(generation.CompleteInvalidation);
+        var earlyCompletion = await Task.WhenAny(completing, Task.Delay(100));
+        Assert.NotSame(completing, earlyCompletion);
+
+        context.ExitBackendGeneration();
+        await completing;
+        Assert.True(context.IsBackendGenerationCurrent());
+        Assert.False(context.TryEnterBackendGeneration(generation, previousGeneration));
+        Assert.True(context.TryEnterBackendGeneration(generation, generation.Current));
+        context.ExitBackendGeneration();
+    }
+
+    [Fact]
     public void PrimitiveBinaryGuardAndExecutionShareNumericSemantics()
     {
         var (state, thread, frame) = CreateFrame();

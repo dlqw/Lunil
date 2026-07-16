@@ -276,6 +276,7 @@ namespace Lunil.Runtime.CodeGen
         public bool HasExactDebugHooks { get => throw null; }
         public bool TryReserveInstructions(int instructionCount) => throw null;
         public bool IsDebugModeCurrent() => throw null;
+        public bool IsBackendGenerationCurrent() => throw null;
     }
 }
 namespace Lunil.Runtime.Execution
@@ -284,6 +285,7 @@ namespace Lunil.Runtime.Execution
     {
         public Lunil.IR.Canonical.LuaIrModule Module { get => throw null; }
         public Lunil.IR.Canonical.LuaIrFunction Function { get => throw null; }
+        public Lunil.Runtime.Execution.LuaFunctionVersion FunctionVersion { get => throw null; }
         public System.Collections.Generic.IReadOnlyList<Lunil.Runtime.Execution.LuaUpvalue> Upvalues { get => throw null; }
         public Lunil.Runtime.Execution.LuaUpvalue GetUpvalue(int index) => throw null;
         public void JoinUpvalue(int index, Lunil.Runtime.Execution.LuaClosure source, int sourceIndex) { }
@@ -329,6 +331,7 @@ namespace Lunil.Runtime.Execution
     public sealed class LuaFrame
     {
         public Lunil.Runtime.Execution.LuaClosure Closure { get => throw null; }
+        public Lunil.Runtime.Execution.LuaFunctionVersion FunctionVersion { get => throw null; }
         public int Base { get => throw null; }
         public int Top { get => throw null; }
         public int ProgramCounter { get => throw null; }
@@ -340,6 +343,21 @@ namespace Lunil.Runtime.Execution
         public bool IsTailCall { get => throw null; }
         public string? DebugFunctionName { get => throw null; }
         public string? DebugFunctionNameWhat { get => throw null; }
+    }
+
+    public static class LuaFunctionIdentity
+    {
+        public static string GetLogicalKey(Lunil.IR.Canonical.LuaIrModule module, int functionId) => throw null;
+        public static string GetUpvalueLayoutFingerprint(Lunil.IR.Canonical.LuaIrFunction function) => throw null;
+    }
+
+    public sealed class LuaFunctionVersion
+    {
+        public Lunil.IR.Canonical.LuaIrModule Module { get => throw null; }
+        public Lunil.IR.Canonical.LuaIrFunction Function { get => throw null; }
+        public long Generation { get => throw null; }
+        public string LogicalKey { get => throw null; }
+        public string UpvalueLayoutFingerprint { get => throw null; }
     }
 
     public sealed class LuaInterpreter

@@ -26,7 +26,7 @@ public static class LuaCodegenAbiV3
         int arrayCapacity)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var allocationHint = frame.Closure.GetOrCreateTableAllocationHint(
+        var allocationHint = frame.GetOrCreateTableAllocationHint(
             frame.ProgramCounter);
         WriteRegisterAndExtendTop(
             thread,

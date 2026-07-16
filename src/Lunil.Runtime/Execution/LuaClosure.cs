@@ -7,112 +7,56 @@ namespace Lunil.Runtime.Execution;
 public sealed class LuaClosure : LuaGcObject
 {
     private readonly LuaUpvalue[] _upvalues;
-    private readonly LuaString?[] _materializedStringConstants;
-    private readonly LuaTableAllocationHint?[] _tableAllocationHints;
-    private readonly object _constantGate = new();
-    private int _framelessCallEntries;
+    private readonly LuaFunctionSlot _functionSlot;
 
     internal LuaClosure(
         LuaHeap owner,
-        LuaIrModule module,
+        LuaModuleRuntimeData runtimeData,
         LuaIrFunction function,
-        IReadOnlyList<LuaUpvalue> upvalues,
-        LuaModuleStringConstants stringConstants)
-        : base(Validate(owner, module, function, upvalues), checked(64 + upvalues.Count * 8L))
+        IReadOnlyList<LuaUpvalue> upvalues)
+        : base(
+            Validate(owner, runtimeData.Module, function, upvalues),
+            checked(64 + upvalues.Count * 8L))
     {
-        ArgumentNullException.ThrowIfNull(stringConstants);
-        Module = module;
-        Function = function;
-        HasSourceLineInformation = function.Instructions.Any(
-            static instruction => instruction.SourceLine > 0);
+        ArgumentNullException.ThrowIfNull(runtimeData);
         _upvalues = [.. upvalues];
-        _materializedStringConstants = new LuaString?[function.Constants.Length];
-        _tableAllocationHints = new LuaTableAllocationHint?[function.Instructions.Length];
-        StringConstants = stringConstants;
-        FramelessInstructionCount = GetFramelessInstructionCount(function);
+        _functionSlot = new LuaFunctionSlot(runtimeData.GetVersion(function.Id));
     }
 
-    public LuaIrModule Module { get; }
+    public LuaIrModule Module => FunctionVersion.Module;
 
-    public LuaIrFunction Function { get; }
+    public LuaIrFunction Function => FunctionVersion.Function;
 
-    internal bool HasSourceLineInformation { get; }
+    /// <summary>Gets the immutable code version used by calls entering this closure now.</summary>
+    public LuaFunctionVersion FunctionVersion => _functionSlot.Current;
 
-    internal int FramelessInstructionCount { get; }
+    internal LuaFunctionSlot FunctionSlot => _functionSlot;
 
-    internal bool SupportsFramelessCall => FramelessInstructionCount != 0;
+    internal bool HasSourceLineInformation => FunctionVersion.HasSourceLineInformation;
+
+    internal int FramelessInstructionCount => FunctionVersion.FramelessInstructionCount;
 
     public IReadOnlyList<LuaUpvalue> Upvalues => _upvalues;
 
-    internal LuaModuleStringConstants StringConstants { get; }
+    internal LuaModuleStringConstants StringConstants =>
+        FunctionVersion.RuntimeData.StringConstants;
 
     internal LuaString GetOrCreateStringConstant(LuaState state, int constantIndex)
     {
-        var existing = Volatile.Read(ref _materializedStringConstants[constantIndex]);
-        if (existing is not null && existing.IsAlive)
+        if (!ReferenceEquals(state.Heap, Owner))
         {
-            return existing;
+            throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
         }
 
-        lock (_constantGate)
-        {
-            existing = _materializedStringConstants[constantIndex];
-            if (existing is not null && existing.IsAlive)
-            {
-                return existing;
-            }
-
-            var constant = Function.Constants[constantIndex];
-            if (constant.Kind != LuaIrConstantKind.String)
-            {
-                throw new InvalidOperationException("The cached constant is not a string.");
-            }
-
-            if (!ReferenceEquals(state.Heap, Owner))
-            {
-                throw new LuaRuntimeException("cannot materialize a constant in another Lua state");
-            }
-
-            existing = StringConstants.GetOrCreate(state, constant.Bytes.AsSpan());
-            Owner.WriteBarrier(this, existing);
-            Volatile.Write(ref _materializedStringConstants[constantIndex], existing);
-            return existing;
-        }
+        var value = FunctionVersion.GetOrCreateStringConstant(state, constantIndex);
+        Owner.WriteBarrier(this, value);
+        return value;
     }
 
-    internal bool TryEnterFramelessCall()
-    {
-        if (!SupportsFramelessCall)
-        {
-            return false;
-        }
-
-        // Preserve the normal frame/backend entry for the first two invocations so profiling,
-        // tier installation, and diagnostics observe the function before the leaf fast path
-        // starts bypassing scheduler frames. Once warm, avoid an atomic write on every leaf call
-        // and keep the counter from wrapping in a long-lived state.
-        if (Volatile.Read(ref _framelessCallEntries) > 2)
-        {
-            return true;
-        }
-
-        return Interlocked.Increment(ref _framelessCallEntries) > 2;
-    }
+    internal bool TryEnterFramelessCall() => FunctionVersion.TryEnterFramelessCall();
 
     internal LuaTableAllocationHint GetOrCreateTableAllocationHint(int programCounter)
-    {
-        var existing = Volatile.Read(ref _tableAllocationHints[programCounter]);
-        if (existing is not null)
-        {
-            return existing;
-        }
-
-        var candidate = new LuaTableAllocationHint();
-        return Interlocked.CompareExchange(
-            ref _tableAllocationHints[programCounter],
-            candidate,
-            null) ?? candidate;
-    }
+        => FunctionVersion.GetOrCreateTableAllocationHint(programCounter);
 
     public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
 
@@ -136,14 +80,7 @@ public sealed class LuaClosure : LuaGcObject
             visitor.Visit(upvalue);
         }
 
-        StringConstants.Traverse(visitor);
-        foreach (var constant in _materializedStringConstants)
-        {
-            if (constant is not null && constant.IsAlive)
-            {
-                visitor.Visit(constant);
-            }
-        }
+        FunctionVersion.Traverse(visitor);
     }
 
     private static LuaHeap Validate(
@@ -172,44 +109,6 @@ public sealed class LuaClosure : LuaGcObject
         return owner;
     }
 
-    private static int GetFramelessInstructionCount(LuaIrFunction function)
-    {
-        const int maximumInstructions = 16;
-        const int maximumRegisters = 32;
-        if (function.IsVarArg || function.Upvalues.Length != 0 ||
-            function.Instructions.Length is 0 or > maximumInstructions ||
-            function.RegisterCount > maximumRegisters)
-        {
-            return 0;
-        }
-
-        for (var programCounter = 0; programCounter < function.Instructions.Length;
-             programCounter++)
-        {
-            var instruction = function.Instructions[programCounter];
-            switch (instruction.Opcode)
-            {
-                case LuaIrOpcode.Move:
-                case LuaIrOpcode.LoadNil:
-                    break;
-                case LuaIrOpcode.Unary when
-                    (LuaIrUnaryOperator)instruction.C is LuaIrUnaryOperator.Negate or
-                        LuaIrUnaryOperator.BitwiseNot or LuaIrUnaryOperator.LogicalNot:
-                    break;
-                case LuaIrOpcode.Binary when
-                    (LuaIrBinaryOperator)instruction.D is not
-                        (LuaIrBinaryOperator.Concatenate or LuaIrBinaryOperator.FloorDivide or
-                            LuaIrBinaryOperator.Modulo):
-                    break;
-                case LuaIrOpcode.Return when instruction.B >= 0:
-                    return programCounter + 1;
-                default:
-                    return 0;
-            }
-        }
-
-        return 0;
-    }
 }
 
 /// <summary>

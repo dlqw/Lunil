@@ -25,9 +25,10 @@ public static class LuaCodegenAbiV2
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(frame);
-        return LuaCodegenAbiV1.CanExecuteCompiled(context) &&
-            frame.Closure.Function.Id == functionId &&
-            frame.Closure.Function.RegisterCount == registerCount &&
+        return context.IsBackendGenerationCurrent() &&
+            LuaCodegenAbiV1.CanExecuteCompiled(context) &&
+            frame.Function.Id == functionId &&
+            frame.Function.RegisterCount == registerCount &&
             frame.Base >= 0 &&
             frame.Base <= context.Thread.Stack.Capacity - registerCount;
     }
@@ -61,6 +62,11 @@ public static class LuaCodegenAbiV2
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(thread);
         ArgumentNullException.ThrowIfNull(frame);
+        if (!context.IsBackendGenerationCurrent())
+        {
+            return LuaCompiledExitReason.BackendInvalidated;
+        }
+
         if (!LuaCodegenAbiV1.CanExecuteCompiled(context) ||
             !ReferenceEquals(context.Thread, thread) ||
             !ReferenceEquals(thread.CurrentFrame, frame) ||

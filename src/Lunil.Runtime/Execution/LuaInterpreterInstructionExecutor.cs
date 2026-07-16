@@ -30,8 +30,9 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             case LuaIrOpcode.LoadConstant:
                 LuaExecutionEngine.Write(thread, frame, instruction.A, LuaExecutionEngine.MaterializeConstant(
                     state,
-                    frame.Closure,
-                    frame.Closure.Function.Constants[instruction.B]));
+                    thread,
+                    frame,
+                    instruction.B));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.LoadNil:
@@ -68,7 +69,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.NewTable:
-                var allocationHint = frame.Closure.GetOrCreateTableAllocationHint(
+                var allocationHint = frame.GetOrCreateTableAllocationHint(
                     frame.ProgramCounter);
                 LuaExecutionEngine.Write(
                     thread,

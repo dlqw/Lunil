@@ -675,7 +675,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                 thread.IsClosing ||
                 frame.Continuation.Kind != LuaContinuationKind.None ||
                 frame.Top < frame.Base ||
-                frame.Top > frame.Base + frame.Closure.Function.RegisterCount ||
+                frame.Top > frame.Base + frame.Function.RegisterCount ||
                 frame.ToBeClosedSlots.Any(slot => slot < frame.Base || slot >= frame.Top))
             {
                 return GuardFailure(context, frame.ProgramCounter);

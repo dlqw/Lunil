@@ -129,7 +129,8 @@ public sealed class LuaThread : LuaGcObject
         LuaValue errorHandler = default,
         bool isCloseHandler = false,
         bool isDebugHook = false,
-        bool isHidden = false)
+        bool isHidden = false,
+        LuaFunctionVersion? functionVersion = null)
     {
         var frame = _framePool.Count == 0 ? new LuaFrame() : _framePool.Pop();
         frame.Initialize(
@@ -143,7 +144,8 @@ public sealed class LuaThread : LuaGcObject
             errorHandler,
             isCloseHandler,
             isDebugHook,
-            isHidden);
+            isHidden,
+            functionVersion);
         return frame;
     }
 
@@ -375,6 +377,7 @@ public sealed class LuaThread : LuaGcObject
         bool includeStack)
     {
         visitor.Visit(frame.Closure);
+        frame.FunctionVersion.Traverse(visitor);
         if (includeStack)
         {
             Stack.Traverse(frame.Base, frame.Top, visitor);

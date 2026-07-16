@@ -39,6 +39,10 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CheckLoopOsrHeader),
         [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]);
+    private static readonly MethodInfo IsBackendGenerationCurrent = Method(
+        typeof(LuaExecutionContext),
+        nameof(LuaExecutionContext.IsBackendGenerationCurrent),
+        []);
     private static readonly MethodInfo ReadRegister = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
@@ -226,6 +230,9 @@ internal static class ReflectionEmitLuaLoopOsrCompiler
 
             if (pc == plan.BackedgeProgramCounter)
             {
+                generator.Emit(OpCodes.Ldarg_0);
+                generator.Emit(OpCodes.Callvirt, IsBackendGenerationCurrent);
+                generator.Emit(OpCodes.Brfalse, invalidatedExit);
                 generator.Emit(OpCodes.Ldarg_0);
                 generator.Emit(OpCodes.Ldarg_2);
                 EmitInt32(generator, pc);

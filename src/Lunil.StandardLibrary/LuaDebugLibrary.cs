@@ -534,7 +534,7 @@ internal static class LuaDebugLibrary
         LuaFrame frame,
         int frameIndex)
     {
-        var source = LuaLibraryHelpers.ShortSource(frame.Closure.Function.SourceName);
+        var source = LuaLibraryHelpers.ShortSource(frame.Function.SourceName);
         var line = LuaDebugApi.GetCurrentLine(thread, frame);
         builder.Append("\n\t").Append(source);
         if (line >= 0)
@@ -565,9 +565,9 @@ internal static class LuaDebugLibrary
         }
 
         builder.Append(": in function <").Append(source);
-        if (frame.Closure.Function.LineDefined > 0)
+        if (frame.Function.LineDefined > 0)
         {
-            builder.Append(':').Append(frame.Closure.Function.LineDefined);
+            builder.Append(':').Append(frame.Function.LineDefined);
         }
 
         builder.Append('>');
@@ -588,17 +588,17 @@ internal static class LuaDebugLibrary
     {
         var frame = thread.Frames.LastOrDefault(static frame => !frame.IsHidden);
         if (frame is null || frame.ProgramCounter < 0 ||
-            frame.ProgramCounter >= frame.Closure.Function.Instructions.Length)
+            frame.ProgramCounter >= frame.Function.Instructions.Length)
         {
             function = LuaValue.Nil;
             return false;
         }
 
-        var instruction = frame.Closure.Function.Instructions[frame.ProgramCounter];
+        var instruction = frame.Function.Instructions[frame.ProgramCounter];
         if (instruction.Opcode is not (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
             thread.Status == LuaThreadStatus.Suspended && frame.ProgramCounter > 0)
         {
-            var previous = frame.Closure.Function.Instructions[frame.ProgramCounter - 1];
+            var previous = frame.Function.Instructions[frame.ProgramCounter - 1];
             if (previous.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall)
             {
                 instruction = previous;
@@ -625,9 +625,10 @@ internal static class LuaDebugLibrary
         var table = state.CreateTable();
         var closure = function.TryGetClosure();
         var native = function.TryGetNativeFunction();
+        var luaFunction = frame?.FunctionVersion.Function ?? closure?.Function;
         if (options.Contains('S'))
         {
-            if (closure is null)
+            if (luaFunction is null)
             {
                 SetString(state, table, "source", "=[C]");
                 SetString(state, table, "short_src", "[C]");
@@ -637,16 +638,16 @@ internal static class LuaDebugLibrary
             }
             else
             {
-                var source = LuaLibraryHelpers.Source(closure.Function.SourceName);
+                var source = LuaLibraryHelpers.Source(luaFunction.SourceName);
                 SetString(state, table, "source", source);
                 SetString(
                     state,
                     table,
                     "short_src",
-                    LuaLibraryHelpers.ShortSource(closure.Function.SourceName));
-                SetString(state, table, "what", closure.Function.LineDefined == 0 ? "main" : "Lua");
-                SetInteger(state, table, "linedefined", closure.Function.LineDefined);
-                SetInteger(state, table, "lastlinedefined", closure.Function.LastLineDefined);
+                    LuaLibraryHelpers.ShortSource(luaFunction.SourceName));
+                SetString(state, table, "what", luaFunction.LineDefined == 0 ? "main" : "Lua");
+                SetInteger(state, table, "linedefined", luaFunction.LineDefined);
+                SetInteger(state, table, "lastlinedefined", luaFunction.LastLineDefined);
             }
         }
 
@@ -667,9 +668,9 @@ internal static class LuaDebugLibrary
         {
             var nups = closure?.Upvalues.Count ?? function.TryGetNativeClosure()?.CaptureCount ?? 0;
             SetInteger(state, table, "nups", nups);
-            SetInteger(state, table, "nparams", closure?.Function.ParameterCount ?? 0);
+            SetInteger(state, table, "nparams", luaFunction?.ParameterCount ?? 0);
             LuaLibraryHelpers.Set(state, table, "isvararg",
-                LuaValue.FromBoolean(closure?.Function.IsVarArg ?? true));
+                LuaValue.FromBoolean(luaFunction?.IsVarArg ?? true));
         }
 
         if (options.Contains('n'))
@@ -759,8 +760,8 @@ internal static class LuaDebugLibrary
 
         var caller = thread.Frames[frameIndex - 1];
         var callPc = Math.Clamp(caller.ProgramCounter - 1, 0,
-            caller.Closure.Function.Instructions.Length - 1);
-        var call = caller.Closure.Function.Instructions[callPc];
+            caller.Function.Instructions.Length - 1);
+        var call = caller.Function.Instructions[callPc];
         if (call.Opcode is not (LuaIrOpcode.Call or LuaIrOpcode.TailCall))
         {
             return null;
@@ -768,7 +769,7 @@ internal static class LuaDebugLibrary
 
         if (call.Opcode == LuaIrOpcode.Call &&
             ((LuaIrCallKind)call.D == LuaIrCallKind.ForIterator ||
-                IsGenericForIteratorCall(caller.Closure.Function, callPc, call)))
+                IsGenericForIteratorCall(caller.Function, callPc, call)))
         {
             return ("for iterator", "for iterator");
         }
@@ -781,7 +782,7 @@ internal static class LuaDebugLibrary
 
         for (var pc = callPc - 1; pc >= 0; pc--)
         {
-            var instruction = caller.Closure.Function.Instructions[pc];
+            var instruction = caller.Function.Instructions[pc];
             if (instruction.A != call.A)
             {
                 continue;
@@ -797,9 +798,9 @@ internal static class LuaDebugLibrary
             }
 
             if (instruction.Opcode == LuaIrOpcode.GetUpvalue &&
-                instruction.B >= 0 && instruction.B < caller.Closure.Function.Upvalues.Length)
+                instruction.B >= 0 && instruction.B < caller.Function.Upvalues.Length)
             {
-                var upvalue = caller.Closure.Function.Upvalues[instruction.B];
+                var upvalue = caller.Function.Upvalues[instruction.B];
                 if (!IsSyntheticUpvalueName(upvalue))
                 {
                     return (upvalue.Name, "upvalue");
@@ -874,7 +875,7 @@ internal static class LuaDebugLibrary
             return null;
         }
 
-        var instructions = frame.Closure.Function.Instructions;
+        var instructions = frame.Function.Instructions;
         for (var pc = beforeProgramCounter - 1; pc >= 0; pc--)
         {
             var instruction = instructions[pc];
@@ -885,7 +886,7 @@ internal static class LuaDebugLibrary
 
             if (instruction.Opcode == LuaIrOpcode.LoadConstant)
             {
-                var constant = frame.Closure.Function.Constants[instruction.B];
+                var constant = frame.Function.Constants[instruction.B];
                 return constant.Kind == LuaIrConstantKind.String
                     ? Encoding.UTF8.GetString(constant.Bytes.AsSpan())
                     : null;
