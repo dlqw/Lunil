@@ -763,6 +763,13 @@ was zero, all four region-shape facts were nonzero, and hot instruction-budget c
 
 The corrected rejected-workload on/off medians were `lua_calls` **0.999x**, `table_access`
 **0.987x**, `metamethod` **0.996x**, and `coroutine_error_hook` **1.007x**. Every allocation comparison
-was at parity and the local Tier 1, Tier 2, Loop OSR, and persisted-AOT decisions all qualified. A
-fresh protected six-RID aggregate remains the cross-architecture authority for this final probe
-batching change.
+was at parity and the local Tier 1, Tier 2, Loop OSR, and persisted-AOT decisions all qualified.
+
+The final protected run is [CI 29468655163](https://github.com/dlqw/Lunil/actions/runs/29468655163).
+All six RIDs qualified for Tier 1, Tier 2, Loop OSR, and persisted AOT. The minimum Loop OSR
+arithmetic CI95 lower bound was **108.615x** versus interpreter and **133.644x** versus the disabled
+control; maximum Loop OSR compilation p95 was **3.448 ms** and maximum compile allocation p95 was
+**191,136 B**. The minimum Tier 2 arithmetic CI95 lower bound was **84.039x**, maximum compilation
+p95 was **2.797 ms**, and maximum compile allocation p95 was **241,648 B**. Every RID installed the
+required numeric region with zero hot instruction-budget checks, and every rejected-workload
+timing, startup, allocation, eligibility, managed-installation, and guard-failure gate passed.
