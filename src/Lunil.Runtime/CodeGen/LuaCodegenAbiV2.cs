@@ -190,6 +190,12 @@ public static class LuaCodegenAbiV2
         var left = ReadRegisterUnchecked(thread, frame, leftRegister);
         var right = ReadRegisterUnchecked(thread, frame, rightRegister);
         var binary = (LuaIrBinaryOperator)operation;
+        if (binary == LuaIrBinaryOperator.Concatenate)
+        {
+            return (left.TryGetString() is not null || left.IsInteger || left.IsFloat) &&
+                (right.TryGetString() is not null || right.IsInteger || right.IsFloat);
+        }
+
         if (binary is LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual)
         {
             return left == right || left.Kind != right.Kind ||
@@ -217,12 +223,6 @@ public static class LuaCodegenAbiV2
         {
             return IsNumber(left) && IsNumber(right) ||
                 left.Kind == LuaValueKind.String && right.Kind == LuaValueKind.String;
-        }
-
-        if (binary == LuaIrBinaryOperator.Concatenate)
-        {
-            return left.Kind is LuaValueKind.String or LuaValueKind.Integer or LuaValueKind.Float &&
-                right.Kind is LuaValueKind.String or LuaValueKind.Integer or LuaValueKind.Float;
         }
 
         return false;
@@ -361,6 +361,5 @@ public static class LuaCodegenAbiV2
         }
     }
 
-    private static bool IsNumber(LuaValue value) =>
-        value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
+    private static bool IsNumber(LuaValue value) => value.IsInteger || value.IsFloat;
 }

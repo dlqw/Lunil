@@ -49,11 +49,10 @@ public static class LuaCodegenAbiV3
     {
         var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
-        if (target.Kind == LuaValueKind.Table && target.AsTable().Metatable is null)
+        if (target.TryGetTable() is { Metatable: null } table)
         {
-            var table = target.AsTable();
-            var value = key.TryGetInteger(out var integer) &&
-                table.TryGetArrayValue(integer, out var arrayValue)
+            var value = key.IsInteger &&
+                table.TryGetArrayValue(key.AsIntegerUnchecked(), out var arrayValue)
                     ? arrayValue
                     : table.Get(key);
             WriteRegisterAndExtendTop(
@@ -92,12 +91,10 @@ public static class LuaCodegenAbiV3
         var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
         var value = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, valueRegister);
-        if (target.Kind == LuaValueKind.Table && target.AsTable().Metatable is null)
+        if (target.TryGetTable() is { Metatable: null } table)
         {
-            var table = target.AsTable();
-            if (!key.TryGetInteger(out var integer) ||
-                !table.TrySetArrayValue(integer, value) &&
-                !table.TryAppendArray(integer, value))
+            if (!key.IsInteger ||
+                !table.TrySetOrAppendArrayValue(key.AsIntegerUnchecked(), value))
             {
                 table.Set(key, value);
             }
@@ -187,12 +184,11 @@ public static class LuaCodegenAbiV3
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(cache);
         var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
-        if (target.Kind != LuaValueKind.Table)
+        if (target.TryGetTable() is not { } table)
         {
             return LuaCodegenPicExecutionResult.GuardFailure;
         }
 
-        var table = target.AsTable();
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
         var exists = table.TryGetExistingEntry(key, out var value, out _);
         if (!exists && !cache.CanBypass(table, LuaMetamethod.Index))
@@ -226,12 +222,11 @@ public static class LuaCodegenAbiV3
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(cache);
         var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
-        if (target.Kind != LuaValueKind.Table)
+        if (target.TryGetTable() is not { } table)
         {
             return LuaCodegenPicExecutionResult.GuardFailure;
         }
 
-        var table = target.AsTable();
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
         var exists = table.TryGetExistingEntry(key, out _, out var entry);
         if (!exists && !cache.CanBypass(table, LuaMetamethod.NewIndex))
@@ -251,9 +246,8 @@ public static class LuaCodegenAbiV3
         }
         else
         {
-            if (!key.TryGetInteger(out var integer) ||
-                !table.TrySetArrayValue(integer, value) &&
-                !table.TryAppendArray(integer, value))
+            if (!key.IsInteger ||
+                !table.TrySetOrAppendArrayValue(key.AsIntegerUnchecked(), value))
             {
                 table.Set(key, value);
             }

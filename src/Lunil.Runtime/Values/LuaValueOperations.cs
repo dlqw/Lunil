@@ -366,22 +366,24 @@ public static class LuaValueOperations
 
     internal static LuaValue Concatenate(LuaState state, LuaValue left, LuaValue right)
     {
-        if (left.Kind == LuaValueKind.String &&
-            right.Kind == LuaValueKind.Integer &&
+        var leftString = left.TryGetString();
+        if (leftString is not null &&
+            right.IsInteger &&
             state.Strings.TryGetOrCreateIntegerConcat(
-                left.AsString(),
-                right.AsInteger(),
+                leftString,
+                right.AsIntegerUnchecked(),
                 textFirst: true,
                 out var cachedRight))
         {
             return LuaValue.FromString(cachedRight);
         }
 
-        if (left.Kind == LuaValueKind.Integer &&
-            right.Kind == LuaValueKind.String &&
+        var rightString = right.TryGetString();
+        if (left.IsInteger &&
+            rightString is not null &&
             state.Strings.TryGetOrCreateIntegerConcat(
-                right.AsString(),
-                left.AsInteger(),
+                rightString,
+                left.AsIntegerUnchecked(),
                 textFirst: false,
                 out var cachedLeft))
         {

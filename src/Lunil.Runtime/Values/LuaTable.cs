@@ -155,6 +155,41 @@ public sealed class LuaTable : LuaGcObject
     }
 
     /// <summary>
+    /// Updates or appends one dense integer slot for an ordinary strong table. Keeping both
+    /// cases in one helper avoids a failed update probe before every sequential append.
+    /// </summary>
+    internal bool TrySetOrAppendArrayValue(long index, LuaValue value)
+    {
+        if (_metatable is not null)
+        {
+            return false;
+        }
+
+        var offset = index - 1;
+        if ((ulong)offset < (ulong)_array.Count)
+        {
+            Owner.WriteBarrier(this, value);
+            SetArray((int)offset, value);
+            return true;
+        }
+
+        if (offset != _array.Count || value.IsNil)
+        {
+            return false;
+        }
+
+        Owner.WriteBarrier(this, value);
+        Owner.AdjustLogicalSize(this, 16);
+        EnsureArrayAppendCapacity();
+        _array.Add(value);
+        IncrementShapeVersion();
+        IncrementContentVersion();
+        IncrementStorageVersion();
+        MigrateArrayTail();
+        return true;
+    }
+
+    /// <summary>
     /// Performs one raw lookup and, when the key is present, returns an opaque handle that can
     /// update that exact entry without probing the table again. The handle never exposes array
     /// or hash storage to code-generation consumers and is valid only until the next table

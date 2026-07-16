@@ -37,6 +37,11 @@ instead of re-graying and re-traversing the full growing array at a later increm
 metatable-backed table, including any table that can acquire weak semantics through `__mode`,
 fails the helper and retains the general backward-barrier path.
 
+The compiled strong-table route combines existing-slot update and sequential append in one probe,
+and common integer keys use the runtime value's internal exact-tag check before falling back to
+generic Lua key normalization. This changes neither the public value ABI nor float/integer key
+equivalence: keys without the integer tag still reach the canonical table operation.
+
 Known Lua-call sites guard the closure identity and verified fixed-result window. Eligible leaf
 calls use the frameless ABI and, when the scheduler state remains clean, continue in the same Tier 1
 or Tier 2 method. Debug hooks, yieldable or protected calls, close/unwind state, finalizers, pending

@@ -99,7 +99,7 @@ public sealed class LuaGarbageCollectorTests
         }
 
         Assert.Equal(LuaGcColor.White, child.Color);
-        Assert.True(parent.TryAppendArray(1, LuaValue.FromTable(child)));
+        Assert.True(parent.TrySetOrAppendArrayValue(1, LuaValue.FromTable(child)));
         Assert.Equal(LuaGcColor.Black, parent.Color);
         Assert.Equal(LuaGcColor.Gray, child.Color);
 
