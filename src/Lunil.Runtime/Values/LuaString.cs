@@ -38,6 +38,8 @@ public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
 
     public ReadOnlySpan<byte> AsSpan() => _bytes.AsSpan(0, _length);
 
+    internal ReadOnlyMemory<byte> AsMemory() => _bytes.AsMemory(0, _length);
+
     public byte[] ToArray() => AsSpan().ToArray();
 
     public bool Equals(LuaString? other) =>

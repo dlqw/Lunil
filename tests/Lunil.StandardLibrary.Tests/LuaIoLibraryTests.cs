@@ -110,6 +110,43 @@ public sealed class LuaIoLibraryTests
         Assert.Contains("invalid mode", values[7].AsString().ToString());
     }
 
+    [Fact]
+    public void ReadBufferReducesStreamTransitionsAndPreservesSeekPushbackAndUpdateWrites()
+    {
+        var prefix = Enumerable.Repeat((byte)'a', 4096).ToArray();
+        var suffix = " 42z\nlast"u8.ToArray();
+        var input = new byte[prefix.Length + suffix.Length];
+        prefix.CopyTo(input, 0);
+        suffix.CopyTo(input, prefix.Length);
+        var files = new MemoryFileSystem(new Dictionary<string, byte[]>
+        {
+            ["buffered.txt"] = input,
+            ["unbuffered.txt"] = Enumerable.Repeat((byte)'b', 32).ToArray(),
+        });
+
+        var values = Execute(files,
+            "local f=assert(io.open('buffered.txt','r')); assert(f:setvbuf('full',64)); " +
+            "for i=1,4096 do assert(f:read(1)=='a') end local before=f:seek(); " +
+            "local n=f:read('*n'); local afterNumber=f:seek(); local marker=f:read(1); " +
+            "local line=f:read('*L'); local tail=f:read('*a'); f:close(); " +
+            "local u=assert(io.open('unbuffered.txt','r')); assert(u:setvbuf('no')); " +
+            "for i=1,16 do assert(u:read(1)=='b') end u:close(); " +
+            "local w=assert(io.open('update.txt','w+')); w:write('abcdef'); w:seek('set'); " +
+            "w:setvbuf('full',4); assert(w:read(1)=='a'); w:write('Z'); w:seek('set'); " +
+            "local updated=w:read('*a'); w:close(); " +
+            "return before,n,afterNumber,marker,line,tail,updated");
+
+        Assert.Equal(4096, values[0].AsInteger());
+        Assert.Equal(42, values[1].AsInteger());
+        Assert.Equal(4099, values[2].AsInteger());
+        Assert.Equal("z", values[3].AsString().ToString());
+        Assert.Equal("\n", values[4].AsString().ToString());
+        Assert.Equal("last", values[5].AsString().ToString());
+        Assert.Equal("aZcdef", values[6].AsString().ToString());
+        Assert.InRange(files.OpenedStreams["buffered.txt"].ReadOperationCount, 1, 70);
+        Assert.Equal(16, files.OpenedStreams["unbuffered.txt"].ReadOperationCount);
+    }
+
     private static LuaValue[] Execute(MemoryFileSystem files, string source)
     {
         var state = new LuaState();
@@ -130,6 +167,8 @@ public sealed class LuaIoLibraryTests
     {
         public Dictionary<string, int> CloseCounts { get; } = [];
 
+        public Dictionary<string, CommitStream> OpenedStreams { get; } = [];
+
         public byte[] ReadAllBytes(string path) => files[path].ToArray();
 
         public bool FileExists(string path) => files.ContainsKey(path);
@@ -144,11 +183,13 @@ public sealed class LuaIoLibraryTests
             var initial = mode is LuaFileMode.Write or LuaFileMode.WriteUpdate
                 ? []
                 : files.GetValueOrDefault(path, []);
-            return new CommitStream(initial, bytes =>
+            var stream = new CommitStream(initial, bytes =>
             {
                 files[path] = bytes;
                 CloseCounts[path] = CloseCounts.GetValueOrDefault(path) + 1;
             }, mode is LuaFileMode.Append or LuaFileMode.AppendUpdate);
+            OpenedStreams[path] = stream;
+            return stream;
         }
 
         public Stream OpenTemporary(out string? path)
@@ -167,6 +208,20 @@ public sealed class LuaIoLibraryTests
             _commit = commit;
             Write(initial);
             Position = append ? Length : 0;
+        }
+
+        public int ReadOperationCount { get; private set; }
+
+        public override int Read(Span<byte> buffer)
+        {
+            ReadOperationCount++;
+            return base.Read(buffer);
+        }
+
+        public override int ReadByte()
+        {
+            ReadOperationCount++;
+            return base.ReadByte();
         }
 
         protected override void Dispose(bool disposing)

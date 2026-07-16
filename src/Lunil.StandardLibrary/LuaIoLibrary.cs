@@ -310,8 +310,7 @@ internal static class LuaIoLibrary
             throw LuaLibraryHelpers.BadArgument("setvbuf", 2, "invalid buffer size");
         }
 
-        file.BufferMode = mode;
-        file.BufferSize = (int)size;
+        file.ConfigureBuffer(mode, (int)size);
         return [LuaValue.FromBoolean(true)];
     }
 
@@ -748,6 +747,9 @@ internal sealed class LuaFileHandle : IDisposable
     private readonly Stream _stream;
     private readonly IDisposable? _process;
     private readonly Stack<byte> _pushback = new();
+    private byte[]? _readBuffer;
+    private int _readBufferOffset;
+    private int _readBufferLength;
 
     public LuaFileHandle(
         Stream stream,
@@ -770,8 +772,14 @@ internal sealed class LuaFileHandle : IDisposable
     public bool Writable { get; }
     public bool Append { get; }
     public bool IsClosed { get; private set; }
-    public string BufferMode { get; set; } = "full";
-    public int BufferSize { get; set; } = 8192;
+    public string BufferMode { get; private set; } = "full";
+    public int BufferSize { get; private set; } = 8192;
+
+    public void ConfigureBuffer(string mode, int size)
+    {
+        BufferMode = mode;
+        BufferSize = size;
+    }
 
     public bool IsEndOfFile
     {
@@ -791,17 +799,7 @@ internal sealed class LuaFileHandle : IDisposable
     public byte[] ReadBytes(int count)
     {
         var result = new byte[count];
-        var length = 0;
-        while (length < count)
-        {
-            var value = ReadByte();
-            if (value < 0)
-            {
-                break;
-            }
-
-            result[length++] = (byte)value;
-        }
+        var length = Read(result);
 
         return length == count ? result : result[..length];
     }
@@ -812,6 +810,13 @@ internal sealed class LuaFileHandle : IDisposable
         while (_pushback.Count > 0)
         {
             result.WriteByte(_pushback.Pop());
+        }
+
+        if (_readBufferOffset < _readBufferLength)
+        {
+            result.Write(
+                _readBuffer!.AsSpan(_readBufferOffset, _readBufferLength - _readBufferOffset));
+            _readBufferOffset = _readBufferLength;
         }
 
         _stream.CopyTo(result);
@@ -949,6 +954,7 @@ internal sealed class LuaFileHandle : IDisposable
 
     public void Write(ReadOnlySpan<byte> bytes)
     {
+        PrepareForWrite();
         if (Append && _stream.CanSeek)
         {
             _stream.Seek(0, SeekOrigin.End);
@@ -972,10 +978,10 @@ internal sealed class LuaFileHandle : IDisposable
 
         if (origin == SeekOrigin.Current)
         {
-            offset -= _pushback.Count;
+            offset -= UnreadByteCount;
         }
 
-        _pushback.Clear();
+        ClearReadState();
         return _stream.Seek(offset, origin);
     }
 
@@ -1009,9 +1015,110 @@ internal sealed class LuaFileHandle : IDisposable
         _ = Close();
     }
 
-    private int ReadByte() => _pushback.Count > 0 ? _pushback.Pop() : _stream.ReadByte();
+    private int Read(Span<byte> destination)
+    {
+        var written = 0;
+        while (_pushback.Count > 0 && written < destination.Length)
+        {
+            destination[written++] = _pushback.Pop();
+        }
+
+        while (written < destination.Length)
+        {
+            var buffered = _readBufferLength - _readBufferOffset;
+            if (buffered > 0)
+            {
+                var count = Math.Min(buffered, destination.Length - written);
+                _readBuffer!.AsSpan(_readBufferOffset, count).CopyTo(destination[written..]);
+                _readBufferOffset += count;
+                written += count;
+                continue;
+            }
+
+            if (!UsesReadBuffer || destination.Length - written >= BufferSize)
+            {
+                var count = _stream.Read(destination[written..]);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                written += count;
+                continue;
+            }
+
+            if (!FillReadBuffer())
+            {
+                break;
+            }
+        }
+
+        return written;
+    }
+
+    private int ReadByte()
+    {
+        if (_pushback.Count > 0)
+        {
+            return _pushback.Pop();
+        }
+
+        if (_readBufferOffset < _readBufferLength)
+        {
+            return _readBuffer![_readBufferOffset++];
+        }
+
+        if (!UsesReadBuffer)
+        {
+            return _stream.ReadByte();
+        }
+
+        return FillReadBuffer() ? _readBuffer![_readBufferOffset++] : -1;
+    }
 
     private void Unread(byte value) => _pushback.Push(value);
+
+    private bool FillReadBuffer()
+    {
+        var size = Math.Max(1, BufferSize);
+        if (_readBuffer is null || _readBuffer.Length != size)
+        {
+            _readBuffer = new byte[size];
+        }
+
+        _readBufferOffset = 0;
+        _readBufferLength = _stream.Read(_readBuffer);
+        return _readBufferLength > 0;
+    }
+
+    private void PrepareForWrite()
+    {
+        var unread = UnreadByteCount;
+        if (unread > 0)
+        {
+            if (!_stream.CanSeek)
+            {
+                return;
+            }
+
+            _stream.Seek(-unread, SeekOrigin.Current);
+        }
+
+        ClearReadState();
+    }
+
+    private void ClearReadState()
+    {
+        _pushback.Clear();
+        _readBufferOffset = 0;
+        _readBufferLength = 0;
+    }
+
+    private int UnreadByteCount =>
+        checked(_pushback.Count + _readBufferLength - _readBufferOffset);
+
+    private bool UsesReadBuffer =>
+        BufferMode != "no" && BufferSize > 0 && (!Writable || _stream.CanSeek);
 
     private static bool IsAsciiSpace(byte value) =>
         value is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n' or 0x0b or 0x0c;

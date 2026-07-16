@@ -290,7 +290,8 @@ public readonly struct LuaNativeStep
         LuaValue[] stateValues,
         bool callIsYieldable,
         bool callIsProtected,
-        LuaNativeByteBuffer? byteBuffer)
+        LuaNativeByteBuffer? byteBuffer,
+        bool stateValuesAreReusable)
     {
         Kind = kind;
         Callable = callable;
@@ -300,6 +301,7 @@ public readonly struct LuaNativeStep
         CallIsYieldable = callIsYieldable;
         CallIsProtected = callIsProtected;
         ByteBuffer = byteBuffer;
+        StateValuesAreReusable = stateValuesAreReusable;
     }
 
     public LuaNativeStepKind Kind { get; }
@@ -332,8 +334,10 @@ public readonly struct LuaNativeStep
     /// </summary>
     internal LuaNativeByteBuffer? ByteBuffer { get; }
 
+    internal bool StateValuesAreReusable { get; }
+
     public static LuaNativeStep Completed(params LuaValue[] values) =>
-        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false, null);
+        new(LuaNativeStepKind.Completed, LuaValue.Nil, values, 0, [], true, false, null, false);
 
     public static LuaNativeStep CallLua(
         LuaValue callable,
@@ -350,7 +354,26 @@ public readonly struct LuaNativeStep
             stateValues ?? [],
             callIsYieldable,
             callIsProtected,
-            null);
+            null,
+            false);
+
+    internal static LuaNativeStep CallLuaWithReusableState(
+        LuaValue callable,
+        LuaValue[] arguments,
+        int continuationId,
+        LuaValue[] stateValues,
+        bool callIsYieldable,
+        bool callIsProtected = false) =>
+        new(
+            LuaNativeStepKind.CallLua,
+            callable,
+            arguments,
+            continuationId,
+            stateValues,
+            callIsYieldable,
+            callIsProtected,
+            null,
+            true);
 
     internal static LuaNativeStep CallLuaWithByteBuffer(
         LuaValue callable,
@@ -368,7 +391,27 @@ public readonly struct LuaNativeStep
             stateValues,
             callIsYieldable,
             callIsProtected,
-            byteBuffer);
+            byteBuffer,
+            false);
+
+    internal static LuaNativeStep CallLuaWithReusableStateAndByteBuffer(
+        LuaValue callable,
+        LuaValue[] arguments,
+        int continuationId,
+        LuaValue[] stateValues,
+        bool callIsYieldable,
+        LuaNativeByteBuffer byteBuffer,
+        bool callIsProtected = false) =>
+        new(
+            LuaNativeStepKind.CallLua,
+            callable,
+            arguments,
+            continuationId,
+            stateValues,
+            callIsYieldable,
+            callIsProtected,
+            byteBuffer,
+            true);
 
     public static LuaNativeStep Yielded(
         LuaValue[] values,
@@ -382,7 +425,8 @@ public readonly struct LuaNativeStep
             stateValues ?? [],
             true,
             false,
-            null);
+            null,
+            false);
 
     internal static LuaNativeStep YieldedWithByteBuffer(
         LuaValue[] values,
@@ -397,7 +441,8 @@ public readonly struct LuaNativeStep
             stateValues,
             true,
             false,
-            byteBuffer);
+            byteBuffer,
+            false);
 }
 
 /// <summary>Owner-aware context supplied to a resumable native descriptor.</summary>
