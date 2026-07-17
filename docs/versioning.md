@@ -125,10 +125,12 @@ public-API-baseline, or package-scope changes. Backward-compatible fixes on this
 
 `0.8.0-alpha.13` continues performance convergence after the Lua AOT removal in `alpha.12`. It
 adds a compact reference-interpreter loop for same-frame canonical instructions, batches ordinary
-GC/finalizer safe points with bounded latency, preserves immediate stress/finalizer servicing, and
-keeps hooks, budgets, calls, returns, coroutine transfers, errors, and backend probes at their exact
-shared-scheduler boundaries. Low-risk call-boundary materialization and single-implementation
-observer/router overhead are removed without weakening continuation snapshots or stack ownership.
+idle GC/finalizer safe points with bounded latency, restores per-instruction progress at the
+allocation-debt threshold and throughout active cycles, preserves immediate stress/finalizer
+servicing, and keeps hooks, budgets, calls, returns, coroutine transfers, errors, and backend probes
+at their exact shared-scheduler boundaries. Low-risk call-boundary materialization and
+single-implementation observer/router overhead are removed without weakening continuation
+snapshots or stack ownership.
 The exact scope is recorded in
 [`changelogs/0.8.0-alpha.13.md`](../changelogs/0.8.0-alpha.13.md) and
 [ADR 0019](adr/0019-compact-tier0-interpreter-loop.md).

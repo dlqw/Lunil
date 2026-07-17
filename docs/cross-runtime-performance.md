@@ -128,6 +128,47 @@ The minimum was win-x64 `string_build`; its paired CI95 lower bounds were 1.026x
 1.010x for Tier 2. Thus even the narrowest hosted-run result remained above MoonSharp, rather than
 passing only through an unpaired or aggregate average.
 
+## Qualified Windows x64 report (`0.8.0-alpha.13`)
+
+The compact Tier 0 acceptance run on 2026-07-18 used exact product commit
+`2bf2a014bd1a5c5589dba217b7a3e7d5fb1e956e`, win-x64, .NET 10.0.3, eight balanced rounds,
+a 250 ms calibration floor, all eight current engines, and all eight workloads. The complete local
+evidence is stored at `artifacts/cross-runtime-performance/win-x64/20260717-184620`. All 512 timed
+samples returned the expected result. Every route was stable, fallback/deoptimization telemetry was
+clean, and all 16 Auto/Tier 2 MoonSharp gates passed.
+
+| Engine | Workloads | Geomean vs native Lua | MoonSharp-relative range | Geomean vs MoonSharp |
+|---|---:|---:|---:|---:|
+| LuaJIT | 8 | **9.286x** | 11.071x–598.776x | 137.075x |
+| Native Lua 5.4.8 | 8 | **1.000x** | 2.202x–29.626x | 14.816x |
+| Lunil Tier 2 | 8 | 0.253x | 1.236x–25.988x | **3.741x** |
+| Lunil Auto | 8 | 0.252x | 1.261x–26.204x | **3.749x** |
+| Lunil Loop OSR | 8 | 0.095x | 0.569x–25.312x | 1.402x |
+| Lunil Tier 1 | 8 | 0.081x | 0.770x–1.691x | 1.191x |
+| MoonSharp | 8 | 0.067x | 1.000x–1.000x | 1.000x |
+| Lunil interpreter | 8 | 0.042x | 0.380x–0.929x | **0.625x** |
+
+The interpreter/MoonSharp geomean rose from the `alpha.12` exact-commit baseline's 0.335x to
+0.625x. To control for run-to-run machine variation, each candidate interpreter/MoonSharp ratio
+was divided by the corresponding `alpha.12` ratio and paired by balanced round. The target
+numeric/control-flow rows exceeded both the 1.50x median and 1.25x CI95-lower requirements; every
+other workload's CI95 lower bound remained above 0.95x.
+
+| Workload | Interpreter vs MoonSharp (CI95) | Normalized gain vs `alpha.12` (paired CI95) |
+|---|---:|---:|
+| arithmetic | 0.584x (0.558–0.595) | **2.579x (2.386–2.672)** |
+| fib_iter | 0.610x (0.593–0.645) | **2.528x (2.328–2.647)** |
+| mandelbrot | 0.380x (0.372–0.391) | **1.784x (1.685–1.871)** |
+| control_flow | 0.434x (0.424–0.440) | **2.150x (2.061–2.197)** |
+| function_calls | 0.844x (0.793–0.919) | **1.782x (1.291–1.965)** |
+| table_access | 0.929x (0.867–0.964) | **1.568x (1.479–1.737)** |
+| sieve | 0.726x (0.705–0.745) | **1.338x (1.038–1.762)** |
+| string_build | 0.693x (0.677–0.710) | **1.650x (1.600–1.737)** |
+
+The narrowest product gate was `string_build`: Auto/Tier 2 reached 1.261x/1.236x with CI95 lower
+bounds of 1.226x/1.222x. Thus compact-interpreter work did not trade away the existing compiled
+candidate gate. The 0.625x interpreter geomean also exceeds the `alpha.13` target of 0.55x.
+
 ## Qualified Windows x64 report (`0.8.0-alpha.12`)
 
 The post-removal Release run on 2026-07-17 used exact product commit
