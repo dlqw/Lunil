@@ -48,7 +48,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         while (true)
         {
             var runSafePoint = --instructionsUntilSafePoint == 0 ||
-                state.Heap.RequiresImmediateInterpreterSafePoint;
+                state.Heap.RequiresInterpreterSafePoint;
             if (result is not InterpreterInstructionResult.Continue and
                 not InterpreterInstructionResult.ContinueWithSchedulerCheck)
             {
@@ -349,27 +349,27 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         InterpreterInstructionResult result,
         LuaExecutionContext context,
         int programCounter) => result switch
-    {
-        InterpreterInstructionResult.Continue or
-            InterpreterInstructionResult.ContinueWithSchedulerCheck => LuaCompiledExit.Continue(
-            programCounter,
-            context.InstructionsConsumed),
-        InterpreterInstructionResult.Call => LuaCompiledExit.Call(
-            programCounter,
-            context.InstructionsConsumed),
-        InterpreterInstructionResult.TailCall => LuaCompiledExit.TailCall(
-            programCounter,
-            context.InstructionsConsumed),
-        InterpreterInstructionResult.Return => LuaCompiledExit.Return(
-            programCounter,
-            context.InstructionsConsumed),
-        InterpreterInstructionResult.InstructionBudget => LuaCompiledExit.Poll(
-            programCounter,
-            context.InstructionsConsumed,
-            LuaCompiledExitReason.InstructionBudget),
-        _ => throw new InvalidOperationException(
-            $"Unknown interpreter instruction result {result}."),
-    };
+        {
+            InterpreterInstructionResult.Continue or
+                InterpreterInstructionResult.ContinueWithSchedulerCheck => LuaCompiledExit.Continue(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.Call => LuaCompiledExit.Call(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.TailCall => LuaCompiledExit.TailCall(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.Return => LuaCompiledExit.Return(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.InstructionBudget => LuaCompiledExit.Poll(
+                programCounter,
+                context.InstructionsConsumed,
+                LuaCompiledExitReason.InstructionBudget),
+            _ => throw new InvalidOperationException(
+                $"Unknown interpreter instruction result {result}."),
+        };
 
     private enum InterpreterInstructionResult : byte
     {
