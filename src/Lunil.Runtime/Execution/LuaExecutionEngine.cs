@@ -3962,6 +3962,7 @@ internal sealed class LuaExecutionEngine
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryContinueCompactInterpreterLoop(
         LuaExecutionContext context,
         LuaState state,
@@ -3987,6 +3988,7 @@ internal sealed class LuaExecutionEngine
         return CanContinueCompactInterpreterLoop(context, thread, frame);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool CanContinueCompactInterpreterLoop(
         LuaExecutionContext context,
         LuaThread thread,
