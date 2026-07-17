@@ -237,7 +237,7 @@ public static class LuaRuntimeOperations
         LuaValue callable,
         ReadOnlySpan<LuaValue> arguments)
     {
-        var resolvedArguments = arguments.ToArray();
+        var resolvedArguments = arguments;
         for (var iteration = 0; iteration < MaximumMetamethodChainLength; iteration++)
         {
             if (callable.Kind == LuaValueKind.Function)
@@ -254,7 +254,7 @@ public static class LuaRuntimeOperations
 
             var expanded = new LuaValue[resolvedArguments.Length + 1];
             expanded[0] = callable;
-            resolvedArguments.CopyTo(expanded, 1);
+            resolvedArguments.CopyTo(expanded.AsSpan(1));
             resolvedArguments = expanded;
             callable = metamethod;
         }

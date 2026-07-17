@@ -340,6 +340,45 @@ public sealed class LuaWeakTableAndFinalizerTests
         Assert.Equal(10, Assert.Single(result.Values).AsInteger());
     }
 
+    [Fact]
+    public void CompactInterpreterRunsFinalizerQueuedByAnAllocationBeforeReturning()
+    {
+        const string source = """
+            local finalized = false
+            local mt = { __gc = function () finalized = true end }
+            local target = setmetatable({}, mt)
+            target = nil
+            local trigger = { 1 }
+            return finalized, trigger[1]
+            """;
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                StressEveryAllocation = true,
+                HashSeed = 1,
+            },
+        });
+        state.SetGlobal(
+            "setmetatable",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "setmetatable",
+                static (_, arguments) =>
+                {
+                    arguments[0].AsTable().SetMetatable(arguments[1].AsTable());
+                    return [arguments[0]];
+                })));
+        var lowering = LuaLowerer.Lower(
+            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+
+        var result = new LuaInterpreter().Execute(
+            state,
+            state.CreateMainClosure(lowering.Module!));
+
+        Assert.True(result.Values[0].AsBoolean());
+        Assert.Equal(1, result.Values[1].AsInteger());
+    }
+
     private static LuaTable CreateWeakTable(LuaState state, string mode)
     {
         var metatable = state.CreateTable();

@@ -15,7 +15,7 @@ must continue to match the stable `v0.7.0` tag; later feature work never rewrite
 ### Active `0.8.0`
 
 [`api/0.8.0/`](../api/0.8.0/) records the reviewed public API and package snapshot for
-`0.8.0-alpha.12`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
+`0.8.0-alpha.13`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
 Beta freeze. The exact gate still rejects an unreviewed addition, removal, signature change,
 dependency edge, or package asset. Entering `0.8.0-beta.1` will turn the accepted snapshot into the
 frozen contract for the rest of the `0.8` line.
@@ -38,7 +38,7 @@ stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
-active `0.8.0-alpha.12` version they read and update only `api/0.8.0/`.
+active `0.8.0-alpha.13` version they read and update only `api/0.8.0/`.
 
 ## Public API baseline
 

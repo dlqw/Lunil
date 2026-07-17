@@ -2,12 +2,18 @@ using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
+using System.Runtime.InteropServices;
 
 namespace Lunil.Runtime.Execution;
 
 /// <summary>Reference canonical-instruction executor beneath the shared scheduler.</summary>
 internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecutor
 {
+    private const int CompactSafePointInterval = 32;
+
+    public LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
+        LuaFrameInstructionRoute.Interpreter;
+
     public LuaCompiledExit Execute(
         LuaExecutionEngine engine,
         LuaExecutionContext context,
@@ -16,12 +22,74 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
+        if (RequiresExactDebugHookDispatch(thread, frame))
+        {
+            return ExecuteSingleInstruction(
+                engine,
+                context,
+                state,
+                thread,
+                frame,
+                in instruction);
+        }
+
+        var exit = ExecuteSingleInstruction(
+            engine,
+            context,
+            state,
+            thread,
+            frame,
+            in instruction);
+        var instructions = ImmutableCollectionsMarshal.AsArray(
+            frame.Function.Instructions)!;
+        var instructionsUntilSafePoint = CompactSafePointInterval;
+        while (true)
+        {
+            var runSafePoint = --instructionsUntilSafePoint == 0 ||
+                state.Heap.RequiresImmediateInterpreterSafePoint;
+            if (exit.Kind != LuaCompiledExitKind.Continue ||
+                !engine.TryContinueCompactInterpreterLoop(
+                    context,
+                    state,
+                    thread,
+                    frame,
+                    runSafePoint))
+            {
+                return exit;
+            }
+
+            if (runSafePoint)
+            {
+                instructionsUntilSafePoint = CompactSafePointInterval;
+            }
+
+            exit = ExecuteSingleInstruction(
+                engine,
+                context,
+                state,
+                thread,
+                frame,
+                in instructions[frame.ProgramCounter]);
+        }
+    }
+
+    internal static bool RequiresExactDebugHookDispatch(LuaThread thread, LuaFrame frame) =>
+        thread.HasDispatchableDebugHook && !frame.IsDebugHook && !frame.IsHidden;
+
+    internal static LuaCompiledExit ExecuteSingleInstruction(
+        LuaExecutionEngine engine,
+        LuaExecutionContext context,
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        in LuaIrInstruction instruction)
+    {
         var programCounter = frame.ProgramCounter;
-        if (!context.TryReserveInstructions(1))
+        if (!context.TryReserveSingleInterpreterInstruction())
         {
             return LuaCompiledExit.Poll(
                 programCounter,
-                instructionsConsumed: 0,
+                context.InstructionsConsumed,
                 LuaCompiledExitReason.InstructionBudget);
         }
 

@@ -21,6 +21,9 @@ public sealed class LuaThread : LuaGcObject
     private readonly List<LuaFrame> _retiredFrames = [];
     private readonly Stack<LuaFrame> _framePool = [];
     private readonly SortedList<int, LuaUpvalue> _openUpvalues = [];
+    private LuaValue _debugHook;
+    private LuaDebugHookMask _debugHookMask;
+    private bool _isRunningDebugHook;
 
     internal LuaThread(LuaHeap owner, int initialStackCapacity = 128)
         : base(owner, checked(128 + initialStackCapacity * 16L))
@@ -64,9 +67,25 @@ public sealed class LuaThread : LuaGcObject
     /// </summary>
     public IReadOnlyList<LuaFrame> Frames => _frames;
 
-    public LuaValue DebugHook { get; internal set; }
+    public LuaValue DebugHook
+    {
+        get => _debugHook;
+        internal set
+        {
+            _debugHook = value;
+            RefreshDebugHookDispatchState();
+        }
+    }
 
-    public LuaDebugHookMask DebugHookMask { get; internal set; }
+    public LuaDebugHookMask DebugHookMask
+    {
+        get => _debugHookMask;
+        internal set
+        {
+            _debugHookMask = value;
+            RefreshDebugHookDispatchState();
+        }
+    }
 
     public int DebugHookCount { get; internal set; }
 
@@ -74,7 +93,17 @@ public sealed class LuaThread : LuaGcObject
 
     internal int DebugHookCounter { get; set; }
 
-    internal bool IsRunningDebugHook { get; set; }
+    internal bool IsRunningDebugHook
+    {
+        get => _isRunningDebugHook;
+        set
+        {
+            _isRunningDebugHook = value;
+            RefreshDebugHookDispatchState();
+        }
+    }
+
+    internal bool HasDispatchableDebugHook { get; private set; }
 
     internal LuaValue DebugHookSubjectFunction { get; set; }
 
@@ -364,6 +393,13 @@ public sealed class LuaThread : LuaGcObject
         DebugHookTransferValues.Clear();
         DebugHookTransferStart = 1;
         DebugHookTransferIsNative = false;
+    }
+
+    private void RefreshDebugHookDispatchState()
+    {
+        HasDispatchableDebugHook = !_debugHook.IsNil &&
+            _debugHookMask != LuaDebugHookMask.None &&
+            !_isRunningDebugHook;
     }
 
     private void RetireActiveFrames()

@@ -14,17 +14,29 @@ internal interface ILuaInstructionExecutor
         LuaThread thread,
         LuaFrame frame,
         LuaIrInstruction instruction);
-}
 
-/// <summary>
-/// Supplies the initial execution route for a newly-created Lua frame. Implementations must not
-/// retain the closure, its owner state, or the module through this call.
-/// </summary>
-internal interface ILuaFrameInstructionRouter
-{
-    LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame);
+    LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
+        LuaFrameInstructionRoute.Backend;
 
-    void CommitPendingBackedges(LuaFrame frame);
+    void CommitPendingBackedges(LuaFrame frame)
+    {
+    }
+
+    void ObserveInstruction(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter,
+        LuaIrInstruction instruction)
+    {
+    }
+
+    void ObserveLoopOsrBackedges(
+        LuaFrame frame,
+        int programCounter,
+        int backedgeCount)
+    {
+    }
 }
 
 internal enum LuaFrameInstructionRoute : byte
