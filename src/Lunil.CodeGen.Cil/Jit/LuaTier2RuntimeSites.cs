@@ -33,7 +33,9 @@ internal sealed class LuaTier2RuntimeSites
             null) ?? created;
     }
 
-    internal LuaCodegenCallSiteCache GetCallSite(int programCounter)
+    internal LuaCodegenCallSiteCache GetCallSite(
+        int programCounter,
+        string expectedModuleContentId)
     {
         var site = Volatile.Read(ref _callSites[programCounter]);
         if (site is not null)
@@ -41,7 +43,9 @@ internal sealed class LuaTier2RuntimeSites
             return site;
         }
 
-        var created = new LuaCodegenCallSiteCache();
+        var created = new LuaCodegenCallSiteCache(
+            expectedModuleContentId,
+            LuaJitModuleIdentity.Create);
         return Interlocked.CompareExchange(
             ref _callSites[programCounter],
             created,

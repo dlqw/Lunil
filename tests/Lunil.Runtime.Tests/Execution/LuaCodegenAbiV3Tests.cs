@@ -129,7 +129,7 @@ public sealed class LuaCodegenAbiV3Tests
     }
 
     [Fact]
-    public void PicHotHitsAreAllocationFreeAndCallCacheIsFourWayPolymorphic()
+    public void PicHotHitsAreAllocationFreeAndCallCacheUsesWeakModuleIdentity()
     {
         var (state, thread, frame, _) = CreateFrame();
         var table = state.CreateTable();
@@ -165,9 +165,21 @@ public sealed class LuaCodegenAbiV3Tests
         var closures = Enumerable.Range(0, 5)
             .Select(_ => state.CreateMainClosure(frame.FunctionVersion.Module))
             .ToArray();
-        Assert.All(closures[..4], closure => Assert.True(callCache.TryMatchOrAdd(closure)));
-        Assert.False(callCache.TryMatchOrAdd(closures[4]));
-        Assert.True(callCache.TryMatchOrAdd(closures[0]));
+        Assert.All(closures, closure => Assert.True(callCache.TryMatchOrAdd(closure)));
+
+        var expectedModule = frame.FunctionVersion.Module;
+        var equivalentModule = CreateModule();
+        var otherModule = CreateModule();
+        var guardedCallCache = new LuaCodegenCallSiteCache(
+            "expected",
+            module => ReferenceEquals(module, expectedModule) ||
+                ReferenceEquals(module, equivalentModule)
+                    ? "expected"
+                    : "other");
+        Assert.All(closures, closure => Assert.True(guardedCallCache.TryMatchOrAdd(closure)));
+        Assert.True(guardedCallCache.TryMatchOrAdd(
+            state.CreateMainClosure(equivalentModule)));
+        Assert.False(guardedCallCache.TryMatchOrAdd(state.CreateMainClosure(otherModule)));
     }
 
     private static (
@@ -176,8 +188,23 @@ public sealed class LuaCodegenAbiV3Tests
         LuaFrame Frame,
         LuaExecutionContext Context) CreateFrame()
     {
+        var module = CreateModule();
+        var state = new LuaState();
+        var thread = state.MainThread;
+        var frame = new LuaFrame(
+            state.CreateMainClosure(module),
+            @base: 0,
+            top: 0,
+            returnBase: 0,
+            expectedResults: 0,
+            varArgs: []);
+        return (state, thread, frame, new LuaExecutionContext(state, thread, 100));
+    }
+
+    private static LuaIrModule CreateModule()
+    {
         var instructions = new[] { new LuaIrInstruction(LuaIrOpcode.Return, 0, 0) };
-        var module = new LuaIrModule
+        return new LuaIrModule
         {
             MainFunctionId = 0,
             Functions =
@@ -193,16 +220,6 @@ public sealed class LuaCodegenAbiV3Tests
                 },
             ],
         };
-        var state = new LuaState();
-        var thread = state.MainThread;
-        var frame = new LuaFrame(
-            state.CreateMainClosure(module),
-            @base: 0,
-            top: 0,
-            returnBase: 0,
-            expectedResults: 0,
-            varArgs: []);
-        return (state, thread, frame, new LuaExecutionContext(state, thread, 100));
     }
 
     private static LuaValue String(LuaState state, string value) =>

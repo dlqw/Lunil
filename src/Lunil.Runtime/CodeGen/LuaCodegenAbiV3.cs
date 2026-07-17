@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
@@ -515,61 +517,47 @@ public sealed class LuaCodegenTableSiteCache
         LuaMetamethod Metamethod);
 }
 
-/// <summary>Weak polymorphic cache used by guarded direct Lua-closure dispatch.</summary>
+/// <summary>Weak module-identity cache used by guarded direct Lua-closure dispatch.</summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class LuaCodegenCallSiteCache
 {
-    private const int MaximumEntries = 4;
-    private readonly Lock _gate = new();
-    private WeakReference<LuaClosure>[] _entries = [];
+    private static readonly object MatchedModule = new();
+    private readonly ConditionalWeakTable<LuaIrModule, object> _matchedModules = new();
+    private readonly string? _expectedModuleContentId;
+    private readonly Func<LuaIrModule, string>? _getModuleContentId;
+
+    public LuaCodegenCallSiteCache()
+    {
+    }
+
+    internal LuaCodegenCallSiteCache(
+        string expectedModuleContentId,
+        Func<LuaIrModule, string> getModuleContentId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(expectedModuleContentId);
+        ArgumentNullException.ThrowIfNull(getModuleContentId);
+        _expectedModuleContentId = expectedModuleContentId;
+        _getModuleContentId = getModuleContentId;
+    }
 
     internal bool TryMatchOrAdd(LuaClosure closure)
     {
-        var entries = Volatile.Read(ref _entries);
-        foreach (var entry in entries)
+        ArgumentNullException.ThrowIfNull(closure);
+        var module = closure.Module;
+        if (_matchedModules.TryGetValue(module, out _))
         {
-            if (entry.TryGetTarget(out var cached) && cached.IsAlive &&
-                ReferenceEquals(cached, closure))
-            {
-                return true;
-            }
-        }
-
-        lock (_gate)
-        {
-            entries = Volatile.Read(ref _entries);
-            var replacement = -1;
-            for (var index = 0; index < entries.Length; index++)
-            {
-                if (!entries[index].TryGetTarget(out var cached) || !cached.IsAlive)
-                {
-                    replacement = index;
-                }
-                else if (ReferenceEquals(cached, closure))
-                {
-                    return true;
-                }
-            }
-
-            var newEntry = new WeakReference<LuaClosure>(closure);
-            if (replacement >= 0)
-            {
-                var updated = (WeakReference<LuaClosure>[])entries.Clone();
-                updated[replacement] = newEntry;
-                Volatile.Write(ref _entries, updated);
-                return true;
-            }
-
-            if (entries.Length >= MaximumEntries)
-            {
-                return false;
-            }
-
-            var expanded = new WeakReference<LuaClosure>[entries.Length + 1];
-            entries.CopyTo(expanded, 0);
-            expanded[^1] = newEntry;
-            Volatile.Write(ref _entries, expanded);
             return true;
         }
+
+        if (_getModuleContentId is not null && !string.Equals(
+                _getModuleContentId(module),
+                _expectedModuleContentId,
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        _matchedModules.GetValue(module, static _ => MatchedModule);
+        return true;
     }
 }

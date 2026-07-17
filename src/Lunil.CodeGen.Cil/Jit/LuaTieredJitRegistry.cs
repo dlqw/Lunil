@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading.Channels;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
@@ -1094,6 +1095,12 @@ internal sealed class LuaTieredJitRegistry :
             if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
                 exit.Reason == LuaCompiledExitReason.GuardFailure)
             {
+                RecordTier2GuardFailureProfile(
+                    entry,
+                    context,
+                    thread,
+                    frame,
+                    exit.ProgramCounter);
                 HandleTier2GuardFailure(entry);
             }
             else if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
@@ -2857,6 +2864,9 @@ internal sealed class LuaTieredJitRegistry :
                     return;
                 }
 
+                var planFingerprint = CreateTier2GuardPlanFingerprint(
+                    entry.Tier2Plan ?? throw new InvalidOperationException(
+                        "A ready Tier 2 entry has no specialization plan."));
                 released = entry.Tier2EstimatedCodeBytes;
                 entry.Tier2Method = null;
                 entry.Tier2Plan = null;
@@ -2865,14 +2875,35 @@ internal sealed class LuaTieredJitRegistry :
                     entry.Tier1EstimatedCodeBytes + GetLoopOsrCodeBytes(entry));
                 entry.Method = entry.Tier1Method;
                 entry.ActiveTier = LuaJitCompilationTier.Tier1;
-                entry.Tier2State = LuaJitTier2State.Profiling;
-                entry.Tier2CompilationAttempts = 0;
+                // Deopt feedback can legitimately change the next specialization plan. Bound
+                // retries per invalidated plan rather than globally so progressive profiling can
+                // discard unstable guards without allowing one unchanged plan to churn methods.
+                var invalidations = entry.Tier2GuardInvalidationsByPlan.GetValueOrDefault(
+                    planFingerprint);
+                invalidations = invalidations == int.MaxValue
+                    ? int.MaxValue
+                    : invalidations + 1;
+                entry.Tier2GuardInvalidationsByPlan[planFingerprint] = invalidations;
+                var canReprofile = invalidations <= _options.MaximumCompilationAttempts;
+                entry.Tier2State = canReprofile
+                    ? LuaJitTier2State.Profiling
+                    : LuaJitTier2State.Failed;
+                entry.Tier2CompilationAttempts = canReprofile
+                    ? 0
+                    : _options.MaximumCompilationAttempts;
                 entry.Tier2GuardFailures = 0;
                 entry.CompletedTier1Invocations = 0;
                 entry.Tier2Eligibility = null;
                 entry.NextTier2EligibilitySample = 0;
                 entry.NoNumericTier2EligibilityEvaluations = 0;
-                Volatile.Write(ref entry.Tier2ProfilingActive, 1);
+                if (canReprofile)
+                {
+                    Volatile.Write(ref entry.Tier2ProfilingActive, 1);
+                }
+                else
+                {
+                    DeactivateTier2ProfilingLocked(entry);
+                }
                 Interlocked.Add(ref _estimatedCodeBytes, -released);
             }
         }
@@ -2886,6 +2917,47 @@ internal sealed class LuaTieredJitRegistry :
             released,
             DiagnosticCode: "JIT2003",
             Tier: LuaJitCompilationTier.Tier2));
+    }
+
+    private static void RecordTier2GuardFailureProfile(
+        FunctionEntry entry,
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        int programCounter)
+    {
+        if (!ReferenceEquals(thread.CurrentFrame, frame) ||
+            (uint)programCounter >= (uint)frame.Function.Instructions.Length)
+        {
+            return;
+        }
+
+        entry.Profile.Observe(
+            context,
+            thread,
+            frame,
+            programCounter,
+            frame.Function.Instructions[programCounter],
+            GetModuleContentId);
+    }
+
+    private static string CreateTier2GuardPlanFingerprint(LuaJitTier2Plan plan)
+    {
+        var builder = new StringBuilder();
+        builder.Append((int)plan.CodeKind).Append('|')
+            .Append(plan.NumericRegionCount).Append('|')
+            .Append(plan.UnboxedNumericLocalCount).Append('|')
+            .Append(plan.DirectNumericInstructionCount).Append('|');
+        foreach (var optimization in plan.Optimizations)
+        {
+            builder.Append(optimization.ProgramCounter).Append(':')
+                .Append((int)optimization.Kind).Append(':')
+                .Append(optimization.CanonicalInstructionCount).Append(':')
+                .Append(optimization.Guard.Length).Append(':')
+                .Append(optimization.Guard).Append('|');
+        }
+
+        return builder.ToString();
     }
 
     private void HandleTier2UnsupportedExit(FunctionEntry entry)
@@ -3163,6 +3235,7 @@ internal sealed class LuaTieredJitRegistry :
         entry.Tier2CompilationAttempts = 0;
         entry.Tier2RetryAfterTimestamp = 0;
         entry.Tier2GuardFailures = 0;
+        entry.Tier2GuardInvalidationsByPlan.Clear();
         entry.CompletedTier1Invocations = 0;
     }
 
@@ -3516,6 +3589,9 @@ internal sealed class LuaTieredJitRegistry :
         public long CompletedTier1Invocations;
 
         public long Tier2GuardFailures;
+
+        public Dictionary<string, int> Tier2GuardInvalidationsByPlan { get; } =
+            new(StringComparer.Ordinal);
 
         public int Tier2ProfilingActive;
 
