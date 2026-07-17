@@ -6,7 +6,7 @@ using Lunil.Runtime.Execution;
 namespace Lunil.Runtime.CodeGen;
 
 /// <summary>
-/// Runtime ABI v4 adds deterministic numeric-region helpers shared by dynamic and persisted CIL.
+/// Runtime ABI v4 adds deterministic numeric-region helpers shared by Tier 2 and Loop OSR.
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class LuaCodegenAbiV4

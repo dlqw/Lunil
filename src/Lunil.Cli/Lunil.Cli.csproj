@@ -10,7 +10,7 @@
     <PackageId>Lunil.Cli</PackageId>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>lunil</ToolCommandName>
-    <Description>Command-line compiler, analyzer, runner, and artifact builder for Lunil.</Description>
+    <Description>Command-line compiler, analyzer, runner, and Lua chunk builder for Lunil.</Description>
     <PackageTags>lua;lua54;cli;compiler;analysis;dotnet-tool</PackageTags>
   </PropertyGroup>
 

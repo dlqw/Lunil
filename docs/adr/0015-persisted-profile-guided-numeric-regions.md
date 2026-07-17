@@ -1,6 +1,6 @@
 # ADR 0015: Persist exact-module profile-guided numeric regions
 
-- Status: Accepted
+- Status: Superseded by ADR 0018 in `0.8.0-alpha.12`
 - Date: 2026-07-17
 - Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0010](0010-persisted-cil-aot-performance-productionization.md),

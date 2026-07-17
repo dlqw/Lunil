@@ -2,11 +2,9 @@ using System.Collections.Immutable;
 using System.Globalization;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
-using Lunil.CodeGen.Cil.Loading;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
-using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.Semantics.Binding;
@@ -94,36 +92,6 @@ internal sealed class ExecutorBackendHarness : ILuaBackendHarness
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default) =>
         _executor.Resume(state, thread, arguments);
-}
-
-internal sealed class PersistedAotBackendHarness : ILuaBackendHarness
-{
-    private readonly LuaExecutionEngine _engine;
-
-    public PersistedAotBackendHarness(LuaInterpreterOptions options)
-    {
-        _engine = new LuaExecutionEngine(options, new PersistedAotInstructionExecutor());
-    }
-
-    public string Name => "persisted-cil-aot";
-
-    public LuaExecutionResult Execute(
-        LuaState state,
-        LuaClosure closure,
-        ReadOnlySpan<LuaValue> arguments = default) =>
-        _engine.Execute(state, closure, arguments);
-
-    public LuaExecutionResult Start(
-        LuaState state,
-        LuaThread thread,
-        ReadOnlySpan<LuaValue> arguments = default) =>
-        _engine.Start(state, thread, arguments);
-
-    public LuaExecutionResult Resume(
-        LuaState state,
-        LuaThread thread,
-        ReadOnlySpan<LuaValue> arguments = default) =>
-        _engine.Resume(state, thread, arguments);
 }
 
 internal sealed class Tier1JitBackendHarness : ILuaBackendHarness, IDisposable
@@ -248,56 +216,6 @@ internal sealed class LoopOsrBackendHarness : ILuaBackendHarness, IDisposable
     public void Dispose() => _executor.Dispose();
 }
 
-internal sealed class PersistedAotInstructionExecutor : ILuaInstructionExecutor
-{
-    private readonly Dictionary<LuaIrModule, LuaAotLoadedModule> _modules =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly Lock _lock = new();
-
-    public LuaCompiledExit Execute(
-        LuaExecutionEngine engine,
-        LuaExecutionContext context,
-        LuaState state,
-        LuaThread thread,
-        LuaFrame frame,
-        LuaIrInstruction instruction)
-    {
-        return GetOrLoad(frame.FunctionVersion.Module)
-            .GetFunction(frame.FunctionVersion.Function.Id)(context, thread, frame);
-    }
-
-    private LuaAotLoadedModule GetOrLoad(LuaIrModule module)
-    {
-        lock (_lock)
-        {
-            if (_modules.TryGetValue(module, out var loaded))
-            {
-                return loaded;
-            }
-
-            var compilation = LuaAotCompiler.Compile(module);
-            if (!compilation.Succeeded)
-            {
-                throw new InvalidOperationException(string.Join(
-                    "; ",
-                    compilation.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-            }
-
-            var loading = LuaAotArtifactLoader.Load(compilation.Artifact!);
-            if (!loading.Succeeded)
-            {
-                throw new InvalidOperationException(string.Join(
-                    "; ",
-                    loading.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-            }
-
-            loaded = loading.Module!;
-            _modules.Add(module, loaded);
-            return loaded;
-        }
-    }
-}
-
 internal sealed record LuaBackendTestOptions
 {
     public static LuaBackendTestOptions Default { get; } = new();
@@ -327,7 +245,6 @@ internal static class LuaBackendCatalog
         [
             new InterpreterBackendHarness(interpreterOptions),
             new ExecutorBackendHarness(interpreterOptions),
-            new PersistedAotBackendHarness(interpreterOptions),
             new Tier1JitBackendHarness(interpreterOptions),
             new Tier2JitBackendHarness(interpreterOptions),
             new LoopOsrBackendHarness(interpreterOptions),

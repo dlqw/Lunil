@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using Lunil.CodeGen.Cil.Caching;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 
@@ -68,7 +67,7 @@ public static class LuaJitProfileRemapper
             StringComparer.Ordinal);
         var sourceProfiles = sourceProfile.Functions.ToDictionary(
             static entry => entry.FunctionId);
-        var targetContentId = LuaAotModuleIdentity.ComputeContentId(targetModule);
+        var targetContentId = LuaJitModuleIdentity.Create(targetModule);
         var selfTargetMap = sourceByKey.Values
             .Where(source => targetByKey.ContainsKey(LuaFunctionIdentity.GetLogicalKey(
                 sourceModule,

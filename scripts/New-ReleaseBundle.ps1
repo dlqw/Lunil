@@ -33,7 +33,6 @@ $solution = Join-Path $repositoryRoot 'Lunil.sln'
 if ($LASTEXITCODE -ne 0) { throw 'dotnet restore failed.' }
 
 $projects = Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') -Recurse -Filter 'Lunil.*.csproj' |
-    Where-Object Name -ne 'Lunil.Build.csproj' |
     Sort-Object FullName
 foreach ($project in $projects) {
     & dotnet build $project.FullName --configuration $Configuration --runtime $RuntimeIdentifier --no-restore `

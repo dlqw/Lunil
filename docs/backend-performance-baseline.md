@@ -1,8 +1,12 @@
 # Execution backend performance baseline
 
-This document records local reference measurements for JIT/AOT backend work. They are regression
+This document records local reference measurements for execution-backend work. They are regression
 evidence from one machine, not portable pass/fail limits. CI publishes the same benchmark output
 for every native RID without failing a build on timing variance.
+
+Persisted/static Lua AOT was removed in `0.8.0-alpha.12`. M17 and later AOT measurements below are
+immutable historical evidence only; current runners, schemas, six-RID aggregation, and release
+gates contain interpreter, Tier 1, Tier 2, and Loop OSR rows only.
 
 These Lunil-internal qualification measurements are intentionally separate from the
 [cross-runtime workflow](cross-runtime-performance.md). The cross-runtime suite pins native Lua
@@ -539,7 +543,7 @@ startup medians were 0.966x, 1.029x, 0.983x, and 0.982x. All automatic negative 
 failure, and managed-installation counts remained zero. The compact benchmark now names this path
 `jit_default_loop_osr_candidate` and consumes the same release default.
 
-## M17 persisted CIL AOT performance productionization
+## M17 persisted CIL AOT performance productionization (historical; superseded)
 
 Persisted CIL previously contributed deterministic PE/PDB size to the backend runner but was not an
 executable evidence row. M17 adds a caller-owned `LuaPersistedAotExecutor` that binds a validated

@@ -328,32 +328,32 @@ public static class CilWellKnownCalls
 
     public static CilCallTarget ExitPoll { get; } = Call(
         "LuaCompiledExit.Poll",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64, CilStackValueKind.Int32],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitContinue { get; } = Call(
         "LuaCompiledExit.Continue",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitReturn { get; } = Call(
         "LuaCompiledExit.Return",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitCall { get; } = Call(
         "LuaCompiledExit.Call",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitTailCall { get; } = Call(
         "LuaCompiledExit.TailCall",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64],
         CilStackValueKind.CompiledExit);
 
     public static CilCallTarget ExitDeopt { get; } = Call(
         "LuaCompiledExit.Deopt",
-        [CilStackValueKind.Int32, CilStackValueKind.Int32, CilStackValueKind.Int32],
+        [CilStackValueKind.Int32, CilStackValueKind.Int64, CilStackValueKind.Int32],
         CilStackValueKind.CompiledExit);
 
     public static ImmutableArray<CilCallTarget> All { get; } =

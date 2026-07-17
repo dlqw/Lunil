@@ -1,6 +1,6 @@
 # ADR 0010: Productize persisted CIL AOT performance
 
-- Status: Accepted
+- Status: Superseded by ADR 0018 in `0.8.0-alpha.12`
 - Date: 2026-07-13
 - Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0002](0002-execution-backend-abi-v2.md)

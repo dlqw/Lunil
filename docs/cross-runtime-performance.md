@@ -13,7 +13,7 @@ qualification gates in [backend-performance-baseline.md](backend-performance-bas
 | Native Lua | Lua 5.4.8 source archive, SHA-256 `4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae` | Per-RID `1.000x` baseline |
 | LuaJIT | Upstream commit `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3`, archive SHA-256 `295f9e6722a2200aaf41297b28f73d337ac12236cdf1788981e46bd0afd466ff` | Native tracing-JIT comparison |
 | MoonSharp | NuGet `MoonSharp` 2.0.0 | Managed comparison and hard gate reference |
-| Lunil | The checked-out commit | Interpreter, Auto, Tier 1, Tier 2, Loop OSR, and persisted AOT |
+| Lunil | The checked-out commit | Interpreter, Auto, Tier 1, Tier 2, and Loop OSR |
 
 `Install-CrossRuntimeBenchmarkTools.ps1` downloads the native source archives, verifies their
 hashes before extraction, builds release executables with the platform C toolchain, verifies their
@@ -61,7 +61,7 @@ reported as compiled after fallback or deoptimization.
    deoptimization, unexpected deoptimization, and Tier 2 unsupported exit.
 
 The primary metric is process CPU nanoseconds per logical operation. Source loading, runtime setup,
-CLR heap reset, JIT/AOT compilation, artifact loading, and warmup are separate setup CPU evidence.
+CLR heap reset, JIT compilation, and warmup are separate setup CPU evidence.
 This is a steady-throughput comparison, not a CLI cold-start comparison.
 
 ## Local workflow
@@ -130,9 +130,11 @@ passing only through an unpaired or aggregate average.
 
 ## Qualified Windows x64 report
 
-The final local Release acceptance run on 2026-07-16 used six balanced rounds, a 250 ms calibration
-floor, all nine engines, and all eight workloads. The complete evidence is stored locally at
+This historical pre-removal Release acceptance run on 2026-07-16 used six balanced rounds, a
+250 ms calibration floor, all nine then-supported engines, and all eight workloads. The complete evidence is stored locally at
 `artifacts/cross-runtime-performance/win-x64/final-full-v20` and identifies commit `9b04cb0`.
+The persisted-AOT row is retained only to make that report reproducible; `0.8.0-alpha.12` removes
+that engine from `suite.json`, current reports, and all gates.
 
 | Engine | Workloads | Geomean vs native Lua | Native-Lua range | Geomean vs MoonSharp |
 |---|---:|---:|---:|---:|

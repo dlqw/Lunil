@@ -1,10 +1,6 @@
-using System.Collections.Immutable;
-using System.Text.Json;
 using Lunil.Cli.CommandLine;
 using Lunil.Cli.Diagnostics;
 using Lunil.Cli.IO;
-using Lunil.CodeGen.Cil;
-using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.Compiler;
 using Lunil.Core.Diagnostics;
 using Lunil.IR.Canonical;
@@ -29,8 +25,6 @@ internal static class BuildCommand
             {
                 modules.Add(new BuildModule(
                     input.ModuleName,
-                    input.SourceIdentity,
-                    input.Bytes,
                     Lua54PrototypeConverter.Convert(input.Bytes)));
             }
             catch (Exception exception) when (exception is Lua54ChunkFormatException or
@@ -69,8 +63,6 @@ internal static class BuildCommand
 
                 modules.Add(new BuildModule(
                     module.Identity.Name,
-                    module.SourceIdentity,
-                    module.Compilation.Source.Text.ToArray(),
                     module.Compilation.Module));
             }
         }
@@ -83,17 +75,7 @@ internal static class BuildCommand
         ValidateArtifactPaths(modules);
 
         var output = Path.GetFullPath(context.Options.OutputPath!, context.CurrentDirectory);
-        if (context.Options.BuildTarget == CliBuildTarget.Chunk)
-        {
-            await EmitChunksAsync(context, input, modules, output).ConfigureAwait(false);
-        }
-        else
-        {
-            if (!await EmitAotAsync(context, modules, output).ConfigureAwait(false))
-            {
-                return CliExitCode.Build;
-            }
-        }
+        await EmitChunksAsync(context, input, modules, output).ConfigureAwait(false);
 
         return CliExitCode.Success;
     }
@@ -132,123 +114,6 @@ internal static class BuildCommand
                 path + "\n",
                 context.CancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private static async Task<bool> EmitAotAsync(
-        CliCommandContext context,
-        IReadOnlyList<BuildModule> modules,
-        string outputDirectory)
-    {
-        Directory.CreateDirectory(outputDirectory);
-        var diagnostics = new List<CliDiagnosticRecord>();
-        foreach (var module in modules.OrderBy(static module => module.Name, StringComparer.Ordinal))
-        {
-            context.CancellationToken.ThrowIfCancellationRequested();
-            var compilation = LuaAotCompiler.Compile(module.Module, new LuaAotCompilationOptions
-            {
-                EmitPortablePdb = !context.Options.StripDebug,
-                SourceDocument = new LuaAotSourceDocument
-                {
-                    LogicalName = module.SourceIdentity,
-                    Content = module.SourceBytes.ToImmutableArray(),
-                },
-            });
-            if (!compilation.Succeeded || compilation.Artifact is null)
-            {
-                diagnostics.AddRange(compilation.Diagnostics.Select(diagnostic =>
-                    CliDiagnosticWriter.CreateProblem(
-                        module.SourceIdentity,
-                        diagnostic.Code,
-                        DiagnosticSeverity.Error,
-                        "aot",
-                        diagnostic.Message)));
-                continue;
-            }
-
-            var artifact = compilation.Artifact;
-            var stem = Path.Combine(outputDirectory, GetArtifactRelativePath(module.Name));
-            var assemblyPath = stem + ".dll";
-            await AtomicWriteAsync(
-                assemblyPath,
-                artifact.PeImage.ToArray(),
-                context.CancellationToken).ConfigureAwait(false);
-            if (!artifact.PortablePdbImage.IsDefaultOrEmpty)
-            {
-                await AtomicWriteAsync(
-                    stem + ".pdb",
-                    artifact.PortablePdbImage.ToArray(),
-                    context.CancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                DeleteStaleArtifact(stem + ".pdb");
-            }
-
-            await AtomicWriteAsync(
-                stem + ".canonical.bin",
-                LuaAotModuleIdentity.SerializeCanonicalModule(module.Module),
-                context.CancellationToken).ConfigureAwait(false);
-            await AtomicWriteAsync(
-                stem + ".manifest.json",
-                SerializeManifest(module.Name, artifact.Manifest),
-                context.CancellationToken).ConfigureAwait(false);
-            await CliStreams.WriteTextAsync(
-                context.StandardOutput,
-                assemblyPath + "\n",
-                context.CancellationToken).ConfigureAwait(false);
-        }
-
-        await WriteDiagnosticsAsync(context, diagnostics).ConfigureAwait(false);
-        return !CliDiagnosticWriter.HasErrors(diagnostics);
-    }
-
-    private static byte[] SerializeManifest(string moduleName, LuaAotArtifactManifest manifest)
-    {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("schema", "lunil.aot.manifest.v1");
-            writer.WriteString("moduleName", moduleName);
-            writer.WriteString("magic", manifest.Magic);
-            writer.WriteNumber("artifactSchemaVersion", manifest.ArtifactSchemaVersion);
-            writer.WriteNumber("irFormatVersion", manifest.IrFormatVersion);
-            writer.WriteNumber("runtimeAbiVersion", manifest.RuntimeAbiVersion);
-            writer.WriteNumber("codegenVersion", manifest.CodegenVersion);
-            writer.WriteString("moduleContentId", manifest.ModuleContentId);
-            writer.WriteString("moduleChecksum", manifest.ModuleChecksum);
-            writer.WriteString("optionsFingerprint", manifest.OptionsFingerprint);
-            writer.WriteBoolean("emitPortablePdb", manifest.EmitPortablePdb);
-            writer.WriteString("assemblyName", manifest.AssemblyName);
-            writer.WriteString("typeName", manifest.TypeName);
-            writer.WriteString("portablePdbName", manifest.PortablePdbName);
-            writer.WriteString("sourceDocumentName", manifest.SourceDocumentName);
-            writer.WriteString("sourceDocumentChecksum", manifest.SourceDocumentChecksum);
-            writer.WriteStartArray("functions");
-            foreach (var function in manifest.Functions.OrderBy(static function => function.FunctionId))
-            {
-                writer.WriteStartObject();
-                writer.WriteNumber("functionId", function.FunctionId);
-                writer.WriteStartArray("shards");
-                foreach (var shard in function.Shards)
-                {
-                    writer.WriteStartObject();
-                    writer.WriteString("methodName", shard.MethodName);
-                    writer.WriteNumber("startProgramCounter", shard.StartProgramCounter);
-                    writer.WriteNumber("instructionCount", shard.InstructionCount);
-                    writer.WriteEndObject();
-                }
-
-                writer.WriteEndArray();
-                writer.WriteEndObject();
-            }
-
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-        }
-
-        stream.WriteByte((byte)'\n');
-        return stream.ToArray();
     }
 
     private static async Task AtomicWriteAsync(
@@ -306,21 +171,6 @@ internal static class BuildCommand
         }
     }
 
-    private static void DeleteStaleArtifact(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-            NotSupportedException or ArgumentException)
-        {
-            throw new CliBuildException(
-                $"Cannot remove stale build output '{Path.GetFullPath(path)}': {exception.Message}",
-                exception);
-        }
-    }
-
     private static string SanitizeSegment(string segment)
     {
         var invalid = Path.GetInvalidFileNameChars();
@@ -353,7 +203,5 @@ internal static class BuildCommand
 
     private sealed record BuildModule(
         string Name,
-        string SourceIdentity,
-        byte[] SourceBytes,
         LuaIrModule Module);
 }

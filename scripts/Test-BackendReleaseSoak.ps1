@@ -27,19 +27,14 @@ $testGroups = @(
         Filter = 'FullyQualifiedName~Lunil.Stability.Tests'
     },
     @{
-        Name = 'jit-tier-cache-profile-osr'
+        Name = 'jit-tier-profile-osr'
         Project = 'tests/Lunil.CodeGen.Cil.Tests/Lunil.CodeGen.Cil.Tests.csproj'
-        Filter = 'FullyQualifiedName~LuaJitExecutorTests|FullyQualifiedName~LuaBackendDiskCacheTests|FullyQualifiedName~LuaBackendCacheKeyTests'
+        Filter = 'FullyQualifiedName~LuaJitExecutorTests'
     },
     @{
-        Name = 'aot-artifact-faults'
+        Name = 'cil-plan-emission'
         Project = 'tests/Lunil.CodeGen.Cil.Tests/Lunil.CodeGen.Cil.Tests.csproj'
         Filter = 'FullyQualifiedName~LuaCilCodeGeneratorTests'
-    },
-    @{
-        Name = 'msbuild-cache'
-        Project = 'tests/Lunil.Build.Tests/Lunil.Build.Tests.csproj'
-        Filter = 'FullyQualifiedName~LunilCompileTaskTests'
     }
 )
 

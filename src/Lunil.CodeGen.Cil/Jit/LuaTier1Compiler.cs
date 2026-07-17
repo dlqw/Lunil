@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
-using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
 

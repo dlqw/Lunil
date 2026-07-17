@@ -321,7 +321,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         var firstValue = generator.DeclareLocal(typeof(LuaValue));
         var secondValue = generator.DeclareLocal(typeof(LuaValue));
         var picExecutionResult = generator.DeclareLocal(typeof(LuaCodegenPicExecutionResult));
-        var framelessConsumed = generator.DeclareLocal(typeof(int));
+        var framelessConsumed = generator.DeclareLocal(typeof(long));
         var safepointCountdown = generator.DeclareLocal(typeof(int));
         var labels = new Label[function.Instructions.Length];
         var budgetExits = new Label[function.Instructions.Length];
@@ -723,6 +723,7 @@ internal static class ReflectionEmitLuaTier2Compiler
                     EmitInt32(generator, instruction.B);
                     EmitInt32(generator, instruction.C);
                     generator.Emit(OpCodes.Call, TryExecuteFramelessCall);
+                    generator.Emit(OpCodes.Conv_I8);
                     generator.Emit(OpCodes.Stloc, framelessConsumed);
                     generator.Emit(OpCodes.Ldloc, framelessConsumed);
                     generator.Emit(OpCodes.Brfalse, slowCall.Value);

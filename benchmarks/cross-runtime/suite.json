@@ -9,8 +9,7 @@
     "lunil_auto",
     "lunil_tier1",
     "lunil_tier2",
-    "lunil_loop_osr",
-    "lunil_persisted_aot"
+    "lunil_loop_osr"
   ],
   "comparison": {
     "referenceEngine": "moonsharp",

@@ -221,6 +221,12 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
             case CilPlanOpCode.LoadInt32:
                 EmitLoadInt32(generator, instruction.Int32Operand);
                 break;
+            case CilPlanOpCode.LoadInt64:
+                generator.Emit(OpCodes.Ldc_I8, instruction.Int64Operand);
+                break;
+            case CilPlanOpCode.ConvertInt64:
+                generator.Emit(OpCodes.Conv_I8);
+                break;
             case CilPlanOpCode.Add:
                 generator.Emit(OpCodes.Add);
                 break;
@@ -488,27 +494,27 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         "LuaCompiledExit.Poll" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Poll),
-            [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]),
+            [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]),
         "LuaCompiledExit.Continue" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Continue),
-            [typeof(int), typeof(int)]),
+            [typeof(int), typeof(long)]),
         "LuaCompiledExit.Return" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Return),
-            [typeof(int), typeof(int)]),
+            [typeof(int), typeof(long)]),
         "LuaCompiledExit.Call" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Call),
-            [typeof(int), typeof(int)]),
+            [typeof(int), typeof(long)]),
         "LuaCompiledExit.TailCall" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.TailCall),
-            [typeof(int), typeof(int)]),
+            [typeof(int), typeof(long)]),
         "LuaCompiledExit.Deopt" => Method(
             typeof(LuaCompiledExit),
             nameof(LuaCompiledExit.Deopt),
-            [typeof(int), typeof(int), typeof(LuaCompiledExitReason)]),
+            [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]),
         _ => throw new InvalidOperationException($"Unknown Runtime ABI call target {target.Id}."),
     };
 

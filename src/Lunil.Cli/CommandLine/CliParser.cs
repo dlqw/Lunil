@@ -204,6 +204,7 @@ internal static class CliParser
                 command,
                 inputs.Count,
                 output,
+                buildTarget,
                 outputSpecified,
                 targetSpecified,
                 dumpKindSpecified,
@@ -242,12 +243,19 @@ internal static class CliParser
         CliCommand command,
         int inputCount,
         string? output,
+        CliBuildTarget buildTarget,
         bool outputSpecified,
         bool targetSpecified,
         bool dumpKindSpecified,
         bool dumpFormatSpecified,
         bool stripDebugSpecified)
     {
+        if (buildTarget == CliBuildTarget.Aot)
+        {
+            throw new CliRemovedFeatureException(
+                "Lua AOT was removed in Lunil 0.8.0-alpha.12; use '--target chunk' or run the module with the interpreter/JIT backend.");
+        }
+
         if (command == CliCommand.None)
         {
             throw new CliUsageException("A command is required: run, check, build, or dump.");
@@ -374,7 +382,7 @@ internal static class CliParser
     {
         "chunk" => CliBuildTarget.Chunk,
         "aot" => CliBuildTarget.Aot,
-        _ => throw new CliUsageException("Build target must be 'chunk' or 'aot'."),
+        _ => throw new CliUsageException("Build target must be 'chunk'."),
     };
 
     internal static CliDumpKind ParseDumpKind(string value) => value switch

@@ -7,7 +7,7 @@ using Lunil.Runtime.Values;
 namespace Lunil.Runtime.CodeGen;
 
 /// <summary>
-/// Versioned Runtime operations callable from dynamically emitted and persisted CIL.
+/// Versioned Runtime operations callable from dynamically emitted CIL.
 /// This is infrastructure ABI rather than the ordinary hosting surface.
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]

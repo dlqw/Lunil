@@ -4,9 +4,9 @@ using System.Reflection.Emit;
 namespace Lunil.CodeGen.Cil.Jit;
 
 /// <summary>
-/// Backend-neutral IL surface used by the exact numeric-region emitter. Reflection.Emit and the
-/// persisted metadata writer deliberately consume the same instruction stream so guards,
-/// materialization, budget accounting, and safepoints cannot drift between backends.
+/// Shared IL surface used by the exact numeric-region emitters. Tier 2 and Loop OSR deliberately
+/// consume the same instruction stream so guards, materialization, budget accounting, and
+/// safepoints cannot drift between generated paths.
 /// </summary>
 internal abstract class LuaNumericRegionIlGenerator
 {

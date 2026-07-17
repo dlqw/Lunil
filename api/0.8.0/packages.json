@@ -1,7 +1,7 @@
 {
   "SchemaVersion": 1,
   "CompatibilityLine": "0.8.0",
-  "PackageCount": 14,
+  "PackageCount": 13,
   "VersionToken": "{version}",
   "Packages": [
     {
@@ -61,78 +61,12 @@
       ]
     },
     {
-      "Id": "Lunil.Build",
-      "Authors": "rdququ",
-      "License": "MIT",
-      "Readme": "README.md",
-      "ProjectUrl": "https://github.com/dlqw/Lunil",
-      "Description": "MSBuild integration for ahead-of-time compilation of Lunil Lua modules.",
-      "Tags": "lua lua54 compiler msbuild nativeaot",
-      "Repository": "https://github.com/dlqw/Lunil",
-      "PackageTypes": [],
-      "DependencyGroups": [
-        {
-          "TargetFramework": "net10.0",
-          "Dependencies": [
-            {
-              "Id": "Lunil.CodeGen.Cil",
-              "Version": "{version}",
-              "Exclude": "Build,Analyzers"
-            },
-            {
-              "Id": "Lunil.Compiler",
-              "Version": "{version}",
-              "Exclude": "Build,Analyzers"
-            },
-            {
-              "Id": "Lunil.Workspace",
-              "Version": "{version}",
-              "Exclude": "Build,Analyzers"
-            }
-          ]
-        }
-      ],
-      "Assets": [
-        "_rels/.rels",
-        "[Content_Types].xml",
-        "assets/lunil-logo.svg",
-        "build/Lunil.Build.props",
-        "build/Lunil.Build.targets",
-        "buildTransitive/Lunil.Build.props",
-        "buildTransitive/Lunil.Build.targets",
-        "lib/net10.0/_._",
-        "LICENSE",
-        "Lunil.Build.nuspec",
-        "package/services/metadata/core-properties/<generated>.psmdcp",
-        "README.md",
-        "README.zh-CN.md",
-        "tasks/net10.0/Lunil.Analysis.dll",
-        "tasks/net10.0/Lunil.Build.dll",
-        "tasks/net10.0/Lunil.CodeGen.Cil.dll",
-        "tasks/net10.0/Lunil.Compiler.dll",
-        "tasks/net10.0/Lunil.Core.dll",
-        "tasks/net10.0/Lunil.EmmyLua.dll",
-        "tasks/net10.0/Lunil.IR.dll",
-        "tasks/net10.0/Lunil.Runtime.dll",
-        "tasks/net10.0/Lunil.Semantics.dll",
-        "tasks/net10.0/Lunil.Syntax.dll",
-        "tasks/net10.0/Lunil.Workspace.dll"
-      ],
-      "SymbolAssets": [
-        "_rels/.rels",
-        "[Content_Types].xml",
-        "Lunil.Build.nuspec",
-        "package/services/metadata/core-properties/<generated>.psmdcp",
-        "tasks/net10.0/Lunil.Build.pdb"
-      ]
-    },
-    {
       "Id": "Lunil.Cli",
       "Authors": "rdququ",
       "License": "MIT",
       "Readme": "README.md",
       "ProjectUrl": "https://github.com/dlqw/Lunil",
-      "Description": "Command-line compiler, analyzer, runner, and artifact builder for Lunil.",
+      "Description": "Command-line compiler, analyzer, runner, and Lua chunk builder for Lunil.",
       "Tags": "lua lua54 cli compiler analysis dotnet-tool",
       "Repository": "https://github.com/dlqw/Lunil",
       "PackageTypes": [

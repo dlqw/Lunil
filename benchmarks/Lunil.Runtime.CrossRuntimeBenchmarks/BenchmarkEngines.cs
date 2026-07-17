@@ -1,10 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
-using Lunil.CodeGen.Cil;
-using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Jit;
-using Lunil.CodeGen.Cil.Loading;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
@@ -226,7 +223,6 @@ internal enum LunilBenchmarkConfiguration
     Tier1,
     Tier2,
     LoopOsr,
-    PersistedAot,
 }
 
 internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
@@ -309,7 +305,6 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             LunilBenchmarkConfiguration.Tier1 => "lunil_tier1",
             LunilBenchmarkConfiguration.Tier2 => "lunil_tier2",
             LunilBenchmarkConfiguration.LoopOsr => "lunil_loop_osr",
-            LunilBenchmarkConfiguration.PersistedAot => "lunil_persisted_aot",
             _ => throw new ArgumentOutOfRangeException(nameof(configuration)),
         };
 
@@ -321,7 +316,6 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             LunilBenchmarkConfiguration.Tier1 => "Lunil Tier 1",
             LunilBenchmarkConfiguration.Tier2 => "Lunil Tier 2",
             LunilBenchmarkConfiguration.LoopOsr => "Lunil Loop OSR",
-            LunilBenchmarkConfiguration.PersistedAot => "Lunil persisted AOT",
             _ => throw new ArgumentOutOfRangeException(nameof(configuration)),
         };
 
@@ -333,7 +327,6 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             LunilBenchmarkConfiguration.Tier1 => "Tier 1 thresholds=1; Tier 2 and Loop OSR disabled",
             LunilBenchmarkConfiguration.Tier2 => "Tier 1 and Tier 2 thresholds=1; Loop OSR disabled",
             LunilBenchmarkConfiguration.LoopOsr => "function JIT disabled; Loop OSR threshold=1",
-            LunilBenchmarkConfiguration.PersistedAot => "artifact compiled and loaded before warm timing",
             _ => throw new ArgumentOutOfRangeException(nameof(configuration)),
         };
 
@@ -357,36 +350,23 @@ internal sealed class LunilRunner : IDisposable
     private readonly LuaClosure _closure;
     private readonly LuaInterpreter? _interpreter;
     private readonly LuaJitExecutor? _jit;
-    private readonly LuaPersistedAotExecutor? _aot;
-    private readonly LuaAotLoadedModule? _loadedModule;
 
     private LunilRunner(
         LuaIrModule module,
         LuaInterpreter? interpreter,
-        LuaJitExecutor? jit,
-        LuaPersistedAotExecutor? aot,
-        LuaAotLoadedModule? loadedModule)
+        LuaJitExecutor? jit)
     {
         _state = new LuaState();
         LuaStandardLibrary.InstallAll(_state);
         _closure = _state.CreateMainClosure(module);
         _interpreter = interpreter;
         _jit = jit;
-        _aot = aot;
-        _loadedModule = loadedModule;
     }
 
     public string Route
     {
         get
         {
-            if (_aot is not null)
-            {
-                return _aot.Statistics.CompiledInvocations > 0
-                    ? "persisted_aot"
-                    : "persisted_aot_fallback";
-            }
-
             if (_jit is null)
             {
                 return "interpreter";
@@ -411,18 +391,6 @@ internal sealed class LunilRunner : IDisposable
     {
         get
         {
-            if (_aot is not null)
-            {
-                var statistics = _aot.Statistics;
-                return new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["compiledInvocations"] = Invariant(statistics.CompiledInvocations),
-                    ["interpreterFallbacks"] = Invariant(statistics.InterpreterFallbacks),
-                    ["deoptimizations"] = Invariant(statistics.Deoptimizations),
-                    ["unexpectedDeoptimizations"] = Invariant(statistics.UnexpectedDeoptimizations),
-                };
-            }
-
             if (_jit is null)
             {
                 return new Dictionary<string, string>(StringComparer.Ordinal);
@@ -436,8 +404,8 @@ internal sealed class LunilRunner : IDisposable
                 ["interpreterFallbacks"] = Invariant(jit.InterpreterFallbacks),
                 ["deoptimizations"] = Invariant(jit.Deoptimizations),
                 // Any deoptimization inside this hook-free timed workload is unexpected. Keep
-                // the explicit field aligned with persisted-AOT telemetry so the gate can reject
-                // a missing counter rather than silently treating it as zero.
+                // the explicit field so the gate can reject a missing counter rather than
+                // silently treating it as zero.
                 ["unexpectedDeoptimizations"] = Invariant(jit.Deoptimizations),
                 ["tier2CompilationCompleted"] = Invariant(jit.Tier2CompilationCompleted),
                 ["tier2MethodEntries"] = Invariant(jit.Tier2MethodEntries),
@@ -473,40 +441,11 @@ internal sealed class LunilRunner : IDisposable
             return new LunilRunner(
                 module,
                 new LuaInterpreter(UnlimitedInterpreter),
-                null,
-                null,
                 null);
         }
 
-        if (configuration == LunilBenchmarkConfiguration.PersistedAot)
-        {
-            var compilation = LuaAotCompiler.Compile(module);
-            var artifact = compilation.Artifact ?? throw new InvalidOperationException(string.Join(
-                "; ",
-                compilation.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-            var loading = LuaAotArtifactLoader.Load(
-                artifact,
-                new LuaAotLoadOptions
-                {
-                    ExpectedModuleContentId = artifact.Manifest.ModuleContentId,
-                });
-            if (!loading.Succeeded || loading.Module is null)
-            {
-                throw new InvalidOperationException(string.Join(
-                    "; ",
-                    loading.Diagnostics.Select(static diagnostic => diagnostic.Message)));
-            }
-
-            return new LunilRunner(
-                module,
-                null,
-                null,
-                new LuaPersistedAotExecutor(loading.Module, UnlimitedInterpreter),
-                loading.Module);
-        }
-
         var options = CreateJitOptions(configuration);
-        return new LunilRunner(module, null, new LuaJitExecutor(options), null, null);
+        return new LunilRunner(module, null, new LuaJitExecutor(options));
     }
 
     public LuaValue Execute(int operations)
@@ -514,9 +453,7 @@ internal sealed class LunilRunner : IDisposable
         LuaValue[] arguments = [LuaValue.FromInteger(operations)];
         var result = _jit is not null
             ? _jit.Execute(_state, _closure, arguments)
-            : _aot is not null
-                ? _aot.Execute(_state, _closure, arguments)
-                : _interpreter!.Execute(_state, _closure, arguments);
+            : _interpreter!.Execute(_state, _closure, arguments);
         if (result.Signal != LuaVmSignal.Completed || result.Values.Length != 1)
         {
             throw new InvalidOperationException(
@@ -529,7 +466,6 @@ internal sealed class LunilRunner : IDisposable
     public void Dispose()
     {
         _jit?.Dispose();
-        _loadedModule?.Dispose();
     }
 
     private static LuaJitExecutorOptions CreateJitOptions(

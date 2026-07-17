@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.8.0--alpha.1-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.8.0--alpha.12-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.8.0-alpha.10`**; stable `0.7.0` and its API/package baselines
-> remain immutable. This Alpha develops faster PUC chunk lowering, qualified Hosting/CLI JIT
-> selection, linear string-library construction, bounded JIT fallback, continuous unboxed numeric
-> regions, and guarded table/call paths. Its `api/0.8.0` data is a reviewed snapshot rather than a
-> Beta freeze, and the full conformance, package, six-RID, and performance gates remain mandatory.
+> The current source version is **`0.8.0-alpha.12`**; stable `0.7.0` and its API/package baselines
+> remain immutable. This Alpha removes the Lua persisted/static AOT product and `Lunil.Build`,
+> keeps .NET NativeAOT interpreter compatibility, and completes 64-bit instruction accounting in
+> the remaining JIT backends. Its `api/0.8.0` data is a reviewed snapshot rather than a Beta freeze,
+> and the full conformance, package, six-RID, and performance gates remain mandatory.
 
 ## Table of contents
 
@@ -59,9 +59,10 @@ collector.
   ownership, resource budgets, handles, protected errors, and host-facing APIs.
 - **One verified IR** — source compilation and imported PUC Lua chunks converge on a
   shared canonical register IR with structural and control-flow verification.
-- **Designed for multiple execution tiers** — the reference interpreter, persisted CIL
-  AOT, profile-guided CoreCLR Tier 1/Tier 2 JIT, and guarded exact-numeric loop OSR share one
-  verified execution contract; NativeAOT build integration follows the same ABI.
+- **Designed for multiple execution tiers** — the reference interpreter, profile-guided CoreCLR
+  Tier 1/Tier 2 JIT, and guarded exact-numeric loop OSR share one verified execution contract.
+  .NET NativeAOT deployments use the same compiler/runtime surface with deterministic interpreter
+  fallback when dynamic code is unavailable.
 - **Testable by construction** — deterministic fuzzing, GC stress, malformed-input
   tests, binary round trips, and PUC Lua differential fixtures are part of the design.
 
@@ -75,28 +76,27 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| JIT / AOT backends | `0.8` Alpha | Qualified Tier 1/Tier 2/loop OSR and persisted CIL retain the stable gates; this milestone adds bounded terminal fallback, continuous/unboxed numeric regions, and guarded table/call specialization |
+| Execution backends | `0.8` Alpha | Qualified interpreter, Tier 1/Tier 2 JIT, and loop OSR; Lua persisted/static AOT was removed in `0.8.0-alpha.12` |
 | Compiler product API | Stable `0.7` | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
 | Hosting product API | Stable `0.7` | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
 | Annotation product API | Stable `0.7` | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
 | Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
 | CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.10` permits reviewed feature/API work and cannot promote directly to stable |
+| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.12` permits reviewed feature/API work and cannot promote directly to stable |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | `0.8.0-alpha.10` readiness |
+| Execution path | Release behavior | `0.8.0-alpha.12` readiness |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
 | Exact-numeric Tier 2 JIT | Automatic promotion after Tier 1 qualification | Qualified on all six release RIDs; managed semantic profiles stay on Tier 1 unless explicitly enabled |
 | Exact-numeric loop OSR | Enabled by default after loop and runtime-value qualification | Qualified on all six release RIDs; non-exact loops are rejected before compilation |
-| Persisted CIL AOT | Explicit artifact compile, validation, collectible load, and execution | Qualified on all six release RIDs; exact-module profiles can persist guarded unboxed numeric regions with precise fallback |
-| Build-time AOT / NativeAOT | Static registry when `Lunil.Build` is used; interpreter fallback for dynamic modules | Build and publish integration verified on all six release RIDs |
+| .NET NativeAOT / trimming | Compiler, workspace, runtime, CLI, and interpreter compatibility | Build and execution verified on all six release RIDs; JIT selection falls back deterministically |
 
-The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.10` layers the work described
-in its [changelog](changelogs/0.8.0-alpha.10.md) on top without changing the frozen `api/0.7.0`
+The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.12` layers the work described
+in its [changelog](changelogs/0.8.0-alpha.12.md) on top without changing the frozen `api/0.7.0`
 contract.
 
 ## Features
@@ -164,8 +164,8 @@ contract.
 - `lunil run` preflights source workspaces or executes validated PUC Lua 5.4 chunks, publishes
   main-chunk varargs and `arg`, and keeps program output separate from diagnostics.
 - `lunil check` analyzes one or more roots with cross-module types; `lunil build` emits portable
-  Lua 5.4 chunks or persisted CIL AOT assemblies/PDBs/manifests; `lunil dump` exposes summary,
-  syntax, annotations, analysis, IR, and chunk views as text or JSON.
+  Lua 5.4 chunks; `lunil dump` exposes summary, syntax, annotations, analysis, IR, and chunk views
+  as text or JSON. Removed `--target aot` inputs fail with stable diagnostic `LUNIL0006`.
 - Defaults, `lunil.json`, `LUNIL_*` environment variables, response files, and direct CLI options
   have defined precedence. Trusted, root-confined read-only sandbox, and deterministic profiles
   share explicit input, instruction, stack, call-depth, and heap budgets.
@@ -190,13 +190,12 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.10
+dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.12
 lunil --version
 
 lunil run app.lua -- one two
 lunil check app.lua --module-root . --warnings-as-errors
 lunil build app.lua --target chunk --output app.luac
-lunil build app.lua --target aot --output artifacts/aot
 lunil dump app.lua --kind analysis --format json
 ```
 
@@ -244,7 +243,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.10" />
+<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.12" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through one
@@ -380,74 +379,23 @@ canonical-loop and guard-widening path. Set `EnableLoopOsr=false` for a complete
 analysis, qualification, preparation, and compilation. Dynamic-code-unavailable runtimes keep the
 same complete fallback regardless of the configured default.
 
-On CoreCLR, a persisted CIL artifact can be validated, loaded into a collectible context, and
-executed through the same scheduler without reimplementing coroutine, hook, close, or exception
-semantics:
-
-```csharp
-var artifact = LuaAotCompiler.Compile(lowering.Module).Artifact
-    ?? throw new InvalidOperationException("Persisted CIL compilation failed.");
-var loading = LuaAotArtifactLoader.Load(
-    artifact,
-    new LuaAotLoadOptions { ExpectedModuleContentId = artifact.Manifest.ModuleContentId });
-if (!loading.Succeeded)
-{
-    throw new InvalidOperationException(string.Join("; ", loading.Diagnostics));
-}
-
-using var loaded = loading.Module!;
-var executor = new LuaPersistedAotExecutor(loaded);
-var result = executor.Execute(state, state.CreateMainClosure(lowering.Module));
-```
-
-`loading.Metrics` attributes validation, assembly loading, delegate binding, total latency, and
-allocated bytes. `executor.Statistics` separates persisted-method invocations, artifact lookup
-fallbacks, expected debug-mode deoptimization, and unexpected compiled deoptimization. The caller
-owns `loaded`; disposing it unloads the collectible context and subsequent execution falls back at
-the current canonical PC. Passing an exact-module `LuaJitModuleProfile` through
-`LuaAotCompilationOptions.Profile` persists the same backend-neutral numeric-region IL used by
-Tier 2 into metadata PE methods with unboxed integer, floating-point, and Boolean locals. The
-profile fingerprint and policy version participate in artifact identity; stale or malformed
-profiles fail closed, while a guard mismatch or budget poll resumes at the exact canonical PC.
+Lua persisted/static AOT, its artifact/loader APIs, and the `Lunil.Build` package were removed in
+`0.8.0-alpha.12`. Existing consumers should run verified modules through `LuaHost`,
+`LuaInterpreter`, or `LuaJitExecutor`; old CLI/config/environment AOT targets fail closed with
+`LUNIL0006` instead of silently selecting another backend. See the matching changelog and the
+[NativeAOT compatibility guide](docs/nativeaot-build-integration.md).
 
 Untrusted source and bytecode should use bounded parser/chunk options, interpreter
 instruction and stack budgets, and heap quotas appropriate for the host.
 
-### Build-time AOT and NativeAOT
+### .NET NativeAOT and trimming
 
-Add `Lunil.Build` and declare source or PUC Lua 5.4 chunks as `LunilCompile` items:
-
-```xml
-<ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.10" />
-  <LunilCompile Include="Modules/math.lua"
-                ModuleName="app.math"
-                InputKind="Source"
-                Optimization="Release"
-                DebugSymbols="false"
-                Sandbox="Restricted" />
-</ItemGroup>
-```
-
-The package resolves all source items through the same workspace graph, reports cross-module
-analysis diagnostics, verifies and compiles each module before `CoreCompile`, writes deterministic
-artifacts under `obj/lunil/`, and generates a direct-method registry without runtime reflection.
-A host can obtain the embedded canonical module and execute its static entry:
-
-```csharp
-if (!LuaStaticAotRegistry.TryGetModule("app.math", out var module) || module is null)
-{
-    throw new InvalidOperationException("The build-time module was not registered.");
-}
-
-var state = new LuaState();
-var result = new LuaStaticAotExecutor().Execute(state, module.CreateMainClosure(state));
-```
-
-Set `PublishAot=true` for NativeAOT. Dynamic modules still execute through the interpreter;
-JIT and dynamic PE loading are disabled when dynamic code is unavailable. See the
-[NativeAOT and MSBuild guide](docs/nativeaot-build-integration.md) for metadata,
-incremental-build behavior, diagnostics, and publish commands.
+Publish ordinary Lunil consumers with `PublishAot=true` or `PublishTrimmed=true`. The compiler,
+workspace, hosting, CLI, and reference interpreter remain available; `LuaJitExecutor` reports that
+dynamic code is unavailable and executes through the interpreter without collecting JIT profiles.
+The six-RID fixture treats trimming warnings as errors and verifies source compilation, workspace
+analysis, runtime execution, and JIT capability fallback. See the
+[NativeAOT compatibility guide](docs/nativeaot-build-integration.md).
 
 ## Architecture
 
@@ -473,7 +421,6 @@ flowchart LR
     Runtime --> Heap[Logical heap + GC]
 
     IR --> JIT[CoreCLR Tier 1 / Tier 2 JIT]
-    IR --> AOT[Persisted CIL AOT]
 ```
 
 The compiler is byte-oriented at its boundaries, publishes immutable syntax, annotation,
@@ -497,8 +444,7 @@ Lunil/
 │   ├── Lunil.IR/                # canonical IR and Lua 5.4 binary chunks
 │   ├── Lunil.Runtime/           # values, tables, GC, interpreter, coroutines
 │   ├── Lunil.Hosting/           # reusable host, capability profiles and execution boundary
-│   ├── Lunil.CodeGen.Cil/       # typed CIL plans, persisted AOT and tiered CoreCLR JIT
-│   ├── Lunil.Build/             # MSBuild task, build assets and NativeAOT registry generation
+│   ├── Lunil.CodeGen.Cil/       # typed CIL plans and tiered CoreCLR JIT
 │   ├── Lunil.Cli/               # packaged run/check/build/dump command-line product
 │   └── Lunil.StandardLibrary/   # standard-library registration and modules
 ├── tests/                       # unit, differential, fuzz and GC-stress tests
@@ -543,7 +489,7 @@ The active `0.8.0` promotion sequence is:
 0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
 ```
 
-The current source version is **`0.8.0-alpha.10`**. Stable `0.7.0`, its tag, and `api/0.7.0`
+The current source version is **`0.8.0-alpha.12`**. Stable `0.7.0`, its tag, and `api/0.7.0`
 remain immutable; backward-compatible fixes on that stable line use `0.7.1`. Alpha prerelease
 counters increase for every published build, and promotion restarts at `beta.1` only after the
 complete `0.8` feature and public-API scope is accepted. The current reviewed `api/0.8.0`
@@ -566,12 +512,11 @@ suffix are automatically marked as prereleases. See the
 | [Loop OSR productionization](docs/adr/0006-loop-osr-performance-productionization.md) | Exact-numeric OSR code shape, eligibility, guards, fallback, and performance gates |
 | [Loop OSR rollout evidence closure](docs/adr/0008-loop-osr-qualified-preparation-and-evidence.md) | Qualified lazy emitter preparation and balanced high-sample rollout evidence |
 | [Loop OSR automatic default rollout](docs/adr/0009-loop-osr-auto-default-rollout.md) | Six-RID authorization, release default, and explicit opt-out contract |
-| [Persisted CIL AOT productionization](docs/adr/0010-persisted-cil-aot-performance-productionization.md) | Collectible runtime execution, loader attribution, fallback, and six-RID performance gates |
-| [Persisted profile-guided numeric regions](docs/adr/0015-persisted-profile-guided-numeric-regions.md) | Exact-module profile identity, shared numeric IL, guards, safepoints, and artifact compatibility |
-| [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter baseline and benchmark procedure for JIT/AOT work |
+| [Historical persisted CIL AOT ADR](docs/adr/0010-persisted-cil-aot-performance-productionization.md) | Superseded design record retained for migration history |
+| [Historical persisted-profile ADR](docs/adr/0015-persisted-profile-guided-numeric-regions.md) | Superseded design record retained for migration history |
+| [Backend performance baseline](docs/backend-performance-baseline.md) | Interpreter/JIT baseline and benchmark procedure; removed AOT results are historical |
 | [Cross-runtime performance](docs/cross-runtime-performance.md) | Native Lua baseline, LuaJIT/MoonSharp/Lunil matrix, reproducible toolchain, and six-RID reports |
-| [Backend cache contract](docs/backend-cache-contract.md) | Cache keys, disk layout, profile format, quotas and corruption behavior |
-| [NativeAOT and MSBuild](docs/nativeaot-build-integration.md) | `Lunil.Build`, static registries, diagnostics and publish modes |
+| [.NET NativeAOT compatibility](docs/nativeaot-build-integration.md) | Trimming, publish modes, interpreter fallback, and six-RID verification |
 | [Runtime continuation ABI](docs/runtime-continuation-abi.md) | Frozen continuation and yield boundary from `0.3.0` |
 | [PUC prototype import](docs/puc-prototype-import.md) | PUC Lua prototype-to-canonical-IR conversion |
 | [Versioning](docs/versioning.md) | SemVer, alpha/beta/RC promotion and release procedure |

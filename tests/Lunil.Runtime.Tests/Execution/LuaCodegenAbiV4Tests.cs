@@ -58,7 +58,7 @@ public sealed class LuaCodegenAbiV4Tests
     }
 
     [Fact]
-    public void PersistedAssemblyAccessorsExposeOnlyRequiredControlState()
+    public void GeneratedCodeAccessorsExposeOnlyRequiredControlState()
     {
         var function = new LuaIrFunction
         {

@@ -232,7 +232,7 @@ internal static class LuaCilMethodPlanner
         var pcLabels = pcLabelBuilder.MoveToImmutable();
         var nextLabel = instructionCount + 1;
 
-        Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadInt32, 0));
+        Emit(instructions, CilPlanInstruction.WithInt64(CilPlanOpCode.LoadInt64, 0));
         Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.StoreLocal, ConsumedLocal));
         Emit(instructions, CilPlanInstruction.WithInt32(
             CilPlanOpCode.LoadInt32,
@@ -353,7 +353,7 @@ internal static class LuaCilMethodPlanner
                 LuaCompiledExitReason.InstructionBudget);
             Emit(instructions, CilPlanInstruction.MarkLabel(reserved, pc));
             Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadLocal, ConsumedLocal, pc));
-            Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadInt32, 1, pc));
+            Emit(instructions, CilPlanInstruction.WithInt64(CilPlanOpCode.LoadInt64, 1, pc));
             Emit(instructions, CilPlanInstruction.Simple(CilPlanOpCode.Add, pc));
             Emit(instructions, CilPlanInstruction.WithInt32(CilPlanOpCode.StoreLocal, ConsumedLocal, pc));
             LowerInstruction(
@@ -423,11 +423,11 @@ internal static class LuaCilMethodPlanner
             ReturnKind = CilStackValueKind.CompiledExit,
             Locals =
             [
-                new CilLocal(ConsumedLocal, CilStackValueKind.Int32, "consumed"),
+                new CilLocal(ConsumedLocal, CilStackValueKind.Int64, "consumed"),
                 new CilLocal(ProgramCounterLocal, CilStackValueKind.Int32, "pc"),
                 new CilLocal(
                     FramelessConsumedLocal,
-                    CilStackValueKind.Int32,
+                    CilStackValueKind.Int64,
                     "framelessConsumed"),
                 new CilLocal(
                     SafepointCountdownLocal,
@@ -800,6 +800,7 @@ internal static class LuaCilMethodPlanner
                     Emit(plan, CilPlanInstruction.Call(
                         CilWellKnownCalls.TryExecuteFramelessCall,
                         pc));
+                    Emit(plan, CilPlanInstruction.Simple(CilPlanOpCode.ConvertInt64, pc));
                     Emit(plan, CilPlanInstruction.WithInt32(
                         CilPlanOpCode.StoreLocal,
                         FramelessConsumedLocal,

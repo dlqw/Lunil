@@ -1,14 +1,14 @@
 # Lunil command-line reference
 
-`Lunil.Cli` packages the public compiler, workspace, host, chunk, and persisted-CIL contracts as
-the `lunil` .NET tool and as an executable in every RID release bundle.
+`Lunil.Cli` packages the public compiler, workspace, host, and chunk contracts as the `lunil`
+.NET tool and as an executable in every RID release bundle.
 
 ## Commands
 
 ```text
 lunil run <input|-> [options] [-- script-args...]
 lunil check <input...> [options]
-lunil build <input> --output <path> [--target chunk|aot] [options]
+lunil build <input> --output <path> [--target chunk] [options]
 lunil dump <input> [--kind <kind>] [--format text|json] [options]
 ```
 
@@ -19,8 +19,9 @@ lunil dump <input> [--kind <kind>] [--format text|json] [options]
   Binary chunks are structurally verified but do not have source annotation/type views.
 - `build --target chunk` writes canonical PUC Lua 5.4 chunks. A workspace emits one `.luac` per
   resolved module. `--strip-debug` removes chunk debug data.
-- `build --target aot` writes one persisted CIL `.dll`, optional portable `.pdb`, canonical-module
-  payload, and `lunil.aot.manifest.v1` JSON manifest per resolved module.
+- Lua AOT was removed in `0.8.0-alpha.12`. Legacy `--target aot`, JSON
+  `buildTarget: "aot"`, and `LUNIL_BUILD_TARGET=aot` inputs fail closed with diagnostic
+  `LUNIL0006`, phase `removed-feature`, and exit code `2`; they never masquerade as chunk output.
 - `dump` supports `summary`, `syntax`, `annotations`, `analysis`, `ir`, and `chunk`; output can be
   text or `lunil.dump.v1` JSON. `--output -` or no output path writes to stdout.
 
@@ -34,7 +35,7 @@ lunil dump <input> [--kind <kind>] [--format text|json] [options]
   to the first matching module root, or relative to the input directory when no root was supplied.
 - `--module-root` is repeatable. `--path-pattern` is repeatable and defaults to `?.lua` and
   `?/init.lua`. Static direct-global literal `require` calls are resolved and analyzed through the
-  same `Lunil.Workspace` graph used by the public API and `Lunil.Build`.
+  same `Lunil.Workspace` graph used by the public API and CLI build pipeline.
 - Program output uses stdout. Diagnostics use stderr. Build commands print emitted artifact paths
   to stdout, so automation can consume them without parsing diagnostics.
 - Every input and resolved module is bounded by `--maximum-input-bytes`.

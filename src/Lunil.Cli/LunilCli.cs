@@ -102,6 +102,17 @@ internal static class LunilCli
                 CancellationToken.None).ConfigureAwait(false);
             return (int)CliExitCode.Usage;
         }
+        catch (CliRemovedFeatureException exception)
+        {
+            await WriteProblemAsync(
+                standardError,
+                diagnosticFormat,
+                "LUNIL0006",
+                "removed-feature",
+                exception.Message,
+                CancellationToken.None).ConfigureAwait(false);
+            return (int)CliExitCode.Usage;
+        }
         catch (CliInputException exception)
         {
             await WriteProblemAsync(
@@ -204,12 +215,12 @@ internal static class LunilCli
     private static string GetHelp(CliCommand command)
     {
         const string global = """
-Lunil Lua 5.4 compiler, analyzer, runner, and artifact builder
+Lunil Lua 5.4 compiler, analyzer, runner, and chunk builder
 
 Usage:
   lunil run <input|-> [options] [-- script-args...]
   lunil check <input...> [options]
-  lunil build <input> --output <path> [--target chunk|aot] [options]
+  lunil build <input> --output <path> [--target chunk] [options]
   lunil dump <input> [--kind <kind>] [--format text|json] [options]
 
 Global options:
@@ -256,8 +267,8 @@ check options:
 
 build options:
   -o, --output <path>             Required output file/directory.
-      --target <chunk|aot>        PUC Lua 5.4 chunk or persisted CIL AOT (default: chunk).
-      --strip-debug               Strip chunk debug data or omit portable PDBs.
+      --target <chunk>            Build a PUC Lua 5.4 chunk (default: chunk).
+      --strip-debug               Strip chunk debug data.
 """,
             CliCommand.Dump => global + """
 

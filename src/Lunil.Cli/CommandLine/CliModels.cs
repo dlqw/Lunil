@@ -135,6 +135,8 @@ internal sealed record CliConfiguration
 
 internal sealed class CliUsageException(string message) : Exception(message);
 
+internal sealed class CliRemovedFeatureException(string message) : Exception(message);
+
 internal sealed class CliInputException(string message, Exception? innerException = null) :
     Exception(message, innerException);
 

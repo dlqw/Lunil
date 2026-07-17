@@ -77,8 +77,8 @@ try {
 
     $projects = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') `
         -Recurse -Filter 'Lunil.*.csproj' | Sort-Object Name)
-    if ($projects.Count -ne 14) {
-        throw "Expected the active $compatibilityLine package scope to contain 14 projects, found $($projects.Count)."
+    if ($projects.Count -ne 13) {
+        throw "Expected the active $compatibilityLine package scope to contain 13 projects, found $($projects.Count)."
     }
 
     $resolvedGeneratedDirectory = [System.IO.Path]::GetFullPath($generatedDirectory)
