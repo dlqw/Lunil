@@ -196,6 +196,9 @@ namespace Lunil.Runtime.CodeGen
         public const int RuntimeAbiVersion = 4;
         public static void SetProgramCounter(Lunil.Runtime.Execution.LuaFrame frame, int programCounter) { }
         public static long GetInstructionsConsumed(Lunil.Runtime.CodeGen.LuaExecutionContext context) => throw null;
+        public static bool TryExecuteDirectCompiledCall(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame caller, Lunil.Runtime.CodeGen.LuaCodegenCallSiteCache cache, int functionRegister, int expectedFunctionId, int argumentCount, int expectedResults) => throw null;
+        public static bool CanExecuteBoundDirectCall(Lunil.Runtime.CodeGen.LuaExecutionContext context) => throw null;
+        public static bool CanExecuteKnownClosureValue(Lunil.Runtime.Values.LuaValue function, Lunil.Runtime.CodeGen.LuaCodegenCallSiteCache cache, int expectedFunctionId) => throw null;
         public static long Shift(long value, long count, bool left) => throw null;
         public static double FloatingModulo(double dividend, double divisor) => throw null;
         public static bool CompareMixed(long integerValue, double floatingPoint, bool integerOnLeft, int operationValue) => throw null;

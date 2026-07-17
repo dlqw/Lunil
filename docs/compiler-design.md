@@ -496,6 +496,23 @@ tail 不计入，并且门禁要求严格为零。这样旧 switch/helper emitte
 code-kind 名称通过门禁。详细架构决策见
 [ADR 0011](adr/0011-linear-numeric-regions.md)。
 
+`0.8.0-alpha.14` 进一步允许 verified numeric region 跨越一类受限的 Lua closure call。profile 中
+monomorphic 的 module content ID/function ID/fixed argument-result shape 会绑定到 generation lease 下的
+direct compiled entry；运行期仍验证 weak module/closure cache 与 `LuaFunctionVersion.Generation`。首个
+callee 集合只包含无 vararg、无 upvalue、不可 yield/分配的固定整数 leaf，支持 integer 常量、move、
+整数 unary/binary、jump、numeric-for 和固定 return。任何 open result、metamethod、native continuation、
+不支持 instruction 或 generation 失配均在提交 callee state 前返回 scheduler。
+
+direct leaf 有两种共享 emitter 的形态：standalone trampoline 直接读写 caller result window；numeric-region
+inline 则把 caller 的 `long` locals 直接映射为参数和结果，并把 callee 的动态 instruction cost 合并到
+region 的 64 位 `remaining/pending`。inline body 每次进入都显式重置 consumed/backedge local，避免 CLR
+local 只在 caller 方法入口初始化而跨 Lua call 累积。hot quantum 与 cold slow tail 各自回滚未执行的
+Call reservation；pending finalizer/GC 是 poll exit 而不是 guard failure。caller 最多绑定 8 个 site、
+32 KiB leaf IL；单 leaf 上限为 128 instructions、32 registers、8 parameters、4 results 和 1024
+backedges。cache 只使用 `ConditionalWeakTable` 与 weak closure/backend-entry reference，invalidation 会
+先关闭 generation 新入口，再等待 active direct caller 退出。完整决策见
+[ADR 0020](adr/0020-generation-bound-direct-compiled-calls.md)。
+
 自动 Tier 2 promotion 在进入 compile queue 前复用同一 optimization/liveness planner 计算
 `LuaJitTier2Eligibility`。只有 code-shape 检查可保证 `ExactNumericSpecializedCil` 或
 `GuardedSpecializedCil` 时才接受；精确数值 hotspot、stable branch/dead move、有界 table PIC 与
