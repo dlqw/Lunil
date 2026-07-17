@@ -207,7 +207,7 @@ internal static class ReflectionEmitLuaTier2Compiler
     private static readonly MethodInfo GetCallSite = Method(
         typeof(LuaTier2RuntimeSites),
         nameof(LuaTier2RuntimeSites.GetCallSite),
-        [typeof(int)]);
+        [typeof(int), typeof(string)]);
     private static readonly MethodInfo CanSkipClose = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanSkipClose),
@@ -705,9 +705,10 @@ internal static class ReflectionEmitLuaTier2Compiler
                 generator.Emit(OpCodes.Ldarg_2);
                 generator.Emit(OpCodes.Ldarg_3);
                 EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Ldstr, optimization.CallTarget!.ModuleContentId);
                 generator.Emit(OpCodes.Callvirt, GetCallSite);
                 EmitInt32(generator, instruction.A);
-                EmitInt32(generator, optimization.CallTarget!.FunctionId);
+                EmitInt32(generator, optimization.CallTarget.FunctionId);
                 generator.Emit(OpCodes.Call, CanExecuteKnownClosureCall);
                 generator.Emit(OpCodes.Brfalse, guardExit);
                 EmitReserve(generator, optimization.InstructionCount, budgetExit);

@@ -154,6 +154,10 @@ public sealed record LuaJitExecutorOptions
 
     public int MaximumConcurrentCompilations { get; init; } = 1;
 
+    /// <summary>
+    /// Limits transient compilation retries and repeated Tier 2 reprofile cycles for an equivalent
+    /// guard-invalidated plan. A successful initial Tier 2 compilation does not consume a cycle.
+    /// </summary>
     public int MaximumCompilationAttempts { get; init; } = 1;
 
     public int MaximumPolymorphicShapes { get; init; } = 4;

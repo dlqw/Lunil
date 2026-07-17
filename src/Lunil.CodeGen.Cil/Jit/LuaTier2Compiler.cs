@@ -1279,13 +1279,15 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     }
                 case LuaJitOptimizationKind.KnownClosureCall:
                     {
-                        var cache = runtimeSites.GetCallSite(frame.ProgramCounter);
+                        var cache = runtimeSites.GetCallSite(
+                            frame.ProgramCounter,
+                            optimization.CallTarget!.ModuleContentId);
                         if (!LuaCodegenAbiV3.CanExecuteKnownClosureCall(
                                 thread,
                                 frame,
                                 cache,
                                 instruction.A,
-                                optimization.CallTarget!.FunctionId))
+                                optimization.CallTarget.FunctionId))
                         {
                             return GuardFailure(context, frame.ProgramCounter);
                         }

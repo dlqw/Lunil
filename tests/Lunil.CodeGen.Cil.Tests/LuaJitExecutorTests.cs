@@ -2153,6 +2153,39 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void RepeatedTier2GuardInvalidationsStopRecompilingUnstableCode()
+    {
+        var injected = new AlternatingGuardFailureCompiler(
+            ProfileGuidedLuaTier2Compiler.Instance);
+        var compiler = new CountingTier2Compiler(injected);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                SynchronousCompilation = true,
+                EnableTier2 = true,
+                EnableTier2ManagedFallback = true,
+                Tier2InvocationThreshold = 1,
+                Tier2BackedgeThreshold = int.MaxValue,
+                MaximumCompilationAttempts = 1,
+                MaximumTier2GuardFailures = 1,
+            },
+            tier2Compiler: compiler);
+        var module = Compile(
+            "local total = 0; for i = 1, 20 do total = total + i end; return total");
+
+        for (var execution = 0; execution < 12; execution++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(210));
+        }
+
+        Assert.Equal(2, compiler.CallCount);
+        Assert.Equal(2, executor.Statistics.Tier2Invalidations);
+        Assert.Equal(LuaJitCompilationTier.Tier1, executor.GetFunctionTier(module, 0));
+        Assert.Equal(LuaJitTier2State.Failed, executor.GetTier2State(module, 0));
+    }
+
+    [Fact]
     public void ProfileUsesBoundedOwnerFreeTableShapeSignatures()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
@@ -4784,7 +4817,8 @@ public sealed class LuaJitExecutorTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static WeakReference[] CompileTier2AndReleaseOwners(LuaJitExecutor executor)
     {
-        var module = Compile("local value = 10; return value + 1");
+        var module = Compile(
+            "local function increment(value) return value + 1 end; return increment(10)");
         for (var invocation = 0; invocation < 2; invocation++)
         {
             var invocationState = new LuaState();
