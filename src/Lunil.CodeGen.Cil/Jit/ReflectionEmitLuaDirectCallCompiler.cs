@@ -97,10 +97,15 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         typeof(LuaCodegenAbiV4),
         nameof(LuaCodegenAbiV4.CanExecuteBoundDirectCall),
         [typeof(LuaExecutionContext)]);
-    private static readonly MethodInfo PrepareIntegerFor = Method(
-        typeof(ReflectionEmitLuaDirectCallCompiler),
-        nameof(PrepareIntegerForLoop),
-        [typeof(long), typeof(long), typeof(long), typeof(long).MakeByRefType()]);
+    private static readonly MethodInfo PrepareIntegerFor =
+        typeof(ReflectionEmitLuaDirectCallCompiler).GetMethod(
+            nameof(PrepareIntegerForLoop),
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            [typeof(long), typeof(long), typeof(long), typeof(long).MakeByRefType()],
+            modifiers: null) ?? throw new MissingMethodException(
+                typeof(ReflectionEmitLuaDirectCallCompiler).FullName,
+                nameof(PrepareIntegerForLoop));
 
     [RequiresDynamicCode("Direct compiled calls require Reflection.Emit support.")]
     [UnconditionalSuppressMessage(

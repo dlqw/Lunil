@@ -276,7 +276,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         }
 
         LuaCompiledDirectCall? directCall = null;
-        if (ReflectionEmitLuaDirectCallCompiler.TryCompile(
+        if (TryCompileDirectCall(
                 function,
                 profile,
                 cancellationToken,
@@ -570,6 +570,21 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
         return result.ToImmutable();
     }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Tier 2 compilation is reached only after the dynamic-code capability check.")]
+    private static bool TryCompileDirectCall(
+        LuaIrFunction function,
+        LuaJitFunctionProfile profile,
+        CancellationToken cancellationToken,
+        [NotNullWhen(true)] out LuaCompiledDirectCall? result) =>
+        ReflectionEmitLuaDirectCallCompiler.TryCompile(
+            function,
+            profile,
+            cancellationToken,
+            out result);
 
     private static void AddNumericRegionHint(
         ImmutableArray<LuaNumericRegionTypeHint>.Builder hints,
