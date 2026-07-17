@@ -13,6 +13,11 @@ public sealed class LuaState
     private readonly Dictionary<string, LoadedModuleRegistration> _loadedModules =
         new(StringComparer.Ordinal);
     private LuaTable? _loadedModuleCache;
+    private LuaString? _debugHookCallString;
+    private LuaString? _debugHookTailCallString;
+    private LuaString? _debugHookReturnString;
+    private LuaString? _debugHookLineString;
+    private LuaString? _debugHookCountString;
     private long _nextModuleRevision;
 
     public LuaState(LuaStateOptions? options = null)
@@ -101,6 +106,19 @@ public sealed class LuaState
         new(Heap, descriptor, captures);
 
     public LuaHandle CreateHandle(LuaValue value) => Heap.CreateHandle(value);
+
+    internal LuaString GetDebugHookEventString(string hookEvent) => hookEvent switch
+    {
+        "call" => GetOrCreatePermanentString(ref _debugHookCallString, "call"u8),
+        "tail call" => GetOrCreatePermanentString(ref _debugHookTailCallString, "tail call"u8),
+        "return" => GetOrCreatePermanentString(ref _debugHookReturnString, "return"u8),
+        "line" => GetOrCreatePermanentString(ref _debugHookLineString, "line"u8),
+        "count" => GetOrCreatePermanentString(ref _debugHookCountString, "count"u8),
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(hookEvent),
+            hookEvent,
+            "Unknown debug hook event."),
+    };
 
     /// <summary>
     /// Gets the current successful <c>require</c> record for <paramref name="name"/>. A record is
@@ -390,6 +408,21 @@ public sealed class LuaState
         {
             registration.Dispose();
         }
+    }
+
+    private LuaString GetOrCreatePermanentString(
+        ref LuaString? cache,
+        ReadOnlySpan<byte> bytes)
+    {
+        if (cache is not null)
+        {
+            return cache;
+        }
+
+        var value = Strings.GetOrCreate(bytes);
+        Heap.AddPermanentRoot(value);
+        cache = value;
+        return value;
     }
 
     private sealed class LoadedModuleRegistration : IDisposable

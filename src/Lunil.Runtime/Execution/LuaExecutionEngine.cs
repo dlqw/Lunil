@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
@@ -656,7 +657,7 @@ internal sealed class LuaExecutionEngine
 
         string? hookEvent = null;
         var line = instruction.SourceLine > 0 ? instruction.SourceLine : -1;
-        var countDue = thread.DebugHookMask.HasFlag(LuaDebugHookMask.Count) &&
+        var countDue = HasDebugHook(thread, LuaDebugHookMask.Count) &&
             thread.DebugHookCount > 0 && !resumingHookedInstruction &&
             IsCountableDebugInstruction(instruction) &&
             --thread.DebugHookCounter <= 0;
@@ -671,7 +672,7 @@ internal sealed class LuaExecutionEngine
             frame.PendingDebugHookEvent = null;
         }
         else if (instruction.Opcode == LuaIrOpcode.Return &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Return) &&
+            HasDebugHook(thread, LuaDebugHookMask.Return) &&
             frame.ToBeClosedSlots.Count == 0 &&
             frame.ReturnHookProgramCounter != frame.ProgramCounter)
         {
@@ -679,7 +680,7 @@ internal sealed class LuaExecutionEngine
             frame.ReturnHookProgramCounter = frame.ProgramCounter;
         }
         else if (!resumingHookedInstruction &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Line) &&
+            HasDebugHook(thread, LuaDebugHookMask.Line) &&
             (!frame.HasSourceLineInformation && frame.LastLineHookProgramCounter < 0 ||
                 line > 0 &&
                 (line != frame.LastDebugHookLine ||
@@ -741,20 +742,18 @@ internal sealed class LuaExecutionEngine
 
         frame.DebugHookCheckedProgramCounter = frame.ProgramCounter;
         frame.DispatchedDebugHookEvent = hookEvent;
-        var arguments = new[]
-        {
-            LuaValue.FromString(state.Strings.GetOrCreate(
-                System.Text.Encoding.UTF8.GetBytes(hookEvent))),
-            line < 0 ? LuaValue.Nil : LuaValue.FromInteger(line),
-        };
-        var resolved = LuaRuntimeOperations.ResolveCall(state, thread.DebugHook, arguments);
+        LuaValuePair arguments = default;
+        arguments[0] = LuaValue.FromString(state.GetDebugHookEventString(hookEvent));
+        arguments[1] = line < 0 ? LuaValue.Nil : LuaValue.FromInteger(line);
+        ReadOnlySpan<LuaValue> argumentSpan = arguments;
+        var hook = thread.DebugHook;
         thread.IsRunningDebugHook = true;
-        if (resolved.Callable.TryGetClosure() is { } closure)
+        if (hook.TryGetClosure() is { } closure)
         {
             var hookFrame = PushFrame(
                 thread,
                 closure,
-                resolved.Arguments,
+                argumentSpan,
                 Math.Max(frame.Top, frame.Base + frame.Function.RegisterCount),
                 expectedResults: 0,
                 isDebugHook: true);
@@ -764,14 +763,14 @@ internal sealed class LuaExecutionEngine
 
         try
         {
-            var native = resolved.Callable.TryGetNativeFunction() ??
+            var native = hook.TryGetNativeFunction() ??
                 throw new LuaRuntimeException("invalid hook function");
             if (native.StepBody is not null)
             {
                 throw new LuaRuntimeException("resumable native functions cannot be debug hooks");
             }
 
-            _ = InvokeNativeBody(state, resolved.Callable, resolved.Arguments);
+            _ = InvokeNativeBody(state, hook, argumentSpan);
             return false;
         }
         finally
@@ -803,6 +802,10 @@ internal sealed class LuaExecutionEngine
             LuaIrOpcode.SetTop or
             LuaIrOpcode.GetUpvalue or
             LuaIrOpcode.Close);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool HasDebugHook(LuaThread thread, LuaDebugHookMask mask) =>
+        (thread.DebugHookMask & mask) != 0;
 
     private void ActivateThread(
         LuaState state,
@@ -2106,7 +2109,7 @@ internal sealed class LuaExecutionEngine
                 }
                 if (!replacement.IsDebugHook && !replacement.IsHidden &&
                     !thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
-                    thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+                    HasDebugHook(thread, LuaDebugHookMask.Call))
                 {
                     replacement.PendingDebugHookEvent = "tail call";
                     thread.SetDebugHookTransfer(
@@ -2528,7 +2531,7 @@ internal sealed class LuaExecutionEngine
         replacement.IsTailCall = true;
         if (!replacement.IsDebugHook && !replacement.IsHidden &&
             !thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+            HasDebugHook(thread, LuaDebugHookMask.Call))
         {
             replacement.PendingDebugHookEvent = "tail call";
             thread.SetDebugHookTransfer(
@@ -2567,7 +2570,7 @@ internal sealed class LuaExecutionEngine
         }
 
         if (thread.DebugHook.IsNil || thread.IsRunningDebugHook ||
-            !thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+            !HasDebugHook(thread, LuaDebugHookMask.Call))
         {
             return false;
         }
@@ -2589,7 +2592,7 @@ internal sealed class LuaExecutionEngine
         ReadOnlySpan<LuaValue> results)
     {
         if (thread.DebugHook.IsNil || thread.IsRunningDebugHook ||
-            !thread.DebugHookMask.HasFlag(LuaDebugHookMask.Return))
+            !HasDebugHook(thread, LuaDebugHookMask.Return))
         {
             return;
         }
@@ -3794,7 +3797,7 @@ internal sealed class LuaExecutionEngine
         frame.InstructionRoute = GetInitialFrameInstructionRoute(frame);
         if (scheduleCallHook && !isDebugHook && !isHidden && !thread.IsRunningDebugHook &&
             !thread.DebugHook.IsNil &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+            HasDebugHook(thread, LuaDebugHookMask.Call))
         {
             frame.PendingDebugHookEvent = "call";
             thread.SetDebugHookTransfer(
@@ -3894,7 +3897,7 @@ internal sealed class LuaExecutionEngine
 
         frame.InstructionRoute = GetInitialFrameInstructionRoute(frame);
         if (!thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
-            thread.DebugHookMask.HasFlag(LuaDebugHookMask.Call))
+            HasDebugHook(thread, LuaDebugHookMask.Call))
         {
             frame.PendingDebugHookEvent = "call";
             thread.SetDebugHookTransfer(
@@ -5050,6 +5053,12 @@ internal sealed class LuaExecutionEngine
             new LuaModuleRuntimeData(module),
             function,
             [new LuaUpvalue(state.Heap, callable)]);
+    }
+
+    [InlineArray(2)]
+    private struct LuaValuePair
+    {
+        private LuaValue _element0;
     }
 
 }
