@@ -1031,6 +1031,9 @@ static void RunBackendEvidence(
         $"direct_call_fallbacks={statistics?.DirectCallFallbacks ?? 0}, " +
         $"direct_call_invalidations={statistics?.DirectCallInvalidations ?? 0}, " +
         $"scheduler_exits_avoided={statistics?.SchedulerExitsAvoided ?? 0}, " +
+        $"table_pic_hits={statistics?.TablePicHits ?? 0}, " +
+        $"table_pic_misses={statistics?.TablePicMisses ?? 0}, " +
+        $"table_pic_invalidations={statistics?.TablePicInvalidations ?? 0}, " +
         $"loop_osr_code_kind={warmed.LoopOsrCodeKind}, " +
         $"loop_osr_specialized_instruction_count={warmed.LoopOsrSpecializedInstructionCount}, " +
         $"loop_osr_guard_count={warmed.LoopOsrGuardCount}, " +

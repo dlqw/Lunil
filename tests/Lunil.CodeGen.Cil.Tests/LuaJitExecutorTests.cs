@@ -2544,7 +2544,7 @@ public sealed class LuaJitExecutorTests
         var eligibility = executor.GetTier2PromotionEligibility(module, 0);
         Assert.False(eligibility.IsAutoEligible);
         Assert.Equal(
-            LuaJitTier2EligibilityReason.UnsupportedInstruction,
+            LuaJitTier2EligibilityReason.NoNumericHotspot,
             eligibility.Reason);
         Assert.Equal(1, executor.Statistics.Tier2CompilationCompleted);
         Assert.True(executor.Statistics.Tier2EligibilityRejected >= 1);
@@ -3034,6 +3034,352 @@ public sealed class LuaJitExecutorTests
             extraKeys: 1,
             expected: LuaValue.FromInteger(1));
         Assert.Equal(guardFailures, executor.Statistics.Tier2GuardFailures);
+    }
+
+    [Fact]
+    public void MegamorphicIntegerTableShapesStillUseExactDenseKeyTier2Pic()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 6,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("local target, key = ...; return target[key]");
+        for (var shape = 1; shape <= 6; shape++)
+        {
+            var state = new LuaState();
+            var table = state.CreateTable();
+            for (var key = 1; key <= shape; key++)
+            {
+                table.Set(LuaValue.FromInteger(key), LuaValue.FromInteger(shape * 10 + key));
+            }
+
+            AssertValues(
+                executor.Execute(
+                    state,
+                    state.CreateMainClosure(module),
+                    [LuaValue.FromTable(table), LuaValue.FromInteger(1)]),
+                LuaValue.FromInteger(shape * 10 + 1));
+        }
+
+        {
+            var state = new LuaState();
+            var table = state.CreateTable();
+            table.Set(LuaValue.FromInteger(1), LuaValue.FromInteger(71));
+            AssertValues(
+                executor.Execute(
+                    state,
+                    state.CreateMainClosure(module),
+                    [LuaValue.FromTable(table), LuaValue.FromInteger(1)]),
+                LuaValue.FromInteger(71));
+        }
+
+        var site = Assert.Single(executor.GetFunctionProfile(module, 0).Sites.Where(
+            static candidate => candidate.Opcode == LuaIrOpcode.GetTable));
+        Assert.True(site.IsMegamorphic);
+        Assert.Equal(LuaJitValueKinds.Integer, site.SecondOperandKinds);
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization => optimization.Kind == LuaJitOptimizationKind.TableGetPic);
+
+        var hitState = new LuaState();
+        var hitTable = hitState.CreateTable();
+        hitTable.Set(LuaValue.FromInteger(1), LuaValue.FromInteger(42));
+        var hits = executor.Statistics.TablePicHits;
+        var hitClosure = hitState.CreateMainClosure(module);
+        for (var sample = 0; sample < 256; sample++)
+        {
+            AssertValues(
+                executor.Execute(
+                    hitState,
+                    hitClosure,
+                    [LuaValue.FromTable(hitTable), LuaValue.FromInteger(1)]),
+                LuaValue.FromInteger(42));
+        }
+
+        Assert.True(executor.Statistics.TablePicHits > hits);
+    }
+
+    [Fact]
+    public void SievePromotesToTier2WithMegamorphicDenseIntegerTableSites()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local limit = 200
+            local sieve = {}
+            for index = 2, limit do sieve[index] = true end
+            for index = 2, floor(sqrt(limit)) do
+                if sieve[index] then
+                    for composite = index * index, limit, index do
+                        sieve[composite] = false
+                    end
+                end
+            end
+            local count = 0
+            for index = 2, limit do
+                if sieve[index] then count = count + 1 end
+            end
+            return count
+            """);
+        for (var warmup = 0; warmup < 3; warmup++)
+        {
+            var state = new LuaState();
+            state.SetGlobal(
+                "sqrt",
+                LuaValue.FromFunction(new LuaNativeFunction(
+                    "sqrt",
+                    static (_, arguments) =>
+                    [LuaValue.FromFloat(Math.Sqrt(arguments[0].AsInteger()))])));
+            state.SetGlobal(
+                "floor",
+                LuaValue.FromFunction(new LuaNativeFunction(
+                    "floor",
+                    static (_, arguments) =>
+                    [LuaValue.FromInteger((long)Math.Floor(arguments[0].AsFloat()))])));
+            AssertValues(
+                executor.Execute(state, state.CreateMainClosure(module), []),
+                LuaValue.FromInteger(46));
+        }
+
+        var sievePlan = executor.GetTier2Plan(module, 0);
+        Assert.True(
+            sievePlan is not null,
+            executor.GetTier2PromotionEligibility(module, 0) + "; instructions=" +
+            string.Join(
+                ",",
+                module.Functions[0].Instructions.Select(
+                    static (instruction, pc) => $"{pc}:{instruction.Opcode}")) +
+            "; profile=" + FormatProfile(executor.GetFunctionProfile(module, 0)));
+        Assert.True(
+            sievePlan.Optimizations.Count(static optimization => optimization.Kind is
+                LuaJitOptimizationKind.TableGetPic or LuaJitOptimizationKind.TableSetPic) >= 4,
+            string.Join(
+                "; ",
+                module.Functions[0].Instructions.Select(
+                    static (instruction, pc) => $"{pc}:{instruction}")));
+        Assert.True(sievePlan.NumericRegionCount > 0);
+        Assert.True(sievePlan.UnboxedNumericLocalCount > 0);
+    }
+
+    [Fact]
+    public void CompilerProvenIntegerAndStringTableSitesStayInsideNumericRegion()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local values = {}
+            local total = 0
+            for index = 1, 200 do
+                values[index] = index
+                values.field = index
+                total = total + values[index] + values.field
+            end
+            return total
+            """);
+
+        for (var warmup = 0; warmup < 3; warmup++)
+        {
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(40_200));
+        }
+
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2CodeKind.GuardedSpecializedCil, plan.CodeKind);
+        Assert.True(plan.NumericRegionCount > 0);
+        Assert.True(plan.UnboxedNumericLocalCount > 0);
+        Assert.Equal(0, executor.Statistics.Tier2GuardFailures);
+        Assert.True(executor.Statistics.TablePicHits > 0);
+    }
+
+    [Fact]
+    public void NumericRegionTableMetamethodGuardDeoptsBeforeTheTableOperation()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local values = {}
+            local metatable = { __index = function(_, key) return key end }
+            attach_metatable(values, metatable)
+            local total = 0
+            for index = 1, 100 do total = total + values[index] end
+            return total
+            """);
+
+        for (var warmup = 0; warmup < 4; warmup++)
+        {
+            var state = new LuaState();
+            state.SetGlobal(
+                "attach_metatable",
+                LuaValue.FromFunction(new LuaNativeFunction(
+                    "attach_metatable",
+                    static (_, arguments) =>
+                    {
+                        arguments[0].AsTable().SetMetatable(arguments[1].AsTable());
+                        return [arguments[0]];
+                    })));
+            AssertValues(
+                executor.Execute(state, state.CreateMainClosure(module), []),
+                LuaValue.FromInteger(5_050));
+        }
+
+        Assert.True(executor.Statistics.Tier2GuardFailures > 0);
+        Assert.True(executor.Statistics.Tier2Invalidations > 0);
+    }
+
+    [Fact]
+    public void Tier2StringFieldPicReportsHitsMissesAndMutationInvalidation()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        var module = Compile("local target, key = ...; return target[key]");
+        var state = new LuaState();
+        var table = state.CreateTable();
+        var key = LuaValue.FromString(state.Strings.GetOrCreate("field"u8));
+        table.Set(key, LuaValue.FromInteger(1));
+        var closure = state.CreateMainClosure(module);
+        var arguments = new[] { LuaValue.FromTable(table), key };
+
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(1));
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(1));
+        var afterPopulation = executor.Statistics;
+        Assert.True(afterPopulation.TablePicMisses >= 1);
+
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(1));
+        Assert.True(executor.Statistics.TablePicHits > afterPopulation.TablePicHits);
+
+        var guardFailures = executor.Statistics.Tier2GuardFailures;
+        var invalidations = executor.Statistics.TablePicInvalidations;
+        table.Set(key, LuaValue.Nil);
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.Nil);
+        Assert.True(executor.Statistics.TablePicInvalidations > invalidations);
+        Assert.Equal(guardFailures, executor.Statistics.Tier2GuardFailures);
+
+        table.Set(key, LuaValue.FromInteger(2));
+        AssertValues(executor.Execute(state, closure, arguments), LuaValue.FromInteger(2));
+    }
+
+    [Fact]
+    public void Tier2PrimitiveEqualityAndStringRelationalGuardsPreserveExactSemantics()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = int.MaxValue,
+            MaximumTier2GuardFailures = int.MaxValue,
+        });
+        var equality = Compile(
+            "local a,b,c,d,e,f=...; local i=0; while i<2 do i=i+1 end; " +
+            "return a==b,a~=b,c==d,e==f,e~=f");
+        LuaValue[] EqualityArguments(LuaState state) =>
+        [
+            LuaValue.FromBoolean(true),
+            LuaValue.FromBoolean(false),
+            LuaValue.Nil,
+            LuaValue.Nil,
+            LuaValue.FromString(state.Strings.GetOrCreate("same"u8)),
+            LuaValue.FromString(state.Strings.GetOrCreate("same"u8)),
+        ];
+        for (var warmup = 0; warmup < 3; warmup++)
+        {
+            var state = new LuaState();
+            AssertValues(
+                executor.Execute(
+                    state,
+                    state.CreateMainClosure(equality),
+                    EqualityArguments(state)),
+                LuaValue.FromBoolean(false),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(false));
+        }
+
+        var rawEqualityPlan = executor.GetTier2Plan(equality, 0);
+        Assert.True(
+            rawEqualityPlan is not null,
+            $"eligibility={executor.GetTier2PromotionEligibility(equality, 0)}; " +
+            $"statistics={executor.Statistics}");
+        var equalityPlan = rawEqualityPlan!;
+        Assert.True(equalityPlan.Optimizations.Count(
+            static optimization => optimization.Kind == LuaJitOptimizationKind.PrimitiveBinary) >= 5);
+
+        var relational = Compile(
+            "local a,b=...; local i=0; while i<2 do i=i+1 end; " +
+            "return a<b,a<=b,a>b,a>=b");
+        for (var warmup = 0; warmup < 3; warmup++)
+        {
+            var state = new LuaState();
+            var left = LuaValue.FromString(state.Strings.GetOrCreate("alpha"u8));
+            var right = LuaValue.FromString(state.Strings.GetOrCreate("beta"u8));
+            AssertValues(
+                executor.Execute(
+                    state,
+                    state.CreateMainClosure(relational),
+                    [left, right]),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(false),
+                LuaValue.FromBoolean(false));
+        }
+
+        var relationalPlan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(relational, 0));
+        Assert.Equal(
+            4,
+            relationalPlan.Optimizations.Count(
+                static optimization => optimization.Kind ==
+                    LuaJitOptimizationKind.PrimitiveBinary));
+
+        var guardFailures = executor.Statistics.Tier2GuardFailures;
+        AssertValues(
+            ExecuteFresh(
+                executor,
+                equality,
+                LuaValue.FromInteger(1),
+                LuaValue.FromInteger(1),
+                LuaValue.Nil,
+                LuaValue.Nil,
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(false)),
+            LuaValue.FromBoolean(true),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(true),
+            LuaValue.FromBoolean(false),
+            LuaValue.FromBoolean(true));
+        Assert.True(executor.Statistics.Tier2GuardFailures > guardFailures);
     }
 
     [Fact]

@@ -587,7 +587,8 @@ namespace Lunil.CodeGen.Cil.Jit
         TableGetPic = 5,
         TableSetPic = 6,
         KnownClosureCall = 7,
-        FixedResultWindowReuse = 8
+        FixedResultWindowReuse = 8,
+        PrimitiveBinary = 9
     }
 
     public sealed class LuaJitOsrEntryMap : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitOsrEntryMap>
@@ -820,6 +821,9 @@ namespace Lunil.CodeGen.Cil.Jit
         public long DirectCallFallbacks { get => throw null; init { } }
         public long DirectCallInvalidations { get => throw null; init { } }
         public long SchedulerExitsAvoided { get => throw null; init { } }
+        public long TablePicHits { get => throw null; init { } }
+        public long TablePicMisses { get => throw null; init { } }
+        public long TablePicInvalidations { get => throw null; init { } }
         public LuaJitStatistics(long FunctionEntries, long Backedges, long CompilationQueued, long CompilationStarted, long CompilationCompleted, long CompilationFailed, long QueueRejected, long CompiledInvocations, long InterpreterFallbacks, long Deoptimizations, long CacheEvictions, long Invalidations, long EstimatedCodeBytes, long TotalQueueLatencyTicks, long TotalCompilationTicks, long Tier2CompilationQueued, long Tier2CompilationStarted, long Tier2CompilationCompleted, long Tier2CompilationFailed, long Tier2Invocations, long Tier2GuardFailures, long Tier2Invalidations, long LoopOsrRequests, long LoopOsrCompilationQueued, long LoopOsrCompilationStarted, long LoopOsrCompilationCompleted, long LoopOsrCompilationFailed, long LoopOsrEntries, long LoopOsrExits, long LoopOsrGuardFailures, long LoopOsrInvalidations, long CompiledCanonicalInstructions, long SchedulerExits, long ContinueExits, long PollExits, long CallExits, long TailCallExits, long ReturnExits, long InstructionBudgetPolls, long GarbageCollectionPolls, long DebugModeDeoptimizations, long Tier1CompileAllocatedBytes, long Tier1DirectCanonicalInstructions, long Tier1SlowPathCanonicalInstructions, long Tier1PlanInstructions, long TotalCanonicalVerificationTicks, long TotalControlFlowAnalysisTicks, long TotalMethodPlanBuildTicks, long TotalPlanVerificationTicks, long TotalReflectionEmitTicks, long TotalDelegateCreationTicks, long EligibilityEvaluated, long EligibilityAccepted, long EligibilityRejected, long Tier2EligibilityEvaluated, long Tier2EligibilityAccepted, long Tier2EligibilityRejected, long LoopOsrEligibilityEvaluated, long LoopOsrEligibilityAccepted, long LoopOsrEligibilityRejected) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitStatistics? left, Lunil.CodeGen.Cil.Jit.LuaJitStatistics? right) => throw null;

@@ -121,19 +121,22 @@ Stable `0.7.0` removes the suffix from that accepted candidate without product-c
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
-## Current `0.8.0-alpha.13` decision
+## Current `0.8.0-alpha.15` decision
 
-`0.8.0-alpha.13` continues performance convergence after the Lua AOT removal in `alpha.12`. It
-adds a compact reference-interpreter loop for same-frame canonical instructions, batches ordinary
-idle GC/finalizer safe points with bounded latency, restores per-instruction progress at the
-allocation-debt threshold and throughout active cycles, preserves immediate stress/finalizer
-servicing, and keeps hooks, budgets, calls, returns, coroutine transfers, errors, and backend probes
-at their exact shared-scheduler boundaries. Low-risk call-boundary materialization and
-single-implementation observer/router overhead are removed without weakening continuation
-snapshots or stack ownership.
-The exact scope is recorded in
-[`changelogs/0.8.0-alpha.13.md`](../changelogs/0.8.0-alpha.13.md) and
-[ADR 0019](adr/0019-compact-tier0-interpreter-loop.md).
+The `0.8.0` Alpha sequence has completed the planned backend feature work: `alpha.12` removed the
+persisted/static Lua AOT product and converted remaining JIT accounting to 64-bit; `alpha.13`
+introduced the compact reference loop; `alpha.14` added generation-bound direct compiled calls;
+and `alpha.15` adds bounded weak table/operand PICs, exact primitive non-numeric guards, and guarded
+table side operations inside verified numeric regions. Every table, key, result-kind, metatable,
+mutation-version, budget, and GC assumption remains guarded, and failure resumes the shared
+canonical path at the exact instruction.
+
+The current scope is recorded in
+[`changelogs/0.8.0-alpha.15.md`](../changelogs/0.8.0-alpha.15.md) and
+[ADR 0021](adr/0021-bounded-table-operand-pics.md). After this Alpha is accepted, `0.8.0-beta.1`
+freezes feature and public-API scope; later 0.8 prereleases accept only compatibility, diagnostics,
+documentation, release-gate, and performance-convergence fixes. New backend/API/IR features move to
+`0.9.0-alpha.1`.
 
 The `api/0.8.0` declarations and package data are reviewed Alpha snapshots, not a compatibility
 freeze. `api/0.7.0` remains identical to stable `v0.7.0`. Promotion beyond Alpha requires the full

@@ -183,16 +183,88 @@ public static class LuaCodegenAbiV3
         int targetRegister,
         int keyRegister)
     {
+        LuaTable? cachedTable = null;
+        return TryExecuteCompilerProvenTableGetPic(
+            context,
+            thread,
+            frame,
+            ref cachedTable,
+            cache,
+            destinationRegister,
+            targetRegister,
+            keyRegister);
+    }
+
+    internal static LuaCodegenPicExecutionResult TryExecuteCompilerProvenTableGetPic(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        ref LuaTable? cachedTable,
+        LuaCodegenTableSiteCache cache,
+        int destinationRegister,
+        int targetRegister,
+        int keyRegister)
+    {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(cache);
-        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
-        if (target.TryGetTable() is not { } table)
+        var table = cachedTable;
+        if (table is null)
         {
-            return LuaCodegenPicExecutionResult.GuardFailure;
+            var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return LuaCodegenPicExecutionResult.GuardFailure;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
         }
 
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
-        var exists = table.TryGetExistingEntry(key, out var value, out _);
+        LuaValue value;
+        bool exists;
+        if (key.IsInteger)
+        {
+            exists = table.TryGetIntegerEntry(
+                key,
+                key.AsIntegerUnchecked(),
+                out value,
+                out var entry);
+            if (entry.IsArray)
+            {
+                cache.RecordIntegerFastPathHit(key.AsIntegerUnchecked());
+            }
+            else
+            {
+                cache.RecordIntegerFastPathMiss(key.AsIntegerUnchecked());
+            }
+        }
+        else if (key.Kind == LuaValueKind.String)
+        {
+            var stringKey = key.AsString();
+            if (cache.TryGetStringEntry(
+                    table,
+                    stringKey,
+                    out var cachedEntry,
+                    out value))
+            {
+                exists = true;
+            }
+            else
+            {
+                exists = table.TryGetExistingEntry(key, out value, out var entry);
+                if (exists)
+                {
+                    cache.ObserveStringEntry(table, stringKey, entry);
+                }
+            }
+        }
+        else
+        {
+            cache.RecordFastPathMiss();
+            exists = table.TryGetExistingEntry(key, out value, out _);
+        }
+
         if (!exists && !cache.CanBypass(table, LuaMetamethod.Index))
         {
             return LuaCodegenPicExecutionResult.GuardFailure;
@@ -212,6 +284,63 @@ public static class LuaCodegenAbiV3
         return LuaCodegenPicExecutionResult.Executed;
     }
 
+    internal static LuaCodegenPicExecutionResult TryExecuteCompilerProvenIntegerTableGetPic(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        ref LuaTable? cachedTable,
+        LuaCodegenTableSiteCache cache,
+        int destinationRegister,
+        int targetRegister,
+        int keyRegister)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return LuaCodegenPicExecutionResult.GuardFailure;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
+        if (!key.IsInteger)
+        {
+            return LuaCodegenPicExecutionResult.GuardFailure;
+        }
+
+        var integerKey = key.AsIntegerUnchecked();
+        var exists = table.TryGetIntegerEntry(key, integerKey, out var value, out var entry);
+        if (entry.IsArray)
+        {
+            cache.RecordIntegerFastPathHit(integerKey);
+        }
+        else
+        {
+            cache.RecordIntegerFastPathMiss(integerKey);
+        }
+
+        if (!exists && !cache.CanBypass(table, LuaMetamethod.Index))
+        {
+            return LuaCodegenPicExecutionResult.GuardFailure;
+        }
+
+        if (!context.TryReserveInstructions(1))
+        {
+            return LuaCodegenPicExecutionResult.InstructionBudget;
+        }
+
+        WriteRegisterAndExtendTop(thread, frame, destinationRegister, value);
+        frame.ProgramCounter++;
+        return LuaCodegenPicExecutionResult.Executed;
+    }
+
     public static LuaCodegenPicExecutionResult TryExecuteTableSetPic(
         LuaExecutionContext context,
         LuaThread thread,
@@ -221,16 +350,113 @@ public static class LuaCodegenAbiV3
         int keyRegister,
         int valueRegister)
     {
+        LuaTable? cachedTable = null;
+        return TryExecuteCompilerProvenTableSetPic(
+            context,
+            thread,
+            frame,
+            ref cachedTable,
+            cache,
+            targetRegister,
+            keyRegister,
+            valueRegister);
+    }
+
+    internal static LuaCodegenPicExecutionResult TryExecuteCompilerProvenTableSetPic(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        ref LuaTable? cachedTable,
+        LuaCodegenTableSiteCache cache,
+        int targetRegister,
+        int keyRegister,
+        int valueRegister)
+    {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(cache);
-        var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
-        if (target.TryGetTable() is not { } table)
+        var table = cachedTable;
+        if (table is null)
         {
-            return LuaCodegenPicExecutionResult.GuardFailure;
+            var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return LuaCodegenPicExecutionResult.GuardFailure;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
         }
 
         var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
-        var exists = table.TryGetExistingEntry(key, out _, out var entry);
+        if (key.IsInteger && table.Metatable is null)
+        {
+            if (!context.TryReserveInstructions(1))
+            {
+                return LuaCodegenPicExecutionResult.InstructionBudget;
+            }
+
+            var denseValue = LuaCodegenAbiV2.ReadRegisterUnchecked(
+                thread,
+                frame,
+                valueRegister);
+            if (table.SetIntegerValueNoMetatable(
+                    key,
+                    key.AsIntegerUnchecked(),
+                    denseValue))
+            {
+                cache.RecordIntegerFastPathHit(key.AsIntegerUnchecked());
+            }
+            else
+            {
+                cache.RecordIntegerFastPathMiss(key.AsIntegerUnchecked());
+            }
+
+            frame.ProgramCounter++;
+            return LuaCodegenPicExecutionResult.Executed;
+        }
+
+        LuaTableExistingEntry entry;
+        bool exists;
+        var cachedStringEntry = false;
+        if (key.IsInteger)
+        {
+            exists = table.TryGetIntegerEntry(
+                key,
+                key.AsIntegerUnchecked(),
+                out _,
+                out entry);
+            if (entry.IsArray)
+            {
+                cache.RecordIntegerFastPathHit(key.AsIntegerUnchecked());
+            }
+            else
+            {
+                cache.RecordIntegerFastPathMiss(key.AsIntegerUnchecked());
+            }
+        }
+        else if (key.Kind == LuaValueKind.String)
+        {
+            var stringKey = key.AsString();
+            if (cache.TryGetStringEntry(table, stringKey, out entry, out _))
+            {
+                exists = true;
+                cachedStringEntry = true;
+            }
+            else
+            {
+                exists = table.TryGetExistingEntry(key, out _, out entry);
+                if (exists)
+                {
+                    cache.ObserveStringEntry(table, stringKey, entry);
+                }
+            }
+        }
+        else
+        {
+            cache.RecordFastPathMiss();
+            exists = table.TryGetExistingEntry(key, out _, out entry);
+        }
+
         if (!exists && !cache.CanBypass(table, LuaMetamethod.NewIndex))
         {
             return LuaCodegenPicExecutionResult.GuardFailure;
@@ -244,19 +470,258 @@ public static class LuaCodegenAbiV3
         var value = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, valueRegister);
         if (exists)
         {
-            table.SetExistingEntry(entry, key, value);
+            if (cachedStringEntry)
+            {
+                table.SetExistingStringEntry(entry, key.AsString(), value);
+            }
+            else
+            {
+                table.SetExistingEntry(entry, key, value);
+            }
         }
         else
         {
-            if (!key.IsInteger ||
-                !table.TrySetOrAppendArrayValue(key.AsIntegerUnchecked(), value))
-            {
-                table.Set(key, value);
-            }
+            table.Set(key, value);
         }
 
         frame.ProgramCounter++;
         return LuaCodegenPicExecutionResult.Executed;
+    }
+
+    internal static LuaCodegenPicExecutionResult TryExecuteCompilerProvenIntegerTableSetPic(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        ref LuaTable? cachedTable,
+        LuaCodegenTableSiteCache cache,
+        int targetRegister,
+        int keyRegister,
+        int valueRegister)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            var target = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, targetRegister);
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return LuaCodegenPicExecutionResult.GuardFailure;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        var key = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, keyRegister);
+        if (!key.IsInteger || table.Metatable is not null)
+        {
+            return LuaCodegenPicExecutionResult.GuardFailure;
+        }
+
+        if (!context.TryReserveInstructions(1))
+        {
+            return LuaCodegenPicExecutionResult.InstructionBudget;
+        }
+
+        var integerKey = key.AsIntegerUnchecked();
+        var value = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, valueRegister);
+        if (table.SetIntegerValueNoMetatable(key, integerKey, value))
+        {
+            cache.RecordIntegerFastPathHit(integerKey);
+        }
+        else
+        {
+            cache.RecordIntegerFastPathMiss(integerKey);
+        }
+
+        frame.ProgramCounter++;
+        return LuaCodegenPicExecutionResult.Executed;
+    }
+
+    internal static bool TryGetCompilerProvenIntegerTableValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long integerKey,
+        out LuaValue value)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                value = LuaValue.Nil;
+                return false;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        var key = LuaValue.FromInteger(integerKey);
+        var exists = table.TryGetIntegerEntry(key, integerKey, out value, out var entry);
+        if (entry.IsArray)
+        {
+            cache.RecordIntegerFastPathHit(integerKey);
+        }
+        else
+        {
+            cache.RecordIntegerFastPathMiss(integerKey);
+        }
+
+        return exists || cache.CanBypass(table, LuaMetamethod.Index);
+    }
+
+    internal static bool TrySetCompilerProvenIntegerTableValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long integerKey,
+        LuaValue value)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return false;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        if (table.Metatable is not null)
+        {
+            return false;
+        }
+
+        var key = LuaValue.FromInteger(integerKey);
+        if (table.SetIntegerValueNoMetatable(key, integerKey, value))
+        {
+            cache.RecordIntegerFastPathHit(integerKey);
+        }
+        else
+        {
+            cache.RecordIntegerFastPathMiss(integerKey);
+        }
+
+        return true;
+    }
+
+    internal static bool TryGetCompilerProvenStringTableValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        LuaValue key,
+        out LuaValue value)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                value = LuaValue.Nil;
+                return false;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        if (key.Kind != LuaValueKind.String)
+        {
+            value = LuaValue.Nil;
+            return false;
+        }
+
+        var stringKey = key.AsString();
+        bool exists;
+        if (cache.TryGetStringEntry(table, stringKey, out var cachedEntry, out value))
+        {
+            exists = true;
+        }
+        else
+        {
+            exists = table.TryGetExistingEntry(key, out value, out var entry);
+            if (exists)
+            {
+                cache.ObserveStringEntry(table, stringKey, entry);
+            }
+        }
+
+        return exists || cache.CanBypass(table, LuaMetamethod.Index);
+    }
+
+    internal static bool TrySetCompilerProvenStringTableValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        LuaValue key,
+        LuaValue value)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var table = cachedTable;
+        if (table is null)
+        {
+            if (target.TryGetTable() is not { } guardedTable)
+            {
+                return false;
+            }
+
+            table = guardedTable;
+            cachedTable = guardedTable;
+        }
+
+        if (key.Kind != LuaValueKind.String)
+        {
+            return false;
+        }
+
+        var stringKey = key.AsString();
+        LuaTableExistingEntry entry;
+        bool exists;
+        var cachedStringEntry = false;
+        if (cache.TryGetStringEntry(table, stringKey, out entry, out _))
+        {
+            exists = true;
+            cachedStringEntry = true;
+        }
+        else
+        {
+            exists = table.TryGetExistingEntry(key, out _, out entry);
+            if (exists)
+            {
+                cache.ObserveStringEntry(table, stringKey, entry);
+            }
+        }
+
+        if (!exists && !cache.CanBypass(table, LuaMetamethod.NewIndex))
+        {
+            return false;
+        }
+
+        if (exists)
+        {
+            if (cachedStringEntry)
+            {
+                table.SetExistingStringEntry(entry, stringKey, value);
+            }
+            else
+            {
+                table.SetExistingEntry(entry, key, value);
+            }
+        }
+        else
+        {
+            table.Set(key, value);
+        }
+
+        return true;
     }
 
     public static bool CanExecuteKnownClosureCall(
@@ -428,13 +893,208 @@ public enum LuaCodegenPicExecutionResult : byte
     Executed,
 }
 
-/// <summary>Polymorphic cache for metatables proven not to define a requested metamethod.</summary>
+/// <summary>
+/// Bounded weak cache for table-entry identities and metatables proven not to define a requested
+/// metamethod. Cached entry handles remain opaque and are guarded by table mutation versions.
+/// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class LuaCodegenTableSiteCache
 {
     private const int MaximumEntries = 4;
     private readonly Lock _gate = new();
-    private Entry[] _entries = [];
+    private MetamethodEntry[] _metamethodEntries = [];
+    private FieldEntry[] _fieldEntries = [];
+    private ILuaCodegenTablePicCounterSink? _counters;
+    private bool _sampleCounters;
+    private bool _observedFastPathHit;
+    private bool _observedFastPathMiss;
+    private int _fastPathHitSampleCountdown = 256;
+    private int _fastPathMissSampleCountdown = 256;
+
+    public LuaCodegenTableSiteCache()
+    {
+    }
+
+    internal LuaCodegenTableSiteCache(ILuaCodegenTablePicCounterSink counters)
+    {
+        ArgumentNullException.ThrowIfNull(counters);
+        BindCounters(counters);
+    }
+
+    internal void BindCounters(ILuaCodegenTablePicCounterSink counters)
+    {
+        ArgumentNullException.ThrowIfNull(counters);
+        _sampleCounters = counters.SupportsWeightedSampling;
+        Volatile.Write(ref _counters, counters);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void RecordFastPathHit()
+    {
+        if (!_sampleCounters)
+        {
+            _counters?.RecordHit();
+            return;
+        }
+
+        if (!_observedFastPathHit)
+        {
+            _observedFastPathHit = true;
+            _counters?.RecordHit();
+            return;
+        }
+
+        if (--_fastPathHitSampleCountdown == 0)
+        {
+            _fastPathHitSampleCountdown = 256;
+            _counters?.RecordHits(256);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void RecordFastPathMiss()
+    {
+        if (!_sampleCounters)
+        {
+            _counters?.RecordMiss();
+            return;
+        }
+
+        if (!_observedFastPathMiss)
+        {
+            _observedFastPathMiss = true;
+            _counters?.RecordMiss();
+            return;
+        }
+
+        if (--_fastPathMissSampleCountdown == 0)
+        {
+            _fastPathMissSampleCountdown = 256;
+            _counters?.RecordMisses(256);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void RecordIntegerFastPathHit(long key)
+    {
+        if (!_sampleCounters)
+        {
+            _counters?.RecordHit();
+            return;
+        }
+
+        RecordFastPathHit();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void RecordIntegerFastPathMiss(long key)
+    {
+        if (!_sampleCounters)
+        {
+            _counters?.RecordMiss();
+            return;
+        }
+
+        RecordFastPathMiss();
+    }
+
+    private void RecordInvalidation() => _counters?.RecordInvalidation();
+
+    internal int FieldEntryCount => Volatile.Read(ref _fieldEntries).Length;
+
+    internal bool TryGetStringEntry(
+        LuaTable table,
+        LuaString key,
+        out LuaTableExistingEntry handle,
+        out LuaValue value)
+    {
+        var entries = Volatile.Read(ref _fieldEntries);
+        foreach (var entry in entries)
+        {
+            if (!entry.Table.TryGetTarget(out var cachedTable) ||
+                !entry.Key.TryGetTarget(out var cachedKey) ||
+                !ReferenceEquals(cachedTable, table) ||
+                !ReferenceEquals(cachedKey, key))
+            {
+                continue;
+            }
+
+            if (cachedTable.IsAlive && cachedKey.IsAlive &&
+                entry.MetatableVersion == table.MetatableVersion &&
+                table.TryReadExistingStringEntry(entry.Handle, key, out value))
+            {
+                handle = entry.Handle;
+                RecordFastPathHit();
+                return true;
+            }
+
+            RecordInvalidation();
+            break;
+        }
+
+        handle = default;
+        value = LuaValue.Nil;
+        RecordFastPathMiss();
+        return false;
+    }
+
+    internal void ObserveStringEntry(
+        LuaTable table,
+        LuaString key,
+        LuaTableExistingEntry handle)
+    {
+        lock (_gate)
+        {
+            var entries = Volatile.Read(ref _fieldEntries);
+            var replacement = -1;
+            for (var index = 0; index < entries.Length; index++)
+            {
+                if (!entries[index].Table.TryGetTarget(out var cachedTable) ||
+                    !entries[index].Key.TryGetTarget(out var cachedKey) ||
+                    !cachedTable.IsAlive || !cachedKey.IsAlive)
+                {
+                    replacement = index;
+                    continue;
+                }
+
+                if (ReferenceEquals(cachedTable, table) && ReferenceEquals(cachedKey, key))
+                {
+                    if (entries[index].ShapeVersion == table.ShapeVersion &&
+                        entries[index].StorageVersion == table.StorageVersion &&
+                        entries[index].MetatableVersion == table.MetatableVersion)
+                    {
+                        return;
+                    }
+
+                    replacement = index;
+                    break;
+                }
+            }
+
+            var newEntry = new FieldEntry(
+                new WeakReference<LuaTable>(table),
+                new WeakReference<LuaString>(key),
+                table.ShapeVersion,
+                table.StorageVersion,
+                table.MetatableVersion,
+                handle);
+            if (replacement >= 0)
+            {
+                var updated = (FieldEntry[])entries.Clone();
+                updated[replacement] = newEntry;
+                Volatile.Write(ref _fieldEntries, updated);
+                return;
+            }
+
+            if (entries.Length < MaximumEntries)
+            {
+                var updated = new FieldEntry[entries.Length + 1];
+                entries.CopyTo(updated, 0);
+                updated[^1] = newEntry;
+                Volatile.Write(ref _fieldEntries, updated);
+            }
+        }
+    }
 
     internal bool CanBypass(LuaTable table, LuaMetamethod metamethod)
     {
@@ -444,18 +1104,26 @@ public sealed class LuaCodegenTableSiteCache
             return true;
         }
 
-        var entries = Volatile.Read(ref _entries);
+        var entries = Volatile.Read(ref _metamethodEntries);
         foreach (var entry in entries)
         {
-            if (entry.Metatable.TryGetTarget(out var cached) && cached.IsAlive &&
-                entry.Metamethod == metamethod &&
-                ReferenceEquals(cached, metatable) &&
-                entry.ContentVersion == metatable.ContentVersion)
+            if (!entry.Metatable.TryGetTarget(out var cached) || !cached.IsAlive ||
+                entry.Metamethod != metamethod || !ReferenceEquals(cached, metatable))
             {
+                continue;
+            }
+
+            if (entry.ContentVersion == metatable.ContentVersion)
+            {
+                RecordFastPathHit();
                 return true;
             }
+
+            RecordInvalidation();
+            break;
         }
 
+        RecordFastPathMiss();
         if (!metatable.GetMetamethodField(metamethod).IsNil)
         {
             return false;
@@ -463,7 +1131,7 @@ public sealed class LuaCodegenTableSiteCache
 
         lock (_gate)
         {
-            entries = Volatile.Read(ref _entries);
+            entries = Volatile.Read(ref _metamethodEntries);
             var replacement = -1;
             for (var index = 0; index < entries.Length; index++)
             {
@@ -478,6 +1146,7 @@ public sealed class LuaCodegenTableSiteCache
                 {
                     if (entries[index].ContentVersion == metatable.ContentVersion)
                     {
+                        RecordFastPathHit();
                         return true;
                     }
 
@@ -486,24 +1155,24 @@ public sealed class LuaCodegenTableSiteCache
                 }
             }
 
-            var newEntry = new Entry(
+            var newEntry = new MetamethodEntry(
                 new WeakReference<LuaTable>(metatable),
                 metatable.ContentVersion,
                 metamethod);
             if (replacement >= 0)
             {
-                var updated = (Entry[])entries.Clone();
+                var updated = (MetamethodEntry[])entries.Clone();
                 updated[replacement] = newEntry;
-                Volatile.Write(ref _entries, updated);
+                Volatile.Write(ref _metamethodEntries, updated);
                 return true;
             }
 
             if (entries.Length < MaximumEntries)
             {
-                var updated = new Entry[entries.Length + 1];
+                var updated = new MetamethodEntry[entries.Length + 1];
                 entries.CopyTo(updated, 0);
                 updated[^1] = newEntry;
-                Volatile.Write(ref _entries, updated);
+                Volatile.Write(ref _metamethodEntries, updated);
                 return true;
             }
 
@@ -511,10 +1180,45 @@ public sealed class LuaCodegenTableSiteCache
         }
     }
 
-    private sealed record Entry(
+    private sealed record MetamethodEntry(
         WeakReference<LuaTable> Metatable,
         ulong ContentVersion,
         LuaMetamethod Metamethod);
+
+    private sealed record FieldEntry(
+        WeakReference<LuaTable> Table,
+        WeakReference<LuaString> Key,
+        ulong ShapeVersion,
+        ulong StorageVersion,
+        ulong MetatableVersion,
+        LuaTableExistingEntry Handle);
+}
+
+internal interface ILuaCodegenTablePicCounterSink
+{
+    bool SupportsWeightedSampling => false;
+
+    void RecordHit();
+
+    void RecordMiss();
+
+    void RecordInvalidation();
+
+    void RecordHits(int count)
+    {
+        for (var index = 0; index < count; index++)
+        {
+            RecordHit();
+        }
+    }
+
+    void RecordMisses(int count)
+    {
+        for (var index = 0; index < count; index++)
+        {
+            RecordMiss();
+        }
+    }
 }
 
 /// <summary>Weak module-identity cache used by guarded direct Lua-closure dispatch.</summary>

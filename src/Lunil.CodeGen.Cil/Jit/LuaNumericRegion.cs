@@ -31,6 +31,17 @@ internal sealed record LuaNumericRegionRegister(
     int Register,
     LuaNumericRegionValueKind Kind);
 
+internal enum LuaNumericRegionTableOperation : byte
+{
+    Get,
+    Set,
+}
+
+internal readonly record struct LuaNumericRegionTableSite(
+    int ProgramCounter,
+    int TableDefinitionProgramCounter,
+    LuaNumericRegionTableOperation Operation);
+
 /// <summary>
 /// Static accounting for one canonical instruction in a numeric region. Hot execution charges
 /// the containing basic block once; a failing instruction rolls back itself and the unexecuted
@@ -53,6 +64,7 @@ internal sealed record LuaNumericRegionPlan(
     ImmutableArray<LuaNumericRegionRegister> Registers,
     ImmutableArray<int> BackedgeProgramCounters,
     int DirectNumericInstructionCount,
+    ImmutableArray<LuaNumericRegionTableSite> TableSites,
     ImmutableArray<LuaNumericRegionBudgetSite> BudgetSites,
     int MaximumBackedgeSegmentInstructionCost,
     int HotInstructionBudgetCheckCount,
@@ -67,6 +79,23 @@ internal sealed record LuaNumericRegionPlan(
 
     public LuaNumericRegionValueKind GetKindAfter(int programCounter, int register) =>
         KindAt(KindsAfter, programCounter, register);
+
+    public bool TryGetTableSite(
+        int programCounter,
+        out LuaNumericRegionTableSite tableSite)
+    {
+        foreach (var candidate in TableSites)
+        {
+            if (candidate.ProgramCounter == programCounter)
+            {
+                tableSite = candidate;
+                return true;
+            }
+        }
+
+        tableSite = default;
+        return false;
+    }
 
     public LuaNumericRegionBudgetSite GetBudgetSite(int programCounter)
     {

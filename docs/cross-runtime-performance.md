@@ -38,6 +38,11 @@ checked against `expectedPerOperation × operations`; an incorrect result aborts
 record the observed route and timed-region telemetry, so a configured backend cannot silently be
 reported as compiled after fallback or deoptimization.
 
+From `0.8.0-alpha.15`, the schema also records table PIC hits, misses, and invalidations. Hit/miss
+values are low-overhead estimates: the first event is exact and steady-state events are aggregated
+in batches of 256. Invalidations remain exact. Gates use these fields to diagnose route stability
+and mutation behavior; they do not treat sampled hit/miss totals as exact per-operation counts.
+
 ## Measurement and gate protocol
 
 1. Create a fresh engine instance and load/compile the source outside the primary interval.

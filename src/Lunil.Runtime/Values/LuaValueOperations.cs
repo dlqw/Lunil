@@ -149,6 +149,25 @@ public static class LuaValueOperations
                 right),
         };
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static LuaValue BinaryPrimitiveSpecialized(
+        LuaIrBinaryOperator operation,
+        LuaValue left,
+        LuaValue right) => operation switch
+        {
+            LuaIrBinaryOperator.Equal => LuaValue.FromBoolean(left.Equals(right)),
+            LuaIrBinaryOperator.NotEqual => LuaValue.FromBoolean(!left.Equals(right)),
+            LuaIrBinaryOperator.LessThan => LuaValue.FromBoolean(LessThan(left, right)),
+            LuaIrBinaryOperator.LessThanOrEqual =>
+                LuaValue.FromBoolean(LessThanOrEqual(left, right)),
+            LuaIrBinaryOperator.GreaterThan => LuaValue.FromBoolean(LessThan(right, left)),
+            LuaIrBinaryOperator.GreaterThanOrEqual =>
+                LuaValue.FromBoolean(LessThanOrEqual(right, left)),
+            _ => throw new InvalidOperationException(
+                $"Primitive specialization does not support {operation}."),
+        };
+
     public static string FormatFloat(double value)
     {
         Span<byte> bytes = stackalloc byte[MaximumFormattedNumberByteCount];

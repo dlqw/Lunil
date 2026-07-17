@@ -838,3 +838,30 @@ avoided scheduler exits in the measured process. Its main function retained one 
 nine unboxed numeric locals, zero hot per-instruction budget comparisons, and a stable
 `GuardedSpecializedCil` route. Raw candidate and control rows are stored under
 `artifacts/performance/0.8.0-alpha.14/win-x64/b9a0a82/`.
+
+## M23 bounded table/operand PICs and numeric-region table side operations
+
+`0.8.0-alpha.15` adds four-entry weak PICs for dense integer keys, interned string fields, and
+metamethod absence, plus exact primitive boolean/nil/string comparison guards. Table identity may be
+promoted to a compiled local only after CFG forward must-analysis proves one `NewTable` token on
+every predecessor. The same proof allows integer and interned-string accesses to remain inside a
+verified numeric region: table operations are tagged side operations, while induction variables,
+arithmetic, comparisons, and accumulators stay in CLR locals. Exact hot-block/cold-tail accounting,
+write barriers, ownership, metatable guards, and canonical-PC deoptimization are unchanged. See
+[ADR 0021](adr/0021-bounded-table-operand-pics.md).
+
+The four-round balanced win-x64 evidence is
+`artifacts/backend-performance/win-x64/20260717-233934` on .NET 10.0.3. Every process executed 30
+verified warm operations after three cold compile samples.
+
+| Workload | Tier 1 warm median | Tier 2 warm median | Paired speedup median | Paired samples |
+|---|---:|---:|---:|---:|
+| `sieve` | 9.619 ms | 1.725 ms | **5.38x** | 5.20x–5.70x |
+| `table_access` | 1.162 ms | 344.318 µs | **3.26x** | 3.16x–3.69x |
+
+`sieve` installed three numeric regions with 18 unboxed numeric locals and four direct numeric
+instructions; `table_access` installed one region with nine unboxed locals and three direct numeric
+instructions. Both retained `GuardedSpecializedCil`, reported zero table PIC invalidations and zero
+unexpected guard/deopt exits, and exceeded the 1.50x target in every paired round. The remaining
+Tier 2 negative-workload gate list was empty. Production table hit/miss telemetry is a sampled
+estimate (first event exact, then batches of 256); invalidation telemetry remains exact.

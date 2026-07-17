@@ -25,6 +25,7 @@ internal sealed class LuaTieredJitRegistry :
     private readonly ILuaTier2Compiler _tier2Compiler;
     private readonly ILuaLoopOsrCompiler _loopOsrCompiler;
     private readonly LuaDirectCallCounterSink _boundDirectCallCounters = new();
+    private readonly LuaTablePicCounterSink _tablePicCounters = new();
     private readonly ConcurrentDictionary<FunctionKey, FunctionEntry> _entries = [];
     private readonly ConcurrentDictionary<string, LuaBackendGeneration> _moduleGenerations =
         new(StringComparer.Ordinal);
@@ -640,6 +641,9 @@ internal sealed class LuaTieredJitRegistry :
         SchedulerExitsAvoided = checked(
             Interlocked.Read(ref _schedulerExitsAvoided) +
             _boundDirectCallCounters.SchedulerExitsAvoided),
+        TablePicHits = _tablePicCounters.Hits,
+        TablePicMisses = _tablePicCounters.Misses,
+        TablePicInvalidations = _tablePicCounters.Invalidations,
     };
 
     public LuaJitFunctionState GetFunctionState(LuaIrModule module, int functionId)
@@ -2140,6 +2144,7 @@ internal sealed class LuaTieredJitRegistry :
             return entry.ActiveTier == LuaJitCompilationTier.Tier1 &&
                 promotionStateReady &&
                 !entry.Tier2EligibilityEvaluationInProgress &&
+                Interlocked.Read(ref entry.CompletedTier1Invocations) > 0 &&
                 (entry.Tier2Eligibility is not { IsAutoEligible: false } ||
                  entry.Profile.Samples >= entry.NextTier2EligibilitySample) &&
                 (programCounter == 0 &&
@@ -2995,6 +3000,7 @@ internal sealed class LuaTieredJitRegistry :
                 request.Entry.Tier2Method = result.Method;
                 request.Entry.DirectCallMethod = result.DirectCallMethod;
                 result.RuntimeSites?.BindDirectCallCounters(_boundDirectCallCounters);
+                result.RuntimeSites?.BindTablePicCounters(_tablePicCounters);
                 request.Entry.Tier2Plan = result.Plan;
                 Volatile.Write(ref request.Entry.DirectCallEligibility, 0);
                 request.Entry.Tier2EstimatedCodeBytes = result.EstimatedCodeBytes;
