@@ -355,6 +355,30 @@ public sealed class LuaGarbageCollectorTests
         Assert.True(state.Heap.CompletedCycleCount > 0);
     }
 
+    [Fact]
+    public void InterpreterSafePointRequestRemainsActiveThroughoutIncrementalCycle()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            Heap = LuaHeapOptions.Default with
+            {
+                StepSizeBytes = 1,
+                StepObjectBudget = 1,
+            },
+        });
+        for (var index = 0; index < 16; index++)
+        {
+            state.SetGlobal($"root-{index}", LuaValue.FromTable(state.CreateTable()));
+        }
+
+        Assert.True(state.Heap.RequiresInterpreterSafePoint);
+
+        state.Heap.SafePoint();
+
+        Assert.NotEqual(LuaGcPhase.Paused, state.Heap.Phase);
+        Assert.True(state.Heap.RequiresInterpreterSafePoint);
+    }
+
     private static Lunil.IR.Canonical.LuaIrModule Compile(string source)
     {
         var syntax = LuaParser.Parse(SourceText.FromUtf8(source));

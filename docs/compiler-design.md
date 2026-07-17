@@ -323,7 +323,7 @@ yield 返回显式 `VmSignal.Yield`，而不是保留 CLR 调用栈。resume 从
 
 `LuaInterpreter` 直接执行 canonical IR，Lua 调用和 Lua 元方法只压入显式 frame。共享调度覆盖 `__index`、`__newindex`、`__call`、算术/位运算、`__len`、`__concat`、`__eq`、`__lt`、`__le` 及其 fallback；类型元表与对象元表走同一路径，并具有 2,000 层链预算。普通算术和 numeric-for 使用与 lexer 共享的 Lua 数字解析器转换完整数字字符串，integer loop 在边界处用宽中间值判定，避免 64 位回绕造成额外迭代。
 
-Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换均已完成，并继续由解释器、JIT/AOT 差分及官方 portable user-mode 语料回归。
+Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换均已完成，并继续由解释器/JIT 差分及官方 portable user-mode 语料回归。
 
 ### 8.7 require 记录与 idle-only 模块重载
 
@@ -389,6 +389,15 @@ guard 保护。完整决策见 [ADR 0017](adr/0017-versioned-invalidation-and-fu
 `LuaExecutionEngine` scheduler，reference opcode dispatch 位于独立的 interpreter instruction
 executor。当前 Runtime code-generation ABI v2 以 `LuaExecutionContext`/`LuaCompiledExit` 交换
 canonical PC、精确指令计数与 tagged boundary，后端返回的计数必须与 context 中预留的区间一致。
+
+`0.8.0-alpha.13` 的 reference executor 在同一 frame 内连续执行 canonical instructions，且
+只保留一份 opcode switch。Call/TailCall/Return、预算 poll、continuation/transfer、error/unwind、
+精确 debug hook 和 backend backedge probe 仍返回共享 scheduler。空闲紧凑批次最多执行 32 条
+指令后推进 GC 并派发 finalizer；allocation debt 达到阈值或 incremental cycle 已启动后恢复逐
+指令推进，every-allocation stress 或已存在 pending finalizer 时也立即进入 safe point。指令数组
+通过受支持的 immutable collection marshal 取得只读 backing array 并以 `in LuaIrInstruction`
+传递，不改变 canonical IR 的 immutable ownership。完整边界见
+[ADR 0019](adr/0019-compact-tier0-interpreter-loop.md)。
 
 ### 9.2 CIL JIT
 

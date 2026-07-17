@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using Lunil.Runtime.Execution;
 
 namespace Lunil.Runtime.CodeGen;
@@ -214,6 +215,19 @@ public sealed class LuaExecutionContext
 
         RemainingInstructionCount -= instructionCount;
         _instructionsConsumed = checked(_instructionsConsumed + instructionCount);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryReserveSingleInterpreterInstruction()
+    {
+        if (RemainingInstructionCount == 0)
+        {
+            return false;
+        }
+
+        RemainingInstructionCount--;
+        _instructionsConsumed++;
         return true;
     }
 

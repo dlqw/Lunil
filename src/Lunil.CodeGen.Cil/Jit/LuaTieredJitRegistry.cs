@@ -14,9 +14,6 @@ namespace Lunil.CodeGen.Cil.Jit;
 
 internal sealed class LuaTieredJitRegistry :
     ILuaInstructionExecutor,
-    ILuaFrameInstructionRouter,
-    ILuaInstructionObserver,
-    ILuaLoopOsrObserver,
     IDisposable
 {
     private const int CodegenVersion = LuaJitProfileCodec.CurrentCodegenVersion;

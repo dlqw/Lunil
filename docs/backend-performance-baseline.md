@@ -777,3 +777,31 @@ control; maximum Loop OSR compilation p95 was **3.448 ms** and maximum compile a
 p95 was **2.797 ms**, and maximum compile allocation p95 was **241,648 B**. Every RID installed the
 required numeric region with zero hot instruction-budget checks, and every rejected-workload
 timing, startup, allocation, eligibility, managed-installation, and guard-failure gate passed.
+
+## M21 compact Tier 0 interpreter loop
+
+`0.8.0-alpha.13` keeps the shared scheduler and one reference opcode switch but no longer returns to
+the scheduler for every pure same-frame instruction. A byte-sized internal result represents the
+hot continue path; `LuaCompiledExit` is materialized only for a real scheduler boundary. After a
+full scheduler/frame/continuation/debug validation, a proven-pure instruction chain reuses that
+state until a table/metamethod operation, close, debug/probe route, safe point, or other potentially
+scheduling operation requires a new full check. Exact budget charging remains per instruction.
+
+Idle compact execution performs a logical heap/finalizer safe point every 32 instructions. Once
+allocation debt reaches the configured threshold or an incremental cycle is active, safe points
+again advance after every instruction; every-allocation stress and pending finalizers also remain
+immediate. The instruction vector retains its immutable contract while the executor accesses the
+supported backing array and passes each instruction by readonly reference. Router/observer
+operations are optional members of the existing internal executor boundary, avoiding three nullable
+single-implementation fields without creating a Runtime-to-CodeGen.Cil reference cycle. See
+[ADR 0019](adr/0019-compact-tier0-interpreter-loop.md).
+
+The exact-commit eight-round, 250 ms win-x64 cross-runtime record is
+`artifacts/cross-runtime-performance/win-x64/20260717-184620` at commit
+`2bf2a014bd1a5c5589dba217b7a3e7d5fb1e956e`. The interpreter reached **0.625x MoonSharp geomean**,
+up from `alpha.12`'s 0.335x. Common-MoonSharp normalized paired improvements were **2.579x** for
+`arithmetic` with CI95 **2.386–2.672** and **2.150x** for `control_flow` with CI95
+**2.061–2.197**, exceeding the 1.50x median/1.25x lower-bound target. The smallest non-target CI95
+lower bound was **1.038x** on `sieve`, above the 0.95x no-regression floor. All 512 results were
+correct and all 16 Auto/Tier 2 product gates passed; the narrowest lower bound was 1.222x on Tier 2
+`string_build`.

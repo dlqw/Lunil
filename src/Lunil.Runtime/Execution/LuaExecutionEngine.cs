@@ -17,8 +17,6 @@ internal sealed class LuaExecutionEngine
 
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
-    private readonly ILuaFrameInstructionRouter? _frameInstructionRouter;
-    private readonly ILuaInstructionObserver? _instructionObserver;
     private readonly LuaInterpreterInstructionExecutor _referenceInstructionExecutor = new();
     private int _schedulerNestingDepth;
 
@@ -28,8 +26,6 @@ internal sealed class LuaExecutionEngine
     {
         _options = options ?? LuaInterpreterOptions.Default;
         _instructionExecutor = instructionExecutor ?? _referenceInstructionExecutor;
-        _frameInstructionRouter = _instructionExecutor as ILuaFrameInstructionRouter;
-        _instructionObserver = _instructionExecutor as ILuaInstructionObserver;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumInstructionCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumStackSlots);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumCallDepth);
@@ -332,16 +328,39 @@ internal sealed class LuaExecutionEngine
                                 scheduler);
                         }
                         pendingInstructionContext = executionContext;
-                        var executor = ShouldUseReferenceInterpreter(frame, instruction)
-                            ? _referenceInstructionExecutor
-                            : _instructionExecutor;
-                        var exit = executor.Execute(
-                            this,
-                            executionContext,
-                            state,
-                            thread,
-                            frame,
-                            instruction);
+                        LuaCompiledExit exit;
+                        if (ShouldUseReferenceInterpreter(frame, instruction))
+                        {
+                            // Keep the reference path concrete so the runtime can enter the
+                            // compact interpreter loop without an interface dispatch.
+                            exit = LuaInterpreterInstructionExecutor.RequiresExactDebugHookDispatch(
+                                thread,
+                                frame)
+                                ? LuaInterpreterInstructionExecutor.ExecuteSingleInstruction(
+                                    this,
+                                    executionContext,
+                                    state,
+                                    thread,
+                                    frame,
+                                    instruction)
+                                : _referenceInstructionExecutor.Execute(
+                                    this,
+                                    executionContext,
+                                    state,
+                                    thread,
+                                    frame,
+                                    instruction);
+                        }
+                        else
+                        {
+                            exit = _instructionExecutor.Execute(
+                                this,
+                                executionContext,
+                                state,
+                                thread,
+                                frame,
+                                instruction);
+                        }
                         ValidateInstructionAccounting(executionContext, exit);
                         activation.InstructionCount = checked(
                             activation.InstructionCount + exit.InstructionsConsumed);
@@ -564,8 +583,7 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         int programCounter)
     {
-        if (_instructionObserver is null ||
-            !context.TryBeginInstructionObservation(programCounter))
+        if (!context.TryBeginInstructionObservation(programCounter))
         {
             return;
         }
@@ -575,7 +593,7 @@ internal sealed class LuaExecutionEngine
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
             programCounter,
             instructions.Length);
-        _instructionObserver.ObserveInstruction(
+        _instructionExecutor.ObserveInstruction(
             context,
             thread,
             frame,
@@ -588,10 +606,7 @@ internal sealed class LuaExecutionEngine
         int programCounter,
         int backedgeCount)
     {
-        if (_instructionObserver is ILuaLoopOsrObserver observer)
-        {
-            observer.ObserveLoopOsrBackedges(frame, programCounter, backedgeCount);
-        }
+        _instructionExecutor.ObserveLoopOsrBackedges(frame, programCounter, backedgeCount);
     }
 
     private static void ValidateInstructionAccounting(
@@ -617,8 +632,7 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        if (thread.DebugHook.IsNil || thread.DebugHookMask == LuaDebugHookMask.None ||
-            thread.IsRunningDebugHook || frame.IsDebugHook || frame.IsHidden)
+        if (!thread.HasDispatchableDebugHook || frame.IsDebugHook || frame.IsHidden)
         {
             return false;
         }
@@ -885,7 +899,7 @@ internal sealed class LuaExecutionEngine
             if (thread.RootContinuation.Kind == LuaContinuationKind.CoroutineYield)
             {
                 thread.RootContinuation.Reset();
-                scheduler.Current.ForcedResult = arguments.ToArray().ToImmutableArray();
+                scheduler.Current.ForcedResult = ImmutableArray.Create(arguments);
                 thread.SetResumeValues([]);
                 return;
             }
@@ -1047,7 +1061,7 @@ internal sealed class LuaExecutionEngine
         {
             result = new LuaExecutionResult(
                 LuaVmSignal.Yielded,
-                thread.YieldedSpan.ToArray().ToImmutableArray());
+                ImmutableArray.Create(thread.YieldedSpan));
             return true;
         }
 
@@ -1459,8 +1473,8 @@ internal sealed class LuaExecutionEngine
             {
                 case LuaNativeStepKind.Completed:
                     var nativeProtected = frame.Continuation.IsNativeProtectedBoundary;
-                    var completedValues = nativeProtected
-                        ? new[] { LuaValue.FromBoolean(true) }.Concat(step.Values).ToArray()
+                    LuaValue[] completedValues = nativeProtected
+                        ? [LuaValue.FromBoolean(true), .. step.Values]
                         : step.Values;
                     frame.Continuation.Reset();
                     if (nativeProtected)
@@ -3391,7 +3405,7 @@ internal sealed class LuaExecutionEngine
         return true;
     }
 
-    private void RunPendingFinalizer(LuaState state, LuaThread thread)
+    internal void RunPendingFinalizer(LuaState state, LuaThread thread)
     {
         for (var index = 0; index < thread.FrameCount; index++)
         {
@@ -3910,11 +3924,10 @@ internal sealed class LuaExecutionEngine
     }
 
     private LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
-        _frameInstructionRouter?.GetInitialFrameInstructionRoute(frame) ??
-        LuaFrameInstructionRoute.Backend;
+        _instructionExecutor.GetInitialFrameInstructionRoute(frame);
 
     private void CommitPendingBackedges(LuaFrame frame) =>
-        _frameInstructionRouter?.CommitPendingBackedges(frame);
+        _instructionExecutor.CommitPendingBackedges(frame);
 
     private bool ShouldUseReferenceInterpreter(
         LuaFrame frame,
@@ -3947,6 +3960,68 @@ internal sealed class LuaExecutionEngine
         }
 
         return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TryContinueCompactInterpreterLoop(
+        LuaExecutionContext context,
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        bool runSafePoint)
+    {
+        if (!CanContinueCompactInterpreterLoop(context, thread, frame))
+        {
+            return false;
+        }
+
+        if (!runSafePoint)
+        {
+            return true;
+        }
+
+        // Bound GC/finalizer latency while avoiding the full scheduler and frame scan for every
+        // straight-line T0 instruction. Any exit from the compact loop also returns through the
+        // scheduler's ordinary safe point, so short batches do not skip collection progress.
+        state.Heap.SafePoint();
+        RunPendingFinalizer(state, thread);
+        return CanContinueCompactInterpreterLoop(context, thread, frame);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool CanContinueCompactInterpreterLoop(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame)
+    {
+        var scheduler = context.Scheduler;
+        if (scheduler is null || scheduler.Transfer != LuaSchedulerTransfer.None ||
+            scheduler.Current.HasPendingError || scheduler.Current.ForcedResult is not null ||
+            thread.FrameCount == 0 || !ReferenceEquals(thread.CurrentFrame, frame) ||
+            thread.UnwindState is not null || thread.IsClosing ||
+            frame.Continuation.Kind != LuaContinuationKind.None ||
+            frame.InstructionRoute == LuaFrameInstructionRoute.Backend ||
+            !context.IsDebugModeCurrent())
+        {
+            return false;
+        }
+
+        // A frame for which hooks cannot fire may stay in the compact loop. Otherwise return to
+        // the scheduler so line/count/call/return hooks retain exact per-instruction ordering.
+        if (thread.HasDispatchableDebugHook && !frame.IsDebugHook && !frame.IsHidden)
+        {
+            return false;
+        }
+
+        var programCounter = frame.ProgramCounter;
+        var instructions = frame.Function.Instructions;
+        if ((uint)programCounter >= (uint)instructions.Length)
+        {
+            return false;
+        }
+
+        return frame.InstructionRoute != LuaFrameInstructionRoute.InterpreterWithBackedgeProbes ||
+            !LuaInstructionRouting.IsBackedge(programCounter, instructions[programCounter]);
     }
 
     private static long GetActiveCallDepth(LuaThread thread)

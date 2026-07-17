@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Operations;
@@ -8,6 +10,11 @@ namespace Lunil.Runtime.Execution;
 /// <summary>Reference canonical-instruction executor beneath the shared scheduler.</summary>
 internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecutor
 {
+    private const int CompactSafePointInterval = 32;
+
+    public LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
+        LuaFrameInstructionRoute.Interpreter;
+
     public LuaCompiledExit Execute(
         LuaExecutionEngine engine,
         LuaExecutionContext context,
@@ -16,13 +23,114 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        var programCounter = frame.ProgramCounter;
-        if (!context.TryReserveInstructions(1))
+        if (RequiresExactDebugHookDispatch(thread, frame))
         {
-            return LuaCompiledExit.Poll(
-                programCounter,
-                instructionsConsumed: 0,
-                LuaCompiledExitReason.InstructionBudget);
+            return ExecuteSingleInstruction(
+                engine,
+                context,
+                state,
+                thread,
+                frame,
+                in instruction);
+        }
+
+        var result = ExecuteInstruction(
+            engine,
+            context,
+            state,
+            thread,
+            frame,
+            in instruction);
+        var instructions = ImmutableCollectionsMarshal.AsArray(
+            frame.Function.Instructions)!;
+        var instructionsUntilSafePoint = CompactSafePointInterval;
+        var compactStateValidated = false;
+        while (true)
+        {
+            var runSafePoint = --instructionsUntilSafePoint == 0 ||
+                state.Heap.RequiresInterpreterSafePoint;
+            if (result is not InterpreterInstructionResult.Continue and
+                not InterpreterInstructionResult.ContinueWithSchedulerCheck)
+            {
+                return MaterializeExit(result, context, frame.ProgramCounter);
+            }
+
+            bool canContinue;
+            if (result == InterpreterInstructionResult.Continue &&
+                compactStateValidated && !runSafePoint)
+            {
+                // Pure canonical instructions cannot change scheduler, frame, continuation, or
+                // debug state. Once a full check has established those invariants, a pure chain
+                // only needs the next-PC bound until a slow operation or safe point occurs.
+                canContinue = (uint)frame.ProgramCounter < (uint)instructions.Length;
+            }
+            else
+            {
+                canContinue = engine.TryContinueCompactInterpreterLoop(
+                    context,
+                    state,
+                    thread,
+                    frame,
+                    runSafePoint);
+                compactStateValidated = canContinue &&
+                    frame.InstructionRoute == LuaFrameInstructionRoute.Interpreter;
+            }
+
+            if (!canContinue)
+            {
+                return LuaCompiledExit.Continue(
+                    frame.ProgramCounter,
+                    context.InstructionsConsumed);
+            }
+
+            if (runSafePoint)
+            {
+                instructionsUntilSafePoint = CompactSafePointInterval;
+            }
+
+            result = ExecuteInstruction(
+                engine,
+                context,
+                state,
+                thread,
+                frame,
+                in instructions[frame.ProgramCounter]);
+        }
+    }
+
+    internal static bool RequiresExactDebugHookDispatch(LuaThread thread, LuaFrame frame) =>
+        thread.HasDispatchableDebugHook && !frame.IsDebugHook && !frame.IsHidden;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static LuaCompiledExit ExecuteSingleInstruction(
+        LuaExecutionEngine engine,
+        LuaExecutionContext context,
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        in LuaIrInstruction instruction)
+    {
+        var result = ExecuteInstruction(
+            engine,
+            context,
+            state,
+            thread,
+            frame,
+            in instruction);
+        return MaterializeExit(result, context, frame.ProgramCounter);
+    }
+
+    private static InterpreterInstructionResult ExecuteInstruction(
+        LuaExecutionEngine engine,
+        LuaExecutionContext context,
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        in LuaIrInstruction instruction)
+    {
+        if (!context.TryReserveSingleInterpreterInstruction())
+        {
+            return InterpreterInstructionResult.InstructionBudget;
         }
 
         switch (instruction.Opcode)
@@ -94,7 +202,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         LuaExecutionEngine.Read(thread, frame, instruction.C)),
                     frame.Base + instruction.A,
                     expectedResults: 1);
-                break;
+                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
             case LuaIrOpcode.SetTable:
                 engine.ExecuteOperation(
                     state,
@@ -109,7 +217,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         LuaExecutionEngine.Read(thread, frame, instruction.C)),
                     frame.Top,
                     expectedResults: 0);
-                break;
+                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
             case LuaIrOpcode.SetList:
                 LuaExecutionEngine.ExecuteSetList(thread, frame, instruction);
                 frame.ProgramCounter++;
@@ -136,7 +244,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         LuaExecutionEngine.Read(thread, frame, instruction.B)),
                     frame.Base + instruction.A,
                     expectedResults: 1);
-                break;
+                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
             case LuaIrOpcode.Binary:
                 engine.ExecuteOperation(
                     state,
@@ -151,12 +259,12 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         LuaExecutionEngine.Read(thread, frame, instruction.C)),
                     frame.Base + instruction.A,
                     expectedResults: 1);
-                break;
+                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
             case LuaIrOpcode.Jump:
                 if (instruction.C >= 0 &&
                     engine.TryCloseFrom(state, thread, frame, instruction.C, LuaValue.Nil))
                 {
-                    break;
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
                 }
 
                 frame.ProgramCounter = instruction.B;
@@ -184,15 +292,15 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                     : frame.ProgramCounter + 1;
                 break;
             case LuaIrOpcode.Call:
-                return LuaCompiledExit.Call(programCounter, context.InstructionsConsumed);
+                return InterpreterInstructionResult.Call;
             case LuaIrOpcode.TailCall:
-                return LuaCompiledExit.TailCall(programCounter, context.InstructionsConsumed);
+                return InterpreterInstructionResult.TailCall;
             case LuaIrOpcode.Return:
-                return LuaCompiledExit.Return(programCounter, context.InstructionsConsumed);
+                return InterpreterInstructionResult.Return;
             case LuaIrOpcode.Close:
                 if (engine.TryCloseFrom(state, thread, frame, instruction.A, LuaValue.Nil))
                 {
-                    break;
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
                 }
 
                 frame.ProgramCounter++;
@@ -233,6 +341,43 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                     $"Unsupported canonical opcode {instruction.Opcode}.");
         }
 
-        return LuaCompiledExit.Continue(frame.ProgramCounter, context.InstructionsConsumed);
+        return InterpreterInstructionResult.Continue;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static LuaCompiledExit MaterializeExit(
+        InterpreterInstructionResult result,
+        LuaExecutionContext context,
+        int programCounter) => result switch
+        {
+            InterpreterInstructionResult.Continue or
+                InterpreterInstructionResult.ContinueWithSchedulerCheck => LuaCompiledExit.Continue(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.Call => LuaCompiledExit.Call(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.TailCall => LuaCompiledExit.TailCall(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.Return => LuaCompiledExit.Return(
+                programCounter,
+                context.InstructionsConsumed),
+            InterpreterInstructionResult.InstructionBudget => LuaCompiledExit.Poll(
+                programCounter,
+                context.InstructionsConsumed,
+                LuaCompiledExitReason.InstructionBudget),
+            _ => throw new InvalidOperationException(
+                $"Unknown interpreter instruction result {result}."),
+        };
+
+    private enum InterpreterInstructionResult : byte
+    {
+        Continue,
+        ContinueWithSchedulerCheck,
+        Call,
+        TailCall,
+        Return,
+        InstructionBudget,
     }
 }

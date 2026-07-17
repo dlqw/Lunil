@@ -90,6 +90,13 @@ public sealed class LuaHeap
 
     internal long Identity { get; }
 
+    internal bool RequiresInterpreterSafePoint =>
+        _pendingFinalizers.Count != 0 ||
+        IsRunning &&
+        (Phase != LuaGcPhase.Paused ||
+            _allocationDebt >= _options.StepSizeBytes ||
+            _options.StressEveryAllocation && _allocatedSinceSafePoint);
+
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
 
     internal IEnumerable<LuaValue> HandleRoots => _handles.Values;

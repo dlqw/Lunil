@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.8.0--alpha.12-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.8.0--alpha.13-7c3aed?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.8.0-alpha.12`**; stable `0.7.0` and its API/package baselines
-> remain immutable. This Alpha removes the Lua persisted/static AOT product and `Lunil.Build`,
-> keeps .NET NativeAOT interpreter compatibility, and completes 64-bit instruction accounting in
-> the remaining JIT backends. Its `api/0.8.0` data is a reviewed snapshot rather than a Beta freeze,
-> and the full conformance, package, six-RID, and performance gates remain mandatory.
+> The current source version is **`0.8.0-alpha.13`**; stable `0.7.0` and its API/package baselines
+> remain immutable. This Alpha adds a compact Tier 0 interpreter loop while retaining exact debug,
+> budget, coroutine, GC/finalizer, and backend-handoff semantics. Lua persisted/static AOT remains
+> removed, while .NET NativeAOT interpreter compatibility remains supported. Its `api/0.8.0` data
+> is a reviewed snapshot rather than a Beta freeze, and all release gates remain mandatory.
 
 ## Table of contents
 
@@ -83,11 +83,11 @@ collector.
 | Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
 | CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.12` permits reviewed feature/API work and cannot promote directly to stable |
+| Stability contract | Active Alpha | Stable `0.7.0` remains frozen; `0.8.0-alpha.13` permits reviewed feature/API work and cannot promote directly to stable |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | `0.8.0-alpha.12` readiness |
+| Execution path | Release behavior | `0.8.0-alpha.13` readiness |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -95,8 +95,8 @@ collector.
 | Exact-numeric loop OSR | Enabled by default after loop and runtime-value qualification | Qualified on all six release RIDs; non-exact loops are rejected before compilation |
 | .NET NativeAOT / trimming | Compiler, workspace, runtime, CLI, and interpreter compatibility | Build and execution verified on all six release RIDs; JIT selection falls back deterministically |
 
-The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.12` layers the work described
-in its [changelog](changelogs/0.8.0-alpha.12.md) on top without changing the frozen `api/0.7.0`
+The stable `0.7.0` evidence remains a regression floor. `0.8.0-alpha.13` layers the work described
+in its [changelog](changelogs/0.8.0-alpha.13.md) on top without changing the frozen `api/0.7.0`
 contract.
 
 ## Features
@@ -190,7 +190,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.12
+dotnet tool install --global Lunil.Cli --version 0.8.0-alpha.13
 lunil --version
 
 lunil run app.lua -- one two
@@ -243,7 +243,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.12" />
+<PackageReference Include="Lunil.Hosting" Version="0.8.0-alpha.13" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through one
@@ -489,7 +489,7 @@ The active `0.8.0` promotion sequence is:
 0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
 ```
 
-The current source version is **`0.8.0-alpha.12`**. Stable `0.7.0`, its tag, and `api/0.7.0`
+The current source version is **`0.8.0-alpha.13`**. Stable `0.7.0`, its tag, and `api/0.7.0`
 remain immutable; backward-compatible fixes on that stable line use `0.7.1`. Alpha prerelease
 counters increase for every published build, and promotion restarts at `beta.1` only after the
 complete `0.8` feature and public-API scope is accepted. The current reviewed `api/0.8.0`

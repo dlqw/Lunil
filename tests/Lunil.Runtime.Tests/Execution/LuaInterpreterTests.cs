@@ -173,11 +173,11 @@ public sealed class LuaInterpreterTests
     [Fact]
     public void ChargesExactlyOneBudgetUnitPerCanonicalInstruction()
     {
-        var instructions = new[]
-        {
-            new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
-            new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1),
-        }.ToImmutableArray();
+        var instructions = Enumerable.Repeat(
+                new LuaIrInstruction(LuaIrOpcode.LoadConstant, a: 0, b: 0),
+                65)
+            .Append(new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 1))
+            .ToImmutableArray();
         var module = new LuaIrModule
         {
             MainFunctionId = 0,
@@ -194,7 +194,7 @@ public sealed class LuaInterpreterTests
                 },
             ],
         };
-        const int instructionCount = 2;
+        var instructionCount = instructions.Length;
         var exactState = new LuaState();
         var exact = new LuaInterpreter(LuaInterpreterOptions.Default with
         {
@@ -211,6 +211,52 @@ public sealed class LuaInterpreterTests
         });
         Assert.Throws<LuaRuntimeException>(() =>
             insufficient.Execute(insufficientState, insufficientState.CreateMainClosure(module)));
+    }
+
+    [Fact]
+    public void CompactLoopObservesHookEnableAndDisableAcrossANativeCall()
+    {
+        var hookCount = 0;
+        var state = new LuaState();
+        var hook = LuaValue.FromFunction(new LuaNativeFunction(
+            "one-shot-hook",
+            (runtime, _) =>
+            {
+                hookCount++;
+                runtime.SetGlobal("marker", LuaValue.FromBoolean(true));
+                LuaDebugApi.SetHook(
+                    runtime,
+                    runtime.RunningThread!,
+                    LuaValue.Nil,
+                    LuaDebugHookMask.None,
+                    count: 0);
+                return [];
+            }));
+        state.SetGlobal("marker", LuaValue.FromBoolean(false));
+        state.SetGlobal(
+            "enable_hook",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "enable-hook",
+                (runtime, _) =>
+                {
+                    LuaDebugApi.SetHook(
+                        runtime,
+                        runtime.RunningThread!,
+                        hook,
+                        LuaDebugHookMask.Count,
+                        count: 1);
+                    return [];
+                })));
+
+        var values = Execute(
+            "enable_hook(); local seen = marker; " +
+            "local total = 0; for i = 1, 100 do total = total + i end; " +
+            "return seen, total",
+            state);
+
+        Assert.Equal(1, hookCount);
+        Assert.True(values[0].AsBoolean());
+        Assert.Equal(5_050, values[1].AsInteger());
     }
 
     [Fact]
