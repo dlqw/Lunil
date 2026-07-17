@@ -160,6 +160,19 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaCodegenAbiV3),
         nameof(LuaCodegenAbiV3.CanExecuteKnownClosureCall),
         [typeof(LuaThread), typeof(LuaFrame), typeof(LuaCodegenCallSiteCache), typeof(int), typeof(int)]);
+    private static readonly MethodInfo TryExecuteDirectCompiledCall = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.TryExecuteDirectCompiledCall),
+        [
+            typeof(LuaExecutionContext),
+            typeof(LuaThread),
+            typeof(LuaFrame),
+            typeof(LuaCodegenCallSiteCache),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+            typeof(int),
+        ]);
     private static readonly MethodInfo TryExecuteFramelessCall = Method(
         typeof(LuaCodegenAbiV3),
         nameof(LuaCodegenAbiV3.TryExecuteFramelessCall),
@@ -208,6 +221,14 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaTier2RuntimeSites),
         nameof(LuaTier2RuntimeSites.GetCallSite),
         [typeof(int), typeof(string)]);
+    private static readonly MethodInfo RecordInlineDirectCallCompletion = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallCompletion),
+        []);
+    private static readonly MethodInfo RecordInlineDirectCallFallback = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallFallback),
+        []);
     private static readonly MethodInfo CanSkipClose = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanSkipClose),
@@ -291,12 +312,15 @@ internal static class ReflectionEmitLuaTier2Compiler
         LuaIrFunction function,
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized,
         ImmutableHashSet<int> numericRegionProgramCounters,
+        IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
+        [NotNullWhen(true)] out LuaTier2RuntimeSites? runtimeSites,
         out long estimatedCodeBytes,
         out LuaTier2EmissionMetrics metrics)
     {
         method = null;
+        runtimeSites = null;
         estimatedCodeBytes = 0;
         metrics = default;
         if (!RuntimeFeature.IsDynamicCodeSupported ||
@@ -368,6 +392,7 @@ internal static class ReflectionEmitLuaTier2Compiler
                     pc,
                     instruction,
                     optimization,
+                    boundDirectCalls,
                     labels,
                     budgetExits[pc],
                     guardExits[pc],
@@ -377,7 +402,8 @@ internal static class ReflectionEmitLuaTier2Compiler
                     secondValue,
                     picExecutionResult,
                     framelessConsumed,
-                    safepointCountdown);
+                    safepointCountdown,
+                    cancellationToken);
             }
             else
             {
@@ -421,9 +447,12 @@ internal static class ReflectionEmitLuaTier2Compiler
         var delegateStarted = Stopwatch.GetTimestamp();
         var compiledWithSites = (LuaCompiledMethodWithSites)dynamicMethod.CreateDelegate(
             typeof(LuaCompiledMethodWithSites));
-        var runtimeSites = new LuaTier2RuntimeSites(function.Instructions.Length);
+        var createdRuntimeSites = new LuaTier2RuntimeSites(
+            function.Instructions.Length,
+            boundDirectCalls);
+        runtimeSites = createdRuntimeSites;
         method = (context, thread, frame) =>
-            compiledWithSites(context, thread, frame, runtimeSites);
+            compiledWithSites(context, thread, frame, createdRuntimeSites);
         var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
         estimatedCodeBytes = checked(
             (function.Instructions.Length - numericRegionProgramCounters.Count) * 32L +
@@ -555,6 +584,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         int pc,
         LuaIrInstruction instruction,
         ProfileGuidedLuaTier2Compiler.OptimizedInstruction optimization,
+        IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
         Label[] labels,
         Label budgetExit,
         Label guardExit,
@@ -564,7 +594,8 @@ internal static class ReflectionEmitLuaTier2Compiler
         LocalBuilder secondValue,
         LocalBuilder picExecutionResult,
         LocalBuilder framelessConsumed,
-        LocalBuilder safepointCountdown)
+        LocalBuilder safepointCountdown,
+        CancellationToken cancellationToken)
     {
         switch (optimization.Kind)
         {
@@ -716,6 +747,58 @@ internal static class ReflectionEmitLuaTier2Compiler
                 if (instruction.Opcode == LuaIrOpcode.Call)
                 {
                     slowCall = generator.DefineLabel();
+                    if (boundDirectCalls.TryGetValue(pc, out var boundDirectCall))
+                    {
+                        var inlineCompleted = generator.DefineLabel();
+                        var inlineFallback = generator.DefineLabel();
+                        ReflectionEmitLuaDirectCallCompiler.EmitInline(
+                            boundDirectCall.Function,
+                            new ReflectionEmitLuaNumericRegionIlGenerator(generator),
+                            instruction.A,
+                            instruction.C,
+                            new LuaNumericIlLabel(-1, inlineCompleted),
+                            new LuaNumericIlLabel(-1, inlineFallback),
+                            cancellationToken);
+                        generator.MarkLabel(inlineCompleted);
+                        generator.Emit(OpCodes.Ldarg_3);
+                        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallCompletion);
+                        EmitNext(
+                            generator,
+                            pc + 1,
+                            pc,
+                            labels,
+                            invalidatedExit,
+                            safepointCountdown);
+                        generator.MarkLabel(inlineFallback);
+                        generator.Emit(OpCodes.Ldarg_3);
+                        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallFallback);
+                    }
+                    else
+                    {
+                        generator.Emit(OpCodes.Ldarg_0);
+                        generator.Emit(OpCodes.Ldarg_1);
+                        generator.Emit(OpCodes.Ldarg_2);
+                        generator.Emit(OpCodes.Ldarg_3);
+                        EmitInt32(generator, pc);
+                        generator.Emit(OpCodes.Ldstr, optimization.CallTarget.ModuleContentId);
+                        generator.Emit(OpCodes.Callvirt, GetCallSite);
+                        EmitInt32(generator, instruction.A);
+                        EmitInt32(generator, optimization.CallTarget.FunctionId);
+                        EmitInt32(generator, instruction.B);
+                        EmitInt32(generator, instruction.C);
+                        generator.Emit(OpCodes.Call, TryExecuteDirectCompiledCall);
+                        var directCallMiss = generator.DefineLabel();
+                        generator.Emit(OpCodes.Brfalse, directCallMiss);
+                        EmitNext(
+                            generator,
+                            pc + 1,
+                            pc,
+                            labels,
+                            invalidatedExit,
+                            safepointCountdown);
+                        generator.MarkLabel(directCallMiss);
+                    }
+
                     generator.Emit(OpCodes.Ldarg_0);
                     generator.Emit(OpCodes.Ldarg_1);
                     generator.Emit(OpCodes.Ldarg_2);

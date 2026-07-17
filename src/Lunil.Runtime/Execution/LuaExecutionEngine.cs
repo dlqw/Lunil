@@ -364,12 +364,13 @@ internal sealed class LuaExecutionEngine
                         ValidateInstructionAccounting(executionContext, exit);
                         activation.InstructionCount = checked(
                             activation.InstructionCount + exit.InstructionsConsumed);
+                        var exitFrame = executionContext.ExitFrame ?? frame;
                         pendingInstructionContext = null;
-                        LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
+                        LuaCodegenAbiV1.CommitProgramCounter(exitFrame, exit.ProgramCounter);
 
                         if (exit.Kind == LuaCompiledExitKind.Deopt)
                         {
-                            instruction = frame.Function.Instructions[frame.ProgramCounter];
+                            instruction = exitFrame.Function.Instructions[exitFrame.ProgramCounter];
                             executionContext.Reset(
                                 this,
                                 state,
@@ -382,19 +383,20 @@ internal sealed class LuaExecutionEngine
                                 executionContext,
                                 state,
                                 thread,
-                                frame,
+                                exitFrame,
                                 instruction);
                             ValidateInstructionAccounting(executionContext, exit);
                             activation.InstructionCount = checked(
                                 activation.InstructionCount + exit.InstructionsConsumed);
+                            exitFrame = executionContext.ExitFrame ?? exitFrame;
                             pendingInstructionContext = null;
-                            LuaCodegenAbiV1.CommitProgramCounter(frame, exit.ProgramCounter);
+                            LuaCodegenAbiV1.CommitProgramCounter(exitFrame, exit.ProgramCounter);
                         }
 
                         if (exit.Kind is LuaCompiledExitKind.Call or
                             LuaCompiledExitKind.TailCall or LuaCompiledExitKind.Return)
                         {
-                            instruction = frame.Function.Instructions[exit.ProgramCounter];
+                            instruction = exitFrame.Function.Instructions[exit.ProgramCounter];
                         }
 
                         switch (exit.Kind)
@@ -422,7 +424,7 @@ internal sealed class LuaExecutionEngine
                                     state,
                                     scheduler,
                                     thread,
-                                    frame,
+                                    exitFrame,
                                     instruction,
                                     tailCall: false);
                                 result = null;
@@ -432,12 +434,17 @@ internal sealed class LuaExecutionEngine
                                     state,
                                     scheduler,
                                     thread,
-                                    frame,
+                                    exitFrame,
                                     instruction,
                                     tailCall: true);
                                 break;
                             case LuaCompiledExitKind.Return:
-                                result = ExecuteReturn(state, scheduler, thread, frame, instruction);
+                                result = ExecuteReturn(
+                                    state,
+                                    scheduler,
+                                    thread,
+                                    exitFrame,
+                                    instruction);
                                 break;
                             case LuaCompiledExitKind.Deopt:
                             default:
@@ -455,7 +462,11 @@ internal sealed class LuaExecutionEngine
                             pendingInstructionContext.InstructionsConsumed);
                     }
 
-                    var enrichedException = EnrichRuntimeException(thread, frame, exception);
+                    var exceptionFrame = pendingInstructionContext?.ExitFrame ?? frame;
+                    var enrichedException = EnrichRuntimeException(
+                        thread,
+                        exceptionFrame,
+                        exception);
                     var error = MaterializeError(state, enrichedException);
                     if (thread.UnwindState is { } unwind)
                     {
@@ -608,6 +619,26 @@ internal sealed class LuaExecutionEngine
     {
         _instructionExecutor.ObserveLoopOsrBackedges(frame, programCounter, backedgeCount);
     }
+
+    internal bool TryExecuteDirectCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame caller,
+        LuaCodegenCallSiteCache cache,
+        int functionRegister,
+        int expectedFunctionId,
+        int argumentCount,
+        int expectedResults) =>
+        _instructionExecutor is ILuaDirectCallExecutor directCallExecutor &&
+        directCallExecutor.TryExecuteDirectCall(
+            context,
+            thread,
+            caller,
+            cache,
+            functionRegister,
+            expectedFunctionId,
+            argumentCount,
+            expectedResults);
 
     private static void ValidateInstructionAccounting(
         LuaExecutionContext context,

@@ -10,6 +10,7 @@ internal enum LuaNumericRegionValueKind : byte
     Integer,
     Float,
     Boolean,
+    Tagged,
     Cleared,
     Conflict,
 }

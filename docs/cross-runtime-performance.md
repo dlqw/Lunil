@@ -128,6 +128,28 @@ The minimum was win-x64 `string_build`; its paired CI95 lower bounds were 1.026x
 1.010x for Tier 2. Thus even the narrowest hosted-run result remained above MoonSharp, rather than
 passing only through an unpaired or aggregate average.
 
+## Qualified Windows x64 call-path report (`0.8.0-alpha.14`)
+
+The direct compiled-call acceptance run used exact product commit
+`b9a0a825b39ed6e5a8c582c3f144a2dbc76de4e4`, win-x64, .NET 10.0.3, six balanced rounds and the
+normal 250 ms calibration floor. A same-protocol `0.8.0-alpha.13` control used exact commit
+`1882ef1fb96969cc15dbf6ffd81e5b150b0f964f`. Both reports ran the common `function_calls` bytes,
+validated every result, retained the stable Tier 2 route, and reported clean timed
+fallback/deoptimization telemetry.
+
+| Candidate | Median CPU | p95 CPU | vs native Lua (CI95) | vs MoonSharp (CI95) |
+|---|---:|---:|---:|---:|
+| alpha.13 Tier 2 | 573.932 µs | 598.822 µs | 0.143x (0.140–0.149) | 2.154x (2.081–2.252) |
+| alpha.14 Tier 2 | **91.654 µs** | 112.337 µs | **0.904x (0.751–0.964)** | **13.809x (12.768–14.807)** |
+
+The exact median improvement is **6.26x**, exceeding the 3x call-heavy gate. Each alpha.14 timed
+sample completed 38,528,000 direct calls with zero direct fallback or invalidation and reported
+77,056,000 avoided scheduler exits. The cross-runtime `telemetry_json` schema now includes
+`directCallEntries`, `directCallCompletions`, `directCallFallbacks`, `directCallInvalidations`, and
+`schedulerExitsAvoided`; these fields make a nominal Tier 2 route insufficient if the timed region
+actually falls back at closure boundaries. Raw reports, samples, provenance, and the exact alpha.13
+control are under `artifacts/performance/0.8.0-alpha.14/win-x64/b9a0a82/`.
+
 ## Qualified Windows x64 report (`0.8.0-alpha.13`)
 
 The compact Tier 0 acceptance run on 2026-07-18 used exact product commit

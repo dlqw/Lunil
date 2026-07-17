@@ -14,6 +14,7 @@ namespace Lunil.CodeGen.Cil.Jit;
 
 internal sealed class LuaTieredJitRegistry :
     ILuaInstructionExecutor,
+    ILuaDirectCallExecutor,
     IDisposable
 {
     private const int CodegenVersion = LuaJitProfileCodec.CurrentCodegenVersion;
@@ -23,6 +24,7 @@ internal sealed class LuaTieredJitRegistry :
     private readonly ILuaTier1Compiler _compiler;
     private readonly ILuaTier2Compiler _tier2Compiler;
     private readonly ILuaLoopOsrCompiler _loopOsrCompiler;
+    private readonly LuaDirectCallCounterSink _boundDirectCallCounters = new();
     private readonly ConcurrentDictionary<FunctionKey, FunctionEntry> _entries = [];
     private readonly ConcurrentDictionary<string, LuaBackendGeneration> _moduleGenerations =
         new(StringComparer.Ordinal);
@@ -78,6 +80,11 @@ internal sealed class LuaTieredJitRegistry :
     private long _instructionBudgetPolls;
     private long _garbageCollectionPolls;
     private long _debugModeDeoptimizations;
+    private long _directCallEntries;
+    private long _directCallCompletions;
+    private long _directCallFallbacks;
+    private long _directCallInvalidations;
+    private long _schedulerExitsAvoided;
     private long _tier1CompileAllocatedBytes;
     private long _tier1DirectCanonicalInstructions;
     private long _tier1SlowPathCanonicalInstructions;
@@ -265,7 +272,14 @@ internal sealed class LuaTieredJitRegistry :
             if (entryPoint is not null)
             {
                 frame.InstructionRoute = LuaFrameInstructionRoute.Backend;
-                return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
+                return InvokeCompiled(
+                    engine,
+                    state,
+                    entry,
+                    entryPoint.Value,
+                    context,
+                    thread,
+                    frame);
             }
         }
 
@@ -307,7 +321,14 @@ internal sealed class LuaTieredJitRegistry :
                     if (entryPoint is not null)
                     {
                         frame.InstructionRoute = LuaFrameInstructionRoute.Backend;
-                        return InvokeCompiled(entry, entryPoint.Value, context, thread, frame);
+                        return InvokeCompiled(
+                            engine,
+                            state,
+                            entry,
+                            entryPoint.Value,
+                            context,
+                            thread,
+                            frame);
                     }
                 }
             }
@@ -328,6 +349,107 @@ internal sealed class LuaTieredJitRegistry :
             LuaCompiledExitReason.BackendInvalidated,
             forceBackendProbe: frameObservation is not null &&
                 Volatile.Read(ref frameObservation.HasPendingLoop) != 0);
+    }
+
+    bool ILuaDirectCallExecutor.TryExecuteDirectCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame caller,
+        LuaCodegenCallSiteCache cache,
+        int functionRegister,
+        int expectedFunctionId,
+        int argumentCount,
+        int expectedResults)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || context.HasExactDebugHooks ||
+            !context.IsDebugModeCurrent() || !ReferenceEquals(context.Thread, thread) ||
+            !ReferenceEquals(thread.CurrentFrame, caller) || thread.UnwindState is not null ||
+            thread.IsClosing || caller.Continuation.Kind != LuaContinuationKind.None ||
+            context.Scheduler?.Transfer != LuaSchedulerTransfer.None ||
+            context.State.IsRunningFinalizer)
+        {
+            return false;
+        }
+
+        var closure = LuaCodegenAbiV2.ReadRegisterUnchecked(
+            thread,
+            caller,
+            functionRegister).TryGetClosure();
+        if (closure is null || closure.Function.Id != expectedFunctionId ||
+            !ReferenceEquals(closure.Module, caller.Module) || closure.Function.IsVarArg ||
+            closure.Function.Upvalues.Length != 0)
+        {
+            return false;
+        }
+
+        var functionVersion = closure.FunctionVersion;
+        FunctionEntry entry;
+        if (cache.TryGetDirectBackendEntry(functionVersion.Generation, out var cached) &&
+            cached is FunctionEntry cachedEntry &&
+            cachedEntry.Key.FunctionId == expectedFunctionId)
+        {
+            entry = cachedEntry;
+        }
+        else
+        {
+            var route = GetFunctionRoute(closure.Module, expectedFunctionId);
+            entry = GetOrCreateEntry(route, closure.Function.ParameterCount);
+            cache.SetDirectBackendEntry(entry, functionVersion.Generation);
+        }
+
+        LuaDirectCompiledMethod directMethod;
+        long installedGeneration;
+        lock (entry.Gate)
+        {
+            if (entry.State != LuaJitFunctionState.Ready ||
+                entry.ActiveTier != LuaJitCompilationTier.Tier2 ||
+                entry.DirectCallMethod is null)
+            {
+                return false;
+            }
+
+            directMethod = entry.DirectCallMethod;
+            installedGeneration = entry.InstalledGeneration;
+        }
+
+        var backendGeneration = GetBackendGeneration(entry.Key.ModuleContentId);
+        if (!context.OwnsBackendGeneration(backendGeneration, installedGeneration))
+        {
+            Interlocked.Increment(ref _directCallInvalidations);
+            Interlocked.Increment(ref _directCallFallbacks);
+            return false;
+        }
+
+        // Qualified direct leaves cannot allocate or mutate heap state. Reuse the compiled
+        // caller's bounded backedge safepoint quantum instead of polling once per leaf call;
+        // already queued finalizers still force frame materialization immediately.
+        if (context.State.Heap.PendingFinalizerCount != 0)
+        {
+            Interlocked.Increment(ref _directCallFallbacks);
+            return false;
+        }
+
+        Interlocked.Increment(ref _directCallEntries);
+        if (!directMethod(
+                context,
+                thread,
+                caller,
+                functionRegister,
+                argumentCount,
+                expectedResults))
+        {
+            Interlocked.Increment(ref _directCallFallbacks);
+            if (!context.OwnsBackendGeneration(backendGeneration, installedGeneration))
+            {
+                Interlocked.Increment(ref _directCallInvalidations);
+            }
+
+            return false;
+        }
+
+        Interlocked.Increment(ref _directCallCompletions);
+        Interlocked.Add(ref _schedulerExitsAvoided, 2);
+        return true;
     }
 
     public void ObserveInstruction(
@@ -505,6 +627,19 @@ internal sealed class LuaTieredJitRegistry :
         Tier2MethodEntries = Interlocked.Read(ref _tier2Invocations),
         Tier2CompletedInvocations = Interlocked.Read(ref _tier2CompletedInvocations),
         Tier2UnsupportedExits = Interlocked.Read(ref _tier2UnsupportedExits),
+        DirectCallEntries = checked(
+            Interlocked.Read(ref _directCallEntries) + _boundDirectCallCounters.Entries),
+        DirectCallCompletions = checked(
+            Interlocked.Read(ref _directCallCompletions) +
+            _boundDirectCallCounters.Completions),
+        DirectCallFallbacks = checked(
+            Interlocked.Read(ref _directCallFallbacks) + _boundDirectCallCounters.Fallbacks),
+        DirectCallInvalidations = checked(
+            Interlocked.Read(ref _directCallInvalidations) +
+            _boundDirectCallCounters.Invalidations),
+        SchedulerExitsAvoided = checked(
+            Interlocked.Read(ref _schedulerExitsAvoided) +
+            _boundDirectCallCounters.SchedulerExitsAvoided),
     };
 
     public LuaJitFunctionState GetFunctionState(LuaIrModule module, int functionId)
@@ -894,6 +1029,7 @@ internal sealed class LuaTieredJitRegistry :
                     entry.Tier1Method = null;
                     entry.PlainTier1Method = null;
                     entry.Tier2Method = null;
+                    entry.DirectCallMethod = null;
                     entry.Tier2Plan = null;
                     entry.Tier1EstimatedCodeBytes = 0;
                     entry.Tier2EstimatedCodeBytes = 0;
@@ -1001,42 +1137,365 @@ internal sealed class LuaTieredJitRegistry :
     }
 
     private LuaCompiledExit InvokeCompiled(
+        LuaExecutionEngine engine,
+        LuaState state,
         FunctionEntry entry,
         CompiledEntryPoint entryPoint,
         LuaExecutionContext context,
         LuaThread thread,
         LuaFrame frame)
     {
-        var generation = GetBackendGeneration(entry.Key.ModuleContentId);
-        if (!context.TryEnterBackendGeneration(generation, entryPoint.Generation))
+        var scheduler = context.Scheduler ?? throw new InvalidOperationException(
+            "A compiled runtime entry requires the shared scheduler context.");
+        var currentEntry = entry;
+        var currentEntryPoint = entryPoint;
+        var currentFrame = frame;
+        var directCallDepth = 0;
+        var directChainStarted = false;
+
+        while (true)
         {
-            return LuaCompiledExit.Deopt(
-                frame.ProgramCounter,
-                instructionsConsumed: 0,
-                LuaCompiledExitReason.BackendInvalidated);
+            context.SetExitFrame(currentFrame);
+            var generation = GetBackendGeneration(currentEntry.Key.ModuleContentId);
+            if (!context.TryEnterBackendGeneration(generation, currentEntryPoint.Generation))
+            {
+                if (directChainStarted)
+                {
+                    Interlocked.Increment(ref _directCallInvalidations);
+                    Interlocked.Increment(ref _directCallFallbacks);
+                }
+
+                var invalidated = LuaCompiledExit.Deopt(
+                    currentFrame.ProgramCounter,
+                    context.InstructionsConsumed,
+                    LuaCompiledExitReason.BackendInvalidated);
+                RecordSchedulerExit(
+                    currentEntry,
+                    currentEntryPoint,
+                    context,
+                    thread,
+                    currentFrame,
+                    invalidated);
+                return invalidated;
+            }
+
+            var frameCountBefore = thread.FrameCount;
+            var consumedBefore = context.InstructionsConsumed;
+            Interlocked.Increment(ref _compiledInvocations);
+            if (currentEntryPoint.Tier == LuaJitCompilationTier.Tier2)
+            {
+                Interlocked.Increment(ref _tier2Invocations);
+            }
+            else
+            {
+                Interlocked.Increment(ref currentEntry.Tier1Invocations);
+            }
+            Interlocked.Exchange(
+                ref currentEntry.LastAccessStamp,
+                Interlocked.Increment(ref _accessStamp));
+
+            LuaCompiledExit exit;
+            try
+            {
+                exit = currentEntryPoint.Method(context, thread, currentFrame);
+            }
+            finally
+            {
+                context.ExitBackendGeneration();
+            }
+
+            RecordCompiledInvocation(
+                currentEntry,
+                currentEntryPoint,
+                exit,
+                checked(exit.InstructionsConsumed - consumedBefore));
+
+            if (TryGetDirectCallee(
+                    state,
+                    context,
+                    thread,
+                    currentFrame,
+                    frameCountBefore,
+                    exit,
+                    out var calleeFrame,
+                    out var calleeEntry,
+                    out var calleeEntryPoint))
+            {
+                // Preserve the logical scheduler boundary before entering the callee. Pending
+                // finalizers remain on the shared path so their protected frame semantics stay
+                // centralized in LuaExecutionEngine.
+                state.Heap.SafePoint();
+                if (state.Heap.PendingFinalizerCount != 0)
+                {
+                    Interlocked.Increment(ref _directCallFallbacks);
+                    RecordSchedulerExit(
+                        currentEntry,
+                        currentEntryPoint,
+                        context,
+                        thread,
+                        currentFrame,
+                        exit);
+                    return exit;
+                }
+
+                LuaCodegenAbiV1.CommitProgramCounter(currentFrame, exit.ProgramCounter);
+                Interlocked.Increment(ref _directCallEntries);
+                Interlocked.Increment(ref _schedulerExitsAvoided);
+                directCallDepth++;
+                directChainStarted = true;
+                currentFrame = calleeFrame;
+                currentEntry = calleeEntry;
+                currentEntryPoint = calleeEntryPoint;
+                continue;
+            }
+
+            if (directCallDepth > 0 &&
+                exit.Kind == LuaCompiledExitKind.Return &&
+                ReferenceEquals(thread.CurrentFrame, currentFrame) &&
+                (uint)exit.ProgramCounter < (uint)currentFrame.Function.Instructions.Length &&
+                currentFrame.Function.Instructions[exit.ProgramCounter].Opcode ==
+                    LuaIrOpcode.Return)
+            {
+                LuaCodegenAbiV1.CommitProgramCounter(currentFrame, exit.ProgramCounter);
+                var returnInstruction = currentFrame.Function.Instructions[exit.ProgramCounter];
+                var result = engine.ExecuteReturn(
+                    state,
+                    scheduler,
+                    thread,
+                    currentFrame,
+                    returnInstruction);
+                if (result is not null || thread.FrameCount == 0)
+                {
+                    throw new InvalidOperationException(
+                        "A direct compiled leaf escaped its owning caller frame.");
+                }
+
+                directCallDepth--;
+                Interlocked.Increment(ref _directCallCompletions);
+                Interlocked.Increment(ref _schedulerExitsAvoided);
+                thread.AdvanceFramePoolEpoch();
+                state.Heap.SafePoint();
+
+                var callerFrame = thread.CurrentFrame;
+                if (state.Heap.PendingFinalizerCount != 0 ||
+                    scheduler.Transfer != LuaSchedulerTransfer.None ||
+                    !context.IsDebugModeCurrent() ||
+                    !TryGetReadyEntry(callerFrame, out var callerEntry, out var callerEntryPoint))
+                {
+                    var schedulerExit = LuaCompiledExit.Continue(
+                        callerFrame.ProgramCounter,
+                        context.InstructionsConsumed);
+                    context.SetExitFrame(callerFrame);
+                    RecordSchedulerExit(
+                        currentEntry,
+                        currentEntryPoint,
+                        context,
+                        thread,
+                        callerFrame,
+                        schedulerExit);
+                    return schedulerExit;
+                }
+
+                currentFrame = callerFrame;
+                currentEntry = callerEntry;
+                currentEntryPoint = callerEntryPoint;
+                continue;
+            }
+
+            if (directCallDepth > 0)
+            {
+                Interlocked.Increment(ref _directCallFallbacks);
+            }
+            context.SetExitFrame(currentFrame);
+            RecordSchedulerExit(
+                currentEntry,
+                currentEntryPoint,
+                context,
+                thread,
+                currentFrame,
+                exit);
+            return exit;
+        }
+    }
+
+    private bool TryGetDirectCallee(
+        LuaState state,
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame callerFrame,
+        int frameCountBefore,
+        LuaCompiledExit exit,
+        out LuaFrame calleeFrame,
+        out FunctionEntry calleeEntry,
+        out CompiledEntryPoint calleeEntryPoint)
+    {
+        calleeFrame = null!;
+        calleeEntry = null!;
+        calleeEntryPoint = default;
+        if (exit.Kind != LuaCompiledExitKind.Continue ||
+            context.HasExactDebugHooks ||
+            !context.IsDebugModeCurrent() ||
+            state.IsRunningFinalizer ||
+            thread.UnwindState is not null ||
+            schedulerHasTransfer(context) ||
+            thread.FrameCount != frameCountBefore + 1 ||
+            ReferenceEquals(thread.CurrentFrame, callerFrame) ||
+            callerFrame.ProgramCounter != exit.ProgramCounter ||
+            exit.ProgramCounter <= 0)
+        {
+            return false;
         }
 
-        Interlocked.Increment(ref _compiledInvocations);
-        if (entryPoint.Tier == LuaJitCompilationTier.Tier2)
+        var callInstruction = callerFrame.Function.Instructions[exit.ProgramCounter - 1];
+        if (callInstruction.Opcode != LuaIrOpcode.Call ||
+            callInstruction.B < 0 ||
+            callInstruction.C < 0 ||
+            callerFrame.Continuation.Kind != LuaContinuationKind.None)
         {
-            Interlocked.Increment(ref _tier2Invocations);
+            return false;
         }
-        else
+
+        calleeFrame = thread.CurrentFrame;
+        if (calleeFrame.ProgramCounter != 0 || calleeFrame.IsDebugHook || calleeFrame.IsHidden ||
+            calleeFrame.PendingDebugHookEvent is not null ||
+            calleeFrame.Continuation.Kind != LuaContinuationKind.None ||
+            calleeFrame.ToBeClosedSlots.Count != 0 ||
+            !ReferenceEquals(calleeFrame.FunctionVersion, calleeFrame.Closure.FunctionVersion))
         {
-            Interlocked.Increment(ref entry.Tier1Invocations);
+            return false;
         }
-        Interlocked.Exchange(
-            ref entry.LastAccessStamp,
-            Interlocked.Increment(ref _accessStamp));
-        LuaCompiledExit exit;
-        try
+
+        var route = GetFunctionRoute(calleeFrame.Module, calleeFrame.Function.Id);
+        calleeEntry = GetOrCreateEntry(route, calleeFrame.Function.ParameterCount);
+        if (!TryReadDirectLeafEntry(calleeEntry, calleeFrame.Function, out calleeEntryPoint))
         {
-            exit = entryPoint.Method(context, thread, frame);
+            return false;
         }
-        finally
+
+        ObserveHotness(
+            calleeEntry,
+            calleeFrame,
+            programCounter: 0,
+            calleeFrame.Function.Instructions[0]);
+        calleeFrame.InstructionRoute = LuaFrameInstructionRoute.Backend;
+        return true;
+
+        static bool schedulerHasTransfer(LuaExecutionContext executionContext) =>
+            executionContext.Scheduler?.Transfer != LuaSchedulerTransfer.None;
+    }
+
+    private static bool TryReadDirectLeafEntry(
+        FunctionEntry entry,
+        LuaIrFunction function,
+        out CompiledEntryPoint entryPoint)
+    {
+        lock (entry.Gate)
         {
-            context.ExitBackendGeneration();
+            if (entry.State != LuaJitFunctionState.Ready ||
+                entry.ActiveTier != LuaJitCompilationTier.Tier2 ||
+                entry.Method is null ||
+                entry.Tier2Plan is null)
+            {
+                entryPoint = default;
+                return false;
+            }
+
+            var eligibility = Volatile.Read(ref entry.DirectCallEligibility);
+            if (eligibility == 0)
+            {
+                eligibility = IsDirectLeafEligible(function, entry.Tier2Plan) ? 1 : -1;
+                Volatile.Write(ref entry.DirectCallEligibility, eligibility);
+            }
+            if (eligibility < 0)
+            {
+                entryPoint = default;
+                return false;
+            }
+
+            entryPoint = new CompiledEntryPoint(
+                entry.Method,
+                entry.ActiveTier,
+                entry.InstalledGeneration);
+            return true;
         }
+    }
+
+    private static bool IsDirectLeafEligible(
+        LuaIrFunction function,
+        LuaJitTier2Plan plan)
+    {
+        const int maximumInstructions = 512;
+        if (function.IsVarArg || function.Upvalues.Length != 0 ||
+            function.Instructions.Length is 0 or > maximumInstructions)
+        {
+            return false;
+        }
+
+        var optimizedNumericSites = plan.Optimizations
+            .Where(static optimization => optimization.Kind is
+                LuaJitOptimizationKind.NumericUnary or LuaJitOptimizationKind.NumericBinary)
+            .Select(static optimization => optimization.ProgramCounter)
+            .ToHashSet();
+        for (var programCounter = 0;
+             programCounter < function.Instructions.Length;
+             programCounter++)
+        {
+            var instruction = function.Instructions[programCounter];
+            switch (instruction.Opcode)
+            {
+                case LuaIrOpcode.LoadConstant:
+                case LuaIrOpcode.LoadNil:
+                case LuaIrOpcode.Move:
+                case LuaIrOpcode.SetTop:
+                case LuaIrOpcode.Jump:
+                case LuaIrOpcode.JumpIfFalse:
+                case LuaIrOpcode.JumpIfTrue:
+                case LuaIrOpcode.NumericForPrepare:
+                case LuaIrOpcode.NumericForLoop:
+                    break;
+                case LuaIrOpcode.Unary:
+                case LuaIrOpcode.Binary:
+                    if (!optimizedNumericSites.Contains(programCounter))
+                    {
+                        return false;
+                    }
+
+                    break;
+                case LuaIrOpcode.Return when instruction.B >= 0:
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryGetReadyEntry(
+        LuaFrame frame,
+        out FunctionEntry entry,
+        out CompiledEntryPoint entryPoint)
+    {
+        var route = GetFunctionRoute(frame.Module, frame.Function.Id);
+        entry = GetOrCreateEntry(route, frame.Function.ParameterCount);
+        if (ReadReadyMethod(entry) is not { } ready)
+        {
+            entryPoint = default;
+            return false;
+        }
+
+        frame.InstructionRoute = LuaFrameInstructionRoute.Backend;
+        entryPoint = ready;
+        return true;
+    }
+
+    private void RecordCompiledInvocation(
+        FunctionEntry entry,
+        CompiledEntryPoint entryPoint,
+        LuaCompiledExit exit,
+        long instructionsConsumed)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(instructionsConsumed);
         if (entryPoint.Tier == LuaJitCompilationTier.Tier2)
         {
             if (exit.Kind is LuaCompiledExitKind.Return or LuaCompiledExitKind.TailCall)
@@ -1049,7 +1508,18 @@ internal sealed class LuaTieredJitRegistry :
                 Interlocked.Increment(ref _tier2UnsupportedExits);
             }
         }
-        Interlocked.Add(ref _compiledCanonicalInstructions, exit.InstructionsConsumed);
+
+        Interlocked.Add(ref _compiledCanonicalInstructions, instructionsConsumed);
+    }
+
+    private void RecordSchedulerExit(
+        FunctionEntry entry,
+        CompiledEntryPoint entryPoint,
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaCompiledExit exit)
+    {
         Interlocked.Increment(ref _schedulerExits);
         switch (exit.Kind)
         {
@@ -1086,36 +1556,36 @@ internal sealed class LuaTieredJitRegistry :
                 break;
         }
 
-        if (exit.Kind == LuaCompiledExitKind.Deopt)
+        if (exit.Kind != LuaCompiledExitKind.Deopt)
         {
-            Interlocked.Increment(ref _deoptimizations);
-            if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
-                exit.Reason == LuaCompiledExitReason.GuardFailure)
-            {
-                RecordTier2GuardFailureProfile(
-                    entry,
-                    context,
-                    thread,
-                    frame,
-                    exit.ProgramCounter);
-                HandleTier2GuardFailure(entry);
-            }
-            else if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
-                exit.Reason == LuaCompiledExitReason.UnsupportedInstruction)
-            {
-                HandleTier2UnsupportedExit(entry);
-            }
-
-            RaiseEvent(new LuaJitEvent(
-                LuaJitEventKind.Deoptimized,
-                entry.Key.ModuleContentId,
-                entry.Key.FunctionId,
-                LuaJitFunctionState.Ready,
-                DiagnosticCode: exit.Reason.ToString(),
-                Tier: entryPoint.Tier));
+            return;
         }
 
-        return exit;
+        Interlocked.Increment(ref _deoptimizations);
+        if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
+            exit.Reason == LuaCompiledExitReason.GuardFailure)
+        {
+            RecordTier2GuardFailureProfile(
+                entry,
+                context,
+                thread,
+                frame,
+                exit.ProgramCounter);
+            HandleTier2GuardFailure(entry);
+        }
+        else if (entryPoint.Tier == LuaJitCompilationTier.Tier2 &&
+            exit.Reason == LuaCompiledExitReason.UnsupportedInstruction)
+        {
+            HandleTier2UnsupportedExit(entry);
+        }
+
+        RaiseEvent(new LuaJitEvent(
+            LuaJitEventKind.Deoptimized,
+            entry.Key.ModuleContentId,
+            entry.Key.FunctionId,
+            LuaJitFunctionState.Ready,
+            DiagnosticCode: exit.Reason.ToString(),
+            Tier: entryPoint.Tier));
     }
 
     private void ObserveHotness(
@@ -2523,7 +2993,10 @@ internal sealed class LuaTieredJitRegistry :
                 }
 
                 request.Entry.Tier2Method = result.Method;
+                request.Entry.DirectCallMethod = result.DirectCallMethod;
+                result.RuntimeSites?.BindDirectCallCounters(_boundDirectCallCounters);
                 request.Entry.Tier2Plan = result.Plan;
+                Volatile.Write(ref request.Entry.DirectCallEligibility, 0);
                 request.Entry.Tier2EstimatedCodeBytes = result.EstimatedCodeBytes;
                 request.Entry.Method = result.Method;
                 request.Entry.InstalledGeneration = GetBackendGeneration(
@@ -2801,6 +3274,7 @@ internal sealed class LuaTieredJitRegistry :
             entry.Tier1Method = null;
             entry.PlainTier1Method = null;
             entry.Tier2Method = null;
+            entry.DirectCallMethod = null;
             entry.Tier2Plan = null;
             entry.Tier1EstimatedCodeBytes = 0;
             entry.Tier2EstimatedCodeBytes = 0;
@@ -2866,6 +3340,7 @@ internal sealed class LuaTieredJitRegistry :
                         "A ready Tier 2 entry has no specialization plan."));
                 released = entry.Tier2EstimatedCodeBytes;
                 entry.Tier2Method = null;
+                entry.DirectCallMethod = null;
                 entry.Tier2Plan = null;
                 entry.Tier2EstimatedCodeBytes = 0;
                 entry.EstimatedCodeBytes = checked(
@@ -2972,6 +3447,7 @@ internal sealed class LuaTieredJitRegistry :
 
                 released = entry.Tier2EstimatedCodeBytes;
                 entry.Tier2Method = null;
+                entry.DirectCallMethod = null;
                 entry.Tier2Plan = null;
                 entry.Tier2EstimatedCodeBytes = 0;
                 entry.EstimatedCodeBytes = checked(
@@ -3081,6 +3557,7 @@ internal sealed class LuaTieredJitRegistry :
                         entry.Tier1Method = null;
                         entry.PlainTier1Method = null;
                         entry.Tier2Method = null;
+                        entry.DirectCallMethod = null;
                         entry.Tier2Plan = null;
                         entry.Tier1EstimatedCodeBytes = 0;
                         entry.Tier2EstimatedCodeBytes = 0;
@@ -3551,6 +4028,8 @@ internal sealed class LuaTieredJitRegistry :
 
         public LuaCompiledMethod? Tier2Method { get; set; }
 
+        public LuaDirectCompiledMethod? DirectCallMethod { get; set; }
+
         public LuaJitTier2Plan? Tier2Plan { get; set; }
 
         public LuaJitTier2Eligibility? Tier2Eligibility { get; set; }
@@ -3591,6 +4070,8 @@ internal sealed class LuaTieredJitRegistry :
             new(StringComparer.Ordinal);
 
         public int Tier2ProfilingActive;
+
+        public int DirectCallEligibility;
 
         public int CompilationAttempts { get; set; }
 

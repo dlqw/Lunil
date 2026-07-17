@@ -805,3 +805,36 @@ up from `alpha.12`'s 0.335x. Common-MoonSharp normalized paired improvements wer
 lower bound was **1.038x** on `sieve`, above the 0.95x no-regression floor. All 512 results were
 correct and all 16 Auto/Tier 2 product gates passed; the narrowest lower bound was 1.222x on Tier 2
 `string_build`.
+
+## M22 generation-bound direct compiled calls
+
+`0.8.0-alpha.14` binds a stable, fixed-shape integer leaf to the caller's active backend generation.
+The qualified path avoids callee-frame construction and the call/return scheduler exits. When the
+call is inside a verified numeric region, integer arguments and results remain CLR `long` locals and
+the callee's actual instruction count is folded into the caller's 64-bit pending budget. Debug,
+budget, GC/finalizer, reload/invalidation, coroutine, vararg, upvalue, and unsupported paths still
+materialize the exact caller PC and return to the shared scheduler. See
+[ADR 0020](adr/0020-generation-bound-direct-compiled-calls.md).
+
+The backend evidence row now includes `direct_call_entries`, `direct_call_completions`,
+`direct_call_fallbacks`, `direct_call_invalidations`, and `scheduler_exits_avoided`. The direct-call
+plan is capped at 8 sites and 32 KiB of bound leaf IL per caller; each leaf is independently bounded
+to 128 canonical instructions, 32 registers, 8 parameters, 4 results, and 1024 backedges.
+
+The exact product commit `b9a0a825b39ed6e5a8c582c3f144a2dbc76de4e4` was measured on win-x64,
+.NET 10.0.3, using five cold compile samples and 30 warm backend operations. The same-machine
+`0.8.0-alpha.13` control was exact commit `1882ef1fb96969cc15dbf6ffd81e5b150b0f964f`.
+
+| `fib_iter` evidence | alpha.13 | alpha.14 | change |
+|---|---:|---:|---:|
+| warm CPU | 3.600 ms/op | 129.710 µs/op | **27.76x faster** |
+| scheduler exits | 70,035 | 39 | **99.944% fewer** |
+| execution allocation | 2,654.67 B/op | 2,700.00 B/op | 1.017x |
+| Tier 2 compile p95 | 2.087 ms | 6.719 ms | below 10 ms gate |
+| estimated code bytes | 24,968 | 28,768 | bounded |
+
+The candidate recorded 34,998 direct completions, zero direct fallbacks/invalidations, and 69,996
+avoided scheduler exits in the measured process. Its main function retained one numeric region,
+nine unboxed numeric locals, zero hot per-instruction budget comparisons, and a stable
+`GuardedSpecializedCil` route. Raw candidate and control rows are stored under
+`artifacts/performance/0.8.0-alpha.14/win-x64/b9a0a82/`.
