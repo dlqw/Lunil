@@ -31,6 +31,8 @@ Starting in `0.8.0-alpha.13`:
    error, unwind, close, continuation, backend entry, or debug-version change exists.
 2. `ExecuteSingleInstruction` remains the only opcode switch. Single-step hook execution, compact
    execution, compiled slow paths, and deoptimization all reuse it rather than copying semantics.
+   Pure compact instructions return a byte-sized internal result and do not materialize a
+   `LuaCompiledExit`; the exit is created only at a scheduler boundary.
 3. Call, tail call, return, instruction-budget poll, and every non-continue exit return to the shared
    scheduler. The execution context charges one unit before each instruction and reports the exact
    accumulated `long` count on every exit.
@@ -49,6 +51,9 @@ Starting in `0.8.0-alpha.13`:
    optional members of the existing internal executor boundary. This removes three nullable
    single-implementation interface fields while keeping custom/test executors compatible through
    default no-op behavior.
+9. After one full continuation-state validation, a consecutive chain of instructions proven not to
+   schedule Lua work reuses that validation and checks only the next-PC bound. Table/metamethod
+   operations, close scheduling, safe points, hooks, and probe routes always restore the full check.
 
 ## Consequences
 
