@@ -525,6 +525,10 @@ public sealed class LuaCodegenCallSiteCache
     private readonly ConditionalWeakTable<LuaIrModule, object> _matchedModules = new();
     private readonly string? _expectedModuleContentId;
     private readonly Func<LuaIrModule, string>? _getModuleContentId;
+    private WeakReference<LuaClosure>? _matchedClosure;
+    private long _matchedFunctionGeneration;
+    private WeakReference<object>? _directBackendEntry;
+    private long _directFunctionGeneration;
 
     public LuaCodegenCallSiteCache()
     {
@@ -543,9 +547,20 @@ public sealed class LuaCodegenCallSiteCache
     internal bool TryMatchOrAdd(LuaClosure closure)
     {
         ArgumentNullException.ThrowIfNull(closure);
+        var functionVersion = closure.FunctionVersion;
+        var matchedClosure = Volatile.Read(ref _matchedClosure);
+        if (matchedClosure is not null &&
+            Interlocked.Read(ref _matchedFunctionGeneration) == functionVersion.Generation &&
+            matchedClosure.TryGetTarget(out var cachedClosure) &&
+            ReferenceEquals(cachedClosure, closure))
+        {
+            return true;
+        }
+
         var module = closure.Module;
         if (_matchedModules.TryGetValue(module, out _))
         {
+            CacheClosure(closure, functionVersion.Generation);
             return true;
         }
 
@@ -558,6 +573,55 @@ public sealed class LuaCodegenCallSiteCache
         }
 
         _matchedModules.GetValue(module, static _ => MatchedModule);
+        CacheClosure(closure, functionVersion.Generation);
         return true;
+    }
+
+    private void CacheClosure(LuaClosure closure, long functionGeneration)
+    {
+        var reference = Volatile.Read(ref _matchedClosure);
+        if (reference is null)
+        {
+            reference = new WeakReference<LuaClosure>(closure);
+            Volatile.Write(ref _matchedClosure, reference);
+        }
+        else
+        {
+            reference.SetTarget(closure);
+        }
+
+        Interlocked.Exchange(ref _matchedFunctionGeneration, functionGeneration);
+    }
+
+    internal bool TryGetDirectBackendEntry(
+        long functionGeneration,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out object? entry)
+    {
+        var reference = Volatile.Read(ref _directBackendEntry);
+        if (Interlocked.Read(ref _directFunctionGeneration) == functionGeneration &&
+            reference is not null && reference.TryGetTarget(out entry))
+        {
+            return true;
+        }
+
+        entry = null;
+        return false;
+    }
+
+    internal void SetDirectBackendEntry(object entry, long functionGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        var reference = Volatile.Read(ref _directBackendEntry);
+        if (reference is null)
+        {
+            reference = new WeakReference<object>(entry);
+            Volatile.Write(ref _directBackendEntry, reference);
+        }
+        else
+        {
+            reference.SetTarget(entry);
+        }
+
+        Interlocked.Exchange(ref _directFunctionGeneration, functionGeneration);
     }
 }

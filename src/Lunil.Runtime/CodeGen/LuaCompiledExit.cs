@@ -129,6 +129,7 @@ public sealed class LuaExecutionContext
     private long _lastObservedInstructionCount;
     private LuaBackendGeneration? _backendGeneration;
     private long _backendGenerationToken;
+    private LuaFrame? _exitFrame;
 
     internal LuaExecutionContext(
         LuaState state,
@@ -164,6 +165,13 @@ public sealed class LuaExecutionContext
 
     internal LuaScheduler? Scheduler { get; private set; }
 
+    /// <summary>
+    /// Identifies the live frame that owns a compiled exit. It is normally the frame supplied to
+    /// the instruction executor, but a generation-bound direct-call trampoline may consume one or
+    /// more nested exits before it returns to the shared scheduler.
+    /// </summary>
+    internal LuaFrame? ExitFrame => _exitFrame;
+
     internal void Reset(
         LuaState state,
         LuaThread thread,
@@ -196,6 +204,7 @@ public sealed class LuaExecutionContext
         _instructionsConsumed = 0;
         _lastObservedProgramCounter = -1;
         _lastObservedInstructionCount = -1;
+        _exitFrame = null;
         ExecutionEngine = executionEngine;
         Scheduler = scheduler;
         State = state;
@@ -268,6 +277,19 @@ public sealed class LuaExecutionContext
         _backendGeneration = null;
         _backendGenerationToken = 0;
         generation.Exit();
+    }
+
+    internal bool OwnsBackendGeneration(
+        LuaBackendGeneration generation,
+        long expectedGeneration) =>
+        ReferenceEquals(_backendGeneration, generation) &&
+        _backendGenerationToken == expectedGeneration &&
+        generation.IsCurrent(expectedGeneration);
+
+    internal void SetExitFrame(LuaFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        _exitFrame = frame;
     }
 
     internal bool TryBeginInstructionObservation(int programCounter)

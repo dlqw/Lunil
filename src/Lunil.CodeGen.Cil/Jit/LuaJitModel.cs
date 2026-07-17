@@ -279,6 +279,21 @@ public sealed record LuaJitStatistics(
 
     /// <summary>Defensive exits attributed to unsupported Tier 2 coverage.</summary>
     public long Tier2UnsupportedExits { get; init; }
+
+    /// <summary>Stable fixed-shape Lua closures entered without returning to the scheduler.</summary>
+    public long DirectCallEntries { get; init; }
+
+    /// <summary>Direct callees returned and materialized their result in the compiled caller.</summary>
+    public long DirectCallCompletions { get; init; }
+
+    /// <summary>Eligible call candidates conservatively returned to the shared scheduler.</summary>
+    public long DirectCallFallbacks { get; init; }
+
+    /// <summary>Direct-chain entries rejected because their backend generation changed.</summary>
+    public long DirectCallInvalidations { get; init; }
+
+    /// <summary>Compiled call/return exits consumed inside the direct-call trampoline.</summary>
+    public long SchedulerExitsAvoided { get; init; }
 }
 
 public sealed record LuaJitTier2Eligibility(

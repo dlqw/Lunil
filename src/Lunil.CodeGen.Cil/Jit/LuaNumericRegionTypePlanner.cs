@@ -16,7 +16,19 @@ internal static class LuaNumericRegionPlanner
         LuaIrFunction function,
         LuaNaturalLoopRegion region,
         IEnumerable<LuaNumericRegionTypeHint> hints,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) => TryCreate(
+            function,
+            region,
+            hints,
+            boundDirectCalls: null,
+            cancellationToken);
+
+    public static LuaNumericRegionPlan? TryCreate(
+        LuaIrFunction function,
+        LuaNaturalLoopRegion region,
+        IEnumerable<LuaNumericRegionTypeHint> hints,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(function);
         ArgumentNullException.ThrowIfNull(region);
@@ -72,7 +84,12 @@ internal static class LuaNumericRegionPlanner
         foreach (var pc in region.ProgramCounters)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ApplyStructuralConstraints(function, pc, before[pc], solver))
+            if (!ApplyStructuralConstraints(
+                    function,
+                    pc,
+                    before[pc],
+                    solver,
+                    boundDirectCalls))
             {
                 return null;
             }
@@ -110,6 +127,7 @@ internal static class LuaNumericRegionPlanner
                     pc,
                     kindsBefore[pc],
                     kindsAfter[pc],
+                    boundDirectCalls,
                     ref directNumericInstructionCount))
             {
                 return null;
@@ -122,13 +140,13 @@ internal static class LuaNumericRegionPlanner
             for (var register = 0; register < function.RegisterCount; register++)
             {
                 var beforeKind = kindsBefore[pc][register];
-                if (IsPromoted(beforeKind))
+                if (IsRepresentable(beforeKind))
                 {
                     registerSet.Add(new LuaNumericRegionRegister(register, beforeKind));
                 }
 
                 var afterKind = kindsAfter[pc][register];
-                if (IsPromoted(afterKind))
+                if (IsRepresentable(afterKind))
                 {
                     registerSet.Add(new LuaNumericRegionRegister(register, afterKind));
                 }
@@ -399,7 +417,8 @@ internal static class LuaNumericRegionPlanner
         LuaIrFunction function,
         int pc,
         ImmutableArray<ValueDefinition>[] before,
-        ExactTypeSolver solver)
+        ExactTypeSolver solver,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls)
     {
         var instruction = function.Instructions[pc];
         switch (instruction.Opcode)
@@ -444,9 +463,78 @@ internal static class LuaNumericRegionPlanner
                     TryGetUseId(solver, before[instruction.A], out _);
             case LuaIrOpcode.NumericForLoop:
                 return ApplyNumericForConstraints(instruction, pc, before, solver);
+            case LuaIrOpcode.Call:
+                return ApplyDirectCallConstraints(
+                    function,
+                    instruction,
+                    pc,
+                    before,
+                    solver,
+                    boundDirectCalls);
             default:
                 return false;
         }
+    }
+
+    private static bool ApplyDirectCallConstraints(
+        LuaIrFunction function,
+        LuaIrInstruction instruction,
+        int pc,
+        ImmutableArray<ValueDefinition>[] before,
+        ExactTypeSolver solver,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls)
+    {
+        if (boundDirectCalls is null ||
+            !boundDirectCalls.TryGetValue(pc, out var directCall) ||
+            instruction.B != directCall.Function.ParameterCount ||
+            !ReflectionEmitLuaDirectCallCompiler.CanInlineWithResultCount(
+                directCall.Function,
+                instruction.C) ||
+            instruction.A < 0 || instruction.B < 0 || instruction.C < 0 ||
+            instruction.A + instruction.B >= function.RegisterCount ||
+            instruction.A + instruction.C > function.RegisterCount ||
+            !TryAssignUse(
+                solver,
+                before[instruction.A],
+                LuaNumericRegionValueKind.Tagged))
+        {
+            return false;
+        }
+
+        for (var argument = 0; argument < instruction.B; argument++)
+        {
+            if (!TryAssignUse(
+                    solver,
+                    before[instruction.A + argument + 1],
+                    LuaNumericRegionValueKind.Integer))
+            {
+                return false;
+            }
+        }
+
+        for (var result = 0; result < instruction.C; result++)
+        {
+            if (!TryAssignDefinition(
+                    solver,
+                    new ValueDefinition(pc, instruction.A + result),
+                    LuaNumericRegionValueKind.Integer))
+            {
+                return false;
+            }
+        }
+
+        for (var register = instruction.A + instruction.C;
+             register < function.RegisterCount;
+             register++)
+        {
+            if (!solver.TryGetId(new ValueDefinition(pc, register), out var cleared) ||
+                !solver.TryAssign(cleared, LuaNumericRegionValueKind.Cleared))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool ApplyUnaryConstraints(
@@ -630,6 +718,7 @@ internal static class LuaNumericRegionPlanner
         int pc,
         ImmutableArray<LuaNumericRegionValueKind> before,
         ImmutableArray<LuaNumericRegionValueKind> after,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
         ref int directNumericInstructionCount)
     {
         var instruction = function.Instructions[pc];
@@ -639,7 +728,7 @@ internal static class LuaNumericRegionPlanner
                 return ConstantKind(function.Constants[instruction.B]) ==
                     Kind(after, instruction.A);
             case LuaIrOpcode.Move:
-                return IsPromoted(Kind(before, instruction.B)) &&
+                return IsRepresentable(Kind(before, instruction.B)) &&
                     Kind(before, instruction.B) == Kind(after, instruction.A);
             case LuaIrOpcode.SetTop:
                 return instruction.A >= 0 && instruction.A <= function.RegisterCount;
@@ -686,6 +775,27 @@ internal static class LuaNumericRegionPlanner
                         Kind(after, instruction.A) == kind &&
                         Kind(after, instruction.A + 1) == kind &&
                         Kind(after, instruction.A + 3) == kind;
+                    directNumericInstructionCount += valid ? 1 : 0;
+                    return valid;
+                }
+            case LuaIrOpcode.Call:
+                {
+                    var valid = boundDirectCalls is not null &&
+                        boundDirectCalls.TryGetValue(pc, out var directCall) &&
+                        instruction.B == directCall.Function.ParameterCount &&
+                        ReflectionEmitLuaDirectCallCompiler.CanInlineWithResultCount(
+                            directCall.Function,
+                            instruction.C) &&
+                        Kind(before, instruction.A) == LuaNumericRegionValueKind.Tagged &&
+                        Enumerable.Range(instruction.A + 1, instruction.B).All(register =>
+                            Kind(before, register) == LuaNumericRegionValueKind.Integer) &&
+                        Enumerable.Range(instruction.A, instruction.C).All(register =>
+                            Kind(after, register) == LuaNumericRegionValueKind.Integer) &&
+                        Enumerable.Range(
+                            instruction.A + instruction.C,
+                            function.RegisterCount - instruction.A - instruction.C).All(
+                            register => Kind(after, register) ==
+                                LuaNumericRegionValueKind.Cleared);
                     directNumericInstructionCount += valid ? 1 : 0;
                     return valid;
                 }
@@ -736,7 +846,7 @@ internal static class LuaNumericRegionPlanner
         ExactTypeSolver solver,
         ValueDefinition definition,
         LuaNumericRegionValueKind kind) =>
-        IsPromoted(kind) && solver.TryGetId(definition, out var id) &&
+        IsRepresentable(kind) && solver.TryGetId(definition, out var id) &&
         solver.TryAssign(id, kind);
 
     private static bool TryUnifyDefinitionWithUse(
@@ -786,7 +896,7 @@ internal static class LuaNumericRegionPlanner
             }
 
             var kind = solver.GetKind(id);
-            if (!IsPromoted(kind))
+            if (!IsRepresentable(kind) && kind != LuaNumericRegionValueKind.Cleared)
             {
                 return LuaNumericRegionValueKind.Unknown;
             }
@@ -862,6 +972,9 @@ internal static class LuaNumericRegionPlanner
                 Enumerable.Range(instruction.A, registerCount - instruction.A),
             LuaIrOpcode.NumericForLoop =>
                 [instruction.A, instruction.A + 1, instruction.A + 3],
+            LuaIrOpcode.Call when instruction.A >= 0 && instruction.C >= 0 &&
+                instruction.A + instruction.C <= registerCount =>
+                Enumerable.Range(instruction.A, registerCount - instruction.A),
             _ => [],
         };
 
@@ -893,6 +1006,9 @@ internal static class LuaNumericRegionPlanner
     private static bool IsPromoted(LuaNumericRegionValueKind kind) =>
         kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float or
             LuaNumericRegionValueKind.Boolean;
+
+    private static bool IsRepresentable(LuaNumericRegionValueKind kind) =>
+        IsPromoted(kind) || kind == LuaNumericRegionValueKind.Tagged;
 
     private static bool IsNumeric(LuaNumericRegionValueKind kind) =>
         kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float;
@@ -1015,6 +1131,6 @@ internal static class LuaNumericRegionPlanner
         }
 
         private static bool IsConstraintKind(LuaNumericRegionValueKind kind) =>
-            IsPromoted(kind) || kind == LuaNumericRegionValueKind.Cleared;
+            IsRepresentable(kind) || kind == LuaNumericRegionValueKind.Cleared;
     }
 }

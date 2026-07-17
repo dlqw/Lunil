@@ -75,7 +75,11 @@ internal sealed record LuaTier2CompilationResult(
     LuaJitTier2Plan? Plan,
     long EstimatedCodeBytes,
     ImmutableArray<string> Diagnostics,
-    LuaJitTier2CompilationMetrics? Metrics = null)
+    LuaJitTier2CompilationMetrics? Metrics = null,
+    LuaDirectCompiledMethod? DirectCallMethod = null,
+    LuaTier2RuntimeSites? RuntimeSites = null,
+    int BoundDirectCallCount = 0,
+    long BoundDirectCallCodeBytes = 0)
 {
     public bool Succeeded => Method is not null && Plan is not null && Diagnostics.IsEmpty;
 }
@@ -92,6 +96,8 @@ internal interface ILuaTier2Compiler
 internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 {
     private const int MinimumStraightLineTier2InstructionCount = 16;
+    internal const int MaximumInlineDirectCallSites = 8;
+    internal const long MaximumInlineDirectCallCodeBytes = 32 * 1024;
 
     public static ProfileGuidedLuaTier2Compiler Instance { get; } = new();
     [UnconditionalSuppressMessage(
@@ -149,10 +155,17 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var livenessAnalysisDuration = Stopwatch.GetElapsedTime(livenessStarted);
         var optimizationStarted = Stopwatch.GetTimestamp();
         var optimized = BuildOptimizations(function, profile, liveness);
+        var boundDirectCalls = BuildBoundDirectCalls(
+            module,
+            function,
+            optimized,
+            cancellationToken,
+            out var boundDirectCallCodeBytes);
         var numericRegionPlans = BuildNumericRegionPlans(
             module,
             function,
             profile,
+            boundDirectCalls,
             cancellationToken);
         var optimizationDescriptions = optimized.Values
             .OrderBy(static item => item.ProgramCounter)
@@ -178,16 +191,19 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 PendingTransformMaterialized: true))
             .ToImmutableArray();
         var plan = new LuaJitTier2Plan(functionId, optimizationDescriptions, deoptMap);
-        var program = new Tier2Program(function, optimized);
+        var program = new Tier2Program(function, optimized, boundDirectCalls);
         var optimizationPlanningDuration = Stopwatch.GetElapsedTime(optimizationStarted);
         LuaCompiledMethod method = program.Execute;
         var estimatedCodeBytes = checked(
-            function.Instructions.Length * 12L + optimized.Count * 64L);
+            function.Instructions.Length * 12L + optimized.Count * 64L +
+            boundDirectCallCodeBytes);
+        LuaTier2RuntimeSites? runtimeSites = program.RuntimeSites;
         var emissionMetrics = default(LuaTier2EmissionMetrics);
         if (!numericRegionPlans.IsEmpty &&
             TryCompileNumericRegions(
                 function,
                 numericRegionPlans,
+                boundDirectCalls,
                 cancellationToken,
                 out var numericRegions) &&
             TryCompileNumericSpecializedCil(
@@ -196,15 +212,22 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 numericRegionPlans
                     .SelectMany(static region => region.Region.ProgramCounters)
                     .ToImmutableHashSet(),
+                boundDirectCalls,
                 cancellationToken,
                 out var specializedMethod,
+                out var outerRuntimeSites,
                 out var specializedCodeBytes,
                 out var outerEmissionMetrics))
         {
+            foreach (var numericRegion in numericRegions)
+            {
+                outerRuntimeSites.AttachCounterChild(numericRegion.RuntimeSites);
+            }
+            runtimeSites = outerRuntimeSites;
             method = new NumericRegionTier2Program(specializedMethod, numericRegions).Execute;
             estimatedCodeBytes = checked(
                 specializedCodeBytes + numericRegions.Sum(static region =>
-                    region.EstimatedCodeBytes));
+                    region.EstimatedCodeBytes) + boundDirectCallCodeBytes);
             emissionMetrics = new LuaTier2EmissionMetrics(
                 outerEmissionMetrics.CilEmissionDuration + TimeSpan.FromTicks(
                     numericRegions.Sum(static region =>
@@ -233,19 +256,35 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 function,
                 optimized,
                 [],
+                boundDirectCalls,
                 cancellationToken,
                 out var fallbackSpecializedMethod,
+                out var fallbackRuntimeSites,
                 out var fallbackSpecializedCodeBytes,
                 out emissionMetrics))
         {
+            runtimeSites = fallbackRuntimeSites;
             method = fallbackSpecializedMethod;
-            estimatedCodeBytes = fallbackSpecializedCodeBytes;
+            estimatedCodeBytes = checked(
+                fallbackSpecializedCodeBytes + boundDirectCallCodeBytes);
             plan = plan with
             {
                 CodeKind = HasNonNumericSpecialization(optimized)
                     ? LuaJitTier2CodeKind.GuardedSpecializedCil
                     : LuaJitTier2CodeKind.ExactNumericSpecializedCil,
             };
+        }
+
+        LuaCompiledDirectCall? directCall = null;
+        if (ReflectionEmitLuaDirectCallCompiler.TryCompile(
+                function,
+                profile,
+                cancellationToken,
+                out var compiledDirectCall))
+        {
+            directCall = compiledDirectCall;
+            estimatedCodeBytes = checked(
+                estimatedCodeBytes + compiledDirectCall.EstimatedCodeBytes);
         }
 
         var specializedOptimizationCount = plan.CodeKind !=
@@ -276,7 +315,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             plan,
             estimatedCodeBytes,
             [],
-            metrics);
+            metrics,
+            directCall?.Method,
+            runtimeSites,
+            boundDirectCalls.Count,
+            boundDirectCallCodeBytes);
     }
 
     internal static LuaJitTier2Eligibility EvaluateAutoPromotionEligibility(
@@ -392,6 +435,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaIrModule module,
         LuaIrFunction function,
         LuaJitFunctionProfile profile,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
         CancellationToken cancellationToken)
     {
         var candidates = ImmutableArray.CreateBuilder<LuaNumericRegionPlan>();
@@ -406,6 +450,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 function,
                 region,
                 BuildNumericRegionHints(function, region, profile),
+                boundDirectCalls,
                 cancellationToken);
             if (plan is not null)
             {
@@ -548,9 +593,88 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         "AOT",
         "IL3050",
         Justification = "Tier 2 compilation is reached only after the dynamic-code capability check.")]
+    private static ImmutableDictionary<int, LuaBoundDirectCall> BuildBoundDirectCalls(
+        LuaIrModule module,
+        LuaIrFunction caller,
+        ImmutableDictionary<int, OptimizedInstruction> optimized,
+        CancellationToken cancellationToken,
+        out long estimatedCodeBytes)
+    {
+        var methodsByFunction = new Dictionary<int, LuaCompiledDirectCall?>();
+        var result = ImmutableDictionary.CreateBuilder<int, LuaBoundDirectCall>();
+        var moduleContentId = LuaJitModuleIdentity.Create(module);
+        estimatedCodeBytes = 0;
+        foreach (var (programCounter, optimization) in optimized)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (optimization.Kind != LuaJitOptimizationKind.KnownClosureCall ||
+                optimization.CallTarget is not { } target ||
+                !string.Equals(
+                    target.ModuleContentId,
+                    moduleContentId,
+                    StringComparison.Ordinal) ||
+                (uint)target.FunctionId >= (uint)module.Functions.Length ||
+                (uint)programCounter >= (uint)caller.Instructions.Length)
+            {
+                continue;
+            }
+
+            var instruction = caller.Instructions[programCounter];
+            if (instruction.Opcode != LuaIrOpcode.Call ||
+                instruction.B < 0 || instruction.C < 0 ||
+                result.Count >= MaximumInlineDirectCallSites)
+            {
+                continue;
+            }
+
+            if (!methodsByFunction.TryGetValue(target.FunctionId, out var compiled))
+            {
+                var callee = module.Functions[target.FunctionId];
+                var assumedProfile = new LuaJitFunctionProfile(
+                    Samples: 1,
+                    ArgumentKinds: Enumerable.Repeat(
+                        LuaJitValueKinds.Integer,
+                        callee.ParameterCount).ToImmutableArray(),
+                    Sites: []);
+                compiled = ReflectionEmitLuaDirectCallCompiler.TryCompile(
+                    callee,
+                    assumedProfile,
+                    cancellationToken,
+                    out var candidate)
+                        ? candidate
+                        : null;
+                methodsByFunction.Add(target.FunctionId, compiled);
+            }
+
+            if (compiled is not null &&
+                instruction.B == module.Functions[target.FunctionId].ParameterCount &&
+                estimatedCodeBytes <=
+                    MaximumInlineDirectCallCodeBytes - compiled.EstimatedCodeBytes)
+            {
+                var callee = module.Functions[target.FunctionId];
+                result.Add(
+                    programCounter,
+                    new LuaBoundDirectCall(
+                        callee,
+                        compiled.Method,
+                        compiled.EstimatedCodeBytes,
+                        moduleContentId));
+                estimatedCodeBytes = checked(
+                    estimatedCodeBytes + compiled.EstimatedCodeBytes);
+            }
+        }
+
+        return result.ToImmutable();
+    }
+
+    [UnconditionalSuppressMessage(
+        "AOT",
+        "IL3050",
+        Justification = "Tier 2 compilation is reached only after the dynamic-code capability check.")]
     private static bool TryCompileNumericRegions(
         LuaIrFunction function,
         ImmutableArray<LuaNumericRegionPlan> plans,
+        IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
         CancellationToken cancellationToken,
         out ImmutableArray<LuaCompiledNumericRegion> regions)
     {
@@ -563,6 +687,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 new LuaNumericRegionEmissionMode(
                     RequireLoopOsrEntry: false,
                     ObserveLoopOsrBackedge: false),
+                boundDirectCalls,
                 cancellationToken,
                 out var region))
             {
@@ -585,15 +710,19 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaIrFunction function,
         ImmutableDictionary<int, OptimizedInstruction> optimized,
         ImmutableHashSet<int> numericRegionProgramCounters,
+        IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
+        [NotNullWhen(true)] out LuaTier2RuntimeSites? runtimeSites,
         out long estimatedCodeBytes,
         out LuaTier2EmissionMetrics metrics) => ReflectionEmitLuaTier2Compiler.TryCompile(
             function,
             optimized,
             numericRegionProgramCounters,
+            boundDirectCalls,
             cancellationToken,
             out method,
+            out runtimeSites,
             out estimatedCodeBytes,
             out metrics);
 
@@ -1022,16 +1151,21 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
         public Tier2Program(
             LuaIrFunction function,
-            ImmutableDictionary<int, OptimizedInstruction> optimized)
+            ImmutableDictionary<int, OptimizedInstruction> optimized,
+            IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls)
         {
             _function = function;
             _optimized = new OptimizedInstruction?[function.Instructions.Length];
-            _runtimeSites = new LuaTier2RuntimeSites(function.Instructions.Length);
+            _runtimeSites = new LuaTier2RuntimeSites(
+                function.Instructions.Length,
+                boundDirectCalls);
             foreach (var pair in optimized)
             {
                 _optimized[pair.Key] = pair.Value;
             }
         }
+
+        public LuaTier2RuntimeSites RuntimeSites => _runtimeSites;
 
         public LuaCompiledExit Execute(
             LuaExecutionContext context,
@@ -1308,6 +1442,33 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         }
                         else
                         {
+                            if (runtimeSites.TryExecuteBoundDirectCall(
+                                    context,
+                                    thread,
+                                    frame,
+                                    frame.ProgramCounter,
+                                    instruction.A,
+                                    instruction.B,
+                                    instruction.C))
+                            {
+                                frame.ProgramCounter++;
+                                return null;
+                            }
+
+                            if (context.ExecutionEngine?.TryExecuteDirectCall(
+                                    context,
+                                    thread,
+                                    frame,
+                                    cache,
+                                    instruction.A,
+                                    optimization.CallTarget.FunctionId,
+                                    instruction.B,
+                                    instruction.C) == true)
+                            {
+                                frame.ProgramCounter++;
+                                return null;
+                            }
+
                             if (LuaCodegenAbiV3.TryExecuteFramelessCall(
                                     context,
                                     thread,

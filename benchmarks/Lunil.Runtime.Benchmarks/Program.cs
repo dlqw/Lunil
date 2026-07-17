@@ -1026,6 +1026,11 @@ static void RunBackendEvidence(
         $"tier2_method_entries={statistics?.Tier2MethodEntries ?? 0}, " +
         $"tier2_completed_invocations={statistics?.Tier2CompletedInvocations ?? 0}, " +
         $"tier2_unsupported_exits={statistics?.Tier2UnsupportedExits ?? 0}, " +
+        $"direct_call_entries={statistics?.DirectCallEntries ?? 0}, " +
+        $"direct_call_completions={statistics?.DirectCallCompletions ?? 0}, " +
+        $"direct_call_fallbacks={statistics?.DirectCallFallbacks ?? 0}, " +
+        $"direct_call_invalidations={statistics?.DirectCallInvalidations ?? 0}, " +
+        $"scheduler_exits_avoided={statistics?.SchedulerExitsAvoided ?? 0}, " +
         $"loop_osr_code_kind={warmed.LoopOsrCodeKind}, " +
         $"loop_osr_specialized_instruction_count={warmed.LoopOsrSpecializedInstructionCount}, " +
         $"loop_osr_guard_count={warmed.LoopOsrGuardCount}, " +

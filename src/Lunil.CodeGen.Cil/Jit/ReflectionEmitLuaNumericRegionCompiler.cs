@@ -24,7 +24,8 @@ internal sealed record LuaCompiledNumericRegion(
     LuaNumericRegionPlan Plan,
     LuaCompiledMethod Method,
     long EstimatedCodeBytes,
-    LuaNumericRegionEmissionMetrics Metrics);
+    LuaNumericRegionEmissionMetrics Metrics,
+    LuaTier2RuntimeSites RuntimeSites);
 
 internal static class LuaNumericRegionRuntime
 {
@@ -52,6 +53,12 @@ internal static class LuaNumericRegionRuntime
 /// </summary>
 internal static class ReflectionEmitLuaNumericRegionCompiler
 {
+    private delegate LuaCompiledExit LuaCompiledNumericRegionMethodWithSites(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaTier2RuntimeSites runtimeSites);
+
     private const int MaximumBackedgePollInterval = 1024;
 
     private enum NumericExecutionPath : byte
@@ -69,12 +76,29 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaExecutionContext),
         typeof(LuaThread),
         typeof(LuaFrame),
+        typeof(LuaTier2RuntimeSites),
     ];
 
     private static readonly MethodInfo CanExecuteCompiledFrame = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanExecuteCompiledFrame),
         [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]);
+    private static readonly MethodInfo CanExecuteKnownClosureValue = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.CanExecuteKnownClosureValue),
+        [typeof(LuaValue), typeof(LuaCodegenCallSiteCache), typeof(int)]);
+    private static readonly MethodInfo GetCallSite = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.GetCallSite),
+        [typeof(int), typeof(string)]);
+    private static readonly MethodInfo RecordInlineDirectCallCompletion = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallCompletion),
+        []);
+    private static readonly MethodInfo RecordInlineDirectCallFallback = Method(
+        typeof(LuaTier2RuntimeSites),
+        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallFallback),
+        []);
     private static readonly MethodInfo CanEnterLoopOsr = Method(
         typeof(LuaCodegenAbiV2),
         nameof(LuaCodegenAbiV2.CanEnterLoopOsr),
@@ -199,6 +223,20 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         CancellationToken cancellationToken,
+        [NotNullWhen(true)] out LuaCompiledNumericRegion? result) => TryCompile(
+            function,
+            plan,
+            mode,
+            boundDirectCalls: null,
+            cancellationToken,
+            out result);
+
+    public static bool TryCompile(
+        LuaIrFunction function,
+        LuaNumericRegionPlan plan,
+        LuaNumericRegionEmissionMode mode,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledNumericRegion? result)
     {
         result = null;
@@ -217,12 +255,18 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             skipVisibility: true);
         var generator = new ReflectionEmitLuaNumericRegionIlGenerator(
             dynamicMethod.GetILGenerator());
-        Emit(function, plan, mode, generator, cancellationToken);
+        Emit(function, plan, mode, generator, boundDirectCalls, cancellationToken);
 
         cancellationToken.ThrowIfCancellationRequested();
         var cilEmissionDuration = Stopwatch.GetElapsedTime(emissionStarted);
         var delegateStarted = Stopwatch.GetTimestamp();
-        var method = (LuaCompiledMethod)dynamicMethod.CreateDelegate(typeof(LuaCompiledMethod));
+        var compiledWithSites = (LuaCompiledNumericRegionMethodWithSites)dynamicMethod.CreateDelegate(
+            typeof(LuaCompiledNumericRegionMethodWithSites));
+        var runtimeSites = new LuaTier2RuntimeSites(
+            function.Instructions.Length,
+            boundDirectCalls);
+        LuaCompiledMethod method = (context, thread, frame) =>
+            compiledWithSites(context, thread, frame, runtimeSites);
         var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);
         var estimatedCodeBytes = checked(
             plan.Region.ProgramCounters.Length * 48L +
@@ -235,7 +279,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             estimatedCodeBytes,
             new LuaNumericRegionEmissionMetrics(
                 cilEmissionDuration,
-                delegateCreationDuration));
+                delegateCreationDuration),
+            runtimeSites);
         return true;
     }
 
@@ -244,6 +289,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         LuaNumericRegionIlGenerator generator,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(function);
@@ -305,7 +351,20 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var coldSemanticDeoptLabels = plan.Region.ProgramCounters.ToDictionary(
             static pc => pc,
             _ => generator.DefineLabel());
+        var hotDirectBudgetLabels = plan.Region.ProgramCounters.ToDictionary(
+            static pc => pc,
+            _ => generator.DefineLabel());
+        var coldDirectBudgetLabels = plan.Region.ProgramCounters.ToDictionary(
+            static pc => pc,
+            _ => generator.DefineLabel());
+        var hotDirectSafepointLabels = plan.Region.ProgramCounters.ToDictionary(
+            static pc => pc,
+            _ => generator.DefineLabel());
+        var coldDirectSafepointLabels = plan.Region.ProgramCounters.ToDictionary(
+            static pc => pc,
+            _ => generator.DefineLabel());
         var budgetBoundary = generator.DefineLabel();
+        var safepointBoundary = generator.DefineLabel();
         var guardBoundary = generator.DefineLabel();
         var invalidatedExit = generator.DefineLabel();
         var backedgePollInterval = Math.Max(
@@ -376,6 +435,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 generator,
                 function,
                 plan,
+                boundDirectCalls,
                 mode,
                 NumericExecutionPath.HotQuantum,
                 pc,
@@ -397,7 +457,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 integerTemporary,
                 integerRemainder,
                 floatingTemporary,
-                hotSemanticDeoptLabels[pc]);
+                hotSemanticDeoptLabels[pc],
+                hotDirectBudgetLabels[pc],
+                hotDirectSafepointLabels[pc],
+                cancellationToken);
 
             generator.MarkLabel(coldSlowTailLabels[pc]);
             EmitLocalInstructionReservation(generator, remaining, pending, budgetLabels[pc]);
@@ -405,6 +468,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 generator,
                 function,
                 plan,
+                boundDirectCalls,
                 mode,
                 NumericExecutionPath.ColdSlowTail,
                 pc,
@@ -426,7 +490,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 integerTemporary,
                 integerRemainder,
                 floatingTemporary,
-                coldSemanticDeoptLabels[pc]);
+                coldSemanticDeoptLabels[pc],
+                coldDirectBudgetLabels[pc],
+                coldDirectSafepointLabels[pc],
+                cancellationToken);
         }
 
         foreach (var pc in plan.Region.ProgramCounters)
@@ -455,6 +522,36 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             EmitInt32(generator, plan.GetBudgetSite(pc).DeoptimizationProgramCounter);
             generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
             generator.Emit(OpCodes.Br, guardBoundary);
+
+            generator.MarkLabel(hotDirectBudgetLabels[pc]);
+            EmitSubtractPendingInstructions(
+                generator,
+                pending,
+                plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
+            EmitInt32(generator, pc);
+            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+            generator.Emit(OpCodes.Br, budgetBoundary);
+
+            generator.MarkLabel(coldDirectBudgetLabels[pc]);
+            EmitCancelLocalInstructionReservation(generator, remaining, pending);
+            EmitInt32(generator, pc);
+            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+            generator.Emit(OpCodes.Br, budgetBoundary);
+
+            generator.MarkLabel(hotDirectSafepointLabels[pc]);
+            EmitSubtractPendingInstructions(
+                generator,
+                pending,
+                plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
+            EmitInt32(generator, pc);
+            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+            generator.Emit(OpCodes.Br, safepointBoundary);
+
+            generator.MarkLabel(coldDirectSafepointLabels[pc]);
+            EmitCancelLocalInstructionReservation(generator, remaining, pending);
+            EmitInt32(generator, pc);
+            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+            generator.Emit(OpCodes.Br, safepointBoundary);
         }
 
         generator.MarkLabel(budgetBoundary);
@@ -476,6 +573,26 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             PollExit,
             boundaryProgramCounter,
             LuaCompiledExitReason.InstructionBudget);
+
+        generator.MarkLabel(safepointBoundary);
+        EmitBoundaryState(
+            generator,
+            plan,
+            programCounter: 0,
+            valueLocals,
+            dirtyLocals,
+            pending,
+            remaining,
+            observedBackedges,
+            minimumTop,
+            desiredTop,
+            topDirty,
+            boundaryProgramCounter);
+        EmitDynamicExit(
+            generator,
+            PollExit,
+            boundaryProgramCounter,
+            LuaCompiledExitReason.GarbageCollection);
 
         generator.MarkLabel(guardBoundary);
         EmitBoundaryState(
@@ -547,6 +664,13 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         EmitInt32(generator, register.Register);
         generator.Emit(OpCodes.Call, ReadRegister);
         generator.Emit(OpCodes.Stloc, taggedValue);
+        if (register.Kind == LuaNumericRegionValueKind.Tagged)
+        {
+            generator.Emit(OpCodes.Ldloc, taggedValue);
+            generator.Emit(OpCodes.Stloc, local);
+            return;
+        }
+
         generator.Emit(OpCodes.Ldloca, taggedValue);
         generator.Emit(OpCodes.Call, GetKind);
         EmitInt32(generator, (int)ValueKind(register.Kind));
@@ -686,6 +810,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionIlGenerator generator,
         LuaIrFunction function,
         LuaNumericRegionPlan plan,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
         LuaNumericRegionEmissionMode mode,
         NumericExecutionPath executionPath,
         int pc,
@@ -707,7 +832,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericIlLocal integerTemporary,
         LuaNumericIlLocal integerRemainder,
         LuaNumericIlLocal floatingTemporary,
-        LuaNumericIlLabel semanticDeopt)
+        LuaNumericIlLabel semanticDeopt,
+        LuaNumericIlLabel directBudgetFallback,
+        LuaNumericIlLabel directSafepointFallback,
+        CancellationToken cancellationToken)
     {
         switch (instruction.Opcode)
         {
@@ -939,6 +1067,41 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                     headerReason,
                     floatingTemporary);
                 break;
+            case LuaIrOpcode.Call:
+                if (boundDirectCalls is null ||
+                    !boundDirectCalls.TryGetValue(pc, out var directCall))
+                {
+                    throw new InvalidOperationException(
+                        $"Numeric-region call PC {pc} has no bound direct target.");
+                }
+
+                EmitNumericDirectCall(
+                    generator,
+                    plan,
+                    mode,
+                    executionPath,
+                    pc,
+                    instruction,
+                    directCall,
+                    bodyLabels,
+                    blockEntryLabels,
+                    resumeLabels,
+                    valueLocals,
+                    dirtyLocals,
+                    remaining,
+                    pending,
+                    backedgeCountdown,
+                    observedBackedges,
+                    backedgePollInterval,
+                    minimumTop,
+                    desiredTop,
+                    topDirty,
+                    headerReason,
+                    semanticDeopt,
+                    directBudgetFallback,
+                    directSafepointFallback,
+                    cancellationToken);
+                break;
             default:
                 throw new InvalidOperationException(
                     $"Unsupported numeric-region instruction {instruction.Opcode} at PC {pc}.");
@@ -987,6 +1150,132 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         }
 
         generator.Emit(OpCodes.Stloc, destination);
+    }
+
+    private static void EmitNumericDirectCall(
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericRegionPlan plan,
+        LuaNumericRegionEmissionMode mode,
+        NumericExecutionPath executionPath,
+        int pc,
+        LuaIrInstruction instruction,
+        LuaBoundDirectCall directCall,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
+        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
+        Dictionary<int, NumericDirtyState> dirtyLocals,
+        LuaNumericIlLocal remaining,
+        LuaNumericIlLocal pending,
+        LuaNumericIlLocal backedgeCountdown,
+        Dictionary<int, LuaNumericIlLocal> observedBackedges,
+        int backedgePollInterval,
+        LuaNumericIlLocal minimumTop,
+        LuaNumericIlLocal desiredTop,
+        LuaNumericIlLocal topDirty,
+        LuaNumericIlLocal headerReason,
+        LuaNumericIlLabel semanticDeopt,
+        LuaNumericIlLabel directBudgetFallback,
+        LuaNumericIlLabel directSafepointFallback,
+        CancellationToken cancellationToken)
+    {
+        var fallback = generator.DefineLabel();
+        var budgetFallback = generator.DefineLabel();
+        var safepointFallback = generator.DefineLabel();
+        var completed = generator.DefineLabel();
+        generator.Emit(
+            OpCodes.Ldloc,
+            NumericLocal(
+                valueLocals,
+                instruction.A,
+                LuaNumericRegionValueKind.Tagged));
+        generator.Emit(OpCodes.Ldarg_3);
+        EmitInt32(generator, pc);
+        generator.Emit(OpCodes.Ldstr, directCall.ModuleContentId);
+        generator.Emit(OpCodes.Callvirt, GetCallSite);
+        EmitInt32(generator, directCall.Function.Id);
+        generator.Emit(OpCodes.Call, CanExecuteKnownClosureValue);
+        generator.Emit(OpCodes.Brfalse, fallback);
+
+        var arguments = Enumerable.Range(0, instruction.B)
+            .Select(index => NumericLocal(
+                valueLocals,
+                instruction.A + index + 1,
+                plan.GetKindBefore(pc, instruction.A + index + 1)))
+            .ToArray();
+        var results = Enumerable.Range(0, instruction.C)
+            .Select(index => NumericLocal(
+                valueLocals,
+                instruction.A + index,
+                plan.GetKindAfter(pc, instruction.A + index)))
+            .ToArray();
+        ReflectionEmitLuaDirectCallCompiler.EmitNumericRegionInline(
+            directCall.Function,
+            generator,
+            arguments,
+            results,
+            remaining,
+            pending,
+            completed,
+            fallback,
+            budgetFallback,
+            safepointFallback,
+            cancellationToken);
+
+        generator.MarkLabel(completed);
+        generator.Emit(OpCodes.Ldarg_3);
+        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallCompletion);
+        for (var index = 0; index < instruction.C; index++)
+        {
+            EmitMarkDirty(
+                generator,
+                dirtyLocals[instruction.A + index],
+                plan.GetKindAfter(pc, instruction.A + index));
+        }
+
+        EmitSetTop(
+            generator,
+            instruction.A + instruction.C,
+            minimumTop,
+            desiredTop,
+            topDirty,
+            dirtyLocals);
+        EmitTransfer(
+            generator,
+            plan,
+            mode,
+            executionPath,
+            pc,
+            pc + 1,
+            bodyLabels,
+            blockEntryLabels,
+            resumeLabels,
+            valueLocals,
+            dirtyLocals,
+            remaining,
+            pending,
+            backedgeCountdown,
+            observedBackedges,
+            backedgePollInterval,
+            minimumTop,
+            desiredTop,
+            topDirty,
+            headerReason);
+
+        generator.MarkLabel(fallback);
+        generator.Emit(OpCodes.Ldarg_3);
+        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallFallback);
+        generator.Emit(OpCodes.Br, semanticDeopt);
+
+        generator.MarkLabel(budgetFallback);
+        generator.Emit(OpCodes.Ldarg_3);
+        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallFallback);
+        generator.Emit(OpCodes.Br, directBudgetFallback);
+
+        generator.MarkLabel(safepointFallback);
+        generator.Emit(OpCodes.Ldarg_3);
+        generator.Emit(OpCodes.Callvirt, RecordInlineDirectCallFallback);
+        generator.Emit(OpCodes.Br, directSafepointFallback);
     }
 
     private static void EmitBinary(
@@ -1638,15 +1927,18 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 generator.Emit(
                     OpCodes.Ldloc,
                     NumericLocal(valueLocals, register, promoted.Kind));
-                generator.Emit(
-                    OpCodes.Call,
-                    promoted.Kind switch
-                    {
-                        LuaNumericRegionValueKind.Integer => FromInteger,
-                        LuaNumericRegionValueKind.Float => FromFloat,
-                        LuaNumericRegionValueKind.Boolean => FromBoolean,
-                        _ => throw new InvalidOperationException(),
-                    });
+                if (promoted.Kind != LuaNumericRegionValueKind.Tagged)
+                {
+                    generator.Emit(
+                        OpCodes.Call,
+                        promoted.Kind switch
+                        {
+                            LuaNumericRegionValueKind.Integer => FromInteger,
+                            LuaNumericRegionValueKind.Float => FromFloat,
+                            LuaNumericRegionValueKind.Boolean => FromBoolean,
+                            _ => throw new InvalidOperationException(),
+                        });
+                }
                 generator.Emit(OpCodes.Call, WriteRegister);
                 generator.Emit(OpCodes.Br, written);
                 generator.MarkLabel(nextKind);
@@ -1865,6 +2157,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionValueKind.Integer => typeof(long),
         LuaNumericRegionValueKind.Float => typeof(double),
         LuaNumericRegionValueKind.Boolean => typeof(bool),
+        LuaNumericRegionValueKind.Tagged => typeof(LuaValue),
         _ => throw new InvalidOperationException($"{kind} is not promotable."),
     };
 

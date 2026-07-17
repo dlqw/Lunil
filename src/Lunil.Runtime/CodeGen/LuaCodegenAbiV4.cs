@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
+using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.CodeGen;
 
@@ -25,6 +26,55 @@ public static class LuaCodegenAbiV4
     {
         ArgumentNullException.ThrowIfNull(context);
         return context.InstructionsConsumed;
+    }
+
+    /// <summary>
+    /// Attempts a generation-bound, side-effect-free compiled leaf call without creating a
+    /// callee frame. A false result guarantees that the ordinary call path can restart the
+    /// callee from PC 0 without undoing callee state.
+    /// </summary>
+    public static bool TryExecuteDirectCompiledCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame caller,
+        LuaCodegenCallSiteCache cache,
+        int functionRegister,
+        int expectedFunctionId,
+        int argumentCount,
+        int expectedResults)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(thread);
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(cache);
+        return context.ExecutionEngine?.TryExecuteDirectCall(
+            context,
+            thread,
+            caller,
+            cache,
+            functionRegister,
+            expectedFunctionId,
+            argumentCount,
+            expectedResults) == true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool CanExecuteBoundDirectCall(LuaExecutionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return context.State.Heap.PendingFinalizerCount == 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool CanExecuteKnownClosureValue(
+        LuaValue function,
+        LuaCodegenCallSiteCache cache,
+        int expectedFunctionId)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        var closure = function.TryGetClosure();
+        return closure is not null && closure.Function.Id == expectedFunctionId &&
+            cache.TryMatchOrAdd(closure);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

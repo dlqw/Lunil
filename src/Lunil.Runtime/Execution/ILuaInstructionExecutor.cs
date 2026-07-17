@@ -39,6 +39,24 @@ internal interface ILuaInstructionExecutor
     }
 }
 
+/// <summary>
+/// Optional backend hook used by a compiled caller to execute a generation-bound leaf without
+/// materializing a callee frame. Implementations must return <see langword="false"/> before
+/// committing any callee-visible state when a guard, budget, debug, GC, or generation check fails.
+/// </summary>
+internal interface ILuaDirectCallExecutor
+{
+    bool TryExecuteDirectCall(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame caller,
+        LuaCodegenCallSiteCache cache,
+        int functionRegister,
+        int expectedFunctionId,
+        int argumentCount,
+        int expectedResults);
+}
+
 internal enum LuaFrameInstructionRoute : byte
 {
     Backend,
