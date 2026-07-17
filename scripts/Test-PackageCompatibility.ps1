@@ -249,8 +249,8 @@ $nupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.nu
     Sort-Object Name)
 $snupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.snupkg" |
     Sort-Object Name)
-if ($nupkgs.Count -ne 14 -or $snupkgs.Count -ne 14) {
-    throw "Expected 14 NuGet and 14 symbol packages for $Version; found $($nupkgs.Count) and $($snupkgs.Count)."
+if ($nupkgs.Count -ne 13 -or $snupkgs.Count -ne 13) {
+    throw "Expected 13 NuGet and 13 symbol packages for $Version; found $($nupkgs.Count) and $($snupkgs.Count)."
 }
 
 $packages = [Collections.Generic.List[object]]::new()
@@ -274,7 +274,7 @@ $manifest = [ordered]@{
 $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10)
 if ($Update) {
     Write-NormalizedText $baselinePath $manifestText
-    Write-Host "Updated the reviewed 14-package baseline at $baselinePath."
+    Write-Host "Updated the reviewed 13-package baseline at $baselinePath."
 }
 else {
     if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) {
@@ -284,7 +284,7 @@ else {
     if (-not [string]::Equals($expected, $manifestText, [StringComparison]::Ordinal)) {
         throw "NuGet package metadata, dependencies, or assets differ from api/$compatibilityLine/packages.json."
     }
-    Write-Host "Verified the reviewed 14-package metadata, dependency, and asset baseline for $compatibilityLine."
+    Write-Host "Verified the reviewed 13-package metadata, dependency, and asset baseline for $compatibilityLine."
 }
 
 Invoke-ConsumerSmoke $packages.ToArray()

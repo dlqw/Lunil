@@ -294,15 +294,19 @@ public static class CilMethodPlanVerifier
             case CilPlanOpCode.LoadInt32:
                 stack.Push(CilStackValueKind.Int32);
                 return true;
+            case CilPlanOpCode.LoadInt64:
+                stack.Push(CilStackValueKind.Int64);
+                return true;
+            case CilPlanOpCode.ConvertInt64:
+                return ConvertToInt64(ref stack, index, instruction, diagnostics);
             case CilPlanOpCode.Add:
             case CilPlanOpCode.Subtract:
-                return Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
-                    Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics) &&
-                    Push(ref stack, CilStackValueKind.Int32);
+                return ApplyIntegerBinary(ref stack, index, instruction, diagnostics);
             case CilPlanOpCode.Call:
                 return ApplyCall(plan, instruction, index, ref stack, diagnostics);
             case CilPlanOpCode.BranchTrue:
             case CilPlanOpCode.BranchFalse:
+                return PopInteger(ref stack, index, instruction, diagnostics);
             case CilPlanOpCode.Switch:
                 return Pop(ref stack, CilStackValueKind.Int32, index, instruction, diagnostics);
             case CilPlanOpCode.Return:
@@ -525,6 +529,75 @@ public static class CilMethodPlanVerifier
         diagnostics.Add(Error(
             "CIL0021",
             $"Evaluation stack type mismatch: expected {expected}, found {actual}.",
+            index,
+            instruction));
+        return false;
+    }
+
+    private static bool ConvertToInt64(
+        ref EvaluationStack stack,
+        int index,
+        CilPlanInstruction instruction,
+        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
+    {
+        if (!PopInteger(ref stack, index, instruction, diagnostics))
+        {
+            return false;
+        }
+
+        stack.Push(CilStackValueKind.Int64);
+        return true;
+    }
+
+    private static bool ApplyIntegerBinary(
+        ref EvaluationStack stack,
+        int index,
+        CilPlanInstruction instruction,
+        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
+    {
+        if (stack.Count < 2)
+        {
+            diagnostics.Add(Error("CIL0020", "Evaluation stack underflow.", index, instruction));
+            return false;
+        }
+
+        var right = stack.Pop();
+        var left = stack.Pop();
+        if (left == right && left is CilStackValueKind.Int32 or CilStackValueKind.Int64)
+        {
+            stack.Push(left);
+            return true;
+        }
+
+        diagnostics.Add(Error(
+            "CIL0021",
+            $"Integer arithmetic requires matching Int32 or Int64 operands; found {left} and {right}.",
+            index,
+            instruction));
+        return false;
+    }
+
+    private static bool PopInteger(
+        ref EvaluationStack stack,
+        int index,
+        CilPlanInstruction instruction,
+        ImmutableArray<CilPlanDiagnostic>.Builder diagnostics)
+    {
+        if (stack.Count == 0)
+        {
+            diagnostics.Add(Error("CIL0020", "Evaluation stack underflow.", index, instruction));
+            return false;
+        }
+
+        var actual = stack.Pop();
+        if (actual is CilStackValueKind.Int32 or CilStackValueKind.Int64)
+        {
+            return true;
+        }
+
+        diagnostics.Add(Error(
+            "CIL0021",
+            $"Evaluation stack type mismatch: expected an integer, found {actual}.",
             index,
             instruction));
         return false;

@@ -11,7 +11,7 @@ namespace Lunil.BackendDifferential.Tests;
 public sealed class BackendContractTests
 {
     [Fact]
-    public void PersistedAotDifferentialCorpusCoversEveryCanonicalOpcode()
+    public void RuntimeBackendsDifferentialCorpusCoversEveryCanonicalOpcode()
     {
         string[] sources =
         [

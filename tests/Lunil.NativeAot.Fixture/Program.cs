@@ -3,6 +3,7 @@ using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
+using Lunil.Runtime.Execution;
 using Lunil.Workspace;
 
 namespace Lunil.NativeAot.Fixture;
@@ -20,27 +21,21 @@ public static class Program
             ["tables"] = 42,
         };
 
-        var executor = new LuaStaticAotExecutor();
+        var interpreter = new LuaInterpreter();
         foreach (var testCase in cases)
         {
-            if (!LuaStaticAotRegistry.TryGetModule("fixture." + testCase.Key, out var registration) ||
-                registration is null)
-            {
-                Console.Error.WriteLine($"Static AOT module '{testCase.Key}' was not registered.");
-                return 1;
-            }
-
-            var value = Execute(executor, registration.CanonicalModule);
+            var path = Path.Combine(AppContext.BaseDirectory, "Modules", testCase.Key + ".lua");
+            var value = Execute(interpreter, Compile(File.ReadAllText(path)));
             if (value != testCase.Value)
             {
                 Console.Error.WriteLine(
-                    $"Unexpected static result for {testCase.Key}: expected={testCase.Value}, actual={value}.");
+                    $"Unexpected interpreter result for {testCase.Key}: expected={testCase.Value}, actual={value}.");
                 return 2;
             }
         }
 
         var dynamicValue = Execute(
-            executor,
+            interpreter,
             Compile("---@type integer\nreturn 21 * 2", requireAnalysis: true));
         if (dynamicValue != 42)
         {
@@ -110,7 +105,7 @@ public static class Program
         return 0;
     }
 
-    private static long Execute(LuaStaticAotExecutor executor, LuaIrModule module)
+    private static long Execute(LuaInterpreter executor, LuaIrModule module)
     {
         var state = new LuaState();
         var result = executor.Execute(state, state.CreateMainClosure(module));

@@ -6,12 +6,11 @@ namespace Lunil.CodeGen.Cil.Emission;
 public enum CilEmitterFlavor : byte
 {
     ReflectionEmit,
-    Metadata,
 }
 
 /// <summary>
-/// Common instruction sink implemented by the Reflection.Emit and metadata encoders. Tokens and
-/// branch widths are resolved by the sink; canonical lowering is performed only once.
+/// Common instruction sink used by the runtime Reflection.Emit encoder. Tokens and branch widths
+/// are resolved by the sink; canonical lowering is performed only once.
 /// </summary>
 public interface ICilInstructionSink
 {

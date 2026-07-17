@@ -1,163 +1,84 @@
-# NativeAOT 与 MSBuild 构建集成
+# .NET NativeAOT 与 trimming 兼容
 
-`Lunil.Build` 将 Lua source 或 PUC Lua 5.4 binary chunk 在宿主 `CoreCompile` 前转换为
-verified canonical IR、persisted CIL、可选 Portable PDB、canonical module payload 和静态
-C# registry。所有入口以直接 method group 注册，因此 trimming 和 NativeAOT 无需 runtime
-reflection、assembly discovery 或动态 PE load。
+从 `0.8.0-alpha.12` 起，Lunil 不再提供 Lua persisted/static AOT、`Lunil.Build`、静态
+registry 或 CIL artifact 加载器。本文件只描述 **.NET NativeAOT/trimming** 兼容性；它们是
+宿主应用的 .NET 发布方式，不是 Lua AOT 后端。
 
-`0.7.0-alpha.4` 的 source compilation 会先通过 `Lunil.Workspace` 对全部 source item 建立模块图，
-运行跨模块 type/flow analysis，并将 unresolved/dynamic require 与依赖类型诊断交给 task。workspace、
-annotation 与 analysis object 均不写入 canonical module payload，因此生成的 registry 与运行时执行
-仍保持 annotation/type erasure。NativeAOT fixture 同时验证动态 source fallback 和两模块 workspace
-fixed-point/cache 路径可在无 reflection/dynamic code 环境中运行。
+## 支持范围
 
-## 引用与 item metadata
+在动态代码不可用的进程中，以下产品面继续可用：
+
+- `LuaCompiler` 的源码编译、注解与语义分析；
+- `LuaWorkspace` 的多模块图、类型与增量分析；
+- `LuaInterpreter`、runtime、标准库与 Hosting interpreter 路径；
+- `Lunil.Cli` 的 `run`、`check`、`build --target chunk` 与 `dump`；
+- PUC Lua 5.4 chunk 的读取、验证、执行与构建。
+
+`LuaJitExecutor` 会检查 `RuntimeFeature.IsDynamicCodeSupported`。当结果为 `false` 时，`Auto`
+与 `PreferJit` 均确定性回退 reference interpreter；不会初始化 Reflection.Emit、采集 Tier 2
+profile 或排队 Tier 1/Tier 2/Loop OSR 编译。旧 Lua AOT CLI/config/environment target 返回
+`LUNIL0006`，不会因为 .NET NativeAOT 发布而恢复。
+
+## 发布普通 consumer
+
+Consumer 直接引用所需的 Lunil package，再使用标准 SDK 属性发布，无需额外 MSBuild task：
 
 ```xml
-<ItemGroup>
-  <PackageReference Include="Lunil.Build" Version="0.8.0-alpha.10" />
-  <LunilCompile Include="Modules/main.lua"
-                ModuleName="app.main"
-                InputKind="Auto"
-                Optimization="Release"
-                DebugSymbols="false"
-                Sandbox="Restricted" />
-</ItemGroup>
+<PropertyGroup>
+  <TargetFramework>net10.0</TargetFramework>
+  <PublishAot>true</PublishAot>
+  <PublishTrimmed>true</PublishTrimmed>
+  <TrimMode>full</TrimMode>
+  <InvariantGlobalization>true</InvariantGlobalization>
+</PropertyGroup>
 ```
 
-| Metadata | 默认值 | 允许值 | 含义 |
-| --- | --- | --- | --- |
-| `ModuleName` | 文件名（无扩展名） | identifier-like dotted name | registry 的稳定模块名 |
-| `InputKind` | `Auto` | `Auto`, `Source`, `BinaryChunk` | `Auto` 通过 Lua chunk signature 判定 |
-| `Optimization` | 跟随 `Optimize` | `Debug`, `Release` | 构建 manifest 与后端配置 |
-| `DebugSymbols` | 跟随 `DebugSymbols` | `true`, `false` | 是否生成 Portable PDB |
-| `Sandbox` | `Default` | `Default`, `Trusted`, `Restricted` | 进入兼容键的宿主策略 metadata |
-
-可用 property：
-
-- `LunilBuildEnabled=false`：禁用 target；
-- `LunilIntermediateOutputPath`：覆盖默认 `$(BaseIntermediateOutputPath)lunil/` root；
-- `LunilOptimization`、`LunilDebugSymbols`、`LunilSandbox`：修改 item definition 默认值；
-- `LunilCacheEnabled`：默认 `true`，控制跨 `Clean` 的内容寻址 backend cache；
-- `LunilCacheDirectory`：覆盖用户级默认 cache root；
-- `LunilCacheMaximumBytes`、`LunilCacheMaximumEntryBytes`、
-  `LunilCacheMaximumQuarantineBytes`：分别控制总 entry、单 entry 与损坏隔离区 quota。
-
-## 输出与增量语义
-
-每个 configuration/TFM/RID 目录包含：
-
-- `Lunil.Aot.<content>.<options>.dll`：确定性 persisted CIL；
-- 同名 `.pdb`：仅在 `DebugSymbols=true` 时生成；
-- 同名 `.lir`：已验证 canonical module；
-- `<module>.<content>.lunil.json`：source/options/build manifest；
-- `LunilModules.g.cs`：`ModuleInitializer` static registry；
-- `LunilCompile.stamp`：当前 module name/content ID 集合。
-
-task 每次执行先以 `ModuleName` 作为稳定 identity 对 source item 建图；direct-global literal `require`
-形成静态依赖，动态名称保持保守诊断边界。随后恢复 `Compile`、`Reference` 和 `FileWrites` item，但仅在 source bytes、input kind、
-optimization/debug/sandbox、TFM 或 RID 改变时重新编译。相同内容不会改写文件时间。并发 build
-通过 output lock 串行提交，并以同目录临时文件和 atomic replace 防止部分写入。design-time build
-使用隔离目录，只生成空 registry skeleton；`Clean` 删除整个 Lunil intermediate root。
-
-verified canonical module 与 persisted CIL/PDB bundle 同时进入用户级 backend cache。key 还纳入
-IR/Runtime ABI/codegen/profile/artifact schema、compiler version、hook mode、NativeAOT/ReadyToRun、
-trimming 与 feature set，因此不同 publish mode 不会错误复用。`Clean` 不删除共享 cache；obj 输出
-被删除后可从 cache 恢复。恢复前重新验证 canonical IR、PE footer/resources/manifest 与 Portable PDB
-binding；截断、checksum 错误或语义无效 payload 会隔离后重新编译。完整契约见
-[`backend-cache-contract.md`](backend-cache-contract.md)。
-
-## Runtime 使用
-
-```csharp
-if (!LuaStaticAotRegistry.TryGetModule("app.main", out var module) || module is null)
-{
-    throw new InvalidOperationException("Missing precompiled Lua module.");
-}
-
-var state = new LuaState();
-var closure = module.CreateMainClosure(state);
-var result = new LuaStaticAotExecutor().Execute(state, closure);
-```
-
-`LuaStaticAotExecutor` 按 canonical module content ID 查找静态函数。未注册模块返回
-`UnsupportedInstruction` deopt，由共享 scheduler 只解释执行当前 canonical PC，不重复副作用。
-普通 CoreCLR 进程可改用 `LuaAotArtifactLoader.Load` 和 `LuaPersistedAotExecutor` 执行动态加载的
-persisted bundle。loader 会先验证 footer、manifest、ABI、module identity 与 PDB binding，再进入
-collectible `AssemblyLoadContext`；`LuaAotLoadMetrics` 分别记录 validation、assembly load、delegate
-binding、总耗时与分配。调用方负责释放 `LuaAotLoadedModule`，释放后 executor 在当前 canonical PC
-精确回退，不继续持有可调用 delegate。
-
-NativeAOT 下 `LuaJitExecutor.IsDynamicCodeAvailable` 为 `false`；动态 persisted PE loader 返回
-`AOT2010`，不会调用 `AssemblyLoadContext`。release 默认同时设置 `EnableTier2=true` 与
-`EnableLoopOsr=true`，但 dynamic-code capability gate 会在 registry entry 创建前关闭对应路径：
-不会采集 Tier 2 profile，也不会分析、预热或编译 Loop OSR。`EnableLoopOsrManagedFallback` 不改变
-NativeAOT 行为；动态 Lua 模块继续精确使用解释器，预注册模块继续使用构建期 AOT。
-CoreCLR 上启用 Loop OSR 时，natural-loop 分析和 specialized emitter 会延后到 verified
-backedge hotness 与运行时 exact-numeric 资格通过之后；资格接受后发布的
-`LoopOsrCompilerPrepared` 会单独归因一次性 emitter 准备耗时。该惰性路径不改变 NativeAOT
-capability gate。
-
-alpha.9 的 module-generation lease 只绑定 CoreCLR 动态 JIT delegate。static/persisted AOT 调用的
-`LuaExecutionContext.IsBackendGenerationCurrent()` 因未绑定动态 generation 而保持 `true`，其安全性
-继续来自 exact canonical module/artifact identity、Runtime ABI 与既有 PC/guard。若构建方要把旧
-profile 用于新源码，必须先通过 `LuaJitProfileRemapper` 生成并再次验证 target-identity payload；
-remapper 只保留 canonical `Opcode/A/B/C/D` 完全不变的函数，因此不会放宽 build cache 或 artifact
-manifest 的 exact-profile 校验。
-
-## Publish mode
-
-```bash
-# NativeAOT
-dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishAot=true
+```powershell
+# .NET NativeAOT
+dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishAot=true -p:PublishTrimmed=true
 
 # Trimmed self-contained single file
-dotnet publish -c Release -r linux-x64 --self-contained true \
+dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
   -p:PublishTrimmed=true -p:PublishSingleFile=true
 
-# ReadyToRun/CoreCLR
-dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishReadyToRun=true
+# ReadyToRun/CoreCLR（动态代码仍可用）
+dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishReadyToRun=true
 ```
 
-仓库用以下命令执行同一 fixture corpus：
+NativeAOT consumer 若需在运行时载入 Lua，只需把源码或 `.luac` 作为普通 content/resource
+随应用分发，再交给 `LuaCompiler` 或 chunk reader；Lunil 不在 build 阶段生成静态 Lua registry。
+
+## 仓库验证
+
+六个发布 RID 共用同一个 fixture：
 
 ```powershell
 ./scripts/Test-NativeAotFixture.ps1 -RuntimeIdentifier win-x64
+./scripts/Test-LunilCliPublish.ps1 -RuntimeIdentifier win-x64 -Modes NativeAot
 ./scripts/Test-LunilPublishModes.ps1 -RuntimeIdentifier win-x64
 ```
 
-CI 对 `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`
-分别 native publish 并运行；IL2026/IL3050 等 trimming/AOT warning 作为 error。
+`Test-NativeAotFixture.ps1` 以 `PublishAot=true`、`PublishTrimmed=true`、
+`TreatWarningsAsErrors=true` 发布 `tests/Lunil.NativeAot.Fixture`，并验证：
 
-## 稳定诊断码
+1. 从随包 Lua source 编译并通过解释器执行；
+2. 动态 source 与静态分析结果可用；
+3. `LuaWorkspace` 的跨模块分析正确；
+4. 默认 JIT policy 保持一致；
+5. 动态代码不可用时 JIT executor 不采样、不编译且精确回退；
+6. fixture 输出 `LUNIL_NATIVEAOT_OK`。
 
-| Code | 含义 |
-| --- | --- |
-| `LUNIL1001` | source/chunk 文件不存在 |
-| `LUNIL1002` | module name 非法 |
-| `LUNIL1003` | optimization 非法 |
-| `LUNIL1004` | debug-symbol value 非法 |
-| `LUNIL1005` | sandbox value 非法 |
-| `LUNIL1006` | module name 重复 |
-| `LUNIL1007` | output path 非法 |
-| `LUNIL1008` | input kind 非法 |
-| `LUNIL2001` | frontend/canonical compilation 失败 |
-| `LUNIL2002` | persisted artifact emission 失败 |
-| `LUNIL2003` | binary chunk 无效 |
-| `LUNIL9001` | 未预期 build-task failure |
+CI 在 `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`
+执行 fixture 与 NativeAOT CLI；Windows x64 另外覆盖 trimmed single-file 与 ReadyToRun。
 
-Lexer/parser/binder/lowering 和 CIL verifier 的既有稳定 code 会原样报告。source 诊断使用
-一基 line/UTF-16 column；binary chunk 错误报告一基 byte column。
+## 兼容边界
 
-## Cache 故障排查
-
-- 默认 cache root 为 `LocalApplicationData/Lunil/backend-cache`；没有该系统目录时依次回退到
-  `~/.cache/Lunil/backend-cache` 和临时目录。可用 `LunilCacheDirectory` 固定 CI 或容器路径。
-- 需要确认问题是否来自 cache 时，先设置 `LunilCacheEnabled=false` 重建；禁用 cache 只影响
-  构建性能，不改变 artifact 或运行语义。
-- `obj/lunil/` 可由 `Clean` 删除；共享 cache 不属于项目输出。需要完全冷构建时应显式使用一个
-  新的空 `LunilCacheDirectory`，不要依赖 `Clean` 删除用户级数据。
-- `quarantine/` 中的目录表示 descriptor、payload、manifest、checksum、canonical IR、PE/PDB
-  binding 或兼容维度验证失败。task 会安全 miss 并重新编译；不要把隔离内容手工移回 `entries-v1/`。
-- cache lock/权限/I/O 故障以低重要性消息 fail-soft，构建继续走本地编译。若持续发生，检查目录
-  ACL、磁盘配额、残留进程，并把 cache root 指向当前用户可独占写入的本地文件系统。
+- Native Lua C module 不受支持，因为 Lunil 不暴露 Lua C ABI。
+- JIT-only telemetry 在动态代码不可用时保持空值或 disabled state；consumer 不应把 fallback
+  解释为编译成功。
+- 反射型 host extension 必须自行声明 trimming metadata；Lunil 内建 compiler/runtime 路径以
+  IL2026/IL3050 warning-as-error fixture 为门禁。
+- 旧 `Lunil.Build` package、`LunilCompile` item、Lua AOT artifact/manifest/loader API 已删除；
+  迁移到运行时编译/解释执行或 portable Lua chunk。

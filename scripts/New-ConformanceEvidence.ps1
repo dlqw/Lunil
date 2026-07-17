@@ -42,7 +42,7 @@ $testProjects = @(
         ExpectedTests = 2
     },
     [pscustomobject]@{
-        Name = 'six-backend-differential'
+        Name = 'five-backend-differential'
         Project = 'tests/Lunil.BackendDifferential.Tests/Lunil.BackendDifferential.Tests.csproj'
         ExpectedTests = 16
     },
@@ -145,7 +145,6 @@ if ($LASTEXITCODE -ne 0 -or $gitCommit -notmatch '^[0-9a-f]{40}$') {
 $backendNames = @(
     'interpreter',
     'executor-auto',
-    'persisted-cil-aot',
     'coreclr-tier1-jit',
     'coreclr-tier2-jit',
     'experimental-loop-osr'

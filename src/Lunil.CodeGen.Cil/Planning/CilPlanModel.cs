@@ -26,6 +26,8 @@ public enum CilPlanOpCode : byte
     LoadLocal,
     StoreLocal,
     LoadInt32,
+    LoadInt64,
+    ConvertInt64,
     Add,
     Subtract,
     Call,
@@ -51,6 +53,7 @@ public readonly record struct CilPlanInstruction
     private CilPlanInstruction(
         CilPlanOpCode opCode,
         int int32Operand,
+        long int64Operand,
         CilLabel label,
         ImmutableArray<CilLabel> labels,
         CilCallTarget? callTarget,
@@ -58,6 +61,7 @@ public readonly record struct CilPlanInstruction
     {
         OpCode = opCode;
         Int32Operand = int32Operand;
+        Int64Operand = int64Operand;
         Label = label;
         Labels = labels;
         CallTarget = callTarget;
@@ -68,6 +72,8 @@ public readonly record struct CilPlanInstruction
 
     public int Int32Operand { get; }
 
+    public long Int64Operand { get; }
+
     public CilLabel Label { get; }
 
     public ImmutableArray<CilLabel> Labels { get; }
@@ -77,34 +83,40 @@ public readonly record struct CilPlanInstruction
     public int CanonicalProgramCounter { get; }
 
     public static CilPlanInstruction MarkLabel(CilLabel label, int canonicalProgramCounter = -1) =>
-        new(CilPlanOpCode.MarkLabel, 0, label, [], null, canonicalProgramCounter);
+        new(CilPlanOpCode.MarkLabel, 0, 0, label, [], null, canonicalProgramCounter);
 
     public static CilPlanInstruction Simple(
         CilPlanOpCode opCode,
         int canonicalProgramCounter = -1) =>
-        new(opCode, 0, default, [], null, canonicalProgramCounter);
+        new(opCode, 0, 0, default, [], null, canonicalProgramCounter);
 
     public static CilPlanInstruction WithInt32(
         CilPlanOpCode opCode,
         int operand,
         int canonicalProgramCounter = -1) =>
-        new(opCode, operand, default, [], null, canonicalProgramCounter);
+        new(opCode, operand, 0, default, [], null, canonicalProgramCounter);
+
+    public static CilPlanInstruction WithInt64(
+        CilPlanOpCode opCode,
+        long operand,
+        int canonicalProgramCounter = -1) =>
+        new(opCode, 0, operand, default, [], null, canonicalProgramCounter);
 
     public static CilPlanInstruction WithLabel(
         CilPlanOpCode opCode,
         CilLabel label,
         int canonicalProgramCounter = -1) =>
-        new(opCode, 0, label, [], null, canonicalProgramCounter);
+        new(opCode, 0, 0, label, [], null, canonicalProgramCounter);
 
     public static CilPlanInstruction Switch(
         ImmutableArray<CilLabel> labels,
         int canonicalProgramCounter = -1) =>
-        new(CilPlanOpCode.Switch, 0, default, labels, null, canonicalProgramCounter);
+        new(CilPlanOpCode.Switch, 0, 0, default, labels, null, canonicalProgramCounter);
 
     public static CilPlanInstruction Call(
         CilCallTarget target,
         int canonicalProgramCounter = -1) =>
-        new(CilPlanOpCode.Call, 0, default, [], target, canonicalProgramCounter);
+        new(CilPlanOpCode.Call, 0, 0, default, [], target, canonicalProgramCounter);
 }
 
 public sealed record CilGcMap(

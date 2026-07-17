@@ -3,18 +3,6 @@
 
 namespace Lunil.CodeGen.Cil
 {
-    public static class LuaAotCompiler
-    {
-        public static Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult Compile(Lunil.IR.Canonical.LuaIrModule module, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? options = null) => throw null;
-    }
-
-    public static class LuaAotModuleIdentity
-    {
-        public static string ComputeContentId(Lunil.IR.Canonical.LuaIrModule module) => throw null;
-        public static byte[] SerializeCanonicalModule(Lunil.IR.Canonical.LuaIrModule module) => throw null;
-        public static Lunil.IR.Canonical.LuaIrModule DeserializeCanonicalModule(System.ReadOnlySpan<byte> content) => throw null;
-    }
-
     public static class LuaCilCodeGenerator
     {
         public static Lunil.CodeGen.Cil.LuaCilPlanningResult PlanFunction(Lunil.IR.Canonical.LuaIrModule module, int functionId, Lunil.CodeGen.Cil.Planning.CilPlanLimits? limits = null, bool includeInstructionObservation = true, System.Threading.CancellationToken cancellationToken = null) => throw null;
@@ -56,64 +44,6 @@ namespace Lunil.CodeGen.Cil
         public bool Equals(Lunil.CodeGen.Cil.LuaCilPlanningResult? other) => throw null;
         public void Deconstruct(out Lunil.CodeGen.Cil.Planning.CilMethodPlan? Plan, out Lunil.CodeGen.Cil.Planning.CilPlanVerificationResult? Verification, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilPlanDiagnostic> Diagnostics) => throw null;
     }
-
-    public sealed class LuaPersistedAotExecutor
-    {
-        public Lunil.CodeGen.Cil.Loading.LuaAotLoadedModule LoadedModule { get => throw null; }
-        public Lunil.Runtime.Execution.LuaInterpreterOptions InterpreterOptions { get => throw null; }
-        public Lunil.CodeGen.Cil.LuaPersistedAotStatistics Statistics { get => throw null; }
-        public LuaPersistedAotExecutor(Lunil.CodeGen.Cil.Loading.LuaAotLoadedModule loadedModule, Lunil.Runtime.Execution.LuaInterpreterOptions? interpreterOptions = null) { }
-        public Lunil.Runtime.Execution.LuaExecutionResult Execute(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaClosure closure, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Start(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Resume(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Close(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread) => throw null;
-    }
-
-    public sealed class LuaPersistedAotStatistics : System.IEquatable<Lunil.CodeGen.Cil.LuaPersistedAotStatistics>
-    {
-        public long CompiledInvocations { get => throw null; init { } }
-        public long InterpreterFallbacks { get => throw null; init { } }
-        public long Deoptimizations { get => throw null; init { } }
-        public long DebugModeDeoptimizations { get => throw null; init { } }
-        public long UnexpectedDeoptimizations { get => throw null; init { } }
-        public LuaPersistedAotStatistics(long CompiledInvocations, long InterpreterFallbacks, long Deoptimizations, long DebugModeDeoptimizations, long UnexpectedDeoptimizations) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.LuaPersistedAotStatistics? left, Lunil.CodeGen.Cil.LuaPersistedAotStatistics? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.LuaPersistedAotStatistics? left, Lunil.CodeGen.Cil.LuaPersistedAotStatistics? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.LuaPersistedAotStatistics? other) => throw null;
-        public void Deconstruct(out long CompiledInvocations, out long InterpreterFallbacks, out long Deoptimizations, out long DebugModeDeoptimizations, out long UnexpectedDeoptimizations) => throw null;
-    }
-
-    public sealed class LuaStaticAotExecutor
-    {
-        public Lunil.Runtime.Execution.LuaInterpreterOptions InterpreterOptions { get => throw null; }
-        public LuaStaticAotExecutor(Lunil.Runtime.Execution.LuaInterpreterOptions? interpreterOptions = null) { }
-        public Lunil.Runtime.Execution.LuaExecutionResult Execute(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaClosure closure, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Start(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Resume(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
-        public Lunil.Runtime.Execution.LuaExecutionResult Close(Lunil.Runtime.LuaState state, Lunil.Runtime.Execution.LuaThread thread) => throw null;
-    }
-
-    public sealed class LuaStaticAotModule
-    {
-        public string ModuleName { get => throw null; }
-        public string ModuleContentId { get => throw null; }
-        public Lunil.IR.Canonical.LuaIrModule CanonicalModule { get => throw null; }
-        public System.Collections.Generic.IReadOnlyDictionary<int, Lunil.CodeGen.Cil.Emission.LuaCompiledMethod> Functions { get => throw null; }
-        public LuaStaticAotModule(string moduleName, string moduleContentId, Lunil.IR.Canonical.LuaIrModule canonicalModule, System.Collections.Generic.IReadOnlyDictionary<int, Lunil.CodeGen.Cil.Emission.LuaCompiledMethod> functions) { }
-        public bool TryGetFunction(int functionId, out Lunil.CodeGen.Cil.Emission.LuaCompiledMethod? function) => throw null;
-        public Lunil.Runtime.Execution.LuaClosure CreateMainClosure(Lunil.Runtime.LuaState state) => throw null;
-    }
-
-    public static class LuaStaticAotRegistry
-    {
-        public static void Register(Lunil.CodeGen.Cil.LuaStaticAotModule module) { }
-        public static bool TryGetModule(string moduleName, out Lunil.CodeGen.Cil.LuaStaticAotModule? module) => throw null;
-        public static bool TryGetModule(Lunil.IR.Canonical.LuaIrModule module, out Lunil.CodeGen.Cil.LuaStaticAotModule? compiledModule) => throw null;
-        public static bool TryGetFunction(Lunil.IR.Canonical.LuaIrModule module, int functionId, out Lunil.CodeGen.Cil.Emission.LuaCompiledMethod? function) => throw null;
-    }
 }
 namespace Lunil.CodeGen.Cil.Analysis
 {
@@ -151,451 +81,11 @@ namespace Lunil.CodeGen.Cil.Analysis
         public void Deconstruct(out System.Collections.Immutable.ImmutableArray<System.Collections.Immutable.ImmutableArray<int>> LiveBefore, out System.Collections.Immutable.ImmutableArray<System.Collections.Immutable.ImmutableArray<int>> LiveAfter, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilGcMap> GcMaps) => throw null;
     }
 }
-namespace Lunil.CodeGen.Cil.Artifacts
-{
-    public sealed class LuaAotArtifact : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact>
-    {
-        public Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest Manifest { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<byte> PeImage { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<byte> PortablePdbImage { get => throw null; init { } }
-        public LuaAotArtifact(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest Manifest, System.Collections.Immutable.ImmutableArray<byte> PeImage, System.Collections.Immutable.ImmutableArray<byte> PortablePdbImage) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? left, Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? left, Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest Manifest, out System.Collections.Immutable.ImmutableArray<byte> PeImage, out System.Collections.Immutable.ImmutableArray<byte> PortablePdbImage) => throw null;
-    }
-
-    public sealed class LuaAotArtifactManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest>
-    {
-        public const string CurrentMagic = "LUNIL-CIL-AOT";
-        public const int CurrentArtifactSchemaVersion = 2;
-        public const int CurrentCodegenVersion = 2;
-        public const int CurrentProfilePolicyVersion = 1;
-        public required string Magic { get => throw null; init { } }
-        public required int ArtifactSchemaVersion { get => throw null; init { } }
-        public required int IrFormatVersion { get => throw null; init { } }
-        public required int RuntimeAbiVersion { get => throw null; init { } }
-        public required int CodegenVersion { get => throw null; init { } }
-        public required string ModuleContentId { get => throw null; init { } }
-        public required string ModuleChecksum { get => throw null; init { } }
-        public required string OptionsFingerprint { get => throw null; init { } }
-        public required bool ProfileGuidedNumericRegions { get => throw null; init { } }
-        public required int ProfilePolicyVersion { get => throw null; init { } }
-        public required string ProfileFingerprint { get => throw null; init { } }
-        public required bool EmitPortablePdb { get => throw null; init { } }
-        public required int MaximumCanonicalInstructionsPerMethod { get => throw null; init { } }
-        public required int MaximumMethodBodyBytes { get => throw null; init { } }
-        public required int MaximumMetadataTokens { get => throw null; init { } }
-        public required int MaximumBranchInstructionsPerMethod { get => throw null; init { } }
-        public required string AssemblyName { get => throw null; init { } }
-        public required string TypeName { get => throw null; init { } }
-        public required string PortablePdbName { get => throw null; init { } }
-        public required string SourceDocumentName { get => throw null; init { } }
-        public required string SourceDocumentChecksum { get => throw null; init { } }
-        public required System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest> Functions { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? other) => throw null;
-    }
-
-    public sealed class LuaAotCompilationOptions : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions>
-    {
-        public static Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions Default { get => throw null; }
-        public bool EmitPortablePdb { get => throw null; init { } }
-        public int MaximumCanonicalInstructionsPerMethod { get => throw null; init { } }
-        public int MaximumMethodBodyBytes { get => throw null; init { } }
-        public int MaximumMetadataTokens { get => throw null; init { } }
-        public int MaximumBranchInstructionsPerMethod { get => throw null; init { } }
-        public Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? SourceDocument { get => throw null; init { } }
-        public Lunil.CodeGen.Cil.Jit.LuaJitModuleProfile? Profile { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationOptions? other) => throw null;
-    }
-
-    public sealed class LuaAotCompilationResult : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult>
-    {
-        public Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? Artifact { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics { get => throw null; init { } }
-        public bool Succeeded { get => throw null; }
-        public LuaAotCompilationResult(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? Artifact, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult? left, Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotCompilationResult? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact? Artifact, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics) => throw null;
-    }
-
-    public sealed class LuaAotDiagnostic : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic>
-    {
-        public string Code { get => throw null; init { } }
-        public string Message { get => throw null; init { } }
-        public int FunctionId { get => throw null; init { } }
-        public int CanonicalProgramCounter { get => throw null; init { } }
-        public LuaAotDiagnostic(string Code, string Message, int FunctionId = -1, int CanonicalProgramCounter = -1) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic? left, Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic? left, Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic? other) => throw null;
-        public void Deconstruct(out string Code, out string Message, out int FunctionId, out int CanonicalProgramCounter) => throw null;
-    }
-
-    public sealed class LuaAotFunctionManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest>
-    {
-        public int FunctionId { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest> Shards { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest> NumericRegions { get => throw null; init { } }
-        public LuaAotFunctionManifest(int FunctionId, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest> Shards) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotFunctionManifest? other) => throw null;
-        public void Deconstruct(out int FunctionId, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest> Shards) => throw null;
-    }
-
-    public sealed class LuaAotMethodShardManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest>
-    {
-        public string MethodName { get => throw null; init { } }
-        public int StartProgramCounter { get => throw null; init { } }
-        public int InstructionCount { get => throw null; init { } }
-        public LuaAotMethodShardManifest(string MethodName, int StartProgramCounter, int InstructionCount) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotMethodShardManifest? other) => throw null;
-        public void Deconstruct(out string MethodName, out int StartProgramCounter, out int InstructionCount) => throw null;
-    }
-
-    public sealed class LuaAotNumericRegionManifest : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest>
-    {
-        public string MethodName { get => throw null; init { } }
-        public int HeaderProgramCounter { get => throw null; init { } }
-        public int BackedgeProgramCounter { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<int> ProgramCounters { get => throw null; init { } }
-        public int UnboxedNumericLocalCount { get => throw null; init { } }
-        public int DirectNumericInstructionCount { get => throw null; init { } }
-        public int SafepointCount { get => throw null; init { } }
-        public LuaAotNumericRegionManifest(string MethodName, int HeaderProgramCounter, int BackedgeProgramCounter, System.Collections.Immutable.ImmutableArray<int> ProgramCounters, int UnboxedNumericLocalCount, int DirectNumericInstructionCount, int SafepointCount) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? left, Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotNumericRegionManifest? other) => throw null;
-        public void Deconstruct(out string MethodName, out int HeaderProgramCounter, out int BackedgeProgramCounter, out System.Collections.Immutable.ImmutableArray<int> ProgramCounters, out int UnboxedNumericLocalCount, out int DirectNumericInstructionCount, out int SafepointCount) => throw null;
-    }
-
-    public static class LuaAotPortablePdbMetadata
-    {
-        public static System.Guid ProgramCounterMapKind { get => throw null; }
-        public static System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry> DecodeProgramCounterMap(System.ReadOnlySpan<byte> content) => throw null;
-    }
-
-    public readonly struct LuaAotProgramCounterMapEntry : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry>
-    {
-        public int IlOffset { get => throw null; init { } }
-        public int CanonicalProgramCounter { get => throw null; init { } }
-        public int LogicalProgramCounter { get => throw null; init { } }
-        public LuaAotProgramCounterMapEntry(int IlOffset, int CanonicalProgramCounter, int LogicalProgramCounter) { }
-        #nullable disable
-        public override string ToString() => throw null;
-        #nullable restore
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry left, Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry left, Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry right) => throw null;
-        public override int GetHashCode() => throw null;
-        #nullable disable
-        public override bool Equals(object obj) => throw null;
-        #nullable restore
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotProgramCounterMapEntry other) => throw null;
-        public void Deconstruct(out int IlOffset, out int CanonicalProgramCounter, out int LogicalProgramCounter) => throw null;
-    }
-
-    public sealed class LuaAotSourceDocument : System.IEquatable<Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument>
-    {
-        public required string LogicalName { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<byte> Content { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? left, Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? left, Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Artifacts.LuaAotSourceDocument? other) => throw null;
-    }
-}
-namespace Lunil.CodeGen.Cil.Caching
-{
-    public enum LuaBackendCacheArtifactKind
-    {
-        CanonicalIr = 0,
-        PersistedCil = 1,
-        Profile = 2
-    }
-
-    public readonly struct LuaBackendCacheCompatibility : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility>
-    {
-        public Lunil.CodeGen.Cil.Caching.LuaBackendCacheMismatch Mismatches { get => throw null; init { } }
-        public bool IsCompatible { get => throw null; }
-        public LuaBackendCacheCompatibility(Lunil.CodeGen.Cil.Caching.LuaBackendCacheMismatch Mismatches) { }
-        #nullable disable
-        public override string ToString() => throw null;
-        #nullable restore
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility right) => throw null;
-        public override int GetHashCode() => throw null;
-        #nullable disable
-        public override bool Equals(object obj) => throw null;
-        #nullable restore
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Caching.LuaBackendCacheMismatch Mismatches) => throw null;
-    }
-
-    public static class LuaBackendCacheDiagnosticCodes
-    {
-        public const string Unavailable = "CACHE1001";
-        public const string CorruptEntry = "CACHE1002";
-        public const string IncompatibleEntry = "CACHE1003";
-        public const string EntryTooLarge = "CACHE1004";
-    }
-
-    public sealed class LuaBackendCacheKey
-    {
-        public const int CurrentCacheKeySchemaVersion = 1;
-        public const int CurrentProfileSchemaVersion = 1;
-        public const string EmptyContentSha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        public string CacheId { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendCacheArtifactKind ArtifactKind { get => throw null; }
-        public string SourceContentHash { get => throw null; }
-        public string CanonicalModuleHash { get => throw null; }
-        public string DependencyHash { get => throw null; }
-        public string SourceBindingId { get => throw null; }
-        public int CacheKeySchemaVersion { get => throw null; }
-        public int IrFormatVersion { get => throw null; }
-        public int RuntimeAbiVersion { get => throw null; }
-        public int CodegenVersion { get => throw null; }
-        public int ProfileSchemaVersion { get => throw null; }
-        public int ArtifactSchemaVersion { get => throw null; }
-        public string CompilerVersion { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendOptimizationMode Optimization { get => throw null; }
-        public bool DebugSymbols { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendHookMode HookMode { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendSandboxMode SandboxMode { get => throw null; }
-        public string TargetFramework { get => throw null; }
-        public string RuntimeIdentifier { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendDeploymentMode DeploymentMode { get => throw null; }
-        public Lunil.CodeGen.Cil.Caching.LuaBackendTrimmingMode TrimmingMode { get => throw null; }
-        public System.Collections.Immutable.ImmutableArray<string> FeatureSet { get => throw null; }
-        public static Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey Create(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters parameters) => throw null;
-        public static string ComputeContentHash(System.ReadOnlySpan<byte> content) => throw null;
-        public static string ComputeDependencyHash(System.Collections.Generic.IEnumerable<string> contentHashes) => throw null;
-        public static Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey ParseCanonicalDescriptor(System.ReadOnlySpan<byte> descriptor) => throw null;
-        public byte[] SerializeCanonicalDescriptor() => throw null;
-        public Lunil.CodeGen.Cil.Caching.LuaBackendCacheCompatibility GetCompatibility(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey candidate) => throw null;
-    }
-
-    public sealed class LuaBackendCacheKeyParameters : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters>
-    {
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendCacheArtifactKind ArtifactKind { get => throw null; init { } }
-        public required string SourceContentHash { get => throw null; init { } }
-        public required string CanonicalModuleHash { get => throw null; init { } }
-        public string DependencyHash { get => throw null; init { } }
-        public required string SourceBindingId { get => throw null; init { } }
-        public int CacheKeySchemaVersion { get => throw null; init { } }
-        public int IrFormatVersion { get => throw null; init { } }
-        public int RuntimeAbiVersion { get => throw null; init { } }
-        public int CodegenVersion { get => throw null; init { } }
-        public int ProfileSchemaVersion { get => throw null; init { } }
-        public int ArtifactSchemaVersion { get => throw null; init { } }
-        public required string CompilerVersion { get => throw null; init { } }
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendOptimizationMode Optimization { get => throw null; init { } }
-        public required bool DebugSymbols { get => throw null; init { } }
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendHookMode HookMode { get => throw null; init { } }
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendSandboxMode SandboxMode { get => throw null; init { } }
-        public required string TargetFramework { get => throw null; init { } }
-        public required string RuntimeIdentifier { get => throw null; init { } }
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendDeploymentMode DeploymentMode { get => throw null; init { } }
-        public required Lunil.CodeGen.Cil.Caching.LuaBackendTrimmingMode TrimmingMode { get => throw null; init { } }
-        public System.Collections.Generic.IReadOnlyCollection<string> FeatureSet { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKeyParameters? other) => throw null;
-    }
-
-    [System.Flags]
-    public enum LuaBackendCacheMismatch
-    {
-        None = 0,
-        CacheKeySchema = 1,
-        ArtifactKind = 2,
-        SourceContent = 4,
-        CanonicalModule = 8,
-        Dependencies = 16,
-        SourceBinding = 32,
-        IrFormat = 64,
-        RuntimeAbi = 128,
-        Codegen = 256,
-        ProfileSchema = 512,
-        ArtifactSchema = 1024,
-        CompilerVersion = 2048,
-        Optimization = 4096,
-        DebugSymbols = 8192,
-        HookMode = 16384,
-        SandboxMode = 32768,
-        TargetFramework = 65536,
-        RuntimeIdentifier = 131072,
-        DeploymentMode = 262144,
-        TrimmingMode = 524288,
-        FeatureSet = 1048576
-    }
-
-    public sealed class LuaBackendCacheReadResult : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult>
-    {
-        public Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadStatus Status { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<byte> Payload { get => throw null; init { } }
-        public string? DiagnosticCode { get => throw null; init { } }
-        public bool IsHit { get => throw null; }
-        public LuaBackendCacheReadResult(Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadStatus Status, System.Collections.Immutable.ImmutableArray<byte> Payload, string? DiagnosticCode = null) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadStatus Status, out System.Collections.Immutable.ImmutableArray<byte> Payload, out string? DiagnosticCode) => throw null;
-    }
-
-    public enum LuaBackendCacheReadStatus
-    {
-        Miss = 0,
-        Hit = 1,
-        CorruptMiss = 2,
-        Unavailable = 3
-    }
-
-    public sealed class LuaBackendCacheTrimResult : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult>
-    {
-        public bool Succeeded { get => throw null; init { } }
-        public int RemovedEntries { get => throw null; init { } }
-        public long RemovedBytes { get => throw null; init { } }
-        public long RemainingBytes { get => throw null; init { } }
-        public string? DiagnosticCode { get => throw null; init { } }
-        public LuaBackendCacheTrimResult(bool Succeeded, int RemovedEntries, long RemovedBytes, long RemainingBytes, string? DiagnosticCode = null) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult? other) => throw null;
-        public void Deconstruct(out bool Succeeded, out int RemovedEntries, out long RemovedBytes, out long RemainingBytes, out string? DiagnosticCode) => throw null;
-    }
-
-    public sealed class LuaBackendCacheWriteResult : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult>
-    {
-        public Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteStatus Status { get => throw null; init { } }
-        public int TrimmedEntries { get => throw null; init { } }
-        public string? DiagnosticCode { get => throw null; init { } }
-        public LuaBackendCacheWriteResult(Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteStatus Status, int TrimmedEntries = 0, string? DiagnosticCode = null) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult? left, Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteStatus Status, out int TrimmedEntries, out string? DiagnosticCode) => throw null;
-    }
-
-    public enum LuaBackendCacheWriteStatus
-    {
-        Created = 0,
-        AlreadyPresent = 1,
-        RejectedTooLarge = 2,
-        Unavailable = 3
-    }
-
-    public enum LuaBackendDeploymentMode
-    {
-        Portable = 0,
-        CoreClr = 1,
-        ReadyToRun = 2,
-        NativeAot = 3
-    }
-
-    public sealed class LuaBackendDiskCache
-    {
-        public LuaBackendDiskCache(Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions options) { }
-        public System.Threading.Tasks.ValueTask<Lunil.CodeGen.Cil.Caching.LuaBackendCacheReadResult> TryReadAsync(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey key, System.Threading.CancellationToken cancellationToken = null) => throw null;
-        public System.Threading.Tasks.ValueTask<Lunil.CodeGen.Cil.Caching.LuaBackendCacheWriteResult> WriteAsync(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey key, System.ReadOnlyMemory<byte> payload, System.Threading.CancellationToken cancellationToken = null) => throw null;
-        public System.Threading.Tasks.ValueTask<bool> QuarantineAsync(Lunil.CodeGen.Cil.Caching.LuaBackendCacheKey key, string reason, System.Threading.CancellationToken cancellationToken = null) => throw null;
-        public System.Threading.Tasks.ValueTask<Lunil.CodeGen.Cil.Caching.LuaBackendCacheTrimResult> TrimAsync(System.Threading.CancellationToken cancellationToken = null) => throw null;
-    }
-
-    public sealed class LuaBackendDiskCacheOptions : System.IEquatable<Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions>
-    {
-        public required string RootDirectory { get => throw null; init { } }
-        public long MaximumBytes { get => throw null; init { } }
-        public long MaximumEntryBytes { get => throw null; init { } }
-        public long MaximumQuarantineBytes { get => throw null; init { } }
-        public System.TimeSpan LockTimeout { get => throw null; init { } }
-        public System.TimeSpan LockRetryDelay { get => throw null; init { } }
-        public System.TimeSpan OrphanTemporaryEntryAge { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions? left, Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions? left, Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Caching.LuaBackendDiskCacheOptions? other) => throw null;
-    }
-
-    public enum LuaBackendHookMode
-    {
-        Disabled = 0,
-        Exact = 1
-    }
-
-    public enum LuaBackendOptimizationMode
-    {
-        Debug = 0,
-        Release = 1
-    }
-
-    public enum LuaBackendSandboxMode
-    {
-        Default = 0,
-        Trusted = 1,
-        Restricted = 2
-    }
-
-    public enum LuaBackendTrimmingMode
-    {
-        Disabled = 0,
-        Enabled = 1
-    }
-}
 namespace Lunil.CodeGen.Cil.Emission
 {
     public enum CilEmitterFlavor
     {
-        ReflectionEmit = 0,
-        Metadata = 1
+        ReflectionEmit = 0
     }
 
     public static class CilPlanEmitter
@@ -614,33 +104,6 @@ namespace Lunil.CodeGen.Cil.Emission
     }
 
     public delegate Lunil.Runtime.CodeGen.LuaCompiledExit LuaCompiledMethod(Lunil.Runtime.CodeGen.LuaExecutionContext context, Lunil.Runtime.Execution.LuaThread thread, Lunil.Runtime.Execution.LuaFrame frame);
-
-    public sealed class MetadataCilPlanSink : Lunil.CodeGen.Cil.Emission.ICilInstructionSink
-    {
-        public Lunil.CodeGen.Cil.Emission.CilEmitterFlavor Flavor { get => throw null; }
-        public Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? Recipe { get => throw null; }
-        public static System.ValueTuple<Lunil.CodeGen.Cil.Emission.MetadataCilRecipe?, Lunil.CodeGen.Cil.Planning.CilPlanVerificationResult> CreateRecipe(Lunil.CodeGen.Cil.Planning.CilMethodPlan plan, Lunil.CodeGen.Cil.Planning.CilPlanLimits? limits = null) => throw null;
-        public void BeginMethod(Lunil.CodeGen.Cil.Planning.CilMethodPlan plan, int maximumEvaluationStack) { }
-        public void DeclareLocal(Lunil.CodeGen.Cil.Planning.CilLocal local) { }
-        public void Emit(Lunil.CodeGen.Cil.Planning.CilPlanInstruction instruction) { }
-        public void EndMethod() { }
-    }
-
-    public sealed class MetadataCilRecipe : System.IEquatable<Lunil.CodeGen.Cil.Emission.MetadataCilRecipe>
-    {
-        public string MethodName { get => throw null; init { } }
-        public int MaximumEvaluationStack { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilLocal> Locals { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilPlanInstruction> Instructions { get => throw null; init { } }
-        public MetadataCilRecipe(string MethodName, int MaximumEvaluationStack, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilLocal> Locals, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilPlanInstruction> Instructions) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? left, Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? left, Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Emission.MetadataCilRecipe? other) => throw null;
-        public void Deconstruct(out string MethodName, out int MaximumEvaluationStack, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilLocal> Locals, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilPlanInstruction> Instructions) => throw null;
-    }
 
     public sealed class ReflectionEmitCilPlanSink : Lunil.CodeGen.Cil.Emission.ICilInstructionSink
     {
@@ -1507,94 +970,6 @@ namespace Lunil.CodeGen.Cil.Jit
         LightUserdata = 512
     }
 }
-namespace Lunil.CodeGen.Cil.Loading
-{
-    public static class LuaAotArtifactLoader
-    {
-        public static Lunil.CodeGen.Cil.Loading.LuaAotValidationResult Validate(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact artifact, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? options = null) => throw null;
-        public static Lunil.CodeGen.Cil.Loading.LuaAotValidationResult Validate(System.Collections.Immutable.ImmutableArray<byte> peImage, System.Collections.Immutable.ImmutableArray<byte> portablePdbImage = null, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? options = null) => throw null;
-        [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Loading a persisted CIL assembly requires dynamic code support.")]
-        [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Dynamically loaded persisted CIL methods cannot be statically analyzed.")]
-        public static Lunil.CodeGen.Cil.Loading.LuaAotLoadResult Load(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifact artifact, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? options = null) => throw null;
-        [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Loading a persisted CIL assembly requires dynamic code support.")]
-        [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Dynamically loaded persisted CIL methods cannot be statically analyzed.")]
-        public static Lunil.CodeGen.Cil.Loading.LuaAotLoadResult Load(System.Collections.Immutable.ImmutableArray<byte> peImage, System.Collections.Immutable.ImmutableArray<byte> portablePdbImage = null, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? options = null) => throw null;
-    }
-
-    public readonly struct LuaAotLoadMetrics : System.IEquatable<Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics>
-    {
-        public System.TimeSpan ValidationDuration { get => throw null; init { } }
-        public System.TimeSpan AssemblyLoadDuration { get => throw null; init { } }
-        public System.TimeSpan DelegateBindingDuration { get => throw null; init { } }
-        public System.TimeSpan TotalDuration { get => throw null; init { } }
-        public long AllocatedBytes { get => throw null; init { } }
-        public LuaAotLoadMetrics(System.TimeSpan ValidationDuration, System.TimeSpan AssemblyLoadDuration, System.TimeSpan DelegateBindingDuration, System.TimeSpan TotalDuration, long AllocatedBytes) { }
-        #nullable disable
-        public override string ToString() => throw null;
-        #nullable restore
-        public static bool operator !=(Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics left, Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics left, Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics right) => throw null;
-        public override int GetHashCode() => throw null;
-        #nullable disable
-        public override bool Equals(object obj) => throw null;
-        #nullable restore
-        public bool Equals(Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics other) => throw null;
-        public void Deconstruct(out System.TimeSpan ValidationDuration, out System.TimeSpan AssemblyLoadDuration, out System.TimeSpan DelegateBindingDuration, out System.TimeSpan TotalDuration, out long AllocatedBytes) => throw null;
-    }
-
-    public sealed class LuaAotLoadOptions : System.IEquatable<Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions>
-    {
-        public static Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions Default { get => throw null; }
-        public string? ExpectedModuleContentId { get => throw null; init { } }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? left, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? left, Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Loading.LuaAotLoadOptions? other) => throw null;
-    }
-
-    public sealed class LuaAotLoadResult : System.IEquatable<Lunil.CodeGen.Cil.Loading.LuaAotLoadResult>
-    {
-        public Lunil.CodeGen.Cil.Loading.LuaAotLoadedModule? Module { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics { get => throw null; init { } }
-        public Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics Metrics { get => throw null; init { } }
-        public bool Succeeded { get => throw null; }
-        public LuaAotLoadResult(Lunil.CodeGen.Cil.Loading.LuaAotLoadedModule? Module, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics, Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics Metrics = null) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Loading.LuaAotLoadResult? left, Lunil.CodeGen.Cil.Loading.LuaAotLoadResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Loading.LuaAotLoadResult? left, Lunil.CodeGen.Cil.Loading.LuaAotLoadResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Loading.LuaAotLoadResult? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Loading.LuaAotLoadedModule? Module, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics, out Lunil.CodeGen.Cil.Loading.LuaAotLoadMetrics Metrics) => throw null;
-    }
-
-    public sealed class LuaAotLoadedModule : System.IDisposable
-    {
-        public Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest Manifest { get => throw null; }
-        public System.WeakReference LoadContextWeakReference { get => throw null; }
-        public bool IsDisposed { get => throw null; }
-        public Lunil.CodeGen.Cil.Emission.LuaCompiledMethod GetFunction(int functionId) => throw null;
-        public bool TryGetFunction(int functionId, out Lunil.CodeGen.Cil.Emission.LuaCompiledMethod? function) => throw null;
-        public void Dispose() { }
-    }
-
-    public sealed class LuaAotValidationResult : System.IEquatable<Lunil.CodeGen.Cil.Loading.LuaAotValidationResult>
-    {
-        public Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? Manifest { get => throw null; init { } }
-        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics { get => throw null; init { } }
-        public bool Succeeded { get => throw null; }
-        public LuaAotValidationResult(Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? Manifest, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics) { }
-        public override string ToString() => throw null;
-        public static bool operator !=(Lunil.CodeGen.Cil.Loading.LuaAotValidationResult? left, Lunil.CodeGen.Cil.Loading.LuaAotValidationResult? right) => throw null;
-        public static bool operator ==(Lunil.CodeGen.Cil.Loading.LuaAotValidationResult? left, Lunil.CodeGen.Cil.Loading.LuaAotValidationResult? right) => throw null;
-        public override int GetHashCode() => throw null;
-        public override bool Equals(object? obj) => throw null;
-        public bool Equals(Lunil.CodeGen.Cil.Loading.LuaAotValidationResult? other) => throw null;
-        public void Deconstruct(out Lunil.CodeGen.Cil.Artifacts.LuaAotArtifactManifest? Manifest, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Artifacts.LuaAotDiagnostic> Diagnostics) => throw null;
-    }
-}
 namespace Lunil.CodeGen.Cil.Planning
 {
     public sealed class CilCallTarget : System.IEquatable<Lunil.CodeGen.Cil.Planning.CilCallTarget>
@@ -1720,6 +1095,7 @@ namespace Lunil.CodeGen.Cil.Planning
     {
         public Lunil.CodeGen.Cil.Planning.CilPlanOpCode OpCode { get => throw null; }
         public int Int32Operand { get => throw null; }
+        public long Int64Operand { get => throw null; }
         public Lunil.CodeGen.Cil.Planning.CilLabel Label { get => throw null; }
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilLabel> Labels { get => throw null; }
         public Lunil.CodeGen.Cil.Planning.CilCallTarget? CallTarget { get => throw null; }
@@ -1727,6 +1103,7 @@ namespace Lunil.CodeGen.Cil.Planning
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction MarkLabel(Lunil.CodeGen.Cil.Planning.CilLabel label, int canonicalProgramCounter = -1) => throw null;
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction Simple(Lunil.CodeGen.Cil.Planning.CilPlanOpCode opCode, int canonicalProgramCounter = -1) => throw null;
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction WithInt32(Lunil.CodeGen.Cil.Planning.CilPlanOpCode opCode, int operand, int canonicalProgramCounter = -1) => throw null;
+        public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction WithInt64(Lunil.CodeGen.Cil.Planning.CilPlanOpCode opCode, long operand, int canonicalProgramCounter = -1) => throw null;
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction WithLabel(Lunil.CodeGen.Cil.Planning.CilPlanOpCode opCode, Lunil.CodeGen.Cil.Planning.CilLabel label, int canonicalProgramCounter = -1) => throw null;
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction Switch(System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Planning.CilLabel> labels, int canonicalProgramCounter = -1) => throw null;
         public static Lunil.CodeGen.Cil.Planning.CilPlanInstruction Call(Lunil.CodeGen.Cil.Planning.CilCallTarget target, int canonicalProgramCounter = -1) => throw null;
@@ -1766,14 +1143,16 @@ namespace Lunil.CodeGen.Cil.Planning
         LoadLocal = 3,
         StoreLocal = 4,
         LoadInt32 = 5,
-        Add = 6,
-        Subtract = 7,
-        Call = 8,
-        Branch = 9,
-        BranchTrue = 10,
-        BranchFalse = 11,
-        Switch = 12,
-        Return = 13
+        LoadInt64 = 6,
+        ConvertInt64 = 7,
+        Add = 8,
+        Subtract = 9,
+        Call = 10,
+        Branch = 11,
+        BranchTrue = 12,
+        BranchFalse = 13,
+        Switch = 14,
+        Return = 15
     }
 
     public sealed class CilPlanVerificationResult : System.IEquatable<Lunil.CodeGen.Cil.Planning.CilPlanVerificationResult>

@@ -60,7 +60,6 @@ IBenchmarkEngine[] allEngines =
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Tier1),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Tier2),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.LoopOsr),
-    new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.PersistedAot),
 ];
 var engines = allEngines
     .Where(engine =>

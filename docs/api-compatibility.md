@@ -15,17 +15,21 @@ must continue to match the stable `v0.7.0` tag; later feature work never rewrite
 ### Active `0.8.0`
 
 [`api/0.8.0/`](../api/0.8.0/) records the reviewed public API and package snapshot for
-`0.8.0-alpha.10`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
+`0.8.0-alpha.12`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
 Beta freeze. The exact gate still rejects an unreviewed addition, removal, signature change,
 dependency edge, or package asset. Entering `0.8.0-beta.1` will turn the accepted snapshot into the
 frozen contract for the rest of the `0.8` line.
 
 The Alpha snapshot intentionally widens the advanced
-`LuaCompiledExit.InstructionsConsumed` code-generation ABI property from `int` to `long`. Existing
-`int` factory overloads remain available for persisted and third-party emitters; new `long`
-overloads and the scheduler's 64-bit activation budget prevent one compiled entry from overflowing
-after more than `Int32.MaxValue` canonical instructions. See
+`LuaCompiledExit.InstructionsConsumed` code-generation ABI property from `int` to `long`. The
+scheduler's 64-bit activation budget and remaining JIT emitters prevent one compiled entry from
+overflowing after more than `Int32.MaxValue` canonical instructions. See
 [ADR 0013](adr/0013-64-bit-instruction-accounting.md).
+
+`0.8.0-alpha.12` also removes the Lua persisted/static AOT API, disk-cache API, `Lunil.Build`
+assembly/package, and metadata emitter surface. This is an intentional breaking change relative to
+stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
+[ADR 0018](adr/0018-remove-lua-aot.md).
 
 `0.8.0-alpha.9` intentionally adds the public immutable `LuaFunctionVersion` and
 `LuaFunctionIdentity` inspection surface, structured reload function-migration results, the
@@ -34,11 +38,11 @@ after more than `Int32.MaxValue` canonical instructions. See
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
-active `0.8.0-alpha.10` version they read and update only `api/0.8.0/`.
+active `0.8.0-alpha.12` version they read and update only `api/0.8.0/`.
 
 ## Public API baseline
 
-The active `manifest.json` pins 14 shipped assemblies and the SHA-256 of a generated C# declaration
+The active `manifest.json` pins 13 shipped assemblies and the SHA-256 of a generated C# declaration
 baseline for each one. The repository-local .NET tool manifest pins
 `Meziantou.Framework.PublicApiGenerator.Tool` 2.0.2. The gate includes public and protected types,
 members, generic constraints, parameter names and defaults, enum values, and nullable annotations.
@@ -61,18 +65,17 @@ behavior. Beta and RC follow the stricter promotion policy in [versioning](versi
 
 ## Package baseline
 
-The active `packages.json` records all 14 NuGet packages independently of the prerelease suffix. It
+The active `packages.json` records all 13 NuGet packages independently of the prerelease suffix. It
 pins:
 
 - package identity, author, license, repository, readme, description, tags, and package type;
 - exact target-framework dependency groups and same-version Lunil dependency edges;
-- normal package asset paths, symbol-package asset paths, the MSBuild task layout, and the .NET tool
-  layout;
-- the required one-to-one set of 14 `.nupkg` and 14 `.snupkg` outputs.
+- normal package asset paths, symbol-package asset paths, and the .NET tool layout;
+- the required one-to-one set of 13 `.nupkg` and 13 `.snupkg` outputs.
 
 Every packable project also enables the SDK package validator with strict compatible-TFM and
 compatible-framework checks. The compatibility script restores a clean project against the local
-package directory only, references all 13 library/MSBuild packages, executes the public `LuaHost`
+package directory only, references all 12 library packages, executes the public `LuaHost`
 path, installs `Lunil.Cli`, verifies its exact version, and executes a source file.
 
 ```powershell

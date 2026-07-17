@@ -6,11 +6,11 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.8.0</VersionPrefix>
-<VersionSuffix>alpha.1</VersionSuffix>
+<VersionSuffix>alpha.12</VersionSuffix>
 ```
 
-The resulting source/package version is `0.8.0-alpha.1` and its eventual immutable tag is
-`v0.8.0-alpha.1`. A stable release omits `VersionSuffix` only after an accepted RC.
+The resulting source/package version is `0.8.0-alpha.12` and its eventual immutable tag is
+`v0.8.0-alpha.12`. A stable release omits `VersionSuffix` only after an accepted RC.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -121,19 +121,24 @@ Stable `0.7.0` removes the suffix from that accepted candidate without product-c
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
-## Current `0.8.0-alpha.1` decision
+## Current `0.8.0-alpha.12` decision
 
-`0.8.0-alpha.1` is the active performance and execution-product milestone. It improves PUC Lua
-chunk generation and canonical lowering, makes qualified JIT selection available through Hosting
-and the CLI, removes quadratic string-library construction, gives terminal JIT rejection a bounded
-reference-interpreter route, and develops continuous/unboxed numeric regions plus guarded
-table/call paths. The exact scope and evidence are recorded in
-[`changelogs/0.8.0-alpha.1.md`](../changelogs/0.8.0-alpha.1.md).
+`0.8.0-alpha.12` is the active performance-convergence milestone. It removes Lua persisted/static
+AOT, its artifact/build/load/cache/benchmark/release surface, and the `Lunil.Build` package; it also
+completes 64-bit instruction accounting in the remaining Tier 1/Tier 2/Loop OSR paths. .NET
+NativeAOT/trimming compatibility remains a release gate and uses deterministic interpreter
+fallback when dynamic code is unavailable. The exact scope is recorded in
+[`changelogs/0.8.0-alpha.12.md`](../changelogs/0.8.0-alpha.12.md) and
+[ADR 0018](adr/0018-remove-lua-aot.md).
 
 The `api/0.8.0` declarations and package data are reviewed Alpha snapshots, not a compatibility
 freeze. `api/0.7.0` remains identical to stable `v0.7.0`. Promotion beyond Alpha requires the full
 format, test, conformance, package, publish-mode, six-RID, and performance gates; the suffix will
 not be removed directly from Alpha.
+
+The removal is a breaking change on the not-yet-frozen `0.8` minor line and is never backported to
+`0.7.x` patches. Stable patches remain backward-compatible; later public API/backend redesign starts
+on the next minor line rather than being hidden in a patch or reused prerelease number.
 
 ## Release procedure
 

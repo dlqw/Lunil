@@ -6,9 +6,7 @@ param(
 
     [string] $Tier2Output = 'artifacts/backend-performance/tier2-six-rid-decision.json',
 
-    [string] $LoopOsrOutput = 'artifacts/backend-performance/loop-osr-six-rid-decision.json',
-
-    [string] $PersistedAotOutput = 'artifacts/backend-performance/persisted-aot-six-rid-decision.json'
+    [string] $LoopOsrOutput = 'artifacts/backend-performance/loop-osr-six-rid-decision.json'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,12 +34,6 @@ $loopOsrOutputPath = if ([System.IO.Path]::IsPathRooted($LoopOsrOutput)) {
 }
 else {
     Join-Path $repositoryRoot $LoopOsrOutput
-}
-$persistedAotOutputPath = if ([System.IO.Path]::IsPathRooted($PersistedAotOutput)) {
-    $PersistedAotOutput
-}
-else {
-    Join-Path $repositoryRoot $PersistedAotOutput
 }
 $requiredRids = @(
     'win-x64',
@@ -249,117 +241,3 @@ $loopOsrResult | ConvertTo-Json -Depth 8 |
     Set-Content -LiteralPath $loopOsrOutputPath -Encoding utf8
 $loopOsrResult | Format-List
 Write-Host "Six-RID Loop OSR decision written to $loopOsrOutputPath"
-
-$persistedAotDecisions = Get-ChildItem -LiteralPath $inputPath -Recurse `
-    -Filter 'persisted-aot-decision.json' | ForEach-Object {
-        $decision = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-        [pscustomobject]@{
-            Path = $_.FullName
-            LastWriteTimeUtc = $_.LastWriteTimeUtc
-            Decision = $decision
-        }
-    }
-$persistedAotSelected = [Collections.Generic.List[object]]::new()
-foreach ($rid in $requiredRids) {
-    $match = $persistedAotDecisions | Where-Object { $_.Decision.Rid -eq $rid } |
-        Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -First 1
-    if ($null -eq $match) {
-        throw "Missing persisted AOT performance decision for RID $rid under $inputPath."
-    }
-
-    $persistedAotSelected.Add($match.Decision)
-}
-
-$persistedAotResult = [pscustomobject]@{
-    GeneratedAtUtc = [DateTime]::UtcNow.ToString('O')
-    RequiredRids = $requiredRids
-    Decisions = $persistedAotSelected.ToArray()
-    MinimumArithmeticSpeedupCi95Lower = (
-        $persistedAotSelected |
-            Measure-Object ArithmeticSpeedupCi95Lower -Minimum).Minimum
-    MinimumControlFlowSpeedupCi95Lower = (
-        $persistedAotSelected |
-            Measure-Object ControlFlowSpeedupCi95Lower -Minimum).Minimum
-    MinimumWarmOperationsPerProcess = (
-        $persistedAotSelected | Measure-Object WarmOperationsPerProcess -Minimum).Minimum
-    MaximumAotValidationP95Ms = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotValidationP95Ms -Maximum).Maximum
-    MaximumAotAssemblyLoadP95Ms = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotAssemblyLoadP95Ms -Maximum).Maximum
-    MaximumAotDelegateBindP95Ms = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotDelegateBindP95Ms -Maximum).Maximum
-    MaximumAotTotalLoadP95Ms = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotTotalLoadP95Ms -Maximum).Maximum
-    MaximumAotLoadAllocatedP95Bytes = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotLoadAllocatedP95Bytes -Maximum).Maximum
-    MaximumAotTotalArtifactBytes = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotTotalArtifactBytes -Maximum).Maximum
-    MaximumProfileGuidedAotSlowdownVsTier2Median = (
-        $persistedAotSelected | ForEach-Object {
-            $_.ProfileGuidedTier2Comparisons
-        } | Measure-Object SlowdownVsTier2Median -Maximum).Maximum
-    MaximumProfileGuidedAotSlowdownVsTier2Ci95Upper = (
-        $persistedAotSelected | ForEach-Object {
-            $_.ProfileGuidedTier2Comparisons
-        } | Measure-Object SlowdownVsTier2Ci95Upper -Maximum).Maximum
-    MinimumProfileGuidedAotSpeedupVsUnprofiled = (
-        $persistedAotSelected | ForEach-Object {
-            $_.ProfileGuidedTier2Comparisons
-        } | Measure-Object SpeedupVsUnprofiledAotMedian -Minimum).Minimum
-    MaximumAbsoluteAllocationSlopeBytesIteration = (
-        $persistedAotSelected | ForEach-Object {
-            [Math]::Abs($_.ArithmeticAllocationSlopeBytesIteration)
-        } | Measure-Object -Maximum).Maximum
-    MaximumAotDeoptimizations = (
-        $persistedAotSelected | Measure-Object MaximumAotDeoptimizations -Maximum).Maximum
-    MaximumAotDebugModeDeoptimizations = (
-        $persistedAotSelected |
-            Measure-Object MaximumAotDebugModeDeoptimizations -Maximum).Maximum
-    TotalUnexpectedAotDeoptimizations = (
-        $persistedAotSelected |
-            Measure-Object TotalUnexpectedAotDeoptimizations -Sum).Sum
-    AllRidsExecutePersistedAot = @($persistedAotSelected | Where-Object {
-        $_.MinimumAotCompiledInvocations -le 0 -or
-            $_.TotalAotInterpreterFallbacks -ne 0 -or
-            $_.TotalUnexpectedAotDeoptimizations -ne 0
-    }).Count -eq 0
-    AllRidsAttributeExpectedDebugDeoptimization = @($persistedAotSelected | Where-Object {
-        $_.MaximumAotDeoptimizations -ne $_.MaximumAotDebugModeDeoptimizations
-    }).Count -eq 0
-    AllRidsPassExecutionGate = @($persistedAotSelected | Where-Object {
-        @($_.ExecutionGateFailures).Count -ne 0
-    }).Count -eq 0
-    AllRidsPassNegativeWorkloadGate = @($persistedAotSelected | Where-Object {
-        @($_.NegativeWorkloadGateFailures).Count -ne 0
-    }).Count -eq 0
-    AllRidsPassProfileGuidedAotGate = @($persistedAotSelected | Where-Object {
-        -not $_.ProfileGuidedQualifiesThisRid -or
-            @($_.ProfileGuidedGateFailures).Count -ne 0
-    }).Count -eq 0
-    AllProfileGuidedNumericWorkloadsPersistSpecializedRegions = @(
-        $persistedAotSelected | Where-Object {
-            @($_.ProfileGuidedTier2Comparisons | Where-Object {
-                $_.NumericRegionCount -le 0 -or
-                    $_.UnboxedNumericLocalCount -le 0 -or
-                    $_.DirectNumericInstructionCount -le 0 -or
-                    $_.NumericRegionSafepointCount -le 0
-            }).Count -ne 0
-        }).Count -eq 0
-    AllRidsQualify = @($persistedAotSelected | Where-Object {
-        -not $_.QualifiesThisRid
-    }).Count -eq 0
-}
-
-New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName(
-        $persistedAotOutputPath)) -Force | Out-Null
-$persistedAotResult | ConvertTo-Json -Depth 8 |
-    Set-Content -LiteralPath $persistedAotOutputPath -Encoding utf8
-$persistedAotResult | Format-List
-Write-Host "Six-RID persisted AOT decision written to $persistedAotOutputPath"

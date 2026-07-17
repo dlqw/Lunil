@@ -2,9 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Lunil.CodeGen.Cil;
-using Lunil.CodeGen.Cil.Artifacts;
 using Lunil.CodeGen.Cil.Jit;
-using Lunil.CodeGen.Cil.Loading;
 using Lunil.CodeGen.Cil.Planning;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -493,52 +491,6 @@ foreach (var workload in backendWorkloads.Where(item =>
         $"direct={diagnosticPlan.DirectCanonicalInstructionCount}, " +
         $"slow={diagnosticPlan.SlowPathCanonicalInstructionCount}, " +
         $"slow_paths={slowPaths}");
-    var persistedArtifact = LuaAotCompiler.Compile(backendEvidenceModule).Artifact ??
-        throw new InvalidOperationException(
-            $"Backend evidence AOT artifact did not compile for {workload.Name}.");
-    Console.WriteLine(
-        $"backend_artifact workload={workload.Name}, " +
-        $"persisted_pe_bytes={persistedArtifact.PeImage.Length}, " +
-        $"portable_pdb_bytes={persistedArtifact.PortablePdbImage.Length}, " +
-        $"total_bytes={persistedArtifact.PeImage.Length + persistedArtifact.PortablePdbImage.Length}");
-    var persistedArtifacts = new Dictionary<LuaIrModule, LuaAotArtifact>(
-        ReferenceEqualityComparer.Instance)
-    {
-        [backendEvidenceModule] = persistedArtifact,
-    };
-    LuaAotArtifact GetPersistedArtifact(LuaIrModule module)
-    {
-        if (persistedArtifacts.TryGetValue(module, out var artifact))
-        {
-            return artifact;
-        }
-
-        artifact = LuaAotCompiler.Compile(module).Artifact ??
-            throw new InvalidOperationException(
-                $"Backend evidence AOT artifact did not compile for {workload.Name}.");
-        persistedArtifacts.Add(module, artifact);
-        return artifact;
-    }
-
-    var profiledPersistedArtifacts = new Dictionary<LuaIrModule, LuaAotArtifact>(
-        ReferenceEqualityComparer.Instance);
-    LuaAotArtifact GetProfiledPersistedArtifact(LuaIrModule module)
-    {
-        if (profiledPersistedArtifacts.TryGetValue(module, out var artifact))
-        {
-            return artifact;
-        }
-
-        var profile = TrainPersistedProfile(module, workload.InstallStandardLibrary);
-        artifact = LuaAotCompiler.Compile(module, new LuaAotCompilationOptions
-        {
-            Profile = profile,
-        }).Artifact ?? throw new InvalidOperationException(
-            $"Profile-guided backend evidence AOT artifact did not compile for {workload.Name}.");
-        profiledPersistedArtifacts.Add(module, artifact);
-        return artifact;
-    }
-
     if (ShouldRunBackend(backendFilter, "interpreter"))
     {
         RunBackendEvidence(
@@ -550,44 +502,6 @@ foreach (var workload in backendWorkloads.Where(item =>
             coldSamples,
             module => BackendEvidenceRunner.CreateInterpreter(
                 module,
-                workload.InstallStandardLibrary));
-    }
-
-    if (ShouldRunBackend(backendFilter, "persisted_aot"))
-    {
-        RunBackendEvidence(
-            workload.Name,
-            "persisted_aot",
-            backendEvidenceModule,
-            expectedResult,
-            backendEvidenceOperations,
-            coldSamples,
-            module => BackendEvidenceRunner.CreatePersistedAot(
-                module,
-                GetPersistedArtifact(module),
-                workload.InstallStandardLibrary));
-    }
-
-    if (ShouldRunBackend(backendFilter, "persisted_aot_pgo"))
-    {
-        var profiledArtifact = GetProfiledPersistedArtifact(backendEvidenceModule);
-        Console.WriteLine(
-            $"backend_profiled_artifact workload={workload.Name}, " +
-            $"persisted_pe_bytes={profiledArtifact.PeImage.Length}, " +
-            $"portable_pdb_bytes={profiledArtifact.PortablePdbImage.Length}, " +
-            $"numeric_regions={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Length)}, " +
-            $"unboxed_numeric_locals={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Sum(static region => region.UnboxedNumericLocalCount))}, " +
-            $"direct_numeric_instructions={profiledArtifact.Manifest.Functions.Sum(static function => function.NumericRegions.Sum(static region => region.DirectNumericInstructionCount))}");
-        RunBackendEvidence(
-            workload.Name,
-            "persisted_aot_pgo",
-            backendEvidenceModule,
-            expectedResult,
-            backendEvidenceOperations,
-            coldSamples,
-            module => BackendEvidenceRunner.CreatePersistedAot(
-                module,
-                GetProfiledPersistedArtifact(module),
                 workload.InstallStandardLibrary));
     }
 
@@ -944,11 +858,6 @@ static void RunBackendEvidence(
     var loopOsrCilEmissionMilliseconds = new List<double>();
     var loopOsrDelegateCreationMilliseconds = new List<double>();
     var loopOsrCompileAllocatedBytes = new List<double>();
-    var aotValidationMilliseconds = new List<double>();
-    var aotAssemblyLoadMilliseconds = new List<double>();
-    var aotDelegateBindingMilliseconds = new List<double>();
-    var aotTotalLoadMilliseconds = new List<double>();
-    var aotLoadAllocatedBytes = new List<double>();
     long peakWorkingSetDelta = 0;
     long estimatedCodeBytes = 0;
     using var process = Process.GetCurrentProcess();
@@ -965,16 +874,6 @@ static void RunBackendEvidence(
         runner.ExecuteVerified(expectedResult);
         stopwatch.Stop();
         startupMilliseconds.Add(stopwatch.Elapsed.TotalMilliseconds);
-        if (runner.AotLoadMetrics is { } aotMetrics)
-        {
-            aotValidationMilliseconds.Add(aotMetrics.ValidationDuration.TotalMilliseconds);
-            aotAssemblyLoadMilliseconds.Add(aotMetrics.AssemblyLoadDuration.TotalMilliseconds);
-            aotDelegateBindingMilliseconds.Add(
-                aotMetrics.DelegateBindingDuration.TotalMilliseconds);
-            aotTotalLoadMilliseconds.Add(aotMetrics.TotalDuration.TotalMilliseconds);
-            aotLoadAllocatedBytes.Add(aotMetrics.AllocatedBytes);
-        }
-
         // Drive Tier 2 promotion after measuring the first-use path. Loop OSR normally compiles
         // during the first invocation, while Tier 1 remains unchanged by these extra executions.
         runner.ExecuteVerified(expectedResult);
@@ -1015,7 +914,7 @@ static void RunBackendEvidence(
     }
 
     using var warmed = factory(module);
-    for (var warmup = 0; warmup < warmed.RequiredWarmupOperations; warmup++)
+    for (var warmup = 0; warmup < BackendEvidenceRunner.WarmupOperations; warmup++)
     {
         warmed.ExecuteVerified(expectedResult);
     }
@@ -1073,12 +972,7 @@ static void RunBackendEvidence(
         $"loop_osr_specialization_plan_ms={JoinSamples(loopOsrSpecializationPlanningMilliseconds)}, " +
         $"loop_osr_cil_emit_ms={JoinSamples(loopOsrCilEmissionMilliseconds)}, " +
         $"loop_osr_delegate_create_ms={JoinSamples(loopOsrDelegateCreationMilliseconds)}, " +
-        $"loop_osr_allocated_bytes={JoinSamples(loopOsrCompileAllocatedBytes)}, " +
-        $"aot_validation_ms={JoinSamples(aotValidationMilliseconds)}, " +
-        $"aot_assembly_load_ms={JoinSamples(aotAssemblyLoadMilliseconds)}, " +
-        $"aot_delegate_bind_ms={JoinSamples(aotDelegateBindingMilliseconds)}, " +
-        $"aot_total_load_ms={JoinSamples(aotTotalLoadMilliseconds)}, " +
-        $"aot_load_allocated_bytes={JoinSamples(aotLoadAllocatedBytes)}");
+        $"loop_osr_allocated_bytes={JoinSamples(loopOsrCompileAllocatedBytes)}");
     Console.WriteLine(
         $"backend_evidence workload={workload}, name={name}, operations={operationCount}, " +
         $"startup_median_ms={Percentile(startupMilliseconds, 0.50):F3}, " +
@@ -1114,22 +1008,6 @@ static void RunBackendEvidence(
         $"loop_osr_cil_emit_p95_ms={Percentile(loopOsrCilEmissionMilliseconds, 0.95):F3}, " +
         $"loop_osr_delegate_create_p95_ms={Percentile(loopOsrDelegateCreationMilliseconds, 0.95):F3}, " +
         $"loop_osr_compile_allocated_p95_bytes={Percentile(loopOsrCompileAllocatedBytes, 0.95):F0}, " +
-        $"aot_validation_p95_ms={Percentile(aotValidationMilliseconds, 0.95):F3}, " +
-        $"aot_assembly_load_p95_ms={Percentile(aotAssemblyLoadMilliseconds, 0.95):F3}, " +
-        $"aot_delegate_bind_p95_ms={Percentile(aotDelegateBindingMilliseconds, 0.95):F3}, " +
-        $"aot_total_load_p95_ms={Percentile(aotTotalLoadMilliseconds, 0.95):F3}, " +
-        $"aot_load_allocated_p95_bytes={Percentile(aotLoadAllocatedBytes, 0.95):F0}, " +
-        $"aot_pe_bytes={warmed.AotPeBytes}, " +
-        $"aot_pdb_bytes={warmed.AotPdbBytes}, " +
-        $"aot_numeric_region_count={warmed.AotNumericRegionCount}, " +
-        $"aot_unboxed_numeric_local_count={warmed.AotUnboxedNumericLocalCount}, " +
-        $"aot_direct_numeric_instruction_count={warmed.AotDirectNumericInstructionCount}, " +
-        $"aot_numeric_region_safepoint_count={warmed.AotNumericRegionSafepointCount}, " +
-        $"aot_compiled_invocations={warmed.AotStatistics?.CompiledInvocations ?? 0}, " +
-        $"aot_interpreter_fallbacks={warmed.AotStatistics?.InterpreterFallbacks ?? 0}, " +
-        $"aot_deoptimizations={warmed.AotStatistics?.Deoptimizations ?? 0}, " +
-        $"aot_debug_mode_deoptimizations={warmed.AotStatistics?.DebugModeDeoptimizations ?? 0}, " +
-        $"aot_unexpected_deoptimizations={warmed.AotStatistics?.UnexpectedDeoptimizations ?? 0}, " +
         $"tier2_code_kind={warmed.Tier2CodeKind}, " +
         $"tier2_optimization_count={warmed.Tier2OptimizationCount}, " +
         $"tier2_specialized_optimization_count={warmed.Tier2SpecializedOptimizationCount}, " +
@@ -1188,7 +1066,7 @@ static void RunBackendEvidence(
 static double MeasureAllocatedPerExecution(BackendEvidenceRunner runner)
 {
     const int samples = 5;
-    for (var warmup = 0; warmup < runner.RequiredWarmupOperations; warmup++)
+    for (var warmup = 0; warmup < BackendEvidenceRunner.WarmupOperations; warmup++)
     {
         runner.ExecuteVerified();
     }
@@ -1208,7 +1086,7 @@ static double MeasureNumericRegionCompileAllocationSlope(
 {
     using var small = factory(Compile(NumericRegionSizingSource(1)));
     using var large = factory(Compile(NumericRegionSizingSource(8)));
-    for (var warmup = 0; warmup < small.RequiredWarmupOperations; warmup++)
+    for (var warmup = 0; warmup < BackendEvidenceRunner.WarmupOperations; warmup++)
     {
         small.ExecuteVerified();
         large.ExecuteVerified();
@@ -1408,53 +1286,20 @@ static LuaIrModule Compile(string source)
     return lowering.Module;
 }
 
-static LuaJitModuleProfile TrainPersistedProfile(
-    LuaIrModule module,
-    bool installStandardLibrary)
-{
-    using var executor = new LuaJitExecutor(LuaJitExecutorOptions.Default with
-    {
-        FunctionEntryThreshold = 1,
-        BackedgeThreshold = 1,
-        EnableLoopOsr = false,
-        Tier2InvocationThreshold = int.MaxValue,
-        Tier2BackedgeThreshold = int.MaxValue,
-        SynchronousCompilation = true,
-    });
-    var state = new LuaState();
-    if (installStandardLibrary)
-    {
-        LuaStandardLibrary.InstallAll(state);
-    }
-
-    var closure = state.CreateMainClosure(module);
-    _ = executor.Execute(state, closure);
-    _ = executor.Execute(state, closure);
-    return LuaJitProfileCodec.Deserialize(module, executor.ExportProfile(module));
-}
-
 sealed class BackendEvidenceRunner : IDisposable
 {
+    public const int WarmupOperations = 5;
+
     private readonly LuaState _state;
     private readonly LuaClosure _closure;
     private readonly LuaInterpreter? _interpreter;
     private readonly LuaJitExecutor? _executor;
-    private readonly LuaPersistedAotExecutor? _persistedAotExecutor;
-    private readonly LuaAotLoadedModule? _loadedAotModule;
-    private readonly LuaAotLoadMetrics? _aotLoadMetrics;
-    private readonly int _aotPeBytes;
-    private readonly int _aotPdbBytes;
     private readonly List<LuaJitEvent> _compilationEvents = [];
 
     private BackendEvidenceRunner(
         LuaIrModule module,
         LuaInterpreter? interpreter,
         LuaJitExecutor? executor,
-        LuaPersistedAotExecutor? persistedAotExecutor,
-        LuaAotLoadedModule? loadedAotModule,
-        LuaAotLoadMetrics? aotLoadMetrics,
-        int aotPeBytes,
-        int aotPdbBytes,
         bool installStandardLibrary)
     {
         _state = new LuaState();
@@ -1466,11 +1311,6 @@ sealed class BackendEvidenceRunner : IDisposable
         _closure = _state.CreateMainClosure(module);
         _interpreter = interpreter;
         _executor = executor;
-        _persistedAotExecutor = persistedAotExecutor;
-        _loadedAotModule = loadedAotModule;
-        _aotLoadMetrics = aotLoadMetrics;
-        _aotPeBytes = aotPeBytes;
-        _aotPdbBytes = aotPdbBytes;
         if (_executor is not null)
         {
             _executor.EventOccurred += OnJitEvent;
@@ -1478,31 +1318,6 @@ sealed class BackendEvidenceRunner : IDisposable
     }
 
     public IReadOnlyList<LuaJitEvent> CompilationEvents => _compilationEvents;
-
-    public LuaAotLoadMetrics? AotLoadMetrics => _aotLoadMetrics;
-
-    public int AotPeBytes => _aotPeBytes;
-
-    public int AotPdbBytes => _aotPdbBytes;
-
-    public int AotNumericRegionCount => _loadedAotModule?.Manifest.Functions.Sum(
-        static function => function.NumericRegions.Length) ?? 0;
-
-    public int AotUnboxedNumericLocalCount => _loadedAotModule?.Manifest.Functions.Sum(
-        static function => function.NumericRegions.Sum(
-            static region => region.UnboxedNumericLocalCount)) ?? 0;
-
-    public int AotDirectNumericInstructionCount => _loadedAotModule?.Manifest.Functions.Sum(
-        static function => function.NumericRegions.Sum(
-            static region => region.DirectNumericInstructionCount)) ?? 0;
-
-    public int AotNumericRegionSafepointCount => _loadedAotModule?.Manifest.Functions.Sum(
-        static function => function.NumericRegions.Sum(
-            static region => region.SafepointCount)) ?? 0;
-
-    public int RequiredWarmupOperations => _persistedAotExecutor is null ? 5 : 256;
-
-    public LuaPersistedAotStatistics? AotStatistics => _persistedAotExecutor?.Statistics;
 
     public long EstimatedCodeBytes => _executor?.Statistics.EstimatedCodeBytes ?? 0;
 
@@ -1612,11 +1427,6 @@ sealed class BackendEvidenceRunner : IDisposable
             module,
             new LuaInterpreter(),
             null,
-            null,
-            null,
-            null,
-            0,
-            0,
             installStandardLibrary);
 
     public static BackendEvidenceRunner CreateJit(
@@ -1627,51 +1437,13 @@ sealed class BackendEvidenceRunner : IDisposable
             module,
             null,
             new LuaJitExecutor(options),
-            null,
-            null,
-            null,
-            0,
-            0,
             installStandardLibrary);
-
-    public static BackendEvidenceRunner CreatePersistedAot(
-        LuaIrModule module,
-        LuaAotArtifact artifact,
-        bool installStandardLibrary)
-    {
-        var loading = LuaAotArtifactLoader.Load(
-            artifact,
-            new LuaAotLoadOptions
-            {
-                ExpectedModuleContentId = artifact.Manifest.ModuleContentId,
-            });
-        if (!loading.Succeeded)
-        {
-            throw new InvalidOperationException(string.Join(
-                "; ",
-                loading.Diagnostics.Select(static item => item.Message)));
-        }
-
-        var loadedModule = loading.Module!;
-        return new BackendEvidenceRunner(
-            module,
-            null,
-            null,
-            new LuaPersistedAotExecutor(loadedModule),
-            loadedModule,
-            loading.Metrics,
-            artifact.PeImage.Length,
-            artifact.PortablePdbImage.Length,
-            installStandardLibrary);
-    }
 
     public LuaValue ExecuteVerified(LuaValue? expectedResult = null)
     {
         var result = _executor is not null
             ? _executor.Execute(_state, _closure)
-            : _persistedAotExecutor is not null
-                ? _persistedAotExecutor.Execute(_state, _closure)
-                : _interpreter!.Execute(_state, _closure);
+            : _interpreter!.Execute(_state, _closure);
         if (result.Signal != LuaVmSignal.Completed || result.Values.Length != 1)
         {
             throw new InvalidOperationException("Backend evidence workload did not complete.");
@@ -1695,7 +1467,6 @@ sealed class BackendEvidenceRunner : IDisposable
             _executor.Dispose();
         }
 
-        _loadedAotModule?.Dispose();
     }
 
     private void OnJitEvent(object? sender, LuaJitEvent jitEvent) =>

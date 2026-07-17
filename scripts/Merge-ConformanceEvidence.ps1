@@ -32,6 +32,13 @@ $requiredRids = @(
     'osx-x64',
     'osx-arm64'
 )
+$requiredBackends = @(
+    'interpreter',
+    'executor-auto',
+    'coreclr-tier1-jit',
+    'coreclr-tier2-jit',
+    'experimental-loop-osr'
+)
 $candidates = Get-ChildItem -LiteralPath $inputRoot -Recurse -Filter 'evidence.json' |
     ForEach-Object {
         [pscustomobject]@{
@@ -65,7 +72,8 @@ foreach ($rid in $requiredRids) {
         }).Count -ne 0) {
         throw "RID $rid does not have three complete passing test runs."
     }
-    if (@($evidence.ObservableGoldens.Backends).Count -ne 6 -or
+    if ((@($evidence.ObservableGoldens.Backends) -join ',') -ne
+            ($requiredBackends -join ',') -or
         $evidence.ObservableGoldens.CaseCount -ne 8 -or
         $evidence.OfficialSuite.FinalMarker -ne 'final OK !!!') {
         throw "RID $rid does not satisfy the fixed conformance corpus contract."

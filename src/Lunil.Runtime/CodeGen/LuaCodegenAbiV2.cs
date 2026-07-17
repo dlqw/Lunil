@@ -9,8 +9,7 @@ namespace Lunil.Runtime.CodeGen;
 
 /// <summary>
 /// Runtime ABI v2 adds guarded primitive operations and numeric-for helpers used by compiled
-/// basic blocks. ABI v1 remains available as an infrastructure facade, while current artifact
-/// loading requires the exact ABI v2 version.
+/// basic blocks. ABI v1 remains available as an infrastructure facade.
 /// </summary>
 [EditorBrowsable(EditorBrowsableState.Never)]
 public static class LuaCodegenAbiV2

@@ -13,7 +13,7 @@ qualification gates in [backend-performance-baseline.md](backend-performance-bas
 | Native Lua | Lua 5.4.8 source archive, SHA-256 `4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae` | Per-RID `1.000x` baseline |
 | LuaJIT | Upstream commit `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3`, archive SHA-256 `295f9e6722a2200aaf41297b28f73d337ac12236cdf1788981e46bd0afd466ff` | Native tracing-JIT comparison |
 | MoonSharp | NuGet `MoonSharp` 2.0.0 | Managed comparison and hard gate reference |
-| Lunil | The checked-out commit | Interpreter, Auto, Tier 1, Tier 2, Loop OSR, and persisted AOT |
+| Lunil | The checked-out commit | Interpreter, Auto, Tier 1, Tier 2, and Loop OSR |
 
 `Install-CrossRuntimeBenchmarkTools.ps1` downloads the native source archives, verifies their
 hashes before extraction, builds release executables with the platform C toolchain, verifies their
@@ -61,7 +61,7 @@ reported as compiled after fallback or deoptimization.
    deoptimization, unexpected deoptimization, and Tier 2 unsupported exit.
 
 The primary metric is process CPU nanoseconds per logical operation. Source loading, runtime setup,
-CLR heap reset, JIT/AOT compilation, artifact loading, and warmup are separate setup CPU evidence.
+CLR heap reset, JIT compilation, and warmup are separate setup CPU evidence.
 This is a steady-throughput comparison, not a CLI cold-start comparison.
 
 ## Local workflow
@@ -128,11 +128,48 @@ The minimum was win-x64 `string_build`; its paired CI95 lower bounds were 1.026x
 1.010x for Tier 2. Thus even the narrowest hosted-run result remained above MoonSharp, rather than
 passing only through an unpaired or aggregate average.
 
-## Qualified Windows x64 report
+## Qualified Windows x64 report (`0.8.0-alpha.12`)
 
-The final local Release acceptance run on 2026-07-16 used six balanced rounds, a 250 ms calibration
-floor, all nine engines, and all eight workloads. The complete evidence is stored locally at
+The post-removal Release run on 2026-07-17 used exact product commit
+`188882033ef27ce8c1ae027acb2dc9e8ce344034`, win-x64, .NET 10.0.3, six balanced rounds,
+a 250 ms calibration floor, all eight current engines, and all eight workloads. The complete local
+evidence is stored at `artifacts/cross-runtime-performance/win-x64/20260717-142359`. All 384 timed
+samples returned the expected result, no instruction counter overflowed, and all 16 Auto/Tier 2
+MoonSharp gates passed with stable routes and clean fallback/deoptimization telemetry.
+
+| Engine | Workloads | Geomean vs native Lua | Native-Lua range | Geomean vs MoonSharp |
+|---|---:|---:|---:|---:|
+| LuaJIT | 8 | **9.106x** | 3.242x–38.841x | 200.989x |
+| Native Lua 5.4.8 | 8 | **1.000x** | 1.000x–1.000x | 22.149x |
+| Lunil Tier 2 | 8 | 0.176x | 0.059x–0.714x | **3.912x** |
+| Lunil Auto | 8 | 0.169x | 0.057x–0.708x | **3.766x** |
+| Lunil Tier 1 | 8 | 0.056x | 0.025x–0.580x | 1.257x |
+| Lunil Loop OSR | 8 | 0.050x | 0.017x–0.623x | 1.099x |
+| MoonSharp | 8 | 0.045x | 0.028x–0.425x | 1.000x |
+| Lunil interpreter | 8 | 0.015x | 0.006x–0.179x | 0.335x |
+
+| Workload | Auto vs MoonSharp (paired CI95) | Tier 2 vs MoonSharp (paired CI95) |
+|---|---:|---:|
+| arithmetic | **22.923x** (22.286–23.812) | **23.197x** (22.980–23.743) |
+| fib_iter | **1.603x** (1.520–1.651) | **1.800x** (1.736–1.951) |
+| mandelbrot | **4.287x** (4.025–4.524) | **5.391x** (4.995–5.634) |
+| control_flow | **24.523x** (22.943–25.658) | **23.581x** (23.507–25.367) |
+| function_calls | **1.979x** (1.877–2.556) | **1.913x** (1.836–2.510) |
+| table_access | **2.372x** (2.269–2.481) | **2.429x** (2.367–2.455) |
+| sieve | **1.614x** (1.375–1.813) | **1.636x** (1.130–1.937) |
+| string_build | **1.381x** (1.348–1.479) | **1.359x** (1.320–1.427) |
+
+The Lua AOT row is absent from the current schema rather than retained as a skipped engine. The
+six-RID hosted workflow remains the cross-platform release qualification source; this report is the
+exact-commit local win-x64 baseline for subsequent `alpha.13` work.
+
+## Historical pre-removal Windows x64 report
+
+This historical pre-removal Release acceptance run on 2026-07-16 used six balanced rounds, a
+250 ms calibration floor, all nine then-supported engines, and all eight workloads. The complete evidence is stored locally at
 `artifacts/cross-runtime-performance/win-x64/final-full-v20` and identifies commit `9b04cb0`.
+The persisted-AOT row is retained only to make that report reproducible; `0.8.0-alpha.12` removes
+that engine from `suite.json`, current reports, and all gates.
 
 | Engine | Workloads | Geomean vs native Lua | Native-Lua range | Geomean vs MoonSharp |
 |---|---:|---:|---:|---:|

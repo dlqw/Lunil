@@ -221,8 +221,7 @@ public sealed class LuaExecutionContext
 
     /// <summary>
     /// Returns whether the generated delegate still owns the module generation admitted at
-    /// entry. Persisted and static backends that do not bind a generation return
-    /// <see langword="true"/>.
+    /// entry. Interpreter contexts that do not bind a generation return <see langword="true"/>.
     /// </summary>
     public bool IsBackendGenerationCurrent() => _backendGeneration is null ||
         _backendGeneration.IsCurrent(_backendGenerationToken);

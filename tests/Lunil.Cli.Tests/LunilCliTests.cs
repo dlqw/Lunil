@@ -1,8 +1,6 @@
 using System.Text;
-using System.Collections.Immutable;
 using System.Reflection;
 using System.Text.Json;
-using Lunil.CodeGen.Cil.Loading;
 
 namespace Lunil.Cli.Tests;
 
@@ -469,11 +467,11 @@ public sealed class LunilCliTests
     }
 
     [Fact]
-    public async Task BuildAotEmitsAssemblyCanonicalModuleAndManifest()
+    public async Task RemovedAotCliTargetReturnsStableDiagnostic()
     {
         using var fixture = new CliFixture();
         var script = fixture.Write("aot.lua", "return 42");
-        var output = Path.Combine(fixture.Root, "aot");
+        var output = Path.Combine(fixture.Root, "removed");
 
         var result = await fixture.RunAsync(
             "build",
@@ -481,36 +479,37 @@ public sealed class LunilCliTests
             "-o",
             output,
             "--target",
-            "aot");
+            "aot",
+            "--diagnostic-format",
+            "json");
 
-        Assert.Equal(0, result.ExitCode);
-        var assembly = Path.Combine(output, "aot.dll");
-        Assert.True(File.Exists(assembly));
-        Assert.True(File.Exists(Path.Combine(output, "aot.pdb")));
-        Assert.True(File.Exists(Path.Combine(output, "aot.canonical.bin")));
-        Assert.True(File.Exists(Path.Combine(output, "aot.manifest.json")));
-        var validation = LuaAotArtifactLoader.Validate(
-            File.ReadAllBytes(assembly).ToImmutableArray(),
-            File.ReadAllBytes(Path.Combine(output, "aot.pdb")).ToImmutableArray());
-        Assert.True(validation.Succeeded);
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("LUNIL0006", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("removed-feature", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("0.8.0-alpha.12", result.StandardError, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(output));
     }
 
     [Fact]
-    public async Task StrippedAotBuildRemovesAStalePortablePdb()
+    public async Task RemovedAotConfigurationAndEnvironmentReturnStableDiagnostic()
     {
         using var fixture = new CliFixture();
         var script = fixture.Write("aot.lua", "return 42");
-        var output = Path.Combine(fixture.Root, "aot");
+        var output = Path.Combine(fixture.Root, "removed");
+        File.WriteAllText(
+            Path.Combine(fixture.Root, "lunil.json"),
+            "{ \"buildTarget\": \"aot\" }");
 
-        Assert.Equal(0, (await fixture.RunAsync(
-            "build", script, "-o", output, "--target", "aot")).ExitCode);
-        Assert.True(File.Exists(Path.Combine(output, "aot.pdb")));
+        var fromConfiguration = await fixture.RunAsync("build", script, "-o", output);
+        File.Delete(Path.Combine(fixture.Root, "lunil.json"));
+        fixture.Environment["LUNIL_BUILD_TARGET"] = "aot";
+        var fromEnvironment = await fixture.RunAsync("build", script, "-o", output);
 
-        var stripped = await fixture.RunAsync(
-            "build", script, "-o", output, "--target", "aot", "--strip-debug");
-
-        Assert.Equal(0, stripped.ExitCode);
-        Assert.False(File.Exists(Path.Combine(output, "aot.pdb")));
+        Assert.Equal(2, fromConfiguration.ExitCode);
+        Assert.Contains("LUNIL0006", fromConfiguration.StandardError, StringComparison.Ordinal);
+        Assert.Equal(2, fromEnvironment.ExitCode);
+        Assert.Contains("LUNIL0006", fromEnvironment.StandardError, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(output));
     }
 
     [Fact]

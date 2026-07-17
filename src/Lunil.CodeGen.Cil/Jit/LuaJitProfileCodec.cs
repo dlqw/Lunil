@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
-using Lunil.CodeGen.Cil.Caching;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 
@@ -40,7 +39,7 @@ public static class LuaJitProfileDiagnosticCodes
 
 public static class LuaJitProfileCodec
 {
-    public const int CurrentSchemaVersion = LuaBackendCacheKey.CurrentProfileSchemaVersion;
+    public const int CurrentSchemaVersion = 1;
     public const int CurrentCodegenVersion = 1;
 
     private const string Magic = "LUNIL-JIT-PROFILE";
@@ -72,7 +71,7 @@ public static class LuaJitProfileCodec
             .OrderBy(static entry => entry.FunctionId)
             .ToImmutableArray();
         var profile = new LuaJitModuleProfile(
-            LuaAotModuleIdentity.ComputeContentId(module),
+            LuaJitModuleIdentity.Create(module),
             entries);
         Validate(module, profile);
 
@@ -141,7 +140,7 @@ public static class LuaJitProfileCodec
             var moduleContentId = ReadString(reader);
             if (!string.Equals(
                 moduleContentId,
-                LuaAotModuleIdentity.ComputeContentId(module),
+                LuaJitModuleIdentity.Create(module),
                 StringComparison.Ordinal))
             {
                 throw Incompatible("Profile module identity does not match the requested module.");
@@ -320,7 +319,7 @@ public static class LuaJitProfileCodec
     {
         if (!IsHash(profile.ModuleContentId) || !string.Equals(
             profile.ModuleContentId,
-            LuaAotModuleIdentity.ComputeContentId(module),
+            LuaJitModuleIdentity.Create(module),
             StringComparison.Ordinal))
         {
             throw Incompatible("Profile module identity is incompatible.");
