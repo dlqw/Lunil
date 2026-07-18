@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "release": "0.9.0-alpha.4",
+  "source": {
+    "productCommit": "8f90032787aba5d4d77d8443964f02f2c860bb13",
+    "backendWorkflowRun": 29651857836,
+    "crossRuntimeWorkflowRun": 29651868383,
+    "rids": [
+      "win-x64",
+      "win-arm64",
+      "linux-x64",
+      "linux-arm64",
+      "osx-x64",
+      "osx-arm64"
+    ],
+    "workloads": 8,
+    "rounds": 6,
+    "targetMilliseconds": 250,
+    "baselineEngine": "lua54",
+    "comparisonEngine": "moonsharp",
+    "complete": true,
+    "performanceGatePassed": true
+  },
+  "overall": [
+    { "engine": "LuaJIT", "speedupVsNativeLua": 11.214656157544717, "speedupVsMoonSharp": 159.27480974589048, "kind": "reference" },
+    { "engine": "Native Lua 5.4", "speedupVsNativeLua": 1.0, "speedupVsMoonSharp": 14.2159924309487, "kind": "reference" },
+    { "engine": "Lunil Tier 2", "speedupVsNativeLua": 1.3280459792279815, "speedupVsMoonSharp": 18.955734582792765, "kind": "lunil" },
+    { "engine": "Lunil Auto JIT", "speedupVsNativeLua": 1.3255069953934, "speedupVsMoonSharp": 18.8634808467811, "kind": "lunil-primary" },
+    { "engine": "Lunil Loop OSR", "speedupVsNativeLua": 0.14651315760581612, "speedupVsMoonSharp": 2.0830043172039145, "kind": "lunil" },
+    { "engine": "Lunil Tier 1", "speedupVsNativeLua": 0.10597823313494432, "speedupVsMoonSharp": 1.5121984277204663, "kind": "lunil" },
+    { "engine": "MoonSharp", "speedupVsNativeLua": 0.07035074718603845, "speedupVsMoonSharp": 1.0, "kind": "reference" },
+    { "engine": "Lunil interpreter", "speedupVsNativeLua": 0.050875459361814326, "speedupVsMoonSharp": 0.7244336885357506, "kind": "lunil" }
+  ],
+  "autoWorkloads": [
+    { "workload": "arithmetic", "speedupVsNativeLua": 1.1059040209297057, "speedupVsMoonSharp": 24.262058412056025 },
+    { "workload": "fib_iter", "speedupVsNativeLua": 3.2793286649397784, "speedupVsMoonSharp": 45.42425869653754 },
+    { "workload": "mandelbrot", "speedupVsNativeLua": 4.306750256648081, "speedupVsMoonSharp": 64.84065613733127 },
+    { "workload": "control_flow", "speedupVsNativeLua": 1.9367986796138983, "speedupVsMoonSharp": 31.870848903015762 },
+    { "workload": "function_calls", "speedupVsNativeLua": 2.3483526288783296, "speedupVsMoonSharp": 31.869882019886973 },
+    { "workload": "table_access", "speedupVsNativeLua": 0.4552080044718272, "speedupVsMoonSharp": 11.82951875906996 },
+    { "workload": "sieve", "speedupVsNativeLua": 0.4980215260055009, "speedupVsMoonSharp": 12.380421512861288 },
+    { "workload": "string_build", "speedupVsNativeLua": 0.5916955806472122, "speedupVsMoonSharp": 1.5081175517401542 }
+  ],
+  "tier2Workloads": [
+    { "workload": "arithmetic", "speedupVsNativeLua": 1.0957259662061234, "speedupVsMoonSharp": 24.358411000044637 },
+    { "workload": "fib_iter", "speedupVsNativeLua": 3.4160559215386446, "speedupVsMoonSharp": 47.91303247871087 },
+    { "workload": "mandelbrot", "speedupVsNativeLua": 4.251605636584812, "speedupVsMoonSharp": 63.75983699760848 },
+    { "workload": "control_flow", "speedupVsNativeLua": 1.9551624761188993, "speedupVsMoonSharp": 32.10058088534502 },
+    { "workload": "function_calls", "speedupVsNativeLua": 2.3478053914608195, "speedupVsMoonSharp": 32.05225058906379 },
+    { "workload": "table_access", "speedupVsNativeLua": 0.45628000504489874, "speedupVsMoonSharp": 11.86295429771728 },
+    { "workload": "sieve", "speedupVsNativeLua": 0.49048773745674706, "speedupVsMoonSharp": 12.271723069579451 },
+    { "workload": "string_build", "speedupVsNativeLua": 0.591861990242809, "speedupVsMoonSharp": 1.4955650844698736 }
+  ],
+  "targets": {
+    "functionCallsMinimumVsNativeLua": 1.5,
+    "mandelbrotMinimumVsNativeLua": 0.75,
+    "functionCallsPassed": true,
+    "mandelbrotPassed": true
+  },
+  "backendCosts": {
+    "tier2MaximumCompilationP95Milliseconds": 3.485,
+    "tier2MaximumCompileAllocatedP95Bytes": 252664,
+    "tier2MaximumRegionAllocationSlopeBytesPerInstruction": 22408,
+    "loopOsrMaximumCompilationP95Milliseconds": 4.7765,
+    "loopOsrMaximumPreparationP95Milliseconds": 0.086,
+    "loopOsrMaximumCompileAllocatedP95Bytes": 193864,
+    "loopOsrMaximumRegionAllocationSlopeBytesPerInstruction": 15278.857143,
+    "maximumExecutionAllocationRatioVs080": 1.01397624039133,
+    "maximumEstimatedCodeSizeRatioVs080": 1.12421635806969
+  }
+}

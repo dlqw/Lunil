@@ -903,6 +903,7 @@ internal static class ReflectionEmitLuaTier2Compiler
                         var inlineFallback = generator.DefineLabel();
                         ReflectionEmitLuaDirectCallCompiler.EmitInline(
                             boundDirectCall.Function,
+                            boundDirectCall.TypePlan,
                             new ReflectionEmitLuaNumericRegionIlGenerator(generator),
                             instruction.A,
                             instruction.C,

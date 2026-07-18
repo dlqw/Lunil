@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <VersionPrefix>0.9.0</VersionPrefix>
-    <VersionSuffix>alpha.3</VersionSuffix>
+    <VersionSuffix>alpha.4</VersionSuffix>
     <Product>Lunil</Product>
     <Authors>rdququ</Authors>
     <Description>Lunil Lua 5.4 compiler and runtime component.</Description>

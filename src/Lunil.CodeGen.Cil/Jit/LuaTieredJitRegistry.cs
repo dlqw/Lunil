@@ -1067,6 +1067,7 @@ internal sealed class LuaTieredJitRegistry :
                 generation.CompleteInvalidation();
             }
         }
+        _boundDirectCallCounters.Dispose();
         if (calledFromWorker)
         {
             _ = DisposeCancellationWhenWorkersCompleteAsync();

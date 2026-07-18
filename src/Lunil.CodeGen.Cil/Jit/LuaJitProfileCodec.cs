@@ -39,7 +39,7 @@ public static class LuaJitProfileDiagnosticCodes
 
 public static class LuaJitProfileCodec
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const int CurrentCodegenVersion = 1;
 
     private const string Magic = "LUNIL-JIT-PROFILE";
@@ -205,6 +205,11 @@ public static class LuaJitProfileCodec
             writer.Write((ushort)site.FirstOperandKinds);
             writer.Write((ushort)site.SecondOperandKinds);
             writer.Write((ushort)site.ThirdOperandKinds);
+            writer.Write(site.CallArgumentKinds.Length);
+            foreach (var kinds in site.CallArgumentKinds)
+            {
+                writer.Write((ushort)kinds);
+            }
             writer.Write(site.BranchTaken);
             writer.Write(site.BranchNotTaken);
             writer.Write(site.IsMegamorphic);
@@ -265,6 +270,13 @@ public static class LuaJitProfileCodec
             var firstKinds = (LuaJitValueKinds)reader.ReadUInt16();
             var secondKinds = (LuaJitValueKinds)reader.ReadUInt16();
             var thirdKinds = (LuaJitValueKinds)reader.ReadUInt16();
+            var callArgumentCount = ReadCount(reader, 255, "call argument");
+            var callArguments = ImmutableArray.CreateBuilder<LuaJitValueKinds>(
+                callArgumentCount);
+            for (var argument = 0; argument < callArgumentCount; argument++)
+            {
+                callArguments.Add((LuaJitValueKinds)reader.ReadUInt16());
+            }
             var branchTaken = reader.ReadInt64();
             var branchNotTaken = reader.ReadInt64();
             var megamorphic = ReadBoolean(reader);
@@ -304,7 +316,10 @@ public static class LuaJitProfileCodec
                 branchNotTaken,
                 megamorphic,
                 shapes.MoveToImmutable(),
-                targets.MoveToImmutable()));
+                targets.MoveToImmutable())
+            {
+                CallArgumentKinds = callArguments.MoveToImmutable(),
+            });
         }
 
         return new LuaJitFunctionProfileEntry(
@@ -356,15 +371,22 @@ public static class LuaJitProfileCodec
         long siteSampleTotal = 0;
         foreach (var site in profile.Sites)
         {
+            var instruction = (uint)site.ProgramCounter < (uint)function.Instructions.Length
+                ? function.Instructions[site.ProgramCounter]
+                : default;
             if (site.ProgramCounter < 0 ||
                 site.ProgramCounter >= function.Instructions.Length ||
                 !seenSites.Add(site.ProgramCounter) ||
-                site.Opcode != function.Instructions[site.ProgramCounter].Opcode ||
+                site.Opcode != instruction.Opcode ||
                 site.Samples < 0 || site.BranchTaken < 0 || site.BranchNotTaken < 0 ||
                 site.BranchTaken > site.Samples || site.BranchNotTaken > site.Samples ||
                 !AreKindsValid(site.FirstOperandKinds) ||
                 !AreKindsValid(site.SecondOperandKinds) ||
                 !AreKindsValid(site.ThirdOperandKinds) ||
+                site.CallArgumentKinds.Any(static kinds => !AreKindsValid(kinds)) ||
+                (site.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall
+                    ? site.CallArgumentKinds.Length != Math.Max(0, instruction.B)
+                    : !site.CallArgumentKinds.IsDefaultOrEmpty) ||
                 site.BranchTaken > site.Samples - Math.Min(site.BranchNotTaken, site.Samples))
             {
                 throw InvalidProfile("Profile site counters or opcode identity are invalid.");

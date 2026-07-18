@@ -659,7 +659,7 @@ namespace Lunil.CodeGen.Cil.Jit
 
     public static class LuaJitProfileCodec
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
         public const int CurrentCodegenVersion = 1;
         public static byte[] Serialize(Lunil.IR.Canonical.LuaIrModule module, System.Collections.Generic.IReadOnlyList<Lunil.CodeGen.Cil.Jit.LuaJitFunctionProfile> profiles) => throw null;
         public static Lunil.CodeGen.Cil.Jit.LuaJitModuleProfile Deserialize(Lunil.IR.Canonical.LuaIrModule module, System.ReadOnlySpan<byte> payload) => throw null;
@@ -741,6 +741,7 @@ namespace Lunil.CodeGen.Cil.Jit
         public bool IsMegamorphic { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitTableShapeProfile> TableShapes { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitCallTargetProfile> CallTargets { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitValueKinds> CallArgumentKinds { get => throw null; init { } }
         public LuaJitSiteProfile(int ProgramCounter, Lunil.IR.Canonical.LuaIrOpcode Opcode, long Samples, Lunil.CodeGen.Cil.Jit.LuaJitValueKinds FirstOperandKinds, Lunil.CodeGen.Cil.Jit.LuaJitValueKinds SecondOperandKinds, Lunil.CodeGen.Cil.Jit.LuaJitValueKinds ThirdOperandKinds, long BranchTaken, long BranchNotTaken, bool IsMegamorphic, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitTableShapeProfile> TableShapes, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitCallTargetProfile> CallTargets) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitSiteProfile? left, Lunil.CodeGen.Cil.Jit.LuaJitSiteProfile? right) => throw null;
