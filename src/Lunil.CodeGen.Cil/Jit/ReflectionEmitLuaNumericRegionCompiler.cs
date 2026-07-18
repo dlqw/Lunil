@@ -127,8 +127,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         nameof(LuaTier2RuntimeSites.GetTableSite),
         [typeof(int)]);
     private static readonly MethodInfo TryGetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryGetCompilerProvenIntegerTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TryGetCompilerProvenIntegerTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
@@ -137,8 +137,18 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(LuaValue).MakeByRefType(),
         ]);
     private static readonly MethodInfo TrySetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TrySetCompilerProvenIntegerTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(long),
+            typeof(LuaValue),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableNonCollectableValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
@@ -147,22 +157,35 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(LuaValue),
         ]);
     private static readonly MethodInfo TryGetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryGetCompilerProvenStringTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaValue).MakeByRefType(),
         ]);
     private static readonly MethodInfo TrySetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TrySetCompilerProvenStringTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaValue),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenStringTableNonCollectableValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableNonCollectableValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaValue),
         ]);
@@ -389,6 +412,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var tableSiteLocals = plan.TableSites.ToDictionary(
             static site => site.ProgramCounter,
             _ => generator.DeclareLocal(typeof(LuaCodegenTableSiteCache)));
+        var tableRegionSiteLocals = plan.TableSites.ToDictionary(
+            static site => site.ProgramCounter,
+            _ => generator.DeclareLocal(typeof(LuaCodegenTableRegionSite)));
         var tableDefinitionLocals = plan.TableSites
             .Select(static site => site.TableDefinitionProgramCounter)
             .Distinct()
@@ -563,6 +589,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 valueLocals,
                 dirtyLocals,
                 tableSiteLocals,
+                tableRegionSiteLocals,
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
@@ -600,6 +627,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 valueLocals,
                 dirtyLocals,
                 tableSiteLocals,
+                tableRegionSiteLocals,
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
@@ -964,6 +992,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         Dictionary<int, LuaNumericIlLocal> tableSiteLocals,
+        Dictionary<int, LuaNumericIlLocal> tableRegionSiteLocals,
         Dictionary<int, LuaNumericIlLocal> tableDefinitionLocals,
         Dictionary<int, LuaNumericIlLocal> taggedConstantLocals,
         LuaNumericIlLocal taggedValue,
@@ -1244,6 +1273,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                     tableSite,
                     valueLocals,
                     tableSiteLocals[pc],
+                    tableRegionSiteLocals[pc],
                     tableDefinitionLocals[tableSite.TableDefinitionProgramCounter],
                     taggedValue,
                     semanticDeopt);
@@ -1326,6 +1356,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionTableSite tableSite,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> locals,
         LuaNumericIlLocal siteLocal,
+        LuaNumericIlLocal regionSiteLocal,
         LuaNumericIlLocal tableLocal,
         LuaNumericIlLocal taggedValue,
         LuaNumericIlLabel semanticDeopt)
@@ -1339,6 +1370,31 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
 
         var targetRegister = isGet ? instruction.B : instruction.A;
         var keyRegister = isGet ? instruction.C : instruction.B;
+        if (isGet && tableSite.ForwardedValueRegister >= 0)
+        {
+            var forwardedKind = plan.GetKindBefore(
+                programCounter,
+                tableSite.ForwardedValueRegister);
+            EmitLoadTaggedLocal(
+                generator,
+                NumericLocal(
+                    locals,
+                    tableSite.ForwardedValueRegister,
+                    forwardedKind),
+                forwardedKind);
+            generator.Emit(OpCodes.Stloc, taggedValue);
+            EmitStoreGuardedTaggedValue(
+                generator,
+                taggedValue,
+                NumericLocal(
+                    locals,
+                    instruction.A,
+                    plan.GetKindAfter(programCounter, instruction.A)),
+                plan.GetKindAfter(programCounter, instruction.A),
+                semanticDeopt);
+            return;
+        }
+
         generator.Emit(OpCodes.Ldloca, tableLocal);
         generator.Emit(
             OpCodes.Ldloc,
@@ -1348,6 +1404,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 LuaNumericRegionValueKind.Tagged));
         generator.Emit(OpCodes.Ldloc, siteLocal);
         var keyKind = plan.GetKindBefore(programCounter, keyRegister);
+        if (keyKind == LuaNumericRegionValueKind.Tagged)
+        {
+            generator.Emit(OpCodes.Ldloca, regionSiteLocal);
+        }
+
         generator.Emit(
             OpCodes.Ldloc,
             NumericLocal(
@@ -1383,8 +1444,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(
             OpCodes.Call,
             keyKind == LuaNumericRegionValueKind.Integer
-                ? TrySetCompilerProvenIntegerTableValue
-                : TrySetCompilerProvenStringTableValue);
+                ? valueKind == LuaNumericRegionValueKind.Tagged
+                    ? TrySetCompilerProvenIntegerTableValue
+                    : TrySetCompilerProvenIntegerTableNonCollectableValue
+                : valueKind == LuaNumericRegionValueKind.Tagged
+                    ? TrySetCompilerProvenStringTableValue
+                    : TrySetCompilerProvenStringTableNonCollectableValue);
         generator.Emit(OpCodes.Brfalse, semanticDeopt);
     }
 

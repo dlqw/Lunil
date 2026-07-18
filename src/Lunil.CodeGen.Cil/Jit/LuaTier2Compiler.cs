@@ -354,11 +354,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             optimized);
         if (status == LuaTier2NumericSpecializationStatus.Eligible)
         {
-            var hasLoopCall = Enumerable.Range(0, function.Instructions.Length).Any(pc =>
-                function.Instructions[pc].Opcode is (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
-                IsInsideLoop(function, pc) &&
-                (!optimized.TryGetValue(pc, out var optimization) ||
-                 optimization.Kind != LuaJitOptimizationKind.KnownClosureCall));
+            var hasLoopCall = HasHotUnboundLoopCall(function, profile, optimized);
             var hasTablePic = optimized.Values.Any(static optimization =>
                 optimization.Kind is LuaJitOptimizationKind.TableGetPic or
                     LuaJitOptimizationKind.TableSetPic);
@@ -427,6 +423,34 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 : LuaJitTier2CodeKind.ManagedProfileProgram);
     }
 
+    private static bool HasHotUnboundLoopCall(
+        LuaIrFunction function,
+        LuaJitFunctionProfile profile,
+        ImmutableDictionary<int, OptimizedInstruction> optimized)
+    {
+        const int MaximumColdCallHotnessDivisor = 16;
+        var maximumLoopSamples = profile.Sites
+            .Where(site => IsInsideLoop(function, site.ProgramCounter))
+            .Select(static site => site.Samples)
+            .DefaultIfEmpty(0)
+            .Max();
+        var minimumHotCallSamples = Math.Max(
+            1,
+            maximumLoopSamples / MaximumColdCallHotnessDivisor +
+            (maximumLoopSamples % MaximumColdCallHotnessDivisor == 0 ? 0 : 1));
+        var samplesByProgramCounter = profile.Sites.ToDictionary(
+            static site => site.ProgramCounter,
+            static site => site.Samples);
+
+        return Enumerable.Range(0, function.Instructions.Length).Any(pc =>
+            function.Instructions[pc].Opcode is (LuaIrOpcode.Call or LuaIrOpcode.TailCall) &&
+            IsInsideLoop(function, pc) &&
+            (!optimized.TryGetValue(pc, out var optimization) ||
+             optimization.Kind != LuaJitOptimizationKind.KnownClosureCall) &&
+            (!samplesByProgramCounter.TryGetValue(pc, out var samples) ||
+             samples >= minimumHotCallSamples));
+    }
+
     private static bool HasNonNumericSpecialization(
         ImmutableDictionary<int, OptimizedInstruction> optimized) =>
         optimized.Values.Any(static optimization => optimization.Kind is
@@ -473,7 +497,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 cancellationToken);
             if (plan is not null)
             {
-                candidates.Add(plan);
+                candidates.Add(AddTableReadForwarding(function, plan));
             }
         }
 
@@ -498,6 +522,151 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             .ThenBy(static candidate => candidate.Region.BackedgeProgramCounter)
             .ToImmutableArray();
     }
+
+    private static LuaNumericRegionPlan AddTableReadForwarding(
+        LuaIrFunction function,
+        LuaNumericRegionPlan plan)
+    {
+        if (plan.TableSites.IsEmpty)
+        {
+            return plan;
+        }
+
+        var sites = plan.TableSites.ToDictionary(static site => site.ProgramCounter);
+        foreach (var block in function.BasicBlocks)
+        {
+            var startsInsideRegion = plan.Contains(block.Start);
+            if (!startsInsideRegion)
+            {
+                continue;
+            }
+
+            var origins = new int[function.RegisterCount];
+            for (var register = 0; register < origins.Length; register++)
+            {
+                origins[register] = -(register + 1);
+            }
+
+            var stores = new Dictionary<(
+                int TableDefinition,
+                int KeyOrigin,
+                LuaNumericRegionValueKind KeyKind), (int ProgramCounter, int ValueOrigin)>();
+            for (var pc = block.Start; pc < block.End && plan.Contains(pc); pc++)
+            {
+                var instruction = function.Instructions[pc];
+                if (sites.TryGetValue(pc, out var site))
+                {
+                    var keyRegister = site.Operation == LuaNumericRegionTableOperation.Get
+                        ? instruction.C
+                        : instruction.B;
+                    var keyKind = plan.GetKindBefore(pc, keyRegister);
+                    var key = (
+                        site.TableDefinitionProgramCounter,
+                        origins[keyRegister],
+                        keyKind);
+                    if (site.Operation == LuaNumericRegionTableOperation.Get)
+                    {
+                        if (stores.TryGetValue(key, out var store))
+                        {
+                            var valueRegister = Array.IndexOf(origins, store.ValueOrigin);
+                            if (valueRegister < 0)
+                            {
+                                continue;
+                            }
+
+                            sites[pc] = site with
+                            {
+                                ForwardedSetProgramCounter = store.ProgramCounter,
+                                ForwardedValueRegister = valueRegister,
+                            };
+                        }
+                    }
+                    else
+                    {
+                        foreach (var candidate in stores.Keys
+                                     .Where(candidate =>
+                                         candidate.TableDefinition == key.Item1 &&
+                                         candidate.KeyKind == keyKind)
+                                     .ToArray())
+                        {
+                            stores.Remove(candidate);
+                        }
+
+                        stores[key] = (pc, origins[instruction.C]);
+                    }
+                }
+
+                if (instruction.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall)
+                {
+                    stores.Clear();
+                }
+
+                ApplySymbolicOrigins(function, pc, instruction, origins);
+            }
+        }
+
+        return plan with
+        {
+            TableSites = plan.TableSites
+                .Select(site => sites[site.ProgramCounter])
+                .ToImmutableArray(),
+        };
+    }
+
+    private static void ApplySymbolicOrigins(
+        LuaIrFunction function,
+        int programCounter,
+        LuaIrInstruction instruction,
+        int[] origins)
+    {
+        void Write(int register)
+        {
+            if ((uint)register < (uint)origins.Length)
+            {
+                origins[register] = checked((programCounter + 1) * (origins.Length + 1) + register);
+            }
+        }
+
+        switch (instruction.Opcode)
+        {
+            case LuaIrOpcode.LoadConstant:
+                origins[instruction.A] = checked(
+                    int.MaxValue - function.Constants.Length + instruction.B);
+                break;
+            case LuaIrOpcode.Move:
+                origins[instruction.A] = origins[instruction.B];
+                break;
+            case LuaIrOpcode.GetTable:
+            case LuaIrOpcode.Unary:
+            case LuaIrOpcode.Binary:
+            case LuaIrOpcode.NewTable:
+            case LuaIrOpcode.GetUpvalue:
+            case LuaIrOpcode.Closure:
+            case LuaIrOpcode.VarArg:
+                Write(instruction.A);
+                break;
+            case LuaIrOpcode.NumericForLoop:
+                Write(instruction.A);
+                Write(instruction.A + 1);
+                Write(instruction.A + 3);
+                break;
+            case LuaIrOpcode.Call:
+                for (var register = instruction.A; register < origins.Length; register++)
+                {
+                    Write(register);
+                }
+
+                break;
+            case LuaIrOpcode.SetTop:
+                for (var register = instruction.A; register < origins.Length; register++)
+                {
+                    Write(register);
+                }
+
+                break;
+        }
+    }
+
 
     private static ImmutableArray<LuaNumericRegionTypeHint> BuildNumericRegionHints(
         LuaIrFunction function,

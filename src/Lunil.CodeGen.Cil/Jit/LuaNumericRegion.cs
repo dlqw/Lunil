@@ -41,7 +41,9 @@ internal enum LuaNumericRegionTableOperation : byte
 internal readonly record struct LuaNumericRegionTableSite(
     int ProgramCounter,
     int TableDefinitionProgramCounter,
-    LuaNumericRegionTableOperation Operation);
+    LuaNumericRegionTableOperation Operation,
+    int ForwardedSetProgramCounter = -1,
+    int ForwardedValueRegister = -1);
 
 /// <summary>
 /// Static accounting for one canonical instruction in a numeric region. Hot execution charges
