@@ -78,8 +78,20 @@ function New-WorkloadSvg($Report) {
     $plotLeft = 250
     $plotRight = 1030
     $plotWidth = $plotRight - $plotLeft
-    $maximum = 3.2
-    $ticks = @(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
+    $observedMaximum = ($Report.autoWorkloads |
+        Measure-Object -Property speedupVsNativeLua -Maximum).Maximum
+    $maximum = if ([double]$observedMaximum -le 3.2) {
+        3.2
+    }
+    else {
+        [Math]::Ceiling([double]$observedMaximum)
+    }
+    $ticks = if ($maximum -eq 3.2) {
+        @(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
+    }
+    else {
+        @(0..([int]$maximum))
+    }
     $displayNames = @{
         arithmetic = 'Arithmetic'
         fib_iter = 'Iterative Fibonacci'

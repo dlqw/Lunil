@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.3-7c3aed?style=flat-square">
+  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.4-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,52 +28,52 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 
 > [!NOTE]
 > Stable `0.8.0` is the supported release and benchmark baseline. The current source is
-> `0.9.0-alpha.3`; Alpha builds may change API and backend behavior before feature freeze.
+> `0.9.0-alpha.4`; Alpha builds may change API and backend behavior before feature freeze.
 
 ## Performance
 
-The current `0.9.0-alpha.3` report uses identical Lua source across eight workloads, six balanced
+The current `0.9.0-alpha.4` report uses identical Lua source across eight workloads, six balanced
 rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
 
 | Engine | Geomean vs native Lua | Geomean vs MoonSharp |
 | --- | ---: | ---: |
-| LuaJIT | 11.236x | 159.381x |
-| Native Lua 5.4 | 1.000x | 14.225x |
-| Lunil Tier 2 | 0.955x | 13.530x |
-| **Lunil Auto JIT** | **0.947x** | **13.479x** |
-| Lunil Loop OSR | 0.146x | 2.078x |
-| Lunil Tier 1 | 0.105x | 1.495x |
+| LuaJIT | 11.215x | 159.275x |
+| Native Lua 5.4 | 1.000x | 14.216x |
+| Lunil Tier 2 | 1.328x | 18.956x |
+| **Lunil Auto JIT** | **1.326x** | **18.863x** |
+| Lunil Loop OSR | 0.147x | 2.083x |
+| Lunil Tier 1 | 0.106x | 1.512x |
 | MoonSharp | 0.070x | 1.000x |
-| Lunil interpreter | 0.050x | 0.712x |
+| Lunil interpreter | 0.051x | 0.724x |
 
-![Lunil 0.9.0-alpha.3 runtime comparison](assets/performance/0.9.0-alpha.3-runtime-overview.svg)
+![Lunil 0.9.0-alpha.4 runtime comparison](assets/performance/0.9.0-alpha.4-runtime-overview.svg)
 
 | Auto JIT workload | Vs native Lua | Vs MoonSharp |
 | --- | ---: | ---: |
-| Arithmetic | 1.108x | 24.851x |
-| Iterative Fibonacci | 2.871x | 40.528x |
-| Mandelbrot | 0.569x | 8.560x |
-| Control flow | 2.064x | 33.104x |
-| Function calls | 1.289x | 17.335x |
-| Table access | 0.457x | 11.891x |
-| Prime sieve | 0.501x | 12.559x |
-| String build | 0.585x | 1.475x |
+| Arithmetic | 1.106x | 24.262x |
+| Iterative Fibonacci | 3.279x | 45.424x |
+| Mandelbrot | 4.307x | 64.841x |
+| Control flow | 1.937x | 31.871x |
+| Function calls | 2.348x | 31.870x |
+| Table access | 0.455x | 11.830x |
+| Prime sieve | 0.498x | 12.380x |
+| String build | 0.592x | 1.508x |
 
-![Lunil 0.9.0-alpha.3 Auto JIT by workload](assets/performance/0.9.0-alpha.3-auto-workloads.svg)
+![Lunil 0.9.0-alpha.4 Auto JIT by workload](assets/performance/0.9.0-alpha.4-auto-workloads.svg)
 
-The table-focused Alpha release moves `table_access` from `0.299x` to `0.457x` native Lua and
-`sieve` from `0.059x` to `0.501x`. The rows below are independent six-RID qualification runs,
-not paired same-machine speedups.
+The calls and floating-point release moves `function_calls` from `1.204x` to `2.348x` native Lua
+and `mandelbrot` from `0.559x` to `4.307x`. The rows below are independent six-RID qualification
+runs, not paired same-machine speedups.
 
-| Version | Auto overall | Table access | Prime sieve |
+| Version | Auto overall | Function calls | Mandelbrot |
 | --- | ---: | ---: | ---: |
-| Stable `0.8.0` | 0.680x | 0.299x | 0.059x |
-| `0.9.0-alpha.2` | 0.697x | 0.292x | 0.060x |
-| **`0.9.0-alpha.3`** | **0.947x** | **0.457x** | **0.501x** |
+| Stable `0.8.0` | 0.680x | 1.204x | 0.559x |
+| `0.9.0-alpha.3` | 0.947x | 1.289x | 0.569x |
+| **`0.9.0-alpha.4`** | **1.326x** | **2.348x** | **4.307x** |
 
 The current source also passes backend correctness, NativeAOT, trimming, package/API, route,
 telemetry, startup, allocation, and code-size qualification. The
-[machine-readable report](benchmarks/results/0.9.0-alpha.3-performance.json) includes exact values
+[machine-readable report](benchmarks/results/0.9.0-alpha.4-performance.json) includes exact values
 and backend costs.
 
 See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
