@@ -6,11 +6,10 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.8.0</VersionPrefix>
-<VersionSuffix>rc.1</VersionSuffix>
 ```
 
-The resulting source/package version is `0.8.0-rc.1` and its eventual immutable tag is
-`v0.8.0-rc.1`. A stable release omits `VersionSuffix` only after an accepted RC.
+The resulting source/package version is stable `0.8.0` and its immutable tag is `v0.8.0`.
+`VersionSuffix` was removed only after accepting `0.8.0-rc.1`.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -121,7 +120,7 @@ Stable `0.7.0` removes the suffix from that accepted candidate without product-c
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
-## Current `0.8.0-rc.1` decision
+## Current stable `0.8.0` decision
 
 The `0.8.0` Alpha sequence has completed the planned backend feature work: `alpha.12` removed the
 persisted/static Lua AOT product and converted remaining JIT accounting to 64-bit; `alpha.13`
@@ -138,17 +137,18 @@ canonical-IR, JIT-profile, and evidence-schema scope. The accepted surface is re
 only compatibility, diagnostics, documentation, reliability, release-gate, and
 performance-convergence fixes. New backend/API/IR features move to `0.9.0-alpha.1`.
 
-The `api/0.8.0` declarations freeze 13 assemblies and 13 packages for the rest of the `0.8` line.
-`api/0.7.0` remains identical to stable `v0.7.0`. The accepted Beta passed PR CI `29631254293`,
-main-branch CI `29631768624`, six-RID cross-runtime run `29631273661`, and tag release run
-`29632182814`; the immutable `v0.8.0-beta.1` prerelease contains six RID bundles and all 13 normal
-and symbol packages. `0.8.0-rc.1` carries that product forward without product-code, public-API,
-or package-scope changes. The suffix is removed only after the candidate repeats the full gates
-without finding a release blocker.
+The `api/0.8.0` declarations freeze 13 assemblies and 13 packages for the `0.8` line; `api/0.7.0`
+remains identical to stable `v0.7.0`. The accepted RC passed PR CI `29632482787`, six-RID
+cross-runtime run `29632487596`, main-branch CI `29633023894`, and tag release run `29633451523`.
+The immutable `v0.8.0-rc.1` prerelease contains six RID bundles and all 13 normal and symbol
+packages. Stable `0.8.0` removes the suffix from that product without product-code, public-API,
+package-scope, canonical-IR, JIT-profile, or evidence-schema changes.
 
 The Lua AOT removal is a frozen breaking change relative to stable `0.7.0` and is never backported
 to `0.7.x` patches. Stable patches remain backward-compatible; later public API/backend redesign
 starts on the next minor line rather than being hidden in a patch or reused prerelease number.
+Backward-compatible fixes to stable `0.8.0` use `0.8.1`; new feature/API/backend work starts at
+`0.9.0-alpha.1`.
 
 ## Release procedure
 
