@@ -16,6 +16,10 @@ TestResults/
 # Local agent instructions and working material
 .codex/
 AGENTS.md
+CLAUDE.md
+.claude/
+.mcp.json
+.codegraph/
 
 .ai_proc/
 
