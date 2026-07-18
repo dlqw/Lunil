@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.4-7c3aed?style=flat-square">
+  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.5-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -26,12 +26,12 @@ Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.4`；Alpha 阶段的
+> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.5`；Alpha 阶段的
 > API 与后端行为在功能冻结前仍可能变化。
 
 ## 性能
 
-当前 `0.9.0-alpha.4` 使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
+`0.9.0-alpha.4` 的发布资格测量使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
 上测试。原生 PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。
 
 | 引擎 | 相对原生 Lua 几何均值 | 相对 MoonSharp 几何均值 |
@@ -70,9 +70,22 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 | `0.9.0-alpha.3` | 0.947x | 1.289x | 0.569x |
 | **`0.9.0-alpha.4`** | **1.326x** | **2.348x** | **4.307x** |
 
-当前源码也通过了后端正确性、NativeAOT、trimming、包/API、路由、telemetry、启动、分配和
+Alpha 4 资格版本也通过了后端正确性、NativeAOT、trimming、包/API、路由、telemetry、启动、分配和
 code-size 资格验证。[机器可读报告](benchmarks/results/0.9.0-alpha.4-performance.json)包含精确值与
 后端成本。
+
+### Alpha 5 字符串构建资格测量
+
+Alpha 5 聚焦临时字符串分配、拼接和 `table.concat`。当前单 RID 的 win-x64 资格样本使用六轮平衡采样，
+并以原生 Lua 作为归一化基线；该样本与发布矩阵分开报告：
+
+| 引擎 | 中位 CPU/操作 | 相对原生 Lua | 相对 MoonSharp |
+| --- | ---: | ---: | ---: |
+| 原生 Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
+| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | 已记录基线 |
+| MoonSharp | 283.203 µs | 0.508x | 1.000x |
+
+![Lunil 0.9.0-alpha.5 字符串构建对比](assets/performance/0.9.0-alpha.5-string-build.svg)
 
 测试方法、源数据、置信门禁与复现命令见[性能文档](docs/performance.md)；下一阶段量化目标见
 [`0.9.0` 路线图](docs/roadmap-0.9.0.md)。
@@ -85,8 +98,8 @@ code-size 资格验证。[机器可读报告](benchmarks/results/0.9.0-alpha.4-p
   分析、canonical lowering 与独立 IR 验证。
 - **托管运行时**：显式 Lua value、table、closure、thread、upvalue、资源预算、protected error、
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
-- **分级执行**：参考解释器、经过收益资格检查的 Tier 1、带守卫的 Tier 2，以及共享同一特化契约
-  的 loop backedge 入口。
+- **分级执行**：参考解释器、经过收益资格检查的 Tier 1 和带守卫的 Tier 2。Loop OSR 是把运行中
+  的循环通过回边切入同一专用代码的入口机制，而不是额外的执行级别。
 - **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
@@ -200,8 +213,7 @@ flowchart LR
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
 - 稳定线：`0.8.x`；当前开发线：`0.9.0-alpha.N`。
 
-相对 `0.7.0` 的破坏性变更（包括移除 Lua persisted/static AOT）见
-[`0.8.0` 迁移指南](docs/migration-0.8.0.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
+兼容性变更和部署说明见 [`0.8.0` 迁移指南](docs/migration-0.8.0.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
 [.NET NativeAOT 与 trimming](docs/nativeaot-build-integration.md)。
 
 ## 文档
