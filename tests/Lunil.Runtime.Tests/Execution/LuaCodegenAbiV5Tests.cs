@@ -59,6 +59,16 @@ public sealed class LuaCodegenAbiV5Tests
             cache,
             3,
             LuaValue.FromInteger(30)));
+
+        table.SetMetatable(null);
+        var collectable = state.CreateTable();
+        Assert.False(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            3,
+            LuaValue.FromTable(collectable)));
+        Assert.True(table.Get(LuaValue.FromInteger(3)).IsNil);
     }
 
     [Fact]

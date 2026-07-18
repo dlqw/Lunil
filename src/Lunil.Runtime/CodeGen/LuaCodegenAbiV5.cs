@@ -96,7 +96,8 @@ public static class LuaCodegenAbiV5
         long key,
         LuaValue value)
     {
-        if (!TryBindTable(ref cachedTable, target, out var table))
+        if (value.TryGetGcObject() is not null ||
+            !TryBindTable(ref cachedTable, target, out var table))
         {
             return false;
         }
@@ -217,7 +218,8 @@ public static class LuaCodegenAbiV5
         LuaValue key,
         LuaValue value)
     {
-        if (!TryBindTable(ref cachedTable, target, out var table) ||
+        if (value.TryGetGcObject() is not null ||
+            !TryBindTable(ref cachedTable, target, out var table) ||
             key.TryGetString() is not { } stringKey)
         {
             return false;
