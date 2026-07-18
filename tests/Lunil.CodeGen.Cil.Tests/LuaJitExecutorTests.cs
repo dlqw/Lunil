@@ -3174,6 +3174,111 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void CrossRuntimeSievePromotesItsOperationsLoopToTier2()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local operations = ... or 1
+            local checksum = 0
+            for _ = 1, operations do
+                local limit = 10000
+                local sieve = {}
+                for index = 2, limit do sieve[index] = true end
+                for index = 2, math.floor(math.sqrt(limit)) do
+                    if sieve[index] then
+                        for composite = index * index, limit, index do
+                            sieve[composite] = false
+                        end
+                    end
+                end
+                local count = 0
+                for index = 2, limit do
+                    if sieve[index] then count = count + 1 end
+                end
+                checksum = checksum + count
+            end
+            return checksum
+            """);
+
+        for (var warmup = 0; warmup < 4; warmup++)
+        {
+            var state = new LuaState();
+            var math = state.CreateTable();
+            math.Set(
+                LuaValue.FromString(state.Strings.GetOrCreate("sqrt"u8)),
+                LuaValue.FromFunction(new LuaNativeFunction(
+                    "sqrt",
+                    static (_, arguments) =>
+                    [LuaValue.FromFloat(Math.Sqrt(arguments[0].AsInteger()))])));
+            math.Set(
+                LuaValue.FromString(state.Strings.GetOrCreate("floor"u8)),
+                LuaValue.FromFunction(new LuaNativeFunction(
+                    "floor",
+                    static (_, arguments) =>
+                    [LuaValue.FromInteger((long)Math.Floor(arguments[0].AsFloat()))])));
+            state.SetGlobal("math", LuaValue.FromTable(math));
+            AssertValues(
+                executor.Execute(
+                    state,
+                    state.CreateMainClosure(module),
+                    [LuaValue.FromInteger(1)]),
+                LuaValue.FromInteger(1_229));
+        }
+
+        var plan = executor.GetTier2Plan(module, 0);
+        Assert.True(
+            plan is not null,
+            executor.GetTier2PromotionEligibility(module, 0) + "; profile=" +
+            FormatProfile(executor.GetFunctionProfile(module, 0)));
+        Assert.True(plan.NumericRegionCount >= 3);
+    }
+
+    [Fact]
+    public void Tier2StillRejectsAnActuallyHotUnboundLoopCall()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local callback = ...
+            local total = 0
+            for index = 1, 200 do total = total + callback(index) end
+            return total
+            """);
+        var callback = LuaValue.FromFunction(new LuaNativeFunction(
+            "identity",
+            static (_, arguments) => [arguments[0]]));
+
+        AssertValues(
+            ExecuteFresh(executor, module, callback),
+            LuaValue.FromInteger(20_100));
+        AssertValues(
+            ExecuteFresh(executor, module, callback),
+            LuaValue.FromInteger(20_100));
+
+        var eligibility = executor.GetTier2PromotionEligibility(module, 0);
+        Assert.False(eligibility.IsAutoEligible);
+        Assert.Equal(LuaJitTier2EligibilityReason.HotLoopCallBoundary, eligibility.Reason);
+        Assert.Equal(LuaJitTier2DiagnosticCodes.HotLoopCallBoundary, eligibility.DiagnosticCode);
+    }
+
+    [Fact]
     public void CompilerProvenIntegerAndStringTableSitesStayInsideNumericRegion()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
@@ -3206,7 +3311,46 @@ public sealed class LuaJitExecutorTests
         Assert.True(plan.NumericRegionCount > 0);
         Assert.True(plan.UnboxedNumericLocalCount > 0);
         Assert.Equal(0, executor.Statistics.Tier2GuardFailures);
-        Assert.True(executor.Statistics.TablePicHits > 0);
+        Assert.True(executor.Statistics.TablePicMisses > 0);
+    }
+
+    [Fact]
+    public void NumericRegionTableForwardingInvalidatesPotentiallyAliasedKeys()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local values = {}
+            local first, second = ...
+            local total = 0
+            for index = 1, 200 do
+                values[first] = index
+                values[second] = index + 1
+                total = total + values[first]
+            end
+            return total
+            """);
+
+        for (var warmup = 0; warmup < 3; warmup++)
+        {
+            AssertValues(
+                ExecuteFresh(
+                    executor,
+                    module,
+                    LuaValue.FromInteger(1),
+                    LuaValue.FromInteger(1)),
+                LuaValue.FromInteger(20_300));
+        }
+
+        Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(0, executor.Statistics.Tier2GuardFailures);
     }
 
     [Fact]

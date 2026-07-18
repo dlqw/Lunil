@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Operations;
 
@@ -6,7 +7,8 @@ namespace Lunil.Runtime.Values;
 
 /// <summary>
 /// Lua table with a dense array part and an open-addressed hash part. Deleted hash
-/// keys remain as tombstones so next(table, deletedCurrentKey) can continue.
+/// keys remain as tombstones so next(table, deletedCurrentKey) can continue. Mutation is
+/// single-writer; version publication supports concurrent cache readers.
 /// </summary>
 public sealed class LuaTable : LuaGcObject
 {
@@ -120,6 +122,7 @@ public sealed class LuaTable : LuaGcObject
     /// Reads an index already known to address the dense array part without materializing or
     /// validating a generic Lua key. Callers must perform any surrounding metatable checks.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetArrayValue(long index, out LuaValue value)
     {
         var offset = index - 1;
@@ -196,6 +199,7 @@ public sealed class LuaTable : LuaGcObject
     /// Updates or appends one dense integer slot for an ordinary strong table. Keeping both
     /// cases in one helper avoids a failed update probe before every sequential append.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TrySetOrAppendArrayValue(long index, LuaValue value)
     {
         if (_metatable is not null)
@@ -217,6 +221,41 @@ public sealed class LuaTable : LuaGcObject
         }
 
         Owner.WriteBarrier(this, value);
+        Owner.AdjustLogicalSize(this, 16);
+        EnsureArrayAppendCapacity();
+        _array.Add(value);
+        IncrementShapeVersion();
+        IncrementContentVersion();
+        IncrementStorageVersion();
+        MigrateArrayTail();
+        return true;
+    }
+
+    /// <summary>
+    /// Updates or appends a dense slot for a value proven by generated code to contain no GC
+    /// object. Structural accounting is identical to the general path; only the inapplicable
+    /// write barrier is omitted.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool TrySetOrAppendArrayNonCollectableValue(long index, LuaValue value)
+    {
+        if (_metatable is not null)
+        {
+            return false;
+        }
+
+        var offset = index - 1;
+        if ((ulong)offset < (ulong)_array.Count)
+        {
+            SetArray((int)offset, value);
+            return true;
+        }
+
+        if (offset != _array.Count || value.IsNil)
+        {
+            return false;
+        }
+
         Owner.AdjustLogicalSize(this, 16);
         EnsureArrayAppendCapacity();
         _array.Add(value);
@@ -365,6 +404,7 @@ public sealed class LuaTable : LuaGcObject
     /// Revalidates a cached hash entry for an exact interned string identity without repeating a
     /// hash probe. A content-equal but non-identical string deliberately misses this fast path.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryReadExistingStringEntry(
         LuaTableExistingEntry entry,
         LuaString key,
@@ -406,6 +446,54 @@ public sealed class LuaTable : LuaGcObject
         }
 
         Owner.WriteBarrier(this, value);
+        if (value.IsNil)
+        {
+            bucket.MakeTombstone();
+            _hashCount--;
+            _tombstoneCount++;
+            IncrementShapeVersion();
+            IncrementContentVersion();
+        }
+        else if (bucket.Value != value)
+        {
+            bucket.Value = value;
+            IncrementContentVersion();
+        }
+    }
+
+    /// <summary>
+    /// Updates a string entry immediately after its handle and key identity were revalidated.
+    /// No table operation may occur between validation and this call.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void SetValidatedExistingStringEntry(
+        LuaTableExistingEntry entry,
+        LuaValue value)
+    {
+        ref var bucket = ref _buckets[entry.Index];
+        Owner.WriteBarrier(this, value);
+        if (value.IsNil)
+        {
+            bucket.MakeTombstone();
+            _hashCount--;
+            _tombstoneCount++;
+            IncrementShapeVersion();
+            IncrementContentVersion();
+        }
+        else if (bucket.Value != value)
+        {
+            bucket.Value = value;
+            IncrementContentVersion();
+        }
+    }
+
+    /// <summary>Updates a revalidated string entry with a non-collectable value.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void SetValidatedExistingStringNonCollectableEntry(
+        LuaTableExistingEntry entry,
+        LuaValue value)
+    {
+        ref var bucket = ref _buckets[entry.Index];
         if (value.IsNil)
         {
             bucket.MakeTombstone();
@@ -1034,7 +1122,7 @@ public sealed class LuaTable : LuaGcObject
 
     private void IncrementContentVersion()
     {
-        Interlocked.Increment(ref _contentVersion);
+        Volatile.Write(ref _contentVersion, unchecked(_contentVersion + 1));
         Volatile.Write(ref _absentMetamethodMask, 0);
     }
 

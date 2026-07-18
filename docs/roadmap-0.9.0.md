@@ -87,7 +87,7 @@ Every performance change must also satisfy these bounds on all release RIDs:
 | --- | --- | --- |
 | Alpha 1 | Implemented in current source | Shared Tier 2 and loop-entry specialization architecture |
 | Alpha 2 | Implemented in current source | Compilation allocation, startup, and code-size closure |
-| Alpha 3 | Planned | Table-heavy and mixed-loop throughput |
+| Alpha 3 | Implemented in current source | Table-heavy and mixed-loop throughput |
 | Alpha 4 | Planned | Calls and floating-point regions |
 | Alpha 5 | Planned | Strings and baseline execution |
 | Beta | Planned | Feature freeze and complete performance qualification |

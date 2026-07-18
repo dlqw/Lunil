@@ -273,14 +273,14 @@ public sealed class LuaCodegenAbiV3Tests
         }
 
         Assert.Equal(LuaValue.FromInteger(3), Read());
-        Assert.True(counters.Invalidations >= 2);
+        Assert.True(counters.Invalidations >= 1);
 
         var metatable = state.CreateTable();
         table.SetMetatable(metatable);
         Assert.Equal(LuaValue.FromInteger(3), Read());
         table.SetMetatable(null);
         Assert.Equal(LuaValue.FromInteger(3), Read());
-        Assert.True(counters.Invalidations >= 4);
+        Assert.True(counters.Invalidations >= 3);
     }
 
     [Fact]

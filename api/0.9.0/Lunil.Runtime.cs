@@ -204,6 +204,27 @@ namespace Lunil.Runtime.CodeGen
         public static bool CompareMixed(long integerValue, double floatingPoint, bool integerOnLeft, int operationValue) => throw null;
     }
 
+    public static class LuaCodegenAbiV5
+    {
+        public const int RuntimeAbiVersion = 5;
+        public static bool TryGetCompilerProvenIntegerTableValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, long key, out Lunil.Runtime.Values.LuaValue value) => throw null;
+        public static bool TrySetCompilerProvenIntegerTableValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, long key, Lunil.Runtime.Values.LuaValue value) => throw null;
+        public static bool TrySetCompilerProvenIntegerTableIntegerValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, long key, long value) => throw null;
+        public static bool TrySetCompilerProvenIntegerTableFloatValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, long key, double value) => throw null;
+        public static bool TrySetCompilerProvenIntegerTableBooleanValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, long key, bool value) => throw null;
+        public static bool TrySetBoundIntegerTableIntegerValue(Lunil.Runtime.Values.LuaTable table, long key, long value) => throw null;
+        public static bool TrySetBoundIntegerTableFloatValue(Lunil.Runtime.Values.LuaTable table, long key, double value) => throw null;
+        public static bool TrySetBoundIntegerTableBooleanValue(Lunil.Runtime.Values.LuaTable table, long key, bool value) => throw null;
+        public static bool TryGetCompilerProvenStringTableValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, Lunil.Runtime.Values.LuaValue key, out Lunil.Runtime.Values.LuaValue value) => throw null;
+        public static bool TrySetCompilerProvenStringTableValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, Lunil.Runtime.Values.LuaValue key, Lunil.Runtime.Values.LuaValue value) => throw null;
+        public static bool TrySetCompilerProvenStringTableIntegerValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, Lunil.Runtime.Values.LuaValue key, long value) => throw null;
+        public static bool TrySetCompilerProvenStringTableFloatValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, Lunil.Runtime.Values.LuaValue key, double value) => throw null;
+        public static bool TrySetCompilerProvenStringTableBooleanValue(ref Lunil.Runtime.Values.LuaTable? cachedTable, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.CodeGen.LuaCodegenTableSiteCache cache, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, Lunil.Runtime.Values.LuaValue key, bool value) => throw null;
+        public static bool TrySetBoundStringTableIntegerValue(Lunil.Runtime.Values.LuaTable table, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, long value) => throw null;
+        public static bool TrySetBoundStringTableFloatValue(Lunil.Runtime.Values.LuaTable table, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, double value) => throw null;
+        public static bool TrySetBoundStringTableBooleanValue(Lunil.Runtime.Values.LuaTable table, ref Lunil.Runtime.CodeGen.LuaCodegenTableRegionSite regionSite, bool value) => throw null;
+    }
+
     public sealed class LuaCodegenCallSiteCache
     {
     }
@@ -213,6 +234,10 @@ namespace Lunil.Runtime.CodeGen
         GuardFailure = 0,
         InstructionBudget = 1,
         Executed = 2
+    }
+
+    public struct LuaCodegenTableRegionSite
+    {
     }
 
     public sealed class LuaCodegenTableSiteCache

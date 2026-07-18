@@ -127,8 +127,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         nameof(LuaTier2RuntimeSites.GetTableSite),
         [typeof(int)]);
     private static readonly MethodInfo TryGetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryGetCompilerProvenIntegerTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TryGetCompilerProvenIntegerTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
@@ -137,8 +137,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(LuaValue).MakeByRefType(),
         ]);
     private static readonly MethodInfo TrySetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TrySetCompilerProvenIntegerTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
@@ -146,26 +146,115 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(long),
             typeof(LuaValue),
         ]);
-    private static readonly MethodInfo TryGetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryGetCompilerProvenStringTableValue",
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableIntegerValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableIntegerValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaCodegenTableSiteCache),
+            typeof(long),
+            typeof(long),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableFloatValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableFloatValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(long),
+            typeof(double),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableBooleanValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableBooleanValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(long),
+            typeof(bool),
+        ]);
+    private static readonly MethodInfo TrySetBoundIntegerTableIntegerValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableIntegerValue),
+        [typeof(LuaTable), typeof(long), typeof(long)]);
+    private static readonly MethodInfo TrySetBoundIntegerTableFloatValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableFloatValue),
+        [typeof(LuaTable), typeof(long), typeof(double)]);
+    private static readonly MethodInfo TrySetBoundIntegerTableBooleanValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableBooleanValue),
+        [typeof(LuaTable), typeof(long), typeof(bool)]);
+    private static readonly MethodInfo TryGetCompilerProvenStringTableValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaValue).MakeByRefType(),
         ]);
     private static readonly MethodInfo TrySetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV3),
-        "TrySetCompilerProvenStringTableValue",
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableValue),
         [
             typeof(LuaTable).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
             typeof(LuaValue),
             typeof(LuaValue),
         ]);
+    private static readonly MethodInfo TrySetCompilerProvenStringTableIntegerValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableIntegerValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(long),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenStringTableFloatValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableFloatValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(double),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenStringTableBooleanValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableBooleanValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(bool),
+        ]);
+    private static readonly MethodInfo TrySetBoundStringTableIntegerValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundStringTableIntegerValue),
+        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(long)]);
+    private static readonly MethodInfo TrySetBoundStringTableFloatValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundStringTableFloatValue),
+        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(double)]);
+    private static readonly MethodInfo TrySetBoundStringTableBooleanValue = Method(
+        typeof(LuaCodegenAbiV5),
+        nameof(LuaCodegenAbiV5.TrySetBoundStringTableBooleanValue),
+        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(bool)]);
     private static readonly MethodInfo RecordInlineDirectCallCompletion = Method(
         typeof(LuaTier2RuntimeSites),
         nameof(LuaTier2RuntimeSites.RecordInlineDirectCallCompletion),
@@ -389,6 +478,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var tableSiteLocals = plan.TableSites.ToDictionary(
             static site => site.ProgramCounter,
             _ => generator.DeclareLocal(typeof(LuaCodegenTableSiteCache)));
+        var tableRegionSiteLocals = plan.TableSites.ToDictionary(
+            static site => site.ProgramCounter,
+            _ => generator.DeclareLocal(typeof(LuaCodegenTableRegionSite)));
         var tableDefinitionLocals = plan.TableSites
             .Select(static site => site.TableDefinitionProgramCounter)
             .Distinct()
@@ -563,6 +655,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 valueLocals,
                 dirtyLocals,
                 tableSiteLocals,
+                tableRegionSiteLocals,
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
@@ -600,6 +693,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 valueLocals,
                 dirtyLocals,
                 tableSiteLocals,
+                tableRegionSiteLocals,
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
@@ -964,6 +1058,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         Dictionary<int, LuaNumericIlLocal> tableSiteLocals,
+        Dictionary<int, LuaNumericIlLocal> tableRegionSiteLocals,
         Dictionary<int, LuaNumericIlLocal> tableDefinitionLocals,
         Dictionary<int, LuaNumericIlLocal> taggedConstantLocals,
         LuaNumericIlLocal taggedValue,
@@ -1244,6 +1339,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                     tableSite,
                     valueLocals,
                     tableSiteLocals[pc],
+                    tableRegionSiteLocals[pc],
                     tableDefinitionLocals[tableSite.TableDefinitionProgramCounter],
                     taggedValue,
                     semanticDeopt);
@@ -1326,6 +1422,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionTableSite tableSite,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> locals,
         LuaNumericIlLocal siteLocal,
+        LuaNumericIlLocal regionSiteLocal,
         LuaNumericIlLocal tableLocal,
         LuaNumericIlLocal taggedValue,
         LuaNumericIlLabel semanticDeopt)
@@ -1339,23 +1436,48 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
 
         var targetRegister = isGet ? instruction.B : instruction.A;
         var keyRegister = isGet ? instruction.C : instruction.B;
-        generator.Emit(OpCodes.Ldloca, tableLocal);
-        generator.Emit(
-            OpCodes.Ldloc,
-            NumericLocal(
-                locals,
-                targetRegister,
-                LuaNumericRegionValueKind.Tagged));
-        generator.Emit(OpCodes.Ldloc, siteLocal);
+        if (isGet && tableSite.ForwardedValueRegister >= 0)
+        {
+            var forwardedKind = plan.GetKindBefore(
+                programCounter,
+                tableSite.ForwardedValueRegister);
+            EmitLoadTaggedLocal(
+                generator,
+                NumericLocal(
+                    locals,
+                    tableSite.ForwardedValueRegister,
+                    forwardedKind),
+                forwardedKind);
+            generator.Emit(OpCodes.Stloc, taggedValue);
+            EmitStoreGuardedTaggedValue(
+                generator,
+                taggedValue,
+                NumericLocal(
+                    locals,
+                    instruction.A,
+                    plan.GetKindAfter(programCounter, instruction.A)),
+                plan.GetKindAfter(programCounter, instruction.A),
+                semanticDeopt);
+            return;
+        }
+
         var keyKind = plan.GetKindBefore(programCounter, keyRegister);
-        generator.Emit(
-            OpCodes.Ldloc,
-            NumericLocal(
-                locals,
-                keyRegister,
-                keyKind));
+        var targetLocal = NumericLocal(
+            locals,
+            targetRegister,
+            LuaNumericRegionValueKind.Tagged);
+        var keyLocal = NumericLocal(locals, keyRegister, keyKind);
         if (isGet)
         {
+            generator.Emit(OpCodes.Ldloca, tableLocal);
+            generator.Emit(OpCodes.Ldloc, targetLocal);
+            generator.Emit(OpCodes.Ldloc, siteLocal);
+            if (keyKind == LuaNumericRegionValueKind.Tagged)
+            {
+                generator.Emit(OpCodes.Ldloca, regionSiteLocal);
+            }
+
+            generator.Emit(OpCodes.Ldloc, keyLocal);
             generator.Emit(OpCodes.Ldloca, taggedValue);
             generator.Emit(
                 OpCodes.Call,
@@ -1376,16 +1498,107 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         }
 
         var valueKind = plan.GetKindBefore(programCounter, instruction.C);
-        EmitLoadTaggedLocal(
-            generator,
-            NumericLocal(locals, instruction.C, valueKind),
-            valueKind);
+        var valueLocal = NumericLocal(locals, instruction.C, valueKind);
+        var boundComplete = default(LuaNumericIlLabel);
+        if (valueKind != LuaNumericRegionValueKind.Tagged)
+        {
+            var bindOrRevalidate = generator.DefineLabel();
+            boundComplete = generator.DefineLabel();
+            generator.Emit(OpCodes.Ldloc, tableLocal);
+            generator.Emit(OpCodes.Brfalse, bindOrRevalidate);
+            generator.Emit(OpCodes.Ldloc, tableLocal);
+            if (keyKind == LuaNumericRegionValueKind.Integer)
+            {
+                generator.Emit(OpCodes.Ldloc, keyLocal);
+            }
+            else
+            {
+                generator.Emit(OpCodes.Ldloca, regionSiteLocal);
+            }
+
+            generator.Emit(OpCodes.Ldloc, valueLocal);
+            generator.Emit(
+                OpCodes.Call,
+                keyKind == LuaNumericRegionValueKind.Integer
+                    ? valueKind switch
+                    {
+                        LuaNumericRegionValueKind.Integer =>
+                            TrySetBoundIntegerTableIntegerValue,
+                        LuaNumericRegionValueKind.Float =>
+                            TrySetBoundIntegerTableFloatValue,
+                        LuaNumericRegionValueKind.Boolean =>
+                            TrySetBoundIntegerTableBooleanValue,
+                        _ => throw new InvalidOperationException(
+                            $"Numeric-region table value kind {valueKind} cannot be bound."),
+                    }
+                    : valueKind switch
+                    {
+                        LuaNumericRegionValueKind.Integer =>
+                            TrySetBoundStringTableIntegerValue,
+                        LuaNumericRegionValueKind.Float =>
+                            TrySetBoundStringTableFloatValue,
+                        LuaNumericRegionValueKind.Boolean =>
+                            TrySetBoundStringTableBooleanValue,
+                        _ => throw new InvalidOperationException(
+                            $"Numeric-region table value kind {valueKind} cannot be bound."),
+                    });
+            generator.Emit(OpCodes.Brfalse, bindOrRevalidate);
+            generator.Emit(OpCodes.Br, boundComplete);
+            generator.MarkLabel(bindOrRevalidate);
+        }
+
+        generator.Emit(OpCodes.Ldloca, tableLocal);
+        generator.Emit(OpCodes.Ldloc, targetLocal);
+        generator.Emit(OpCodes.Ldloc, siteLocal);
+        if (keyKind == LuaNumericRegionValueKind.Tagged)
+        {
+            generator.Emit(OpCodes.Ldloca, regionSiteLocal);
+        }
+
+        generator.Emit(OpCodes.Ldloc, keyLocal);
+        if (valueKind == LuaNumericRegionValueKind.Tagged)
+        {
+            EmitLoadTaggedLocal(generator, valueLocal, valueKind);
+        }
+        else
+        {
+            generator.Emit(OpCodes.Ldloc, valueLocal);
+        }
+
         generator.Emit(
             OpCodes.Call,
             keyKind == LuaNumericRegionValueKind.Integer
-                ? TrySetCompilerProvenIntegerTableValue
-                : TrySetCompilerProvenStringTableValue);
+                ? valueKind switch
+                {
+                    LuaNumericRegionValueKind.Integer =>
+                        TrySetCompilerProvenIntegerTableIntegerValue,
+                    LuaNumericRegionValueKind.Float =>
+                        TrySetCompilerProvenIntegerTableFloatValue,
+                    LuaNumericRegionValueKind.Boolean =>
+                        TrySetCompilerProvenIntegerTableBooleanValue,
+                    LuaNumericRegionValueKind.Tagged =>
+                        TrySetCompilerProvenIntegerTableValue,
+                    _ => throw new InvalidOperationException(
+                        $"Numeric-region table value kind {valueKind} cannot be stored."),
+                }
+                : valueKind switch
+                {
+                    LuaNumericRegionValueKind.Integer =>
+                        TrySetCompilerProvenStringTableIntegerValue,
+                    LuaNumericRegionValueKind.Float =>
+                        TrySetCompilerProvenStringTableFloatValue,
+                    LuaNumericRegionValueKind.Boolean =>
+                        TrySetCompilerProvenStringTableBooleanValue,
+                    LuaNumericRegionValueKind.Tagged =>
+                        TrySetCompilerProvenStringTableValue,
+                    _ => throw new InvalidOperationException(
+                        $"Numeric-region table value kind {valueKind} cannot be stored."),
+                });
         generator.Emit(OpCodes.Brfalse, semanticDeopt);
+        if (valueKind != LuaNumericRegionValueKind.Tagged)
+        {
+            generator.MarkLabel(boundComplete);
+        }
     }
 
     private static void EmitLoadTaggedLocal(

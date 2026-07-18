@@ -60,7 +60,7 @@
       "Assembly": "Lunil.Runtime",
       "Project": "src/Lunil.Runtime/Lunil.Runtime.csproj",
       "Baseline": "api/0.9.0/Lunil.Runtime.cs",
-      "Sha256": "59994F79D874C2A6AA75966F4E1853B0478250D71167FFF71FEE8BDA42DEF142"
+      "Sha256": "D947784FE6BA108B3C1D34EA98D36239EBA49548F046914E57933C3E3FE4E675"
     },
     {
       "Assembly": "Lunil.Semantics",

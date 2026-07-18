@@ -998,7 +998,7 @@ public sealed class LuaCodegenTableSiteCache
         RecordFastPathMiss();
     }
 
-    private void RecordInvalidation() => _counters?.RecordInvalidation();
+    internal void RecordInvalidation() => _counters?.RecordInvalidation();
 
     internal int FieldEntryCount => Volatile.Read(ref _fieldEntries).Length;
 
