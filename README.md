@@ -67,7 +67,7 @@ backend correctness, NativeAOT, route, telemetry, startup, allocation, and code-
 | Source | Auto vs native Lua | Auto vs MoonSharp | Tier 2 compile allocation p95 | Loop OSR compile allocation p95 |
 | --- | ---: | ---: | ---: | ---: |
 | Stable `0.8.0` | 0.680x | 9.974x | 317,776 B | 259,232 B |
-| `0.9.0-alpha.2` | 0.697x | 9.918x | 250,912 B | 191,416 B |
+| `0.9.0-alpha.2` | 0.697x | 9.918x | 250,912 B | 192,112 B |
 
 Throughput rows are independent six-RID qualification runs, not a paired hardware claim. The
 machine-readable Alpha 2 report also includes compile p95, allocation growth, startup, and

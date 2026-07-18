@@ -3,7 +3,7 @@
   "release": "0.9.0-alpha.2",
   "source": {
     "productCommit": "06deccadd467ed0b29ee80a68955a8162a59ec87",
-    "backendWorkflowRun": 29640370974,
+    "backendWorkflowRun": 29640984510,
     "crossRuntimeWorkflowRun": 29640378703,
     "rids": [
       "win-x64",
@@ -77,19 +77,19 @@
   },
   "backend": {
     "tier2": {
-      "maximumCompileP95Milliseconds": 3.6045,
+      "maximumCompileP95Milliseconds": 3.6545,
       "maximumCompileAllocatedP95Bytes": 250912.0,
       "maximumRegionAllocationSlopeBytesPerInstruction": 22184.0,
-      "maximumExecutionAllocationRatioVs080": 1.0016836819978598,
+      "maximumExecutionAllocationRatioVs080": 1.00168666693478,
       "maximumEstimatedCodeSizeRatioVs080": 1.0
     },
     "loopOsr": {
-      "maximumCompileP95Milliseconds": 4.7940000000000005,
-      "maximumPreparationP95Milliseconds": 0.096,
-      "maximumCompileAllocatedP95Bytes": 191416.0,
+      "maximumCompileP95Milliseconds": 4.6265,
+      "maximumPreparationP95Milliseconds": 0.091,
+      "maximumCompileAllocatedP95Bytes": 192112.0,
       "maximumRegionAllocationSlopeBytesPerInstruction": 15078.857143,
-      "minimumUnchangedRouteStartupRatio": 0.967364905889496,
-      "maximumExecutionAllocationRatioVs080": 1.0139762403913348,
+      "minimumUnchangedRouteStartupRatio": 0.986104196779966,
+      "maximumExecutionAllocationRatioVs080": 1.02795248078267,
       "maximumEstimatedCodeSizeRatioVs080": 1.0
     }
   }

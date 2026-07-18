@@ -75,14 +75,14 @@ development row demonstrates current-source correctness, route stability, and pe
 
 | Alpha 2 backend metric | Six-RID result | `0.9.0` limit |
 | --- | ---: | ---: |
-| Tier 2 compile p95 | 3.6045 ms | ≤ 5 ms |
+| Tier 2 compile p95 | 3.6545 ms | ≤ 5 ms |
 | Tier 2 compile allocation p95 | 250,912 B | ≤ 262,144 B |
-| Loop OSR compile p95 | 4.794 ms | ≤ 7.5 ms |
-| Loop OSR preparation p95 | 0.096 ms | ≤ 2 ms |
-| Loop OSR compile allocation p95 | 191,416 B | ≤ 196,608 B |
+| Loop OSR compile p95 | 4.6265 ms | ≤ 7.5 ms |
+| Loop OSR preparation p95 | 0.091 ms | ≤ 2 ms |
+| Loop OSR compile allocation p95 | 192,112 B | ≤ 196,608 B |
 | Maximum region allocation growth | 22,184 B/instruction | ≤ 32,768 B/instruction |
-| Minimum unchanged-route startup ratio | 0.967x | ≥ 0.95x |
-| Maximum unchanged-route execution allocation | 1.014x | ≤ 1.05x |
+| Minimum unchanged-route startup ratio | 0.986x | ≥ 0.95x |
+| Maximum unchanged-route execution allocation | 1.028x | ≤ 1.05x |
 | Maximum unchanged-route estimated code size | 1.000x | ≤ 1.15x |
 
 The compact source report is available at
