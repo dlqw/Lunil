@@ -6,11 +6,11 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.8.0</VersionPrefix>
-<VersionSuffix>beta.1</VersionSuffix>
+<VersionSuffix>rc.1</VersionSuffix>
 ```
 
-The resulting source/package version is `0.8.0-beta.1` and its eventual immutable tag is
-`v0.8.0-beta.1`. A stable release omits `VersionSuffix` only after an accepted RC.
+The resulting source/package version is `0.8.0-rc.1` and its eventual immutable tag is
+`v0.8.0-rc.1`. A stable release omits `VersionSuffix` only after an accepted RC.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -121,7 +121,7 @@ Stable `0.7.0` removes the suffix from that accepted candidate without product-c
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
-## Current `0.8.0-beta.1` decision
+## Current `0.8.0-rc.1` decision
 
 The `0.8.0` Alpha sequence has completed the planned backend feature work: `alpha.12` removed the
 persisted/static Lua AOT product and converted remaining JIT accounting to 64-bit; `alpha.13`
@@ -139,9 +139,12 @@ only compatibility, diagnostics, documentation, reliability, release-gate, and
 performance-convergence fixes. New backend/API/IR features move to `0.9.0-alpha.1`.
 
 The `api/0.8.0` declarations freeze 13 assemblies and 13 packages for the rest of the `0.8` line.
-`api/0.7.0` remains identical to stable `v0.7.0`. Promotion to RC requires the full format, test,
-conformance, package, publish-mode, six-RID, and performance gates; the suffix is removed only from
-an accepted RC with no intervening product change.
+`api/0.7.0` remains identical to stable `v0.7.0`. The accepted Beta passed PR CI `29631254293`,
+main-branch CI `29631768624`, six-RID cross-runtime run `29631273661`, and tag release run
+`29632182814`; the immutable `v0.8.0-beta.1` prerelease contains six RID bundles and all 13 normal
+and symbol packages. `0.8.0-rc.1` carries that product forward without product-code, public-API,
+or package-scope changes. The suffix is removed only after the candidate repeats the full gates
+without finding a release blocker.
 
 The Lua AOT removal is a frozen breaking change relative to stable `0.7.0` and is never backported
 to `0.7.x` patches. Stable patches remain backward-compatible; later public API/backend redesign

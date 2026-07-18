@@ -28,12 +28,11 @@ chunk interoperability, a managed interpreter, and an explicit logical garbage
 collector.
 
 > [!IMPORTANT]
-> The current source version is **`0.8.0-beta.1`**; stable `0.7.0` and its API/package baselines
-> remain immutable. This Beta freezes the completed interpreter, Tier 1/Tier 2 JIT, loop-OSR,
-> public API, assembly, package, IR/profile, and evidence-schema scope. Lua persisted/static AOT
-> remains removed, while .NET NativeAOT interpreter compatibility remains supported. Later `0.8`
-> prereleases accept only compatibility, diagnostics, documentation, reliability, and performance
-> convergence; all release gates remain mandatory.
+> The current source version is **`0.8.0-rc.1`**; stable `0.7.0` and its API/package baselines
+> remain immutable. This release candidate carries forward the Beta-frozen interpreter,
+> Tier 1/Tier 2 JIT, loop-OSR, public API, assembly, package, IR/profile, and evidence-schema scope
+> without product changes. Lua persisted/static AOT remains removed, while .NET NativeAOT
+> interpreter compatibility remains supported. Only release-blocking fixes may enter before stable.
 
 ## Table of contents
 
@@ -77,18 +76,18 @@ collector.
 | Reference interpreter | Implemented | Calls, varargs, multiple results, control flow, coroutines, errors and close unwinding |
 | Runtime and logical GC | Implemented | Tables, values, metatables, quotas, handles, weak tables, ephemerons and finalizers |
 | Standard library | Implemented | Basic, coroutine, table, string, math, utf8, package, io, os, and debug libraries |
-| Execution backends | `0.8` Beta | Qualified interpreter, Tier 1/Tier 2 JIT, and loop OSR; Lua persisted/static AOT was removed in `0.8.0-alpha.12` |
+| Execution backends | `0.8` RC | Qualified interpreter, Tier 1/Tier 2 JIT, and loop OSR; Lua persisted/static AOT was removed in `0.8.0-alpha.12` |
 | Compiler product API | Stable `0.7` | Unified bounded lex/parse/bind/lower/verify pipeline, immutable results, phase diagnostics, cancellation boundaries, and canonical source identity |
 | Hosting product API | Stable `0.7` | Reusable compile/execute host with explicit trusted, restricted, and deterministic capability profiles and runtime budgets |
 | Annotation product API | Stable `0.7` | Shared bounded annotation lexer/type AST, LuaLS default parser, legacy EmmyLua compatibility, unknown-tag preservation, configurable diagnostics, and suppression |
 | Type and flow analysis API | Stable `0.7` | Semantic type/pack model, annotation declarations, constraints, CFGs, function/return inference, nil/type/assert/discriminant narrowing, definite assignment, unreachable analysis, generics, source suppression, and deterministic widening budgets |
 | Workspace product API | Stable `0.7` | Stable module/source identities, injectable resolvers, static/dynamic require classification, SCC fixed points, content-addressed caching, minimal invalidation, bounded parallelism, cancellation, and deterministic merging |
 | CLI | Stable `0.7` | Packaged `lunil` tool with `run`/`check`/`build`/`dump`, stable exit codes, text/JSON diagnostics, stdin, response files, layered configuration, workspace resolution, resource budgets, and trusted/sandbox/deterministic profiles |
-| Stability contract | Active Beta | Stable `0.7.0` remains frozen; the `0.8.0-beta.1` feature/API/package scope is frozen and promotes only through an accepted RC |
+| Stability contract | Active RC | Stable `0.7.0` remains frozen; `0.8.0-rc.1` carries the accepted Beta product unchanged and accepts only release blockers |
 
 ### Current backend readiness
 
-| Execution path | Release behavior | `0.8.0-beta.1` readiness |
+| Execution path | Release behavior | `0.8.0-rc.1` readiness |
 | --- | --- | --- |
 | Reference interpreter | Explicit Tier 0 and exact fallback | Implemented and used as the semantic reference |
 | CoreCLR Tier 1 JIT | `Auto` for repeatedly hot, benefit-qualified functions | Qualified on all six release RIDs |
@@ -96,8 +95,9 @@ collector.
 | Exact-numeric loop OSR | Enabled by default after loop and runtime-value qualification | Qualified on all six release RIDs; non-exact loops are rejected before compilation |
 | .NET NativeAOT / trimming | Compiler, workspace, runtime, CLI, and interpreter compatibility | Build and execution verified on all six release RIDs; JIT selection falls back deterministically |
 
-The stable `0.7.0` evidence remains a regression floor. `0.8.0-beta.1` freezes the work described
-in its [changelog](changelogs/0.8.0-beta.1.md) without changing the stable `api/0.7.0` contract.
+The stable `0.7.0` evidence remains a regression floor. `0.8.0-rc.1` promotes the accepted Beta
+product without changing code, public APIs, or package scope; see its
+[changelog](changelogs/0.8.0-rc.1.md).
 Breaking migration details, including the Lua AOT removal, are documented in the
 [`0.8.0` migration guide](docs/migration-0.8.0.md).
 
@@ -192,7 +192,7 @@ Install the tagged tool package from the configured GitHub Packages source, or r
 directly from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0-beta.1
+dotnet tool install --global Lunil.Cli --version 0.8.0-rc.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -245,7 +245,7 @@ NuGet and symbol packages to GitHub Packages. Projects may also be referenced di
 from a source checkout.
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.8.0-beta.1" />
+<PackageReference Include="Lunil.Hosting" Version="0.8.0-rc.1" />
 ```
 
 The high-level host compiles, verifies, installs the standard library, and executes through one
@@ -491,11 +491,10 @@ The active `0.8.0` promotion sequence is:
 0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
 ```
 
-The current source version is **`0.8.0-beta.1`**. Stable `0.7.0`, its tag, and `api/0.7.0`
+The current source version is **`0.8.0-rc.1`**. Stable `0.7.0`, its tag, and `api/0.7.0`
 remain immutable; backward-compatible fixes on that stable line use `0.7.1`. The complete `0.8`
-feature, public-API, assembly, and package scope is now frozen in `api/0.8.0`. Beta accepts only
-compatibility, diagnostics, documentation, reliability, and performance-convergence fixes before
-promotion to `rc.1`.
+feature, public-API, assembly, and package scope remains frozen in `api/0.8.0`. RC accepts only
+release-blocking fixes; an accepted candidate is promoted to stable without product changes.
 
 An immutable `v<SemVer>` tag triggers validation, six RID bundles, symbol-enabled
 NuGet packages, GitHub Packages publication, and a GitHub Release. Versions with a
