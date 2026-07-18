@@ -1,0 +1,981 @@
+{
+  "schemaVersion": 1,
+  "release": "0.8.0",
+  "source": {
+    "tag": "v0.8.0",
+    "productCommit": "eb017623fcb0550bfd025ab2b192e9607c682d6c",
+    "workflowRun": 29633690913,
+    "rounds": 6,
+    "coldSamplesPerProcess": 9,
+    "rids": [
+      "win-x64",
+      "win-arm64",
+      "linux-x64",
+      "linux-arm64",
+      "osx-x64",
+      "osx-arm64"
+    ]
+  },
+  "measurements": [
+    {
+      "rid": "linux-arm64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 32.036,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 65.6215,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 31.5185,
+      "allocatedBytesPerOperation": 4579.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 30.075,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.2685,
+      "allocatedBytesPerOperation": 566601.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 41.008,
+      "allocatedBytesPerOperation": 569145.33,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 7.1405,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 48.9475,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 21.5385,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 43.632,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.6855,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 27.2865,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 58.4285,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 99.482,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.8075,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 31.1125,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 37.6105,
+      "allocatedBytesPerOperation": 3239937.6,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 81.4455,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 3.4085,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-arm64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 23.2455,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 33.431,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 55.6745,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 31.5975,
+      "allocatedBytesPerOperation": 4579.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 30.5845,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.4625,
+      "allocatedBytesPerOperation": 567585.87,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 42.9675,
+      "allocatedBytesPerOperation": 571089.87,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 7.028,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 52.0965,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 19.7755,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 43.278,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.644,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 27.944,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 68.4995,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 103.8795,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.764,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 31.543,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 42.481,
+      "allocatedBytesPerOperation": 3240061.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 82.9395,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 3.802,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "linux-x64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 23.753,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 26.054,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 38.1065,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 24.668,
+      "allocatedBytesPerOperation": 4707.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 20.1965,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.691,
+      "allocatedBytesPerOperation": 567634.93,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 32.262,
+      "allocatedBytesPerOperation": 570178.93,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 5.903,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 44.3475,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 15.3395,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 31.6165,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.104,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 21.622,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 40.6285,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 86.066,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.176,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 26.5695,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 32.659,
+      "allocatedBytesPerOperation": 3239723.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 62.0655,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.3145,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-arm64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 16.488,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 43.185,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 74.2045,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 39.3285,
+      "allocatedBytesPerOperation": 4579.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 35.485,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 3.419,
+      "allocatedBytesPerOperation": 567634.93,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 53.187,
+      "allocatedBytesPerOperation": 570178.93,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 8.0735,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 66.94,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 23.6465,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 49.505,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.7695,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 32.8735,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 78.9685,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 140.0095,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.071,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 44.3785,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 52.6555,
+      "allocatedBytesPerOperation": 3239971.6,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 89.6615,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 4.231,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "osx-x64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 28.677,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 33.8685,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 56.364,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 34.0995,
+      "allocatedBytesPerOperation": 4579.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 31.717,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.3665,
+      "allocatedBytesPerOperation": 567561.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 43.5275,
+      "allocatedBytesPerOperation": 569145.33,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 7.4935,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 52.254,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 20.9975,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 44.4015,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.705,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 28.142,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 63.324,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 102.6305,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.8375,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 31.8215,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 37.8075,
+      "allocatedBytesPerOperation": 3240983.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 84.273,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 3.7365,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-arm64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 23.7005,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    },
+    {
+      "rid": "win-x64",
+      "workload": "arithmetic",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 20.731,
+      "allocatedBytesPerOperation": 2751.47,
+      "estimatedCodeBytes": 2544
+    },
+    {
+      "rid": "win-x64",
+      "workload": "arithmetic",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 30.3755,
+      "allocatedBytesPerOperation": 1665.33,
+      "estimatedCodeBytes": 21360
+    },
+    {
+      "rid": "win-x64",
+      "workload": "control_flow",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 20.7555,
+      "allocatedBytesPerOperation": 4707.2,
+      "estimatedCodeBytes": 3360
+    },
+    {
+      "rid": "win-x64",
+      "workload": "control_flow",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 19.339,
+      "allocatedBytesPerOperation": 2537.33,
+      "estimatedCodeBytes": 27696
+    },
+    {
+      "rid": "win-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.2665,
+      "allocatedBytesPerOperation": 566625.87,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "coroutine_error_hook",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 28.7125,
+      "allocatedBytesPerOperation": 569169.87,
+      "estimatedCodeBytes": 47640
+    },
+    {
+      "rid": "win-x64",
+      "workload": "fib_iter",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 4.807,
+      "allocatedBytesPerOperation": 2659.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "fib_iter",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 33.9475,
+      "allocatedBytesPerOperation": 2700.0,
+      "estimatedCodeBytes": 28768
+    },
+    {
+      "rid": "win-x64",
+      "workload": "fib_recursive",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 13.6055,
+      "allocatedBytesPerOperation": 2711.2,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "fib_recursive",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 28.601,
+      "allocatedBytesPerOperation": 2708.53,
+      "estimatedCodeBytes": 16504
+    },
+    {
+      "rid": "win-x64",
+      "workload": "lua_calls",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.0495,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "lua_calls",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 18.5735,
+      "allocatedBytesPerOperation": 3136.8,
+      "estimatedCodeBytes": 25552
+    },
+    {
+      "rid": "win-x64",
+      "workload": "mandelbrot",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 43.6755,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "mandelbrot",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 65.593,
+      "allocatedBytesPerOperation": 3899.73,
+      "estimatedCodeBytes": 54872
+    },
+    {
+      "rid": "win-x64",
+      "workload": "metamethod",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 1.1065,
+      "allocatedBytesPerOperation": 44329.33,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "metamethod",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 20.607,
+      "allocatedBytesPerOperation": 44878.13,
+      "estimatedCodeBytes": 27304
+    },
+    {
+      "rid": "win-x64",
+      "workload": "sieve",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 23.332,
+      "allocatedBytesPerOperation": 3239358.53,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "sieve",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 55.3795,
+      "allocatedBytesPerOperation": 23517.07,
+      "estimatedCodeBytes": 45464
+    },
+    {
+      "rid": "win-x64",
+      "workload": "table_access",
+      "backend": "loop_osr",
+      "startupMedianMilliseconds": 2.1255,
+      "allocatedBytesPerOperation": 4121.07,
+      "estimatedCodeBytes": 0
+    },
+    {
+      "rid": "win-x64",
+      "workload": "table_access",
+      "backend": "tier2",
+      "startupMedianMilliseconds": 14.8105,
+      "allocatedBytesPerOperation": 3313.33,
+      "estimatedCodeBytes": 20568
+    }
+  ]
+}

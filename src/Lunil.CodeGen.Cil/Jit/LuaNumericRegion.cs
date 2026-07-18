@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.IR.Canonical;
 
@@ -133,6 +134,8 @@ internal sealed record LuaNumericRegionPlan(
 /// </summary>
 internal static class LuaNumericRegionAnalyzer
 {
+    private static readonly ConditionalWeakTable<LuaIrModule, ModuleCache> Caches = new();
+
     public static ImmutableArray<LuaNaturalLoopRegion> AnalyzeNaturalLoops(
         LuaIrModule module,
         int functionId,
@@ -146,6 +149,19 @@ internal static class LuaNumericRegionAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        return Caches.GetValue(module, static _ => new ModuleCache()).GetOrAdd(
+            module,
+            functionId,
+            out livenessCacheHit,
+            cancellationToken);
+    }
+
+    private static ImmutableArray<LuaNaturalLoopRegion> AnalyzeNaturalLoopsCore(
+        LuaIrModule module,
+        int functionId,
+        out bool livenessCacheHit,
+        CancellationToken cancellationToken)
+    {
         var function = module.Functions[functionId];
         var blocks = function.BasicBlocks.IsDefaultOrEmpty
             ? LuaIrControlFlow.Build(function.Instructions)
@@ -224,6 +240,38 @@ internal static class LuaNumericRegionAnalyzer
             .OrderBy(static region => region.HeaderProgramCounter)
             .ThenBy(static region => region.BackedgeProgramCounter)
             .ToImmutableArray();
+    }
+
+    private sealed class ModuleCache
+    {
+        private readonly Lock _gate = new();
+        private readonly Dictionary<int, ImmutableArray<LuaNaturalLoopRegion>> _regions = [];
+
+        public ImmutableArray<LuaNaturalLoopRegion> GetOrAdd(
+            LuaIrModule module,
+            int functionId,
+            out bool cacheHit,
+            CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_regions.TryGetValue(functionId, out var cached))
+                {
+                    cacheHit = true;
+                    return cached;
+                }
+
+                var regions = AnalyzeNaturalLoopsCore(
+                    module,
+                    functionId,
+                    out cacheHit,
+                    cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _regions.Add(functionId, regions);
+                return regions;
+            }
+        }
     }
 
     public static bool IsBackedgeInstruction(

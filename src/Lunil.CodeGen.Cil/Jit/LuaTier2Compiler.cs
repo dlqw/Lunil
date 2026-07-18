@@ -120,7 +120,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         cancellationToken.ThrowIfCancellationRequested();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var errors = LuaIrVerifier.Verify(module);
+        var errors = LuaIrVerificationCache.Verify(module);
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || functionId < 0 || functionId >= module.Functions.Length)
         {

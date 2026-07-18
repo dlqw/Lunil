@@ -18,6 +18,9 @@ The source data comes from the immutable `0.8.0` product tree and the accepted
 [six-RID performance workflow](https://github.com/dlqw/Lunil/actions/runs/29633696197). The compact
 machine-readable summary is committed at
 [`benchmarks/results/0.8.0-cross-runtime.json`](../benchmarks/results/0.8.0-cross-runtime.json).
+The matching backend startup, execution-allocation, and generated-code estimates are available at
+[`benchmarks/results/0.8.0-backend.json`](../benchmarks/results/0.8.0-backend.json) and serve as the
+versioned regression baseline for unchanged Tier 2 and Loop OSR routes.
 
 ### Overall runtime comparison
 

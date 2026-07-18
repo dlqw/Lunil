@@ -409,6 +409,54 @@ $summary = foreach ($group in $records | Group-Object Workload, Name | Sort-Obje
 }
 $summary | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'summary.json') -Encoding utf8
+$backendBaselinePath = Join-Path $repositoryRoot 'benchmarks/results/0.8.0-backend.json'
+$backendBaselineDocument = Get-Content -LiteralPath $backendBaselinePath -Raw |
+    ConvertFrom-Json
+if ($backendBaselineDocument.release -ne '0.8.0') {
+    throw "Expected the stable 0.8.0 backend baseline at $backendBaselinePath."
+}
+
+function Get-RegressionRatio([double] $Current, [double] $Baseline) {
+    if ($Baseline -eq 0) {
+        return $(if ($Current -eq 0) { 1.0 } else { [double]::MaxValue })
+    }
+
+    return $Current / $Baseline
+}
+
+$versionBaselineComparisons = foreach ($record in $summary | Where-Object {
+    $_.Name -in @('tier2', 'loop_osr')
+}) {
+    $baseline = $backendBaselineDocument.measurements | Where-Object {
+        $_.rid -eq $effectiveRid -and
+        $_.workload -eq $record.Workload -and
+        $_.backend -eq $record.Name
+    } | Select-Object -First 1
+    if ($null -eq $baseline) {
+        throw "Missing 0.8.0 backend baseline for $effectiveRid/$($record.Workload)/$($record.Name)."
+    }
+
+    [pscustomobject]@{
+        Workload = $record.Workload
+        Backend = $record.Name
+        AllocationRatioVs080 = Get-RegressionRatio `
+            $record.AllocatedOp $baseline.allocatedBytesPerOperation
+        CodeSizeRatioVs080 = Get-RegressionRatio `
+            $record.EstimatedCodeBytes $baseline.estimatedCodeBytes
+    }
+}
+$tier2VersionBaselineComparisons = @($versionBaselineComparisons | Where-Object {
+    $_.Backend -eq 'tier2'
+})
+$loopOsrVersionBaselineComparisons = @($versionBaselineComparisons | Where-Object {
+    $_.Backend -eq 'loop_osr'
+})
+$tier2VersionBaselineFailures = @($tier2VersionBaselineComparisons | Where-Object {
+    $_.AllocationRatioVs080 -gt 1.05 -or $_.CodeSizeRatioVs080 -gt 1.15
+})
+$loopOsrVersionBaselineFailures = @($loopOsrVersionBaselineComparisons | Where-Object {
+    $_.AllocationRatioVs080 -gt 1.05 -or $_.CodeSizeRatioVs080 -gt 1.15
+})
 $tier1Arithmetic = $summary | Where-Object {
     $_.Workload -eq 'arithmetic' -and $_.Name -eq 'tier1'
 } | Select-Object -First 1
@@ -484,7 +532,7 @@ foreach ($workload in @(
         $negativeGateFailures.Add(
             "$workload Tier 1/interpreter median speedup is $($tier1.SpeedupVsInterpreterMedian).")
     }
-    if ($tier1.AllocationRatioVsInterpreterMedian -gt 1.10) {
+    if ($tier1.AllocationRatioVsInterpreterMedian -gt 1.05) {
         $negativeGateFailures.Add(
             "$workload Tier 1/interpreter allocation ratio is $($tier1.AllocationRatioVsInterpreterMedian).")
     }
@@ -508,6 +556,8 @@ foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_er
     }
 
     $rolloutRatios = [Collections.Generic.List[double]]::new()
+    $allocationRatios = [Collections.Generic.List[double]]::new()
+    $codeSizeRatios = [Collections.Generic.List[double]]::new()
     foreach ($record in $records | Where-Object {
         $_.Workload -eq $workload -and $_.Name -eq 'tier2'
     }) {
@@ -521,6 +571,18 @@ foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_er
         }
 
         $rolloutRatios.Add($tier1Record.WarmNsOp / $record.WarmNsOp)
+        $allocationRatios.Add($(if ($tier1Record.AllocatedOp -eq 0) {
+            if ($record.AllocatedOp -eq 0) { 1.0 } else { [double]::MaxValue }
+        }
+        else {
+            $record.AllocatedOp / $tier1Record.AllocatedOp
+        }))
+        $codeSizeRatios.Add($(if ($tier1Record.EstimatedCodeBytes -eq 0) {
+            if ($record.EstimatedCodeBytes -eq 0) { 1.0 } else { [double]::MaxValue }
+        }
+        else {
+            $record.EstimatedCodeBytes / $tier1Record.EstimatedCodeBytes
+        }))
     }
 
     $rolloutInterval = Get-BootstrapMedianInterval $rolloutRatios.ToArray()
@@ -529,6 +591,8 @@ foreach ($workload in @('lua_calls', 'table_access', 'metamethod', 'coroutine_er
         SpeedupVsTier1Median = Get-Median $rolloutRatios.ToArray()
         SpeedupVsTier1Ci95Lower = $rolloutInterval.Lower
         SpeedupVsTier1Ci95Upper = $rolloutInterval.Upper
+        AllocationRatioVsTier1Median = Get-Median $allocationRatios.ToArray()
+        CodeSizeRatioVsTier1Median = Get-Median $codeSizeRatios.ToArray()
     })
     $rolloutMedian = Get-Median $rolloutRatios.ToArray()
     if ($rolloutMedian -lt 0.90) {
@@ -595,13 +659,15 @@ $tier2Decision = [pscustomobject]@{
     Tier2VsTier1Comparisons = $tier2Tier1Comparisons
     NegativeWorkloadComparisons = $tier2NegativeComparisons.ToArray()
     NegativeWorkloadGateFailures = $tier2NegativeGateFailures.ToArray()
+    VersionBaselineComparisons = $tier2VersionBaselineComparisons
+    VersionBaselineGateFailures = $tier2VersionBaselineFailures
     QualifiesThisRid =
         $tier2Arithmetic.SpeedupVsInterpreterMedian -ge 4.0 -and
         $tier2Arithmetic.SpeedupVsInterpreterCi95Lower -ge 4.0 -and
         [Math]::Abs($tier2Arithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
-        $tier2Arithmetic.Tier2P95Ms -lt 10.0 -and
-        $tier2Arithmetic.Tier2CompileAllocatedP95Bytes -lt 262144 -and
-        $tier2Arithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -lt 32768 -and
+        $tier2Arithmetic.Tier2P95Ms -le 5.0 -and
+        $tier2Arithmetic.Tier2CompileAllocatedP95Bytes -le 262144 -and
+        $tier2Arithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -le 32768 -and
         $tier2Arithmetic.Tier2CodeKind -eq 'ExactNumericSpecializedCil' -and
         $tier2Arithmetic.Tier2SpecializedOptimizationCount -gt 0 -and
         $tier2Arithmetic.Tier2NumericRegionCount -gt 0 -and
@@ -621,10 +687,11 @@ $tier2Decision = [pscustomobject]@{
         $tier2ArithmeticVsTier1.SpeedupVsTier1Ci95Lower -ge 0.95 -and
         $tier2FibIterVsTier1.SpeedupVsTier1Median -ge 0.95 -and
         $tier2MandelbrotVsTier1.SpeedupVsTier1Median -ge 0.90 -and
-        $tier2ArithmeticVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
-        $tier2FibIterVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
-        $tier2MandelbrotVsTier1.AllocationRatioVsTier1Median -le 1.10 -and
-        $tier2NegativeGateFailures.Count -eq 0
+        $tier2ArithmeticVsTier1.AllocationRatioVsTier1Median -le 1.05 -and
+        $tier2FibIterVsTier1.AllocationRatioVsTier1Median -le 1.05 -and
+        $tier2MandelbrotVsTier1.AllocationRatioVsTier1Median -le 1.05 -and
+        $tier2NegativeGateFailures.Count -eq 0 -and
+        $tier2VersionBaselineFailures.Count -eq 0
 }
 $tier2Decision | ConvertTo-Json | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'tier2-decision.json') -Encoding utf8
@@ -636,6 +703,8 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
     } | Select-Object -First 1
     $ratios = [Collections.Generic.List[double]]::new()
     $startupRatios = [Collections.Generic.List[double]]::new()
+    $allocationRatios = [Collections.Generic.List[double]]::new()
+    $codeSizeRatios = [Collections.Generic.List[double]]::new()
     foreach ($run in $records | Where-Object {
         $_.Workload -eq $workload -and $_.Name -eq 'loop_osr'
     }) {
@@ -650,6 +719,18 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
 
         $ratios.Add($baseline.WarmNsOp / $run.WarmNsOp)
         $startupRatios.Add($baseline.StartupMedianMs / $run.StartupMedianMs)
+        $allocationRatios.Add($(if ($baseline.AllocatedOp -eq 0) {
+            if ($run.AllocatedOp -eq 0) { 1.0 } else { [double]::MaxValue }
+        }
+        else {
+            $run.AllocatedOp / $baseline.AllocatedOp
+        }))
+        $codeSizeRatios.Add($(if ($baseline.EstimatedCodeBytes -eq 0) {
+            if ($run.EstimatedCodeBytes -eq 0) { 1.0 } else { [double]::MaxValue }
+        }
+        else {
+            $run.EstimatedCodeBytes / $baseline.EstimatedCodeBytes
+        }))
     }
 
     $interval = Get-BootstrapMedianInterval $ratios.ToArray()
@@ -660,9 +741,17 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
         $loopOsrNegativeGateFailures.Add(
             "$workload Loop OSR-on/off median speedup is $median.")
     }
-    if ($startupMedian -lt 0.90) {
+    if ($startupMedian -lt 0.95) {
         $loopOsrNegativeGateFailures.Add(
             "$workload Loop OSR-on/off startup median speedup is $startupMedian.")
+    }
+    if ((Get-Median $allocationRatios.ToArray()) -gt 1.05) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload Loop OSR-on/off allocation ratio exceeds 1.05.")
+    }
+    if ((Get-Median $codeSizeRatios.ToArray()) -gt 1.15) {
+        $loopOsrNegativeGateFailures.Add(
+            "$workload Loop OSR-on/off code-size ratio exceeds 1.15.")
     }
     if ($record.LoopOsrEligibilityAccepted -ne 0) {
         $loopOsrNegativeGateFailures.Add(
@@ -685,6 +774,8 @@ $loopOsrWorkloadComparisons = foreach ($workload in @(
         StartupSpeedupVsDisabledMedian = $startupMedian
         StartupSpeedupVsDisabledCi95Lower = $startupInterval.Lower
         StartupSpeedupVsDisabledCi95Upper = $startupInterval.Upper
+        AllocationRatioVsDisabledMedian = Get-Median $allocationRatios.ToArray()
+        CodeSizeRatioVsDisabledMedian = Get-Median $codeSizeRatios.ToArray()
         CodeKind = $record.LoopOsrCodeKind
         ManagedCompilationCount = $record.LoopOsrManagedCompilationCount
         EligibilityAccepted = $record.LoopOsrEligibilityAccepted
@@ -755,14 +846,16 @@ $loopOsrDecision = [pscustomobject]@{
         $loopOsrArithmetic.NumericRegionCompileAllocationSlopeBytesInstruction
     NegativeWorkloadComparisons = @($loopOsrWorkloadComparisons)
     NegativeWorkloadGateFailures = $loopOsrNegativeGateFailures.ToArray()
+    VersionBaselineComparisons = $loopOsrVersionBaselineComparisons
+    VersionBaselineGateFailures = $loopOsrVersionBaselineFailures
     QualifiesThisRid =
         (Get-Median $loopOsrArithmeticRatios.ToArray()) -ge 2.0 -and
         $loopOsrArithmeticInterval.Lower -ge 1.5 -and
         $loopOsrArithmetic.Operations -ge 30 -and
         ($Rounds % 2) -eq 0 -and
         [Math]::Abs($loopOsrArithmetic.AllocationSlopeBytesIteration) -le 0.01 -and
-        $loopOsrArithmetic.LoopOsrPreparationP95Ms -lt 10.0 -and
-        $loopOsrArithmetic.LoopOsrP95Ms -lt 10.0 -and
+        $loopOsrArithmetic.LoopOsrPreparationP95Ms -le 2.0 -and
+        $loopOsrArithmetic.LoopOsrP95Ms -le 7.5 -and
         $loopOsrArithmetic.LoopOsrCodeKind -eq 'GuardedExactNumericCil' -and
         $loopOsrArithmetic.LoopOsrSpecializedInstructionCount -gt 0 -and
         $loopOsrArithmetic.LoopOsrNumericRegionCount -gt 0 -and
@@ -773,9 +866,10 @@ $loopOsrDecision = [pscustomobject]@{
         $loopOsrArithmetic.LoopOsrManagedCompilationCount -eq 0 -and
         $loopOsrArithmetic.LoopOsrEligibilityAccepted -gt 0 -and
         $loopOsrArithmetic.LoopOsrLivenessCacheHitRate -eq 1.0 -and
-        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes -lt 196608 -and
-        $loopOsrArithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -lt 32768 -and
-        $loopOsrNegativeGateFailures.Count -eq 0
+        $loopOsrArithmetic.LoopOsrCompileAllocatedP95Bytes -le 196608 -and
+        $loopOsrArithmetic.NumericRegionCompileAllocationSlopeBytesInstruction -le 32768 -and
+        $loopOsrNegativeGateFailures.Count -eq 0 -and
+        $loopOsrVersionBaselineFailures.Count -eq 0
 }
 $loopOsrDecision | ConvertTo-Json -Depth 8 | Set-Content `
     -LiteralPath (Join-Path $outputDirectory 'loop-osr-decision.json') -Encoding utf8

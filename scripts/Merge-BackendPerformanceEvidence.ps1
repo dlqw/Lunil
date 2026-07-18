@@ -138,6 +138,9 @@ $tier2Result = [pscustomobject]@{
     AllRidsRejectNegativeAutomaticTier2 = @($tier2Selected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0
     }).Count -eq 0
+    AllRidsPassVersionBaselineGate = @($tier2Selected | Where-Object {
+        @($_.VersionBaselineGateFailures).Count -ne 0
+    }).Count -eq 0
     AllRidsQualify = @($tier2Selected | Where-Object {
         -not $_.QualifiesThisRid
     }).Count -eq 0
@@ -224,11 +227,14 @@ $loopOsrResult = [pscustomobject]@{
     }).Count -eq 0
     AllRidsPassNegativeStartupGate = @($loopOsrSelected | Where-Object {
         @($_.NegativeWorkloadComparisons | Where-Object {
-            $_.StartupSpeedupVsDisabledMedian -lt 0.90
+            $_.StartupSpeedupVsDisabledMedian -lt 0.95
         }).Count -ne 0
     }).Count -eq 0
     AllRidsPassNegativeWorkloadGate = @($loopOsrSelected | Where-Object {
         @($_.NegativeWorkloadGateFailures).Count -ne 0
+    }).Count -eq 0
+    AllRidsPassVersionBaselineGate = @($loopOsrSelected | Where-Object {
+        @($_.VersionBaselineGateFailures).Count -ne 0
     }).Count -eq 0
     AllRidsQualify = @($loopOsrSelected | Where-Object {
         -not $_.QualifiesThisRid
