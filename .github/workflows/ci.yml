@@ -12,6 +12,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -88,9 +89,15 @@ jobs:
             --configuration Release --no-build -- 1000000 |
             Tee-Object -FilePath 'artifacts/benchmarks/${{ matrix.rid }}.txt'
       - name: Record repeated Tier 1, Tier 2, and Loop OSR evidence
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: pwsh
         run: ./scripts/Measure-BackendPerformance.ps1 -Rounds 6 -ColdSamples 9 -Iterations 1000000 -Configuration Release -NoBuild
       - uses: actions/upload-artifact@v7
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
         with:
           name: backend-performance-${{ matrix.rid }}
           path: artifacts/backend-performance/**
@@ -111,6 +118,9 @@ jobs:
 
   backend-performance-decision:
     name: Aggregate Tier 1/Tier 2/Loop OSR six-RID evidence
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: build-and-test
     runs-on: ubuntu-latest
     steps:
