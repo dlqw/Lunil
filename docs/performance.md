@@ -116,6 +116,22 @@ Install the pinned native tools once, then run the complete matrix:
   -NoProvision
 ```
 
+During local optimization work, the native baseline and selected Lunil route are sufficient; the
+reference-engine comparison is intentionally optional and is reserved for release qualification:
+
+```powershell
+./scripts/Measure-CrossRuntimePerformance.ps1 `
+  -Workloads string_build `
+  -Engines lunil_auto `
+  -SkipReference `
+  -Rounds 6 `
+  -TargetMilliseconds 500 `
+  -NoProvision
+```
+
+Beta, RC, and stable gates use the complete matrix above, including the reference engine and every
+required execution route.
+
 Regenerate or verify the committed charts:
 
 ```powershell

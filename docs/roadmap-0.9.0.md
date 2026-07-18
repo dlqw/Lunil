@@ -12,9 +12,9 @@ reference interpreter -> Tier 1 -> Tier 2
                                       +-- function entry or loop backedge entry
 ```
 
-Loop OSR remains independently configurable and measurable, but shares Tier 2's numeric analysis,
-planning, emission, accounting, and deoptimization contract. Lua persisted/static AOT is not part of
-the product and will not be reintroduced.
+Loop OSR is not a separate roadmap milestone: it remains independently configurable and measurable,
+while sharing Tier 2's numeric analysis, planning, emission, accounting, and deoptimization contract.
+Lua persisted/static AOT is not part of the product and will not be reintroduced.
 
 ## Stable baseline
 
