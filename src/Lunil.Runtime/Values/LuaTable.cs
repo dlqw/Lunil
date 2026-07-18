@@ -7,7 +7,8 @@ namespace Lunil.Runtime.Values;
 
 /// <summary>
 /// Lua table with a dense array part and an open-addressed hash part. Deleted hash
-/// keys remain as tombstones so next(table, deletedCurrentKey) can continue.
+/// keys remain as tombstones so next(table, deletedCurrentKey) can continue. Mutation is
+/// single-writer; version publication supports concurrent cache readers.
 /// </summary>
 public sealed class LuaTable : LuaGcObject
 {
@@ -1121,7 +1122,7 @@ public sealed class LuaTable : LuaGcObject
 
     private void IncrementContentVersion()
     {
-        Interlocked.Increment(ref _contentVersion);
+        Volatile.Write(ref _contentVersion, unchecked(_contentVersion + 1));
         Volatile.Write(ref _absentMetamethodMask, 0);
     }
 
