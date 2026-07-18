@@ -62,31 +62,43 @@ the primary `0.9.0` optimization targets.
 
 ## Current development snapshot
 
-`0.9.0-alpha.2` has complete six-RID cross-runtime and backend qualification using the same
+`0.9.0-alpha.3` has complete six-RID cross-runtime and backend qualification using the same
 workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 
 | Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
 | --- | ---: | ---: | --- |
 | `0.8.0`, six release RIDs | 0.680x | 9.974x | Passed |
 | `0.9.0-alpha.2`, six release RIDs | 0.697x | 9.918x | Passed |
+| `0.9.0-alpha.3`, six release RIDs | 0.947x | 13.479x | Passed |
 
-The two rows are independent qualification runs rather than a paired hardware speedup claim. The
-development row demonstrates current-source correctness, route stability, and performance shape.
+These rows are independent qualification runs rather than paired hardware speedup claims. The
+development rows demonstrate current-source correctness, route stability, and performance shape.
 
-| Alpha 2 backend metric | Six-RID result | `0.9.0` limit |
+Alpha 3 keeps exact dense-array and interned-field table operations inside guarded numeric regions.
+The resulting table-heavy workloads meet their release targets:
+
+| Auto JIT workload | `0.8.0` | `0.9.0-alpha.3` | `0.9.0` target |
+| --- | ---: | ---: | ---: |
+| `table_access` | 0.299x | 0.457x | ≥ 0.450x |
+| `sieve` | 0.059x | 0.501x | ≥ 0.120x |
+
+![Runtime comparison for Lunil 0.9.0-alpha.3](../assets/performance/0.9.0-alpha.3-runtime-overview.svg)
+
+![Auto JIT workload comparison for Lunil 0.9.0-alpha.3](../assets/performance/0.9.0-alpha.3-auto-workloads.svg)
+
+| Current backend metric | Six-RID result | `0.9.0` limit |
 | --- | ---: | ---: |
-| Tier 2 compile p95 | 3.6545 ms | ≤ 5 ms |
-| Tier 2 compile allocation p95 | 250,912 B | ≤ 262,144 B |
-| Loop OSR compile p95 | 4.6265 ms | ≤ 7.5 ms |
-| Loop OSR preparation p95 | 0.091 ms | ≤ 2 ms |
-| Loop OSR compile allocation p95 | 192,112 B | ≤ 196,608 B |
-| Maximum region allocation growth | 22,184 B/instruction | ≤ 32,768 B/instruction |
-| Minimum unchanged-route startup ratio | 0.986x | ≥ 0.95x |
-| Maximum unchanged-route execution allocation | 1.028x | ≤ 1.05x |
+| Tier 2 compile p95 | 3.280 ms | ≤ 5 ms |
+| Tier 2 compile allocation p95 | 251,088 B | ≤ 262,144 B |
+| Loop OSR compile p95 | 4.613 ms | ≤ 7.5 ms |
+| Loop OSR preparation p95 | 0.081 ms | ≤ 2 ms |
+| Loop OSR compile allocation p95 | 192,264 B | ≤ 196,608 B |
+| Maximum region allocation growth | 23,351 B/instruction | ≤ 32,768 B/instruction |
+| Maximum unchanged-route execution allocation | 1.014x | ≤ 1.05x |
 | Maximum unchanged-route estimated code size | 1.000x | ≤ 1.15x |
 
 The compact source report is available at
-[`benchmarks/results/0.9.0-alpha.2-performance.json`](../benchmarks/results/0.9.0-alpha.2-performance.json).
+[`benchmarks/results/0.9.0-alpha.3-performance.json`](../benchmarks/results/0.9.0-alpha.3-performance.json).
 
 ## Reproduce the benchmark
 
@@ -106,6 +118,11 @@ Regenerate or verify the committed charts:
 ```powershell
 ./scripts/New-PerformanceCharts.ps1
 ./scripts/New-PerformanceCharts.ps1 -Verify
+./scripts/New-PerformanceCharts.ps1 `
+  -DataPath benchmarks/results/0.9.0-alpha.3-performance.json
+./scripts/New-PerformanceCharts.ps1 `
+  -DataPath benchmarks/results/0.9.0-alpha.3-performance.json `
+  -Verify
 ```
 
 Absolute timings are hardware-specific. Valid version comparisons use the same machine, toolchain,

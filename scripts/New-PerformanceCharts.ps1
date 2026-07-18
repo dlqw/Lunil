@@ -122,8 +122,8 @@ function New-WorkloadSvg($Report) {
 }
 
 $outputs = @{
-    '0.8.0-runtime-overview.svg' = New-EngineOverviewSvg $data
-    '0.8.0-auto-workloads.svg' = New-WorkloadSvg $data
+    "$($data.release)-runtime-overview.svg" = New-EngineOverviewSvg $data
+    "$($data.release)-auto-workloads.svg" = New-WorkloadSvg $data
 }
 
 if (-not $Verify) {

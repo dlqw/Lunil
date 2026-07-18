@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.2-7c3aed?style=flat-square">
+  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.3-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -26,50 +26,52 @@ Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.2`；Alpha 阶段的
+> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.3`；Alpha 阶段的
 > API 与后端行为在功能冻结前仍可能变化。
 
 ## 性能
 
-稳定版 `0.8.0` 使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
+当前 `0.9.0-alpha.3` 使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
 上测试。原生 PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。
 
 | 引擎 | 相对原生 Lua 几何均值 | 相对 MoonSharp 几何均值 |
 | --- | ---: | ---: |
-| LuaJIT | 11.488x | 168.397x |
-| 原生 Lua 5.4 | 1.000x | 14.657x |
-| Lunil Tier 2 | 0.682x | 9.988x |
-| **Lunil Auto JIT** | **0.680x** | **9.974x** |
-| Lunil Loop OSR | 0.113x | 1.659x |
-| Lunil Tier 1 | 0.105x | 1.543x |
-| MoonSharp | 0.068x | 1.000x |
-| Lunil 解释器 | 0.050x | 0.726x |
+| LuaJIT | 11.236x | 159.381x |
+| 原生 Lua 5.4 | 1.000x | 14.225x |
+| Lunil Tier 2 | 0.955x | 13.530x |
+| **Lunil Auto JIT** | **0.947x** | **13.479x** |
+| Lunil Loop OSR | 0.146x | 2.078x |
+| Lunil Tier 1 | 0.105x | 1.495x |
+| MoonSharp | 0.070x | 1.000x |
+| Lunil 解释器 | 0.050x | 0.712x |
 
-![Lunil 0.8.0 运行时对比](assets/performance/0.8.0-runtime-overview.svg)
+![Lunil 0.9.0-alpha.3 运行时对比](assets/performance/0.9.0-alpha.3-runtime-overview.svg)
 
 | Auto JIT workload | 相对原生 Lua | 相对 MoonSharp |
 | --- | ---: | ---: |
-| 算术循环 | 1.110x | 24.659x |
-| 迭代 Fibonacci | 2.801x | 40.813x |
-| Mandelbrot | 0.559x | 8.757x |
-| 控制流 | 2.070x | 34.874x |
-| 函数调用 | 1.204x | 17.133x |
-| 表访问 | 0.299x | 8.348x |
-| 素数筛 | 0.059x | 1.464x |
-| 字符串构建 | 0.591x | 1.521x |
+| 算术循环 | 1.108x | 24.851x |
+| 迭代 Fibonacci | 2.871x | 40.528x |
+| Mandelbrot | 0.569x | 8.560x |
+| 控制流 | 2.064x | 33.104x |
+| 函数调用 | 1.289x | 17.335x |
+| 表访问 | 0.457x | 11.891x |
+| 素数筛 | 0.501x | 12.559x |
+| 字符串构建 | 0.585x | 1.475x |
 
-![Lunil 0.8.0 Auto JIT 分 workload 对比](assets/performance/0.8.0-auto-workloads.svg)
+![Lunil 0.9.0-alpha.3 Auto JIT 分 workload 对比](assets/performance/0.9.0-alpha.3-auto-workloads.svg)
 
-当前 `0.9.0-alpha.2` 源码也通过了相同的六 RID 跨运行时矩阵，以及完整的后端正确性、
-NativeAOT、路由、telemetry、启动、分配和 code-size 资格验证：
+本次以 table 为重点的 Alpha 版本将 `table_access` 从原生 Lua 的 `0.299x` 提升至 `0.457x`，
+将 `sieve` 从 `0.059x` 提升至 `0.501x`。下表来自各版本独立的六 RID 资格测试，不代表同机器配对增幅。
 
-| 源码版本 | Auto 相对原生 Lua | Auto 相对 MoonSharp | Tier 2 编译分配 p95 | Loop OSR 编译分配 p95 |
-| --- | ---: | ---: | ---: | ---: |
-| 稳定版 `0.8.0` | 0.680x | 9.974x | 317,776 B | 259,232 B |
-| `0.9.0-alpha.2` | 0.697x | 9.918x | 250,912 B | 192,112 B |
+| 版本 | Auto 总体 | 表访问 | 素数筛 |
+| --- | ---: | ---: | ---: |
+| 稳定版 `0.8.0` | 0.680x | 0.299x | 0.059x |
+| `0.9.0-alpha.2` | 0.697x | 0.292x | 0.060x |
+| **`0.9.0-alpha.3`** | **0.947x** | **0.457x** | **0.501x** |
 
-吞吐数据来自两次独立的六 RID 资格运行，不作为同硬件配对增幅结论。Alpha 2 的机器可读报告还
-包含编译 p95、分配增长、启动与未改变路由的回归比例。
+当前源码也通过了后端正确性、NativeAOT、trimming、包/API、路由、telemetry、启动、分配和
+code-size 资格验证。[机器可读报告](benchmarks/results/0.9.0-alpha.3-performance.json)包含精确值与
+后端成本。
 
 测试方法、源数据、置信门禁与复现命令见[性能文档](docs/performance.md)；下一阶段量化目标见
 [`0.9.0` 路线图](docs/roadmap-0.9.0.md)。

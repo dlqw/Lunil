@@ -162,7 +162,9 @@ jobs:
         run: ./scripts/Test-CommunityDocumentation.ps1
       - name: Verify generated performance charts
         shell: pwsh
-        run: ./scripts/New-PerformanceCharts.ps1 -Verify
+        run: |
+          ./scripts/New-PerformanceCharts.ps1 -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.3-performance.json -Verify
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
