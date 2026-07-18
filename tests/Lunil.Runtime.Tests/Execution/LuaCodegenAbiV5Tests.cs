@@ -24,18 +24,18 @@ public sealed class LuaCodegenAbiV5Tests
         var target = LuaValue.FromTable(table);
         var cache = new LuaCodegenTableSiteCache();
 
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue(
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableIntegerValue(
             ref cachedTable,
             target,
             cache,
             1,
-            LuaValue.FromInteger(10)));
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue(
+            10));
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableBooleanValue(
             ref cachedTable,
             target,
             cache,
             2,
-            LuaValue.FromBoolean(true)));
+            true));
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenIntegerTableValue(
             ref cachedTable,
             target,
@@ -53,22 +53,21 @@ public sealed class LuaCodegenAbiV5Tests
             cache,
             3,
             out _));
-        Assert.False(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue(
+        Assert.False(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableIntegerValue(
             ref cachedTable,
             target,
             cache,
             3,
-            LuaValue.FromInteger(30)));
+            30));
 
         table.SetMetatable(null);
-        var collectable = state.CreateTable();
-        Assert.False(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableNonCollectableValue(
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableFloatValue(
             ref cachedTable,
             target,
             cache,
             3,
-            LuaValue.FromTable(collectable)));
-        Assert.True(table.Get(LuaValue.FromInteger(3)).IsNil);
+            1.5));
+        Assert.Equal(LuaValue.FromFloat(1.5), table.Get(LuaValue.FromInteger(3)));
     }
 
     [Fact]
@@ -82,13 +81,13 @@ public sealed class LuaCodegenAbiV5Tests
         LuaTable? cachedTable = null;
         var regionSite = new LuaCodegenTableRegionSite();
 
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableNonCollectableValue(
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableIntegerValue(
             ref cachedTable,
             target,
             cache,
             ref regionSite,
             key,
-            LuaValue.FromInteger(1)));
+            1));
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
             ref cachedTable,
             target,
@@ -97,6 +96,38 @@ public sealed class LuaCodegenAbiV5Tests
             key,
             out var value));
         Assert.Equal(LuaValue.FromInteger(1), value);
+
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableFloatValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            2.5));
+        Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            out value));
+        Assert.Equal(LuaValue.FromFloat(2.5), value);
+
+        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableBooleanValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            true));
+        Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            out value));
+        Assert.Equal(LuaValue.FromBoolean(true), value);
 
         table.Set(key, LuaValue.Nil);
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(

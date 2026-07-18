@@ -89,15 +89,53 @@ public static class LuaCodegenAbiV5
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool TrySetCompilerProvenIntegerTableNonCollectableValue(
+    public static bool TrySetCompilerProvenIntegerTableIntegerValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        long value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            key,
+            LuaValue.FromInteger(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetCompilerProvenIntegerTableFloatValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        double value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            key,
+            LuaValue.FromFloat(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetCompilerProvenIntegerTableBooleanValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        bool value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            key,
+            LuaValue.FromBoolean(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TrySetCompilerProvenIntegerTableNonCollectableValue(
         ref LuaTable? cachedTable,
         LuaValue target,
         LuaCodegenTableSiteCache cache,
         long key,
         LuaValue value)
     {
-        if (value.TryGetGcObject() is not null ||
-            !TryBindTable(ref cachedTable, target, out var table))
+        if (!TryBindTable(ref cachedTable, target, out var table))
         {
             return false;
         }
@@ -210,7 +248,52 @@ public static class LuaCodegenAbiV5
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool TrySetCompilerProvenStringTableNonCollectableValue(
+    public static bool TrySetCompilerProvenStringTableIntegerValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        long value) => TrySetCompilerProvenStringTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            LuaValue.FromInteger(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetCompilerProvenStringTableFloatValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        double value) => TrySetCompilerProvenStringTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            LuaValue.FromFloat(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetCompilerProvenStringTableBooleanValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        bool value) => TrySetCompilerProvenStringTableNonCollectableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            LuaValue.FromBoolean(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TrySetCompilerProvenStringTableNonCollectableValue(
         ref LuaTable? cachedTable,
         LuaValue target,
         LuaCodegenTableSiteCache cache,
@@ -218,8 +301,7 @@ public static class LuaCodegenAbiV5
         LuaValue key,
         LuaValue value)
     {
-        if (value.TryGetGcObject() is not null ||
-            !TryBindTable(ref cachedTable, target, out var table) ||
+        if (!TryBindTable(ref cachedTable, target, out var table) ||
             key.TryGetString() is not { } stringKey)
         {
             return false;
