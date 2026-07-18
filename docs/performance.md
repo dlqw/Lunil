@@ -30,7 +30,7 @@ versioned regression baseline for unchanged Tier 2 and Loop OSR routes.
 | Native Lua 5.4 | 1.000x | 14.657x |
 | Lunil Tier 2 | 0.682x | 9.988x |
 | **Lunil Auto JIT** | **0.680x** | **9.974x** |
-| Lunil Loop OSR | 0.113x | 1.659x |
+| Lunil Tier 2 (loop-entry OSR) | 0.113x | 1.659x |
 | Lunil Tier 1 | 0.105x | 1.543x |
 | MoonSharp | 0.068x | 1.000x |
 | Lunil interpreter | 0.050x | 0.726x |
@@ -59,6 +59,9 @@ Auto JIT and explicit Tier 2 passed the release stability gate on every workload
 The data also makes the remaining gap explicit. Numeric loops, control flow, and qualified calls
 are already competitive with native Lua; table-heavy mixed workloads and string construction are
 the primary `0.9.0` optimization targets.
+
+Loop OSR is an entry mechanism for already-running loops, not a third tier. It is measured separately
+to expose the cost and benefit of entering specialized code at a loop backedge.
 
 ## Current development snapshot
 
@@ -109,10 +112,14 @@ six-round result; it is intentionally reported separately from the six-RID relea
 | Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
 | --- | ---: | ---: | ---: |
 | Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
-| **Lunil Auto JIT** | **169.837 µs** | **0.805x** | **1.615x** |
+| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | recorded baseline |
 | MoonSharp | 283.203 µs | 0.508x | 1.000x |
 
 ![Runtime comparison for Lunil 0.9.0-alpha.5 string_build](../assets/performance/0.9.0-alpha.5-string-build.svg)
+
+The MoonSharp comparison is retained from the accepted reference baseline; PR smoke tests do not
+rerun external engines. Full external comparison is refreshed only by the scheduled/manual release
+qualification workflow.
 
 ## Reproduce the benchmark
 

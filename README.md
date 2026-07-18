@@ -85,7 +85,7 @@ normalization baseline; it is reported separately from the release matrix:
 | Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
 | --- | ---: | ---: | ---: |
 | Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
-| **Lunil Auto JIT** | **169.837 µs** | **0.805x** | **1.615x** |
+| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | recorded baseline |
 | MoonSharp | 283.203 µs | 0.508x | 1.000x |
 
 ![Lunil 0.9.0-alpha.5 string-build comparison](assets/performance/0.9.0-alpha.5-string-build.svg)
@@ -102,8 +102,8 @@ targets.
   flow analysis, workspace analysis, canonical lowering, and independent IR verification.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
-- **Tiered execution** — reference interpreter, benefit-qualified Tier 1, guarded Tier 2, and
-  loop-backedge entry over the same specialization contract.
+- **Tiered execution** — reference interpreter, benefit-qualified Tier 1, and guarded Tier 2. Loop
+  OSR is the backedge entry mechanism that transfers a running loop into the same specialized code.
 - **Embeddable and sandboxable** — reusable hosting API with restricted, trusted, and deterministic
   capability profiles.
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming

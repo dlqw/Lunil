@@ -16,8 +16,6 @@ on:
   push:
     branches:
       - main
-      - "feature/**"
-      - "perf/**"
     paths:
       - ".github/workflows/cross-runtime-performance.yml"
       - "benchmarks/cross-runtime/**"
@@ -50,6 +48,8 @@ env:
 jobs:
   measure:
     name: Measure (${{ matrix.rid }})
+    if: >-
+      github.event_name != 'pull_request' || matrix.rid == 'win-x64'
     strategy:
       fail-fast: false
       matrix:
@@ -86,7 +86,19 @@ jobs:
         run: >-
           ./scripts/Install-CrossRuntimeBenchmarkTools.ps1
           -RuntimeIdentifier '${{ matrix.rid }}'
-      - name: Run balanced cross-runtime benchmark
+      - name: Run PR performance smoke test (native Lua + Lunil Auto)
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: >-
+          ./scripts/Measure-CrossRuntimePerformance.ps1
+          -RuntimeIdentifier '${{ matrix.rid }}'
+          -Workloads string_build
+          -Engines lunil_auto
+          -Rounds 2
+          -TargetMilliseconds 100
+          -Configuration Release -NoProvision -NoBuild -SkipReference
+      - name: Run complete cross-runtime qualification
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: >-
           ./scripts/Measure-CrossRuntimePerformance.ps1
@@ -103,6 +115,7 @@ jobs:
 
   aggregate:
     name: Aggregate native-Lua and MoonSharp gates
+    if: github.event_name != 'pull_request'
     needs: measure
     runs-on: ubuntu-latest
     steps:

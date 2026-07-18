@@ -14,6 +14,9 @@ reference interpreter -> Tier 1 -> Tier 2
 
 Loop OSR is not a separate roadmap milestone: it remains independently configurable and measurable,
 while sharing Tier 2's numeric analysis, planning, emission, accounting, and deoptimization contract.
+In other words, OSR describes a loop-entry transfer into compiled code, not an execution tier beside
+Tier 1 or Tier 2. The benchmark's separate OSR row exists only to compare loop-entry enabled and
+disabled behavior.
 Lua persisted/static AOT is not part of the product and will not be reintroduced.
 
 ## Stable baseline
