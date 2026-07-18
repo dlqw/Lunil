@@ -77,16 +77,15 @@ internal sealed class LuaNativeByteBuffer
     /// </summary>
     internal void AppendPair(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
     {
-        var firstRequiredLength = (long)Length + first.Length;
-        if (firstRequiredLength > _maximumLength)
-        {
-            ThrowQuotaExceeded(firstRequiredLength);
-        }
-
-        var requiredLength = firstRequiredLength + second.Length;
+        var requiredLength = (long)Length + first.Length + second.Length;
         if (requiredLength > _maximumLength)
         {
-            ThrowQuotaExceeded(requiredLength);
+            // Preserve the observable failure point of two sequential appends when a
+            // quota is actually exceeded, while keeping the common in-quota path to one check.
+            var firstRequiredLength = (long)Length + first.Length;
+            ThrowQuotaExceeded(firstRequiredLength > _maximumLength
+                ? firstRequiredLength
+                : requiredLength);
         }
 
         EnsureCapacity((int)requiredLength);

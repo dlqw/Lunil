@@ -34,6 +34,7 @@ public sealed class LuaHeap
     private long _nextObjectId;
     private long _nextHandleId;
     private long _allocationDebt;
+    private long _automaticCycleThreshold;
     private bool _allocatedSinceSafePoint;
     private LuaGcCycleKind _cycleKind;
     private int _completedMinorCycles;
@@ -48,6 +49,7 @@ public sealed class LuaHeap
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.StepObjectBudget);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MinorCyclesBeforeMajor);
         Mode = _options.InitialMode;
+        _automaticCycleThreshold = _options.StepSizeBytes;
         _visitor = new LuaGcVisitor(this);
         HashSeed = _options.HashSeed ?? RandomNumberGenerator.GetInt32(int.MinValue, int.MaxValue);
     }
@@ -94,7 +96,7 @@ public sealed class LuaHeap
         _pendingFinalizers.Count != 0 ||
         IsRunning &&
         (Phase != LuaGcPhase.Paused ||
-            _allocationDebt >= _options.StepSizeBytes ||
+            _allocationDebt >= _automaticCycleThreshold ||
             _options.StressEveryAllocation && _allocatedSinceSafePoint);
 
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
@@ -173,7 +175,7 @@ public sealed class LuaHeap
         }
 
         if (!_allocatedSinceSafePoint && Phase == LuaGcPhase.Paused &&
-            _allocationDebt < _options.StepSizeBytes)
+            _allocationDebt < _automaticCycleThreshold)
         {
             return;
         }
@@ -182,7 +184,8 @@ public sealed class LuaHeap
         {
             CollectFull();
         }
-        else if (Phase != LuaGcPhase.Paused || _allocationDebt >= _options.StepSizeBytes)
+        else if (Phase != LuaGcPhase.Paused ||
+            _allocationDebt >= _automaticCycleThreshold)
         {
             Step(stepObjectBudget);
         }
@@ -250,6 +253,10 @@ public sealed class LuaHeap
         if (value != 0)
         {
             Pause = value;
+            if (Phase == LuaGcPhase.Paused)
+            {
+                _automaticCycleThreshold = CalculateAutomaticCycleThreshold();
+            }
         }
 
         return previous;
@@ -825,7 +832,23 @@ public sealed class LuaHeap
         }
 
         Phase = LuaGcPhase.Paused;
+        _allocationDebt = 0;
+        _automaticCycleThreshold = CalculateAutomaticCycleThreshold();
         return 1;
+    }
+
+    private long CalculateAutomaticCycleThreshold()
+    {
+        var growthPercent = Math.Max(0L, (long)Pause - 100L);
+        if (growthPercent == 0)
+        {
+            return _options.StepSizeBytes;
+        }
+
+        var growthBytes = LogicalBytes > long.MaxValue / growthPercent
+            ? long.MaxValue
+            : LogicalBytes * growthPercent / 100L;
+        return Math.Max(_options.StepSizeBytes, growthBytes);
     }
 
     private void FinishActiveCycle()

@@ -40,6 +40,7 @@ var rid = GetOption(args, "--rid=") ??
 var commit = GetOption(args, "--commit=") ?? Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "unknown";
 var workloadFilter = SplitFilter(GetOption(args, "--workloads="));
 var engineFilter = SplitFilter(GetOption(args, "--engines="));
+var skipReference = args.Contains("--skip-reference", StringComparer.Ordinal);
 
 var workloads = suite.Workloads
     .Where(workload => workloadFilter.Count == 0 || workloadFilter.Contains(workload.Name))
@@ -66,7 +67,7 @@ var engines = allEngines
         engineFilter.Count == 0 ||
         engineFilter.Contains(engine.Descriptor.Id) ||
         engine.Descriptor.Id == suite.BaselineEngine ||
-        engine.Descriptor.Id == suite.Comparison.ReferenceEngine)
+        !skipReference && engine.Descriptor.Id == suite.Comparison.ReferenceEngine)
     .ToArray();
 if (engines.All(engine => engine.Descriptor.Id != suite.BaselineEngine))
 {

@@ -17,6 +17,7 @@ param(
     [string] $Configuration = 'Release',
     [switch] $NoProvision,
     [switch] $NoBuild,
+    [switch] $SkipReference,
     [switch] $Quick
 )
 
@@ -95,6 +96,9 @@ try {
     }
     if ($Engines.Count -gt 0) {
         $runnerArguments += "--engines=$($Engines -join ',')"
+    }
+    if ($SkipReference) {
+        $runnerArguments += '--skip-reference'
     }
 
     & dotnet @runnerArguments 2>&1 | Tee-Object -FilePath (Join-Path $OutputDirectory 'runner.log')
