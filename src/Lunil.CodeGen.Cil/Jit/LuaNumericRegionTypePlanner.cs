@@ -542,6 +542,8 @@ internal static class LuaNumericRegionPlanner
         if (boundDirectCalls is null ||
             !boundDirectCalls.TryGetValue(pc, out var directCall) ||
             instruction.B != directCall.Function.ParameterCount ||
+            instruction.B != directCall.TypePlan.ParameterKinds.Length ||
+            instruction.C != directCall.TypePlan.ResultKinds.Length ||
             !ReflectionEmitLuaDirectCallCompiler.CanInlineWithResultCount(
                 directCall.Function,
                 instruction.C) ||
@@ -561,7 +563,7 @@ internal static class LuaNumericRegionPlanner
             if (!TryAssignUse(
                     solver,
                     before[instruction.A + argument + 1],
-                    LuaNumericRegionValueKind.Integer))
+                    directCall.TypePlan.ParameterKinds[argument]))
             {
                 return false;
             }
@@ -572,7 +574,7 @@ internal static class LuaNumericRegionPlanner
             if (!TryAssignDefinition(
                     solver,
                     new ValueDefinition(pc, instruction.A + result),
-                    LuaNumericRegionValueKind.Integer))
+                    directCall.TypePlan.ResultKinds[result]))
             {
                 return false;
             }
@@ -859,14 +861,18 @@ internal static class LuaNumericRegionPlanner
                     var valid = boundDirectCalls is not null &&
                         boundDirectCalls.TryGetValue(pc, out var directCall) &&
                         instruction.B == directCall.Function.ParameterCount &&
+                        instruction.B == directCall.TypePlan.ParameterKinds.Length &&
+                        instruction.C == directCall.TypePlan.ResultKinds.Length &&
                         ReflectionEmitLuaDirectCallCompiler.CanInlineWithResultCount(
                             directCall.Function,
                             instruction.C) &&
                         Kind(before, instruction.A) == LuaNumericRegionValueKind.Tagged &&
-                        Enumerable.Range(instruction.A + 1, instruction.B).All(register =>
-                            Kind(before, register) == LuaNumericRegionValueKind.Integer) &&
-                        Enumerable.Range(instruction.A, instruction.C).All(register =>
-                            Kind(after, register) == LuaNumericRegionValueKind.Integer) &&
+                        Enumerable.Range(0, instruction.B).All(argument =>
+                            Kind(before, instruction.A + argument + 1) ==
+                                directCall.TypePlan.ParameterKinds[argument]) &&
+                        Enumerable.Range(0, instruction.C).All(result =>
+                            Kind(after, instruction.A + result) ==
+                                directCall.TypePlan.ResultKinds[result]) &&
                         Enumerable.Range(
                             instruction.A + instruction.C,
                             function.RegisterCount - instruction.A - instruction.C).All(

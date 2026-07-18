@@ -24,7 +24,7 @@
       "Assembly": "Lunil.CodeGen.Cil",
       "Project": "src/Lunil.CodeGen.Cil/Lunil.CodeGen.Cil.csproj",
       "Baseline": "api/0.9.0/Lunil.CodeGen.Cil.cs",
-      "Sha256": "CA6D0535D9679FC92379BBFF40AF557917284131CC0B353287771DB95E007707"
+      "Sha256": "CFAAA1A01D14B1FD1F968820216BB047A60C9B7C9F436182E9FA17774DE9BF57"
     },
     {
       "Assembly": "Lunil.Compiler",

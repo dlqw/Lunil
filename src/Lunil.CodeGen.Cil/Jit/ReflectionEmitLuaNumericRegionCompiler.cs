@@ -118,6 +118,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaCodegenAbiV4),
         nameof(LuaCodegenAbiV4.CanExecuteKnownClosureValue),
         [typeof(LuaValue), typeof(LuaCodegenCallSiteCache), typeof(int)]);
+    private static readonly MethodInfo TryGetClosure = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.TryGetClosure),
+        []);
     private static readonly MethodInfo GetCallSite = Method(
         typeof(LuaTier2RuntimeSites),
         nameof(LuaTier2RuntimeSites.GetCallSite),
@@ -497,6 +501,13 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 static constant => constant,
                 _ => generator.DeclareLocal(typeof(LuaValue)));
         var taggedValue = generator.DeclareLocal(typeof(LuaValue));
+        var directCallClosureLocals = (boundDirectCalls ??
+                ImmutableDictionary<int, LuaBoundDirectCall>.Empty)
+            .Where(pair => plan.Contains(pair.Key))
+            .ToDictionary(
+                static pair => pair.Key,
+                _ => generator.DeclareLocal(typeof(LuaClosure)));
+        var currentDirectCallClosure = generator.DeclareLocal(typeof(LuaClosure));
         var remaining = generator.DeclareLocal(typeof(long));
         var pending = generator.DeclareLocal(typeof(int));
         var boundaryProgramCounter = generator.DeclareLocal(typeof(int));
@@ -659,6 +670,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
+                directCallClosureLocals,
+                currentDirectCallClosure,
                 remaining,
                 pending,
                 backedgeCountdown,
@@ -697,6 +710,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 tableDefinitionLocals,
                 taggedConstantLocals,
                 taggedValue,
+                directCallClosureLocals,
+                currentDirectCallClosure,
                 remaining,
                 pending,
                 backedgeCountdown,
@@ -1062,6 +1077,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         Dictionary<int, LuaNumericIlLocal> tableDefinitionLocals,
         Dictionary<int, LuaNumericIlLocal> taggedConstantLocals,
         LuaNumericIlLocal taggedValue,
+        Dictionary<int, LuaNumericIlLocal> directCallClosureLocals,
+        LuaNumericIlLocal currentDirectCallClosure,
         LuaNumericIlLocal remaining,
         LuaNumericIlLocal pending,
         LuaNumericIlLocal backedgeCountdown,
@@ -1389,6 +1406,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                     pc,
                     instruction,
                     directCall,
+                    directCallClosureLocals[pc],
+                    currentDirectCallClosure,
                     bodyLabels,
                     blockEntryLabels,
                     resumeLabels,
@@ -1710,6 +1729,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         int pc,
         LuaIrInstruction instruction,
         LuaBoundDirectCall directCall,
+        LuaNumericIlLocal cachedClosure,
+        LuaNumericIlLocal currentClosure,
         NumericRegionLabelMap bodyLabels,
         NumericRegionLabelMap blockEntryLabels,
         NumericRegionLabelMap resumeLabels,
@@ -1733,6 +1754,26 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var budgetFallback = generator.DefineLabel();
         var safepointFallback = generator.DefineLabel();
         var completed = generator.DefineLabel();
+        var fullClosureGuard = generator.DefineLabel();
+        var closureGuardCompleted = generator.DefineLabel();
+        generator.Emit(
+            OpCodes.Ldloca,
+            NumericLocal(
+                valueLocals,
+                instruction.A,
+                LuaNumericRegionValueKind.Tagged));
+        generator.Emit(OpCodes.Call, TryGetClosure);
+        generator.Emit(OpCodes.Stloc, currentClosure);
+        generator.Emit(OpCodes.Ldloc, currentClosure);
+        generator.Emit(OpCodes.Brfalse, fallback);
+        generator.Emit(OpCodes.Ldloc, cachedClosure);
+        generator.Emit(OpCodes.Brfalse, fullClosureGuard);
+        generator.Emit(OpCodes.Ldloc, currentClosure);
+        generator.Emit(OpCodes.Ldloc, cachedClosure);
+        generator.Emit(OpCodes.Ceq);
+        generator.Emit(OpCodes.Brtrue, closureGuardCompleted);
+
+        generator.MarkLabel(fullClosureGuard);
         generator.Emit(
             OpCodes.Ldloc,
             NumericLocal(
@@ -1746,6 +1787,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         EmitInt32(generator, directCall.Function.Id);
         generator.Emit(OpCodes.Call, CanExecuteKnownClosureValue);
         generator.Emit(OpCodes.Brfalse, fallback);
+        generator.Emit(OpCodes.Ldloc, currentClosure);
+        generator.Emit(OpCodes.Stloc, cachedClosure);
+        generator.MarkLabel(closureGuardCompleted);
 
         var arguments = Enumerable.Range(0, instruction.B)
             .Select(index => NumericLocal(
@@ -1761,6 +1805,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             .ToArray();
         ReflectionEmitLuaDirectCallCompiler.EmitNumericRegionInline(
             directCall.Function,
+            directCall.TypePlan,
             generator,
             arguments,
             results,

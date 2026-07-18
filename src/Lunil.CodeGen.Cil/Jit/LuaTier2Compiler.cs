@@ -159,6 +159,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var boundDirectCalls = BuildBoundDirectCalls(
             module,
             function,
+            profile,
             optimized,
             cancellationToken,
             out var boundDirectCallCodeBytes);
@@ -999,11 +1000,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static ImmutableDictionary<int, LuaBoundDirectCall> BuildBoundDirectCalls(
         LuaIrModule module,
         LuaIrFunction caller,
+        LuaJitFunctionProfile profile,
         ImmutableDictionary<int, OptimizedInstruction> optimized,
         CancellationToken cancellationToken,
         out long estimatedCodeBytes)
     {
-        var methodsByFunction = new Dictionary<int, LuaCompiledDirectCall?>();
+        var methodsBySignature = new Dictionary<
+            (int FunctionId, UInt128 ArgumentKinds),
+            LuaCompiledDirectCall?>();
         var result = ImmutableDictionary.CreateBuilder<int, LuaBoundDirectCall>();
         var moduleContentId = LuaJitModuleIdentity.Create(module);
         estimatedCodeBytes = 0;
@@ -1030,38 +1034,57 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 continue;
             }
 
-            if (!methodsByFunction.TryGetValue(target.FunctionId, out var compiled))
+            var callee = module.Functions[target.FunctionId];
+            var site = profile.Sites.FirstOrDefault(candidate =>
+                candidate.ProgramCounter == programCounter &&
+                candidate.Opcode == LuaIrOpcode.Call);
+            if (site is null ||
+                site.CallArgumentKinds.Length != callee.ParameterCount ||
+                site.CallArgumentKinds.Any(static kinds => kinds is not
+                    (LuaJitValueKinds.Integer or LuaJitValueKinds.Float or
+                        LuaJitValueKinds.Boolean)))
             {
-                var callee = module.Functions[target.FunctionId];
-                var assumedProfile = new LuaJitFunctionProfile(
+                continue;
+            }
+
+            UInt128 argumentSignature = 0;
+            for (var argument = 0; argument < site.CallArgumentKinds.Length; argument++)
+            {
+                argumentSignature |= (UInt128)(ushort)site.CallArgumentKinds[argument]
+                    << (argument * 10);
+            }
+
+            var signature = (target.FunctionId, argumentSignature);
+            if (!methodsBySignature.TryGetValue(signature, out var compiled))
+            {
+                var exactProfile = new LuaJitFunctionProfile(
                     Samples: 1,
-                    ArgumentKinds: Enumerable.Repeat(
-                        LuaJitValueKinds.Integer,
-                        callee.ParameterCount).ToImmutableArray(),
+                    ArgumentKinds: site.CallArgumentKinds,
                     Sites: []);
                 compiled = ReflectionEmitLuaDirectCallCompiler.TryCompile(
                     callee,
-                    assumedProfile,
+                    exactProfile,
                     cancellationToken,
                     out var candidate)
                         ? candidate
                         : null;
-                methodsByFunction.Add(target.FunctionId, compiled);
+                methodsBySignature.Add(signature, compiled);
             }
 
             if (compiled is not null &&
                 instruction.B == module.Functions[target.FunctionId].ParameterCount &&
+                instruction.C == compiled.TypePlan.ResultKinds.Length &&
                 estimatedCodeBytes <=
                     MaximumInlineDirectCallCodeBytes - compiled.EstimatedCodeBytes)
             {
-                var callee = module.Functions[target.FunctionId];
                 result.Add(
                     programCounter,
                     new LuaBoundDirectCall(
                         callee,
                         compiled.Method,
                         compiled.EstimatedCodeBytes,
-                        moduleContentId));
+                        moduleContentId,
+                        compiled.TypePlan));
                 estimatedCodeBytes = checked(
                     estimatedCodeBytes + compiled.EstimatedCodeBytes);
             }

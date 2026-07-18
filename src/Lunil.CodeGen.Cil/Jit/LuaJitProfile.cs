@@ -58,7 +58,10 @@ public sealed record LuaJitSiteProfile(
     long BranchNotTaken,
     bool IsMegamorphic,
     ImmutableArray<LuaJitTableShapeProfile> TableShapes,
-    ImmutableArray<LuaJitCallTargetProfile> CallTargets);
+    ImmutableArray<LuaJitCallTargetProfile> CallTargets)
+{
+    public ImmutableArray<LuaJitValueKinds> CallArgumentKinds { get; init; } = [];
+}
 
 public sealed record LuaJitFunctionProfile(
     long Samples,
@@ -99,6 +102,9 @@ internal sealed class LuaJitProfileAccumulator(
             programCounter => new SiteAccumulator(
                 programCounter,
                 instruction.Opcode,
+                instruction.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall
+                    ? Math.Max(0, instruction.B)
+                    : 0,
                 maximumPolymorphicShapes));
         site.Observe(context, thread, frame, instruction, getModuleContentId);
     }
@@ -144,6 +150,7 @@ internal sealed class LuaJitProfileAccumulator(
                 _ => new SiteAccumulator(
                     importedSite.ProgramCounter,
                     importedSite.Opcode,
+                    importedSite.CallArgumentKinds.Length,
                     maximumPolymorphicShapes));
             site.Merge(importedSite);
         }
@@ -155,6 +162,7 @@ internal sealed class LuaJitProfileAccumulator(
     private sealed class SiteAccumulator(
         int programCounter,
         LuaIrOpcode opcode,
+        int callArgumentCount,
         int maximumPolymorphicShapes)
     {
         private readonly Lock _signaturesGate = new();
@@ -164,6 +172,7 @@ internal sealed class LuaJitProfileAccumulator(
         private long _firstOperandKinds;
         private long _secondOperandKinds;
         private long _thirdOperandKinds;
+        private readonly long[] _callArgumentKinds = new long[callArgumentCount];
         private long _branchTaken;
         private long _branchNotTaken;
         private int _megamorphic;
@@ -226,6 +235,21 @@ internal sealed class LuaJitProfileAccumulator(
                     ObserveCallTarget(
                         LuaCodegenAbiV1.ReadRegister(thread, frame, instruction.A),
                         getModuleContentId);
+                    if (instruction.B >= 0 &&
+                        instruction.B != _callArgumentKinds.Length)
+                    {
+                        throw new InvalidOperationException(
+                            "The observed call argument window changed for a canonical site.");
+                    }
+                    for (var argument = 0; argument < Math.Max(0, instruction.B); argument++)
+                    {
+                        AddKind(
+                            ref _callArgumentKinds[argument],
+                            LuaCodegenAbiV1.ReadRegister(
+                                thread,
+                                frame,
+                                instruction.A + argument + 1));
+                    }
                     break;
             }
         }
@@ -234,6 +258,14 @@ internal sealed class LuaJitProfileAccumulator(
         {
             lock (_signaturesGate)
             {
+                var callArgumentKinds = ImmutableArray.CreateBuilder<LuaJitValueKinds>(
+                    _callArgumentKinds.Length);
+                for (var argument = 0; argument < _callArgumentKinds.Length; argument++)
+                {
+                    callArgumentKinds.Add((LuaJitValueKinds)Interlocked.Read(
+                        ref _callArgumentKinds[argument]));
+                }
+
                 return new LuaJitSiteProfile(
                     ProgramCounter,
                     opcode,
@@ -266,7 +298,10 @@ internal sealed class LuaJitProfileAccumulator(
                             pair.Key.ModuleContentId,
                             pair.Key.FunctionId,
                             pair.Key.NativeName,
-                            pair.Value))]);
+                            pair.Value))])
+                {
+                    CallArgumentKinds = callArgumentKinds.MoveToImmutable(),
+                };
             }
         }
 
@@ -283,6 +318,18 @@ internal sealed class LuaJitProfileAccumulator(
             Interlocked.Or(ref _firstOperandKinds, (long)profile.FirstOperandKinds);
             Interlocked.Or(ref _secondOperandKinds, (long)profile.SecondOperandKinds);
             Interlocked.Or(ref _thirdOperandKinds, (long)profile.ThirdOperandKinds);
+            if (profile.CallArgumentKinds.Length != _callArgumentKinds.Length)
+            {
+                throw new ArgumentException(
+                    "Imported call argument count does not match the canonical site.",
+                    nameof(profile));
+            }
+            for (var argument = 0; argument < _callArgumentKinds.Length; argument++)
+            {
+                Interlocked.Or(
+                    ref _callArgumentKinds[argument],
+                    (long)profile.CallArgumentKinds[argument]);
+            }
             AddSaturating(ref _branchTaken, profile.BranchTaken);
             AddSaturating(ref _branchNotTaken, profile.BranchNotTaken);
             if (profile.IsMegamorphic)

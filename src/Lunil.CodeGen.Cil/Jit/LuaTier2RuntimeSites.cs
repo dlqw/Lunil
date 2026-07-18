@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Execution;
 
@@ -122,6 +123,7 @@ internal sealed class LuaTier2RuntimeSites
         return completed;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void RecordInlineDirectCallCompletion() =>
         _directCallCounters?.RecordCompletion();
 
@@ -190,30 +192,117 @@ internal sealed class LuaTablePicCounterSink : ILuaCodegenTablePicCounterSink
     public void RecordMisses(int count) => Interlocked.Add(ref _misses, count);
 }
 
-internal sealed class LuaDirectCallCounterSink
+internal sealed class LuaDirectCallCounterSink : IDisposable
 {
-    private long _completions;
-    private long _fallbacks;
-    private long _invalidations;
+    private sealed class CounterShard
+    {
+        public long Completions;
+        public long Fallbacks;
+        public long Invalidations;
+    }
+
+    private static int s_nextId;
+
+    [ThreadStatic]
+    private static int t_cachedId;
+
+    [ThreadStatic]
+    private static CounterShard? t_cachedShard;
+
+    private readonly int _id = Interlocked.Increment(ref s_nextId);
+    private readonly ThreadLocal<CounterShard> _shards = new(
+        static () => new CounterShard(),
+        trackAllValues: true);
+    private readonly Lock _disposeGate = new();
+    private long _finalCompletions;
+    private long _finalFallbacks;
+    private long _finalInvalidations;
+    private bool _disposed;
 
     public long Entries => checked(Completions + Fallbacks);
 
-    public long Completions => Interlocked.Read(ref _completions);
+    public long Completions => Sum(
+        static shard => shard.Completions,
+        ref _finalCompletions);
 
-    public long Fallbacks => Interlocked.Read(ref _fallbacks);
+    public long Fallbacks => Sum(
+        static shard => shard.Fallbacks,
+        ref _finalFallbacks);
 
-    public long Invalidations => Interlocked.Read(ref _invalidations);
+    public long Invalidations => Sum(
+        static shard => shard.Invalidations,
+        ref _finalInvalidations);
 
     public long SchedulerExitsAvoided => checked(Completions * 2);
 
-    public void RecordCompletion() => Interlocked.Increment(ref _completions);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void RecordCompletion()
+    {
+        var shard = CurrentShard();
+        shard.Completions++;
+    }
 
     public void RecordFallback(bool invalidated)
     {
-        Interlocked.Increment(ref _fallbacks);
+        var shard = CurrentShard();
+        shard.Fallbacks++;
         if (invalidated)
         {
-            Interlocked.Increment(ref _invalidations);
+            shard.Invalidations++;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_disposeGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            foreach (var shard in _shards.Values)
+            {
+                _finalCompletions = checked(_finalCompletions + shard.Completions);
+                _finalFallbacks = checked(_finalFallbacks + shard.Fallbacks);
+                _finalInvalidations = checked(_finalInvalidations + shard.Invalidations);
+            }
+
+            _shards.Dispose();
+            _disposed = true;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private CounterShard CurrentShard()
+    {
+        if (t_cachedId == _id && t_cachedShard is { } cached)
+        {
+            return cached;
+        }
+
+        var shard = _shards.Value!;
+        t_cachedId = _id;
+        t_cachedShard = shard;
+        return shard;
+    }
+
+    private long Sum(Func<CounterShard, long> selector, ref long finalValue)
+    {
+        lock (_disposeGate)
+        {
+            if (_disposed)
+            {
+                return finalValue;
+            }
+
+            long total = 0;
+            foreach (var shard in _shards.Values)
+            {
+                total = checked(total + selector(shard));
+            }
+
+            return total;
         }
     }
 }

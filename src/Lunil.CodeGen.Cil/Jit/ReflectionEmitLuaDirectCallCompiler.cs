@@ -20,16 +20,18 @@ internal delegate bool LuaDirectCompiledMethod(
 internal sealed record LuaCompiledDirectCall(
     LuaDirectCompiledMethod Method,
     long EstimatedCodeBytes,
-    int MaximumBackedges);
+    int MaximumBackedges,
+    LuaPrimitiveLeafTypePlan TypePlan);
 
 internal sealed record LuaBoundDirectCall(
     LuaIrFunction Function,
     LuaDirectCompiledMethod Method,
     long EstimatedCodeBytes,
-    string ModuleContentId);
+    string ModuleContentId,
+    LuaPrimitiveLeafTypePlan TypePlan);
 
 /// <summary>
-/// Emits a bounded, side-effect-free integer leaf directly against the caller result window.
+/// Emits a bounded, side-effect-free primitive leaf directly against the caller result window.
 /// The generated method keeps every callee register in CLR locals and commits budget/results only
 /// at a fixed return. Any unstable path discards the locals and re-enters the ordinary scheduler.
 /// </summary>
@@ -85,10 +87,26 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         typeof(LuaValue),
         nameof(LuaValue.AsInteger),
         []);
+    private static readonly MethodInfo AsFloat = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.AsFloat),
+        []);
+    private static readonly MethodInfo AsBoolean = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.AsBoolean),
+        []);
     private static readonly MethodInfo FromInteger = Method(
         typeof(LuaValue),
         nameof(LuaValue.FromInteger),
         [typeof(long)]);
+    private static readonly MethodInfo FromFloat = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.FromFloat),
+        [typeof(double)]);
+    private static readonly MethodInfo FromBoolean = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.FromBoolean),
+        [typeof(bool)]);
     private static readonly MethodInfo TryReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
@@ -97,6 +115,26 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         typeof(LuaCodegenAbiV4),
         nameof(LuaCodegenAbiV4.CanExecuteBoundDirectCall),
         [typeof(LuaExecutionContext)]);
+    private static readonly MethodInfo MathFloor = Method(
+        typeof(Math),
+        nameof(Math.Floor),
+        [typeof(double)]);
+    private static readonly MethodInfo MathPow = Method(
+        typeof(Math),
+        nameof(Math.Pow),
+        [typeof(double), typeof(double)]);
+    private static readonly MethodInfo Shift = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.Shift),
+        [typeof(long), typeof(long), typeof(bool)]);
+    private static readonly MethodInfo FloatingModulo = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.FloatingModulo),
+        [typeof(double), typeof(double)]);
+    private static readonly MethodInfo CompareMixed = Method(
+        typeof(LuaCodegenAbiV4),
+        nameof(LuaCodegenAbiV4.CompareMixed),
+        [typeof(long), typeof(double), typeof(bool), typeof(int)]);
     private static readonly MethodInfo PrepareIntegerFor =
         typeof(ReflectionEmitLuaDirectCallCompiler).GetMethod(
             nameof(PrepareIntegerForLoop),
@@ -122,20 +160,21 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         ArgumentNullException.ThrowIfNull(profile);
         result = null;
         if (!RuntimeFeature.IsDynamicCodeSupported ||
-            !CanCompile(function, profile))
+            !TryCreatePlan(function, profile, out var typePlan))
         {
             return false;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var dynamicMethod = new DynamicMethod(
-            $"lunil_direct_integer_f{function.Id}",
+            $"lunil_direct_primitive_f{function.Id}",
             typeof(bool),
             DirectMethodParameters,
             typeof(ReflectionEmitLuaDirectCallCompiler).Module,
             skipVisibility: true);
         Emit(
             function,
+            typePlan,
             new ReflectionEmitLuaNumericRegionIlGenerator(dynamicMethod.GetILGenerator()),
             cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
@@ -144,12 +183,20 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         result = new LuaCompiledDirectCall(
             method,
             checked(function.Instructions.Length * 40L + function.RegisterCount * 24L + 128L),
-            MaximumBackedges);
+            MaximumBackedges,
+            typePlan);
         return true;
     }
 
-    internal static bool CanCompile(LuaIrFunction function, LuaJitFunctionProfile profile)
+    internal static bool CanCompile(LuaIrFunction function, LuaJitFunctionProfile profile) =>
+        TryCreatePlan(function, profile, out _);
+
+    private static bool TryCreatePlan(
+        LuaIrFunction function,
+        LuaJitFunctionProfile profile,
+        [NotNullWhen(true)] out LuaPrimitiveLeafTypePlan? typePlan)
     {
+        typePlan = null;
         if (function.IsVarArg || function.Upvalues.Length != 0 ||
             function.Instructions.Length is 0 or > MaximumInstructions ||
             function.RegisterCount is 0 or > MaximumRegisters ||
@@ -159,47 +206,8 @@ internal static class ReflectionEmitLuaDirectCallCompiler
             return false;
         }
 
-        for (var index = 0; index < function.ParameterCount; index++)
-        {
-            if (profile.ArgumentKinds[index] != LuaJitValueKinds.Integer)
-            {
-                return false;
-            }
-        }
-
-        var hasFixedReturn = false;
-        foreach (var instruction in function.Instructions)
-        {
-            switch (instruction.Opcode)
-            {
-                case LuaIrOpcode.LoadConstant when
-                    (uint)instruction.B < (uint)function.Constants.Length &&
-                    function.Constants[instruction.B].Kind == LuaIrConstantKind.Integer:
-                case LuaIrOpcode.Move:
-                case LuaIrOpcode.SetTop:
-                case LuaIrOpcode.Jump:
-                case LuaIrOpcode.NumericForPrepare:
-                case LuaIrOpcode.NumericForLoop:
-                    break;
-                case LuaIrOpcode.Unary when
-                    (LuaIrUnaryOperator)instruction.C is LuaIrUnaryOperator.Negate or
-                        LuaIrUnaryOperator.BitwiseNot:
-                    break;
-                case LuaIrOpcode.Binary when
-                    (LuaIrBinaryOperator)instruction.D is LuaIrBinaryOperator.Add or
-                        LuaIrBinaryOperator.Subtract or LuaIrBinaryOperator.Multiply or
-                        LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
-                        LuaIrBinaryOperator.BitwiseXor:
-                    break;
-                case LuaIrOpcode.Return when instruction.B is >= 0 and <= MaximumResults:
-                    hasFixedReturn = true;
-                    break;
-                default:
-                    return false;
-            }
-        }
-
-        return hasFixedReturn;
+        return LuaPrimitiveLeafTypePlanner.TryCreate(function, profile, out typePlan) &&
+            typePlan is { ResultKinds.Length: <= MaximumResults };
     }
 
     internal static bool CanInlineWithResultCount(LuaIrFunction function, int resultCount)
@@ -237,6 +245,8 @@ internal static class ReflectionEmitLuaDirectCallCompiler
                 case LuaIrOpcode.Jump:
                     pending.Push(instruction.B);
                     break;
+                case LuaIrOpcode.JumpIfFalse:
+                case LuaIrOpcode.JumpIfTrue:
                 case LuaIrOpcode.NumericForPrepare:
                 case LuaIrOpcode.NumericForLoop:
                     pending.Push(instruction.B);
@@ -253,9 +263,11 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
     private static void Emit(
         LuaIrFunction function,
+        LuaPrimitiveLeafTypePlan typePlan,
         LuaNumericRegionIlGenerator generator,
         CancellationToken cancellationToken) => EmitCore(
             function,
+            typePlan,
             generator,
             DirectEmissionMode.Standalone,
             functionRegister: 0,
@@ -267,6 +279,7 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
     internal static void EmitInline(
         LuaIrFunction function,
+        LuaPrimitiveLeafTypePlan typePlan,
         LuaNumericRegionIlGenerator generator,
         int functionRegister,
         int expectedResults,
@@ -280,6 +293,7 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         ArgumentOutOfRangeException.ThrowIfNegative(expectedResults);
         EmitCore(
             function,
+            typePlan,
             generator,
             DirectEmissionMode.FrameInline,
             functionRegister,
@@ -292,6 +306,7 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
     internal static void EmitNumericRegionInline(
         LuaIrFunction function,
+        LuaPrimitiveLeafTypePlan typePlan,
         LuaNumericRegionIlGenerator generator,
         IReadOnlyList<LuaNumericIlLocal> arguments,
         IReadOnlyList<LuaNumericIlLocal> results,
@@ -316,6 +331,7 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
         EmitCore(
             function,
+            typePlan,
             generator,
             DirectEmissionMode.NumericRegionInline,
             functionRegister: 0,
@@ -334,6 +350,7 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
     private static void EmitCore(
         LuaIrFunction function,
+        LuaPrimitiveLeafTypePlan typePlan,
         LuaNumericRegionIlGenerator generator,
         DirectEmissionMode mode,
         int functionRegister,
@@ -343,20 +360,26 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         NumericRegionEmission? numericRegion,
         CancellationToken cancellationToken)
     {
-        var registers = Enumerable.Range(0, function.RegisterCount)
-            .Select(_ => generator.DeclareLocal(typeof(long)))
-            .ToArray();
+        var registers = typePlan.Locals.ToDictionary(
+            static local => (local.Register, local.Kind),
+            local => generator.DeclareLocal(LocalType(local.Kind)));
         var taggedValue = generator.DeclareLocal(typeof(LuaValue));
         var consumed = generator.DeclareLocal(typeof(int));
         var backedges = generator.DeclareLocal(typeof(int));
         var prepareStatus = generator.DeclareLocal(typeof(int));
+        var integerTemporary = generator.DeclareLocal(typeof(long));
+        var integerRemainder = generator.DeclareLocal(typeof(long));
         var labels = function.Instructions.Select(_ => generator.DefineLabel()).ToArray();
         var standalone = mode == DirectEmissionMode.Standalone;
         var frameInline = mode == DirectEmissionMode.FrameInline;
         var numericInline = mode == DirectEmissionMode.NumericRegionInline;
+        var dynamicAccounting = function.Instructions.Any(static instruction =>
+            instruction.Opcode is LuaIrOpcode.Jump or LuaIrOpcode.JumpIfFalse or
+                LuaIrOpcode.JumpIfTrue or LuaIrOpcode.NumericForPrepare or
+                LuaIrOpcode.NumericForLoop);
         var fallback = standalone ? generator.DefineLabel() : externalFallback;
 
-        if (!standalone)
+        if (!standalone && !numericInline)
         {
             generator.Emit(OpCodes.Ldarg_0);
             generator.Emit(OpCodes.Call, CanExecuteBoundDirectCall);
@@ -368,10 +391,13 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         // Inline IL is reached repeatedly when the caller contains a loop. Dynamic-method locals
         // are initialized only once per caller entry, so per-call accounting must be reset here
         // rather than relying on InitLocals as the standalone trampoline can.
-        generator.Emit(OpCodes.Ldc_I4_0);
-        generator.Emit(OpCodes.Dup);
-        generator.Emit(OpCodes.Stloc, consumed);
-        generator.Emit(OpCodes.Stloc, backedges);
+        if (dynamicAccounting)
+        {
+            generator.Emit(OpCodes.Ldc_I4_0);
+            generator.Emit(OpCodes.Dup);
+            generator.Emit(OpCodes.Stloc, consumed);
+            generator.Emit(OpCodes.Stloc, backedges);
+        }
 
         if (standalone)
         {
@@ -381,10 +407,12 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         }
         for (var parameter = 0; parameter < function.ParameterCount; parameter++)
         {
+            var parameterKind = typePlan.ParameterKinds[parameter];
+            var destination = NumericLocal(registers, parameter, parameterKind);
             if (numericInline)
             {
                 generator.Emit(OpCodes.Ldloc, numericRegion!.Arguments[parameter]);
-                generator.Emit(OpCodes.Stloc, registers[parameter]);
+                generator.Emit(OpCodes.Stloc, destination);
                 continue;
             }
 
@@ -404,11 +432,11 @@ internal static class ReflectionEmitLuaDirectCallCompiler
             generator.Emit(OpCodes.Stloc, taggedValue);
             generator.Emit(OpCodes.Ldloca, taggedValue);
             generator.Emit(OpCodes.Call, GetValueKind);
-            EmitInt32(generator, (int)LuaValueKind.Integer);
+            EmitInt32(generator, (int)ValueKind(parameterKind));
             generator.Emit(OpCodes.Bne_Un, fallback);
             generator.Emit(OpCodes.Ldloca, taggedValue);
-            generator.Emit(OpCodes.Call, AsInteger);
-            generator.Emit(OpCodes.Stloc, registers[parameter]);
+            generator.Emit(OpCodes.Call, AsMethod(parameterKind));
+            generator.Emit(OpCodes.Stloc, destination);
         }
 
         generator.Emit(OpCodes.Br, labels[0]);
@@ -418,50 +446,63 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         {
             cancellationToken.ThrowIfCancellationRequested();
             generator.MarkLabel(labels[programCounter]);
-            generator.Emit(OpCodes.Ldloc, consumed);
-            generator.Emit(OpCodes.Ldc_I4_1);
-            generator.Emit(OpCodes.Add);
-            generator.Emit(OpCodes.Stloc, consumed);
+            if (dynamicAccounting)
+            {
+                generator.Emit(OpCodes.Ldloc, consumed);
+                generator.Emit(OpCodes.Ldc_I4_1);
+                generator.Emit(OpCodes.Add);
+                generator.Emit(OpCodes.Stloc, consumed);
+            }
             var instruction = function.Instructions[programCounter];
             switch (instruction.Opcode)
             {
                 case LuaIrOpcode.LoadConstant:
-                    generator.Emit(OpCodes.Ldc_I8, function.Constants[instruction.B].Integer);
-                    generator.Emit(OpCodes.Stloc, registers[instruction.A]);
+                    EmitConstant(
+                        generator,
+                        function.Constants[instruction.B],
+                        NumericLocal(
+                            registers,
+                            instruction.A,
+                            typePlan.GetKindAfter(programCounter, instruction.A)));
                     EmitNext(generator, labels, programCounter, fallback);
                     break;
                 case LuaIrOpcode.Move:
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.B]);
-                    generator.Emit(OpCodes.Stloc, registers[instruction.A]);
+                    generator.Emit(
+                        OpCodes.Ldloc,
+                        NumericLocal(
+                            registers,
+                            instruction.B,
+                            typePlan.GetKindBefore(programCounter, instruction.B)));
+                    generator.Emit(
+                        OpCodes.Stloc,
+                        NumericLocal(
+                            registers,
+                            instruction.A,
+                            typePlan.GetKindAfter(programCounter, instruction.A)));
                     EmitNext(generator, labels, programCounter, fallback);
                     break;
                 case LuaIrOpcode.SetTop:
                     EmitNext(generator, labels, programCounter, fallback);
                     break;
                 case LuaIrOpcode.Unary:
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.B]);
-                    generator.Emit(
-                        (LuaIrUnaryOperator)instruction.C == LuaIrUnaryOperator.Negate
-                            ? OpCodes.Neg
-                            : OpCodes.Not);
-                    generator.Emit(OpCodes.Stloc, registers[instruction.A]);
+                    EmitUnary(
+                        generator,
+                        typePlan,
+                        programCounter,
+                        instruction,
+                        registers);
                     EmitNext(generator, labels, programCounter, fallback);
                     break;
                 case LuaIrOpcode.Binary:
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.B]);
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.C]);
-                    generator.Emit((LuaIrBinaryOperator)instruction.D switch
-                    {
-                        LuaIrBinaryOperator.Add => OpCodes.Add,
-                        LuaIrBinaryOperator.Subtract => OpCodes.Sub,
-                        LuaIrBinaryOperator.Multiply => OpCodes.Mul,
-                        LuaIrBinaryOperator.BitwiseAnd => OpCodes.And,
-                        LuaIrBinaryOperator.BitwiseOr => OpCodes.Or,
-                        LuaIrBinaryOperator.BitwiseXor => OpCodes.Xor,
-                        _ => throw new InvalidOperationException(
-                            "An unsupported integer binary operation reached emission."),
-                    });
-                    generator.Emit(OpCodes.Stloc, registers[instruction.A]);
+                    EmitBinary(
+                        generator,
+                        typePlan,
+                        programCounter,
+                        instruction,
+                        registers,
+                        integerTemporary,
+                        integerRemainder,
+                        fallback);
                     EmitNext(generator, labels, programCounter, fallback);
                     break;
                 case LuaIrOpcode.Jump:
@@ -473,13 +514,47 @@ internal static class ReflectionEmitLuaDirectCallCompiler
                         instruction.B,
                         fallback);
                     break;
+                case LuaIrOpcode.JumpIfFalse:
+                case LuaIrOpcode.JumpIfTrue:
+                    {
+                        var operandKind = typePlan.GetKindBefore(
+                            programCounter,
+                            instruction.A);
+                        if (operandKind == LuaNumericRegionValueKind.Boolean)
+                        {
+                            generator.Emit(
+                                OpCodes.Ldloc,
+                                NumericLocal(registers, instruction.A, operandKind));
+                        }
+                        else
+                        {
+                            generator.Emit(OpCodes.Ldc_I4_1);
+                        }
+
+                        var fallthrough = generator.DefineLabel();
+                        generator.Emit(
+                            instruction.Opcode == LuaIrOpcode.JumpIfTrue
+                                ? OpCodes.Brfalse
+                                : OpCodes.Brtrue,
+                            fallthrough);
+                        EmitBoundedTransfer(
+                            generator,
+                            labels,
+                            backedges,
+                            programCounter,
+                            instruction.B,
+                            fallback);
+                        generator.MarkLabel(fallthrough);
+                        EmitNext(generator, labels, programCounter, fallback);
+                        break;
+                    }
                 case LuaIrOpcode.NumericForPrepare:
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.A]);
-                    generator.Emit(OpCodes.Stloc, registers[instruction.A + 3]);
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.A]);
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.A + 1]);
-                    generator.Emit(OpCodes.Ldloc, registers[instruction.A + 2]);
-                    generator.Emit(OpCodes.Ldloca, registers[instruction.A + 1]);
+                    generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A));
+                    generator.Emit(OpCodes.Stloc, IntegerLocal(registers, instruction.A + 3));
+                    generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A));
+                    generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A + 1));
+                    generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A + 2));
+                    generator.Emit(OpCodes.Ldloca, IntegerLocal(registers, instruction.A + 1));
                     generator.Emit(OpCodes.Call, PrepareIntegerFor);
                     generator.Emit(OpCodes.Stloc, prepareStatus);
                     generator.Emit(OpCodes.Ldloc, prepareStatus);
@@ -492,19 +567,19 @@ internal static class ReflectionEmitLuaDirectCallCompiler
                 case LuaIrOpcode.NumericForLoop:
                     {
                         var finished = generator.DefineLabel();
-                        generator.Emit(OpCodes.Ldloc, registers[instruction.A + 1]);
+                        generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A + 1));
                         generator.Emit(OpCodes.Brfalse, finished);
-                        generator.Emit(OpCodes.Ldloc, registers[instruction.A]);
-                        generator.Emit(OpCodes.Ldloc, registers[instruction.A + 2]);
+                        generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A));
+                        generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A + 2));
                         generator.Emit(OpCodes.Add);
-                        generator.Emit(OpCodes.Stloc, registers[instruction.A]);
-                        generator.Emit(OpCodes.Ldloc, registers[instruction.A + 1]);
+                        generator.Emit(OpCodes.Stloc, IntegerLocal(registers, instruction.A));
+                        generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A + 1));
                         generator.Emit(OpCodes.Ldc_I4_1);
                         generator.Emit(OpCodes.Conv_I8);
                         generator.Emit(OpCodes.Sub);
-                        generator.Emit(OpCodes.Stloc, registers[instruction.A + 1]);
-                        generator.Emit(OpCodes.Ldloc, registers[instruction.A]);
-                        generator.Emit(OpCodes.Stloc, registers[instruction.A + 3]);
+                        generator.Emit(OpCodes.Stloc, IntegerLocal(registers, instruction.A + 1));
+                        generator.Emit(OpCodes.Ldloc, IntegerLocal(registers, instruction.A));
+                        generator.Emit(OpCodes.Stloc, IntegerLocal(registers, instruction.A + 3));
                         EmitBoundedTransfer(
                             generator,
                             labels,
@@ -520,7 +595,10 @@ internal static class ReflectionEmitLuaDirectCallCompiler
                     EmitReturn(
                         generator,
                         registers,
+                        typePlan,
+                        programCounter,
                         consumed,
+                        dynamicAccounting ? -1 : programCounter + 1,
                         instruction,
                         fallback,
                         mode,
@@ -545,8 +623,13 @@ internal static class ReflectionEmitLuaDirectCallCompiler
 
     private static void EmitReturn(
         LuaNumericRegionIlGenerator generator,
-        LuaNumericIlLocal[] registers,
+        IReadOnlyDictionary<
+            (int Register, LuaNumericRegionValueKind Kind),
+            LuaNumericIlLocal> registers,
+        LuaPrimitiveLeafTypePlan typePlan,
+        int programCounter,
         LuaNumericIlLocal consumed,
+        int fixedConsumed,
         LuaIrInstruction instruction,
         LuaNumericIlLabel fallback,
         DirectEmissionMode mode,
@@ -576,32 +659,34 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         if (numericInline)
         {
             generator.Emit(OpCodes.Ldloc, numericRegion!.Remaining);
-            generator.Emit(OpCodes.Ldloc, consumed);
-            generator.Emit(OpCodes.Conv_I8);
+            EmitConsumed(generator, consumed, fixedConsumed, convertToInt64: true);
             generator.Emit(OpCodes.Blt, numericRegion.BudgetFallback);
             generator.Emit(OpCodes.Ldloc, numericRegion.Remaining);
-            generator.Emit(OpCodes.Ldloc, consumed);
-            generator.Emit(OpCodes.Conv_I8);
+            EmitConsumed(generator, consumed, fixedConsumed, convertToInt64: true);
             generator.Emit(OpCodes.Sub);
             generator.Emit(OpCodes.Stloc, numericRegion.Remaining);
             generator.Emit(OpCodes.Ldloc, numericRegion.Pending);
-            generator.Emit(OpCodes.Ldloc, consumed);
+            EmitConsumed(generator, consumed, fixedConsumed, convertToInt64: false);
             generator.Emit(OpCodes.Add);
             generator.Emit(OpCodes.Stloc, numericRegion.Pending);
         }
         else
         {
             generator.Emit(OpCodes.Ldarg_0);
-            generator.Emit(OpCodes.Ldloc, consumed);
+            EmitConsumed(generator, consumed, fixedConsumed, convertToInt64: false);
             generator.Emit(OpCodes.Callvirt, TryReserveInstructions);
             generator.Emit(OpCodes.Brfalse, fallback);
         }
 
         for (var index = 0; index < instruction.B; index++)
         {
+            var kind = typePlan.GetKindBefore(
+                programCounter,
+                instruction.A + index);
+            var source = NumericLocal(registers, instruction.A + index, kind);
             if (numericInline)
             {
-                generator.Emit(OpCodes.Ldloc, registers[instruction.A + index]);
+                generator.Emit(OpCodes.Ldloc, source);
                 generator.Emit(OpCodes.Stloc, numericRegion!.Results[index]);
                 continue;
             }
@@ -618,8 +703,8 @@ internal static class ReflectionEmitLuaDirectCallCompiler
                 EmitInt32(generator, index);
                 generator.Emit(OpCodes.Add);
             }
-            generator.Emit(OpCodes.Ldloc, registers[instruction.A + index]);
-            generator.Emit(OpCodes.Call, FromInteger);
+            generator.Emit(OpCodes.Ldloc, source);
+            generator.Emit(OpCodes.Call, FromMethod(kind));
             generator.Emit(OpCodes.Call, WriteRegister);
         }
 
@@ -649,6 +734,425 @@ internal static class ReflectionEmitLuaDirectCallCompiler
             generator.Emit(OpCodes.Ret);
         }
     }
+
+    private static void EmitConsumed(
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericIlLocal consumed,
+        int fixedConsumed,
+        bool convertToInt64)
+    {
+        if (fixedConsumed >= 0)
+        {
+            EmitInt32(generator, fixedConsumed);
+        }
+        else
+        {
+            generator.Emit(OpCodes.Ldloc, consumed);
+        }
+
+        if (convertToInt64)
+        {
+            generator.Emit(OpCodes.Conv_I8);
+        }
+    }
+
+    private static void EmitConstant(
+        LuaNumericRegionIlGenerator generator,
+        LuaIrConstant constant,
+        LuaNumericIlLocal destination)
+    {
+        switch (constant.Kind)
+        {
+            case LuaIrConstantKind.Boolean:
+                generator.Emit(constant.Boolean ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+                break;
+            case LuaIrConstantKind.Integer:
+                generator.Emit(OpCodes.Ldc_I8, constant.Integer);
+                break;
+            case LuaIrConstantKind.Float:
+                generator.Emit(OpCodes.Ldc_R8, constant.Float);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Constant {constant.Kind} cannot enter a primitive direct call.");
+        }
+
+        generator.Emit(OpCodes.Stloc, destination);
+    }
+
+    private static void EmitUnary(
+        LuaNumericRegionIlGenerator generator,
+        LuaPrimitiveLeafTypePlan typePlan,
+        int programCounter,
+        LuaIrInstruction instruction,
+        IReadOnlyDictionary<
+            (int Register, LuaNumericRegionValueKind Kind),
+            LuaNumericIlLocal> registers)
+    {
+        var sourceKind = typePlan.GetKindBefore(programCounter, instruction.B);
+        var destinationKind = typePlan.GetKindAfter(programCounter, instruction.A);
+        var source = NumericLocal(registers, instruction.B, sourceKind);
+        var destination = NumericLocal(registers, instruction.A, destinationKind);
+        var operation = (LuaIrUnaryOperator)instruction.C;
+        switch (operation)
+        {
+            case LuaIrUnaryOperator.Negate:
+            case LuaIrUnaryOperator.BitwiseNot:
+                generator.Emit(OpCodes.Ldloc, source);
+                generator.Emit(
+                    operation == LuaIrUnaryOperator.Negate ? OpCodes.Neg : OpCodes.Not);
+                break;
+            case LuaIrUnaryOperator.LogicalNot:
+                if (sourceKind == LuaNumericRegionValueKind.Boolean)
+                {
+                    generator.Emit(OpCodes.Ldloc, source);
+                    generator.Emit(OpCodes.Ldc_I4_0);
+                    generator.Emit(OpCodes.Ceq);
+                }
+                else
+                {
+                    generator.Emit(OpCodes.Ldc_I4_0);
+                }
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported primitive unary {operation}.");
+        }
+
+        generator.Emit(OpCodes.Stloc, destination);
+    }
+
+    private static void EmitBinary(
+        LuaNumericRegionIlGenerator generator,
+        LuaPrimitiveLeafTypePlan typePlan,
+        int programCounter,
+        LuaIrInstruction instruction,
+        IReadOnlyDictionary<
+            (int Register, LuaNumericRegionValueKind Kind),
+            LuaNumericIlLocal> registers,
+        LuaNumericIlLocal integerTemporary,
+        LuaNumericIlLocal integerRemainder,
+        LuaNumericIlLabel fallback)
+    {
+        var operation = (LuaIrBinaryOperator)instruction.D;
+        var leftKind = typePlan.GetKindBefore(programCounter, instruction.B);
+        var rightKind = typePlan.GetKindBefore(programCounter, instruction.C);
+        var resultKind = typePlan.GetKindAfter(programCounter, instruction.A);
+        var left = NumericLocal(registers, instruction.B, leftKind);
+        var right = NumericLocal(registers, instruction.C, rightKind);
+        var result = NumericLocal(registers, instruction.A, resultKind);
+        if (IsComparison(operation))
+        {
+            EmitComparison(generator, operation, leftKind, rightKind, left, right);
+            generator.Emit(OpCodes.Stloc, result);
+            return;
+        }
+
+        if (leftKind == LuaNumericRegionValueKind.Integer &&
+            rightKind == LuaNumericRegionValueKind.Integer)
+        {
+            switch (operation)
+            {
+                case LuaIrBinaryOperator.Add:
+                case LuaIrBinaryOperator.Subtract:
+                case LuaIrBinaryOperator.Multiply:
+                case LuaIrBinaryOperator.BitwiseAnd:
+                case LuaIrBinaryOperator.BitwiseOr:
+                case LuaIrBinaryOperator.BitwiseXor:
+                    generator.Emit(OpCodes.Ldloc, left);
+                    generator.Emit(OpCodes.Ldloc, right);
+                    generator.Emit(operation switch
+                    {
+                        LuaIrBinaryOperator.Add => OpCodes.Add,
+                        LuaIrBinaryOperator.Subtract => OpCodes.Sub,
+                        LuaIrBinaryOperator.Multiply => OpCodes.Mul,
+                        LuaIrBinaryOperator.BitwiseAnd => OpCodes.And,
+                        LuaIrBinaryOperator.BitwiseOr => OpCodes.Or,
+                        _ => OpCodes.Xor,
+                    });
+                    generator.Emit(OpCodes.Stloc, result);
+                    return;
+                case LuaIrBinaryOperator.Divide:
+                    EmitLoadAsDouble(generator, leftKind, left);
+                    EmitLoadAsDouble(generator, rightKind, right);
+                    generator.Emit(OpCodes.Div);
+                    generator.Emit(OpCodes.Stloc, result);
+                    return;
+                case LuaIrBinaryOperator.FloorDivide:
+                case LuaIrBinaryOperator.Modulo:
+                    EmitIntegerFloorOperation(
+                        generator,
+                        operation,
+                        left,
+                        right,
+                        result,
+                        integerTemporary,
+                        integerRemainder,
+                        fallback);
+                    return;
+                case LuaIrBinaryOperator.Power:
+                    EmitLoadAsDouble(generator, leftKind, left);
+                    EmitLoadAsDouble(generator, rightKind, right);
+                    generator.Emit(OpCodes.Call, MathPow);
+                    generator.Emit(OpCodes.Stloc, result);
+                    return;
+                case LuaIrBinaryOperator.ShiftLeft:
+                case LuaIrBinaryOperator.ShiftRight:
+                    generator.Emit(OpCodes.Ldloc, left);
+                    generator.Emit(OpCodes.Ldloc, right);
+                    generator.Emit(
+                        operation == LuaIrBinaryOperator.ShiftLeft
+                            ? OpCodes.Ldc_I4_1
+                            : OpCodes.Ldc_I4_0);
+                    generator.Emit(OpCodes.Call, Shift);
+                    generator.Emit(OpCodes.Stloc, result);
+                    return;
+            }
+        }
+
+        EmitLoadAsDouble(generator, leftKind, left);
+        EmitLoadAsDouble(generator, rightKind, right);
+        switch (operation)
+        {
+            case LuaIrBinaryOperator.Add:
+                generator.Emit(OpCodes.Add);
+                break;
+            case LuaIrBinaryOperator.Subtract:
+                generator.Emit(OpCodes.Sub);
+                break;
+            case LuaIrBinaryOperator.Multiply:
+                generator.Emit(OpCodes.Mul);
+                break;
+            case LuaIrBinaryOperator.Divide:
+                generator.Emit(OpCodes.Div);
+                break;
+            case LuaIrBinaryOperator.FloorDivide:
+                generator.Emit(OpCodes.Div);
+                generator.Emit(OpCodes.Call, MathFloor);
+                break;
+            case LuaIrBinaryOperator.Modulo:
+                generator.Emit(OpCodes.Call, FloatingModulo);
+                break;
+            case LuaIrBinaryOperator.Power:
+                generator.Emit(OpCodes.Call, MathPow);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported floating primitive operation {operation}.");
+        }
+
+        generator.Emit(OpCodes.Stloc, result);
+    }
+
+    private static void EmitIntegerFloorOperation(
+        LuaNumericRegionIlGenerator generator,
+        LuaIrBinaryOperator operation,
+        LuaNumericIlLocal dividend,
+        LuaNumericIlLocal divisor,
+        LuaNumericIlLocal result,
+        LuaNumericIlLocal quotient,
+        LuaNumericIlLocal remainder,
+        LuaNumericIlLabel fallback)
+    {
+        var nonZero = generator.DefineLabel();
+        var notNegativeOne = generator.DefineLabel();
+        var adjust = generator.DefineLabel();
+        var write = generator.DefineLabel();
+        generator.Emit(OpCodes.Ldloc, divisor);
+        generator.Emit(OpCodes.Brtrue, nonZero);
+        generator.Emit(OpCodes.Br, fallback);
+        generator.MarkLabel(nonZero);
+        generator.Emit(OpCodes.Ldloc, divisor);
+        generator.Emit(OpCodes.Ldc_I4_M1);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Bne_Un, notNegativeOne);
+        if (operation == LuaIrBinaryOperator.FloorDivide)
+        {
+            generator.Emit(OpCodes.Ldloc, dividend);
+            generator.Emit(OpCodes.Neg);
+        }
+        else
+        {
+            generator.Emit(OpCodes.Ldc_I4_0);
+            generator.Emit(OpCodes.Conv_I8);
+        }
+
+        generator.Emit(OpCodes.Stloc, result);
+        generator.Emit(OpCodes.Br, write);
+        generator.MarkLabel(notNegativeOne);
+        generator.Emit(OpCodes.Ldloc, dividend);
+        generator.Emit(OpCodes.Ldloc, divisor);
+        generator.Emit(OpCodes.Div);
+        generator.Emit(OpCodes.Stloc, quotient);
+        generator.Emit(OpCodes.Ldloc, dividend);
+        generator.Emit(OpCodes.Ldloc, divisor);
+        generator.Emit(OpCodes.Rem);
+        generator.Emit(OpCodes.Stloc, remainder);
+        generator.Emit(OpCodes.Ldloc, remainder);
+        generator.Emit(OpCodes.Brfalse, adjust);
+        generator.Emit(OpCodes.Ldloc, remainder);
+        generator.Emit(OpCodes.Ldloc, divisor);
+        generator.Emit(OpCodes.Xor);
+        generator.Emit(OpCodes.Ldc_I4_0);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Bge, adjust);
+        if (operation == LuaIrBinaryOperator.FloorDivide)
+        {
+            generator.Emit(OpCodes.Ldloc, quotient);
+            generator.Emit(OpCodes.Ldc_I4_1);
+            generator.Emit(OpCodes.Conv_I8);
+            generator.Emit(OpCodes.Sub);
+            generator.Emit(OpCodes.Stloc, quotient);
+        }
+        else
+        {
+            generator.Emit(OpCodes.Ldloc, remainder);
+            generator.Emit(OpCodes.Ldloc, divisor);
+            generator.Emit(OpCodes.Add);
+            generator.Emit(OpCodes.Stloc, remainder);
+        }
+
+        generator.MarkLabel(adjust);
+        generator.Emit(
+            OpCodes.Ldloc,
+            operation == LuaIrBinaryOperator.FloorDivide ? quotient : remainder);
+        generator.Emit(OpCodes.Stloc, result);
+        generator.MarkLabel(write);
+    }
+
+    private static void EmitComparison(
+        LuaNumericRegionIlGenerator generator,
+        LuaIrBinaryOperator operation,
+        LuaNumericRegionValueKind leftKind,
+        LuaNumericRegionValueKind rightKind,
+        LuaNumericIlLocal left,
+        LuaNumericIlLocal right)
+    {
+        if (leftKind == LuaNumericRegionValueKind.Boolean)
+        {
+            generator.Emit(OpCodes.Ldloc, left);
+            generator.Emit(OpCodes.Ldloc, right);
+            generator.Emit(OpCodes.Ceq);
+            if (operation == LuaIrBinaryOperator.NotEqual)
+            {
+                generator.Emit(OpCodes.Ldc_I4_0);
+                generator.Emit(OpCodes.Ceq);
+            }
+            return;
+        }
+
+        if (leftKind != rightKind)
+        {
+            var integerOnLeft = leftKind == LuaNumericRegionValueKind.Integer;
+            generator.Emit(OpCodes.Ldloc, integerOnLeft ? left : right);
+            generator.Emit(OpCodes.Ldloc, integerOnLeft ? right : left);
+            generator.Emit(integerOnLeft ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+            EmitInt32(generator, (int)operation);
+            generator.Emit(OpCodes.Call, CompareMixed);
+            return;
+        }
+
+        generator.Emit(OpCodes.Ldloc, left);
+        generator.Emit(OpCodes.Ldloc, right);
+        var floating = leftKind == LuaNumericRegionValueKind.Float;
+        switch (operation)
+        {
+            case LuaIrBinaryOperator.Equal:
+                generator.Emit(OpCodes.Ceq);
+                break;
+            case LuaIrBinaryOperator.NotEqual:
+                generator.Emit(OpCodes.Ceq);
+                generator.Emit(OpCodes.Ldc_I4_0);
+                generator.Emit(OpCodes.Ceq);
+                break;
+            case LuaIrBinaryOperator.LessThan:
+                generator.Emit(OpCodes.Clt);
+                break;
+            case LuaIrBinaryOperator.LessThanOrEqual:
+                generator.Emit(floating ? OpCodes.Cgt_Un : OpCodes.Cgt);
+                generator.Emit(OpCodes.Ldc_I4_0);
+                generator.Emit(OpCodes.Ceq);
+                break;
+            case LuaIrBinaryOperator.GreaterThan:
+                generator.Emit(OpCodes.Cgt);
+                break;
+            case LuaIrBinaryOperator.GreaterThanOrEqual:
+                generator.Emit(floating ? OpCodes.Clt_Un : OpCodes.Clt);
+                generator.Emit(OpCodes.Ldc_I4_0);
+                generator.Emit(OpCodes.Ceq);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported comparison {operation}.");
+        }
+    }
+
+    private static void EmitLoadAsDouble(
+        LuaNumericRegionIlGenerator generator,
+        LuaNumericRegionValueKind kind,
+        LuaNumericIlLocal local)
+    {
+        generator.Emit(OpCodes.Ldloc, local);
+        if (kind == LuaNumericRegionValueKind.Integer)
+        {
+            generator.Emit(OpCodes.Conv_R8);
+        }
+    }
+
+    private static Type LocalType(LuaNumericRegionValueKind kind) => kind switch
+    {
+        LuaNumericRegionValueKind.Integer => typeof(long),
+        LuaNumericRegionValueKind.Float => typeof(double),
+        LuaNumericRegionValueKind.Boolean => typeof(bool),
+        _ => throw new InvalidOperationException($"{kind} is not primitive."),
+    };
+
+    private static LuaValueKind ValueKind(LuaNumericRegionValueKind kind) => kind switch
+    {
+        LuaNumericRegionValueKind.Integer => LuaValueKind.Integer,
+        LuaNumericRegionValueKind.Float => LuaValueKind.Float,
+        LuaNumericRegionValueKind.Boolean => LuaValueKind.Boolean,
+        _ => throw new InvalidOperationException($"{kind} is not a Lua value kind."),
+    };
+
+    private static MethodInfo AsMethod(LuaNumericRegionValueKind kind) => kind switch
+    {
+        LuaNumericRegionValueKind.Integer => AsInteger,
+        LuaNumericRegionValueKind.Float => AsFloat,
+        LuaNumericRegionValueKind.Boolean => AsBoolean,
+        _ => throw new InvalidOperationException($"{kind} has no Lua accessor."),
+    };
+
+    private static MethodInfo FromMethod(LuaNumericRegionValueKind kind) => kind switch
+    {
+        LuaNumericRegionValueKind.Integer => FromInteger,
+        LuaNumericRegionValueKind.Float => FromFloat,
+        LuaNumericRegionValueKind.Boolean => FromBoolean,
+        _ => throw new InvalidOperationException($"{kind} has no Lua constructor."),
+    };
+
+    private static LuaNumericIlLocal NumericLocal(
+        IReadOnlyDictionary<
+            (int Register, LuaNumericRegionValueKind Kind),
+            LuaNumericIlLocal> locals,
+        int register,
+        LuaNumericRegionValueKind kind) =>
+        locals.TryGetValue((register, kind), out var local)
+            ? local
+            : throw new InvalidOperationException(
+                $"Register r{register} has no primitive {kind} local.");
+
+    private static LuaNumericIlLocal IntegerLocal(
+        IReadOnlyDictionary<
+            (int Register, LuaNumericRegionValueKind Kind),
+            LuaNumericIlLocal> locals,
+        int register) => NumericLocal(
+            locals,
+            register,
+            LuaNumericRegionValueKind.Integer);
+
+    private static bool IsComparison(LuaIrBinaryOperator operation) => operation is
+        LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
+        LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
+        LuaIrBinaryOperator.GreaterThan or LuaIrBinaryOperator.GreaterThanOrEqual;
 
     private static void EmitBoundedTransfer(
         LuaNumericRegionIlGenerator generator,

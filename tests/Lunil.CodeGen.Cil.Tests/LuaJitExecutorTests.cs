@@ -1929,6 +1929,81 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void Tier2KeepsFloatingAndBooleanLeafStateUnboxedAcrossCalls()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function escapes(cx, cy)
+                local zx, zy = 0.0, 0.0
+                local iteration = 0
+                while zx * zx + zy * zy <= 4.0 and iteration < 50 do
+                    local next_zx = zx * zx - zy * zy + cx
+                    zy = 2.0 * zx * zy + cy
+                    zx = next_zx
+                    iteration = iteration + 1
+                end
+                return iteration < 50
+            end
+            local escaped = 0
+            for y = -12, 11 do
+                for x = -12, 11 do
+                    if escapes(x / 16.0, y / 16.0) then
+                        escaped = escaped + 1
+                    end
+                end
+            end
+            return escaped
+            """);
+        var interpreterState = new LuaState();
+        var expected = new LuaInterpreter().Execute(
+            interpreterState,
+            interpreterState.CreateMainClosure(module));
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+
+        AssertValues(executor.Execute(state, closure), expected.Values.ToArray());
+        AssertValues(executor.Execute(state, closure), expected.Values.ToArray());
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.True(plan.NumericRegionCount > 0);
+        var refreshed = ProfileGuidedLuaTier2Compiler.Instance.Compile(
+            module,
+            0,
+            executor.GetFunctionProfile(module, 0),
+            CancellationToken.None);
+        Assert.True(refreshed.Succeeded, string.Join("; ", refreshed.Diagnostics));
+        Assert.Equal(1, refreshed.BoundDirectCallCount);
+        Assert.True(
+            refreshed.Plan!.NumericRegionCount > 0,
+            $"runtime={plan.NumericRegionCount}; refreshed={refreshed.Plan.NumericRegionCount}; " +
+            $"direct={refreshed.BoundDirectCallCount}");
+        Assert.Contains(
+            plan.Optimizations,
+            static optimization =>
+                optimization.Kind == LuaJitOptimizationKind.KnownClosureCall);
+        var before = executor.Statistics;
+
+        AssertValues(executor.Execute(state, closure), expected.Values.ToArray());
+
+        var after = executor.Statistics;
+        Assert.InRange(
+            after.DirectCallCompletions - before.DirectCallCompletions,
+            550,
+            576);
+        Assert.InRange(after.SchedulerExits - before.SchedulerExits, 1, 16);
+        Assert.Equal(before.Tier2GuardFailures, after.Tier2GuardFailures);
+    }
+
+    [Fact]
     public void NumericRegionDirectCallGuardMaterializesExactCallerStateOnTargetMismatch()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
@@ -2117,6 +2192,144 @@ public sealed class LuaJitExecutorTests
         AssertValues(await active, LuaValue.FromInteger(5_150));
         await invalidating;
         Assert.True(executor.Statistics.Invalidations > 0);
+    }
+
+    [Fact]
+    public void PrimitiveDirectCallCompilerRejectsUnstableAndSchedulerOwnedCallees()
+    {
+        var unstableModule = Compile("""
+            local function choose(flag)
+                if flag then return 1 end
+                return 1.5
+            end
+            return choose(...)
+            """);
+        var unstable = unstableModule.Functions.Single(static function =>
+            function.ParameterCount == 1 && !function.IsVarArg);
+        var unstableProfile = new LuaJitFunctionProfile(
+            Samples: 1,
+            ArgumentKinds: [LuaJitValueKinds.Boolean],
+            Sites: []);
+
+        Assert.False(ReflectionEmitLuaDirectCallCompiler.CanCompile(
+            unstable,
+            unstableProfile));
+
+        var varargModule = Compile("""
+            local function values(...) return ... end
+            return values(...)
+            """);
+        var vararg = varargModule.Functions.Single(function =>
+            function.Id != varargModule.MainFunctionId && function.IsVarArg);
+        Assert.False(ReflectionEmitLuaDirectCallCompiler.CanCompile(
+            vararg,
+            new LuaJitFunctionProfile(1, [], [])));
+
+        var upvalueModule = Compile("""
+            local captured = 1
+            local function add(value) return value + captured end
+            return add(...)
+            """);
+        var upvalue = upvalueModule.Functions.Single(function =>
+            function.Id != upvalueModule.MainFunctionId && !function.Upvalues.IsEmpty);
+        Assert.False(ReflectionEmitLuaDirectCallCompiler.CanCompile(
+            upvalue,
+            new LuaJitFunctionProfile(1, [LuaJitValueKinds.Integer], [])));
+
+        var fixedModule = Compile("""
+            local function add(left, right) return left + right end
+            return add(...)
+            """);
+        var fixedLeaf = fixedModule.Functions.Single(function =>
+            function.Id != fixedModule.MainFunctionId &&
+            function.ParameterCount == 2 && function.Upvalues.IsEmpty);
+        Assert.True(ReflectionEmitLuaDirectCallCompiler.CanCompile(
+            fixedLeaf,
+            new LuaJitFunctionProfile(
+                1,
+                [LuaJitValueKinds.Integer, LuaJitValueKinds.Integer],
+                [])));
+        Assert.False(ReflectionEmitLuaDirectCallCompiler.CanInlineWithResultCount(
+            fixedLeaf,
+            resultCount: 2));
+    }
+
+    [Fact]
+    public void PrimitiveDirectCallBackedgeBoundFallsBackToExactSchedulerExecution()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function sum(count)
+                local total = 0
+                while count > 0 do
+                    total = total + count
+                    count = count - 1
+                end
+                return total
+            end
+            local count = ...
+            local result = 0
+            for index = 1, 2 do result = sum(count) end
+            return result
+            """);
+
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(2)),
+            LuaValue.FromInteger(3));
+        var before = executor.Statistics;
+
+        AssertValues(ExecuteFresh(executor, module, LuaValue.FromInteger(1_200)),
+            LuaValue.FromInteger(720_600));
+
+        var after = executor.Statistics;
+        Assert.True(after.DirectCallEntries > before.DirectCallEntries);
+        Assert.True(after.DirectCallFallbacks > before.DirectCallFallbacks);
+    }
+
+    [Fact]
+    public async Task DirectCallTelemetryAggregatesExactConcurrentThreadShards()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+            EnableTier2 = true,
+            EnableLoopOsr = false,
+            Tier2InvocationThreshold = 1,
+            Tier2BackedgeThreshold = 1,
+        });
+        var module = Compile("""
+            local function increment(value) return value + 1 end
+            local total = 0
+            for index = 1, 100 do total = total + increment(index) end
+            return total
+            """);
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_150));
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_150));
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_150));
+        var before = executor.Statistics.DirectCallCompletions;
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+            AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(5_150)))));
+
+        Assert.Equal(
+            400,
+            executor.Statistics.DirectCallCompletions - before);
     }
 
     [Fact]
@@ -2694,6 +2907,21 @@ public sealed class LuaJitExecutorTests
         Assert.Equal(module.Functions.Length, profile.Functions.Length);
         Assert.All(profile.Functions, static function =>
             Assert.True(function.Profile.Samples > 0));
+        foreach (var functionEntry in profile.Functions)
+        {
+            var function = module.Functions[functionEntry.FunctionId];
+            foreach (var site in functionEntry.Profile.Sites.Where(static site =>
+                         site.Opcode is LuaIrOpcode.Call or LuaIrOpcode.TailCall))
+            {
+                var argumentCount = Math.Max(
+                    0,
+                    function.Instructions[site.ProgramCounter].B);
+                Assert.Equal(argumentCount, site.CallArgumentKinds.Length);
+                Assert.All(
+                    site.CallArgumentKinds,
+                    static kinds => Assert.NotEqual(LuaJitValueKinds.None, kinds));
+            }
+        }
     }
 
     [Fact]
@@ -5632,7 +5860,12 @@ public sealed class LuaJitExecutorTests
                 BranchNotTaken: 0,
                 IsMegamorphic: false,
                 TableShapes: [],
-                CallTargets: [target]))
+                CallTargets: [target])
+            {
+                CallArgumentKinds = Enumerable.Repeat(
+                    LuaJitValueKinds.Integer,
+                    item.instruction.B).ToImmutableArray(),
+            })
             .ToImmutableArray();
         return new LuaJitFunctionProfile(
             Samples: 32,
