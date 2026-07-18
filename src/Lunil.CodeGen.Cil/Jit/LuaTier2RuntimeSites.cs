@@ -210,10 +210,7 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
     private static CounterShard? t_cachedShard;
 
     private readonly int _id = Interlocked.Increment(ref s_nextId);
-    private readonly ThreadLocal<CounterShard> _shards = new(
-        static () => new CounterShard(),
-        trackAllValues: true);
-    private readonly Lock _disposeGate = new();
+    private ThreadLocal<CounterShard>? _shards;
     private long _finalCompletions;
     private long _finalFallbacks;
     private long _finalInvalidations;
@@ -235,6 +232,17 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
 
     public long SchedulerExitsAvoided => checked(Completions * 2);
 
+    internal int ShardCount
+    {
+        get
+        {
+            lock (this)
+            {
+                return _disposed ? 0 : Volatile.Read(ref _shards)?.Values.Count ?? 0;
+            }
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RecordCompletion()
     {
@@ -254,21 +262,22 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
 
     public void Dispose()
     {
-        lock (_disposeGate)
+        lock (this)
         {
             if (_disposed)
             {
                 return;
             }
 
-            foreach (var shard in _shards.Values)
+            var shards = Volatile.Read(ref _shards);
+            foreach (var shard in shards?.Values ?? [])
             {
                 _finalCompletions = checked(_finalCompletions + shard.Completions);
                 _finalFallbacks = checked(_finalFallbacks + shard.Fallbacks);
                 _finalInvalidations = checked(_finalInvalidations + shard.Invalidations);
             }
 
-            _shards.Dispose();
+            shards?.Dispose();
             _disposed = true;
         }
     }
@@ -281,7 +290,24 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
             return cached;
         }
 
-        var shard = _shards.Value!;
+        var shards = Volatile.Read(ref _shards);
+        if (shards is null)
+        {
+            var created = new ThreadLocal<CounterShard>(
+                static () => new CounterShard(),
+                trackAllValues: true);
+            shards = Interlocked.CompareExchange(ref _shards, created, null);
+            if (shards is null)
+            {
+                shards = created;
+            }
+            else
+            {
+                created.Dispose();
+            }
+        }
+
+        var shard = shards.Value!;
         t_cachedId = _id;
         t_cachedShard = shard;
         return shard;
@@ -289,15 +315,21 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
 
     private long Sum(Func<CounterShard, long> selector, ref long finalValue)
     {
-        lock (_disposeGate)
+        lock (this)
         {
             if (_disposed)
             {
                 return finalValue;
             }
 
+            var shards = Volatile.Read(ref _shards);
+            if (shards is null)
+            {
+                return 0;
+            }
+
             long total = 0;
-            foreach (var shard in _shards.Values)
+            foreach (var shard in shards.Values)
             {
                 total = checked(total + selector(shard));
             }

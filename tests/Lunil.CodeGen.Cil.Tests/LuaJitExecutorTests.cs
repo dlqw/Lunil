@@ -2333,6 +2333,20 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void DirectCallTelemetryAllocatesShardsOnlyAfterTheFirstRecordedCall()
+    {
+        using var counters = new LuaDirectCallCounterSink();
+
+        Assert.Equal(0, counters.ShardCount);
+        Assert.Equal(0, counters.Completions);
+
+        counters.RecordCompletion();
+
+        Assert.Equal(1, counters.ShardCount);
+        Assert.Equal(1, counters.Completions);
+    }
+
+    [Fact]
     public void DefaultAutoTier2RejectsPolymorphicNumericProfiles()
     {
         var compiler = new CountingTier2Compiler(ProfileGuidedLuaTier2Compiler.Instance);
