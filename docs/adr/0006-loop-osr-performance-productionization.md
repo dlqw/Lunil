@@ -9,7 +9,7 @@
 
 ## Context
 
-The M6 Loop OSR prototype proved the scheduler and canonical-PC transition, but executed a managed
+The first Loop OSR prototype proved the scheduler and canonical-PC transition, but executed a managed
 canonical loop program. Its compact local result was useful for semantics work, not a production
 code-shape or rollout decision: allocation increased, negative workloads had no paired disabled
 baseline, compilation phases were not attributed, and no rule prevented a managed loop from being
@@ -101,7 +101,7 @@ The final five-process win-x64 Release record used nine cold samples per process
 The six-RID aggregator now writes `loop-osr-six-rid-decision.json` alongside the Tier 1 and Tier 2
 decisions and verifies code kind, liveness, allocation, managed-installation, negative-workload,
 and qualification fields. Synthetic win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and
-osx-arm64 inputs exercise the complete aggregation path; protected CI records the real per-RID
+osx-arm64 inputs exercise the complete aggregation path; release automation records the per-RID
 measurements without enforcing shared-runner wall-clock timing.
 
 Release build, the full solution test suite, focused Loop OSR tests, and backend differential tests

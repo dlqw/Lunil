@@ -156,6 +156,12 @@ jobs:
       - name: Verify public repository boundaries
         shell: pwsh
         run: ./scripts/Test-PublicRepository.ps1
+      - name: Verify community documentation boundaries
+        shell: pwsh
+        run: ./scripts/Test-CommunityDocumentation.ps1
+      - name: Verify generated performance charts
+        shell: pwsh
+        run: ./scripts/New-PerformanceCharts.ps1 -Verify
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json

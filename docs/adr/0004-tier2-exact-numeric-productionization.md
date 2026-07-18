@@ -8,8 +8,8 @@
 
 ## Context
 
-The original profile-guided Tier 2 executor interpreted an optimized managed program. On the M8
-arithmetic workload it was slower and allocated substantially more than both the interpreter and
+The original profile-guided Tier 2 executor interpreted an optimized managed program. On the
+initial arithmetic qualification workload it was slower and allocated substantially more than both the interpreter and
 Tier 1, so it could not satisfy the approved 4x arithmetic gate. It also repeated canonical
 liveness analysis during promotion and did not expose enough phase attribution to distinguish
 profile planning, CIL emission, and delegate creation.

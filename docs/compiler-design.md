@@ -610,44 +610,14 @@ loop analysis、liveness/cache hit、specialization planning、CIL emission、de
 code kind、专门化与 guard 数量；`JIT3101`–`JIT3105`、accepted/rejected 事件和独立 statistics 公开资格。
 
 无 natural loop 或所有 loop 均被拒绝的函数在达到 hotness 后进入永久 fast-rejection 状态，后续
-instruction/backedge 不再运行 analyzer、dictionary lookup 或锁。M6 的 managed prototype 曾只有
-47.5% compact-runner 改善并增加分配；M13 的 exact-numeric CIL 生产化记录达到 8.516 倍 interpreter
-arithmetic median、3.080 ms compile p95、零 allocation slope 与 100% liveness-cache hit，同时
-lua-call/table/metamethod/coroutine-error-hook 的 paired on/off median 全部不低于 0.935。默认仍保持关闭；
-详细决策见 [ADR 0006](adr/0006-loop-osr-performance-productionization.md)。
-
-M8 曾将启动、稳态吞吐、分配、编译 p95、RSS、code bytes 和 persisted PE/PDB size 纳入同一
-runner；其中 persisted artifact 指标已随 `0.8.0-alpha.12` 的 Lua AOT 删除而退出当前 schema。
-当时 Windows x64 三轮证据未达到 Tier 1 至少 2 倍、Tier 2 至少 4 倍以及 Tier 1 编译 p95 小于
-5 ms 的门槛，因此默认曾回退为 `InterpreterOnly`。M9 完成 Runtime ABI v2、直接 lowering、缓存和
-编译延迟收口后，六 RID 的 Tier 1 arithmetic bootstrap 95% 下界均超过 2 倍、编译 p95 均低于
-5 ms、allocation slope 均为 0，且 negative workload gate 无失败。M10 据此只将 Tier 1 默认迁移为
-`Auto`；Tier 2 与 Loop OSR 继续独立 opt-in。
-
-M11 的最终 win-x64 五进程精确数值证据达到 9.177 倍 arithmetic median speedup、bootstrap 95%
-下界 6.557 倍、1.395 ms Tier 2 compile p95 与零 allocation slope；六 RID CI 的最低 bootstrap
-下界为 7.086 倍、最大 compile p95 为 3.228 ms。该结果先将 exact-numeric Tier 2 生产化，详细
-决策见 [ADR 0004](adr/0004-tier2-exact-numeric-productionization.md)。M12 再以 profile/code-shape
-eligibility 隔离 managed table/call/metamethod/coroutine 路径，将 `EnableTier2` 默认改为 `true`，
-同时保持 `EnableTier2ManagedFallback=false`；默认策略见
-[ADR 0005](adr/0005-tier2-auto-default-rollout.md)。M13 进一步把 natural loop 的 exact numeric
-子集发射为 `GuardedExactNumericCil`，加入独立 eligibility、code-kind 安装门控、fast rejection、
-paired negative workload 与六 RID 聚合证据，但保持 `EnableLoopOsr=false`；见
-[ADR 0006](adr/0006-loop-osr-performance-productionization.md)。M14 根据真实六 RID negative gate 失败，
-把分析延后到 hot backedge、加入 observed exact-numeric qualification/`JIT3105`，并平衡 on/off 运行顺序；
-默认仍不改变，直到新 aggregate 全部通过，见
-[ADR 0007](adr/0007-loop-osr-default-rollout-readiness.md)。
-M15 审查真实 CI run `29241821560` 后继续保持默认关闭：该 run 的拒绝、startup 与 guard 门槛通过，
-但两个 10-operation negative median 和 osx-x64 首次 emitter 编译时延仍未达标。当前证据改为至少
-30 次 warm operation、六个进程严格 3:3 平衡 on/off 顺序，并仅在 exact-numeric 资格通过后惰性准备
-emitter；决策见
-[ADR 0008](adr/0008-loop-osr-qualified-preparation-and-evidence.md)。
-M15 后续真实六 RID CI run `29244862401` 在 30-operation、六进程严格平衡契约下全部通过：最低
-arithmetic bootstrap 下界 4.349 倍、最低 OSR-on/off 下界 63.933 倍、最大 preparation p95 1.239 ms、
-最大 compile p95 6.399 ms，所有 negative startup/throughput/acceptance/guard/managed-installation 门槛
-均通过。M16 据此将 `EnableLoopOsr` 默认改为 `true`，同时保持 `EnableLoopOsr=false` 完整 opt-out 与
-`EnableLoopOsrManagedFallback=false`；见
-[ADR 0009](adr/0009-loop-osr-auto-default-rollout.md)。
+instruction/backedge 不再运行 analyzer、dictionary lookup 或锁。release 默认启用 qualified Tier 1、
+Tier 2 与 Loop OSR；`EnableTier2=false` 和 `EnableLoopOsr=false` 分别提供完整 opt-out，managed
+fallback 则保持显式实验选项。代码形态、资格与默认策略见
+[ADR 0004](adr/0004-tier2-exact-numeric-productionization.md)、
+[ADR 0005](adr/0005-tier2-auto-default-rollout.md)、
+[ADR 0006](adr/0006-loop-osr-performance-productionization.md) 和
+[ADR 0009](adr/0009-loop-osr-auto-default-rollout.md)。当前跨平台性能数据和门禁统一维护在
+[性能文档](performance.md)与 [`0.9.0` 路线图](roadmap-0.9.0.md)，不在架构文档中复制开发过程流水。
 
 执行后端共享的 scheduler、canonical PC 提交、指令预算、逻辑 GC safe point、hook/debug
 已由 [ADR 0001](adr/0001-execution-backend-abi-v1.md) 冻结；当前 unchecked
@@ -666,7 +636,7 @@ Reflection.Emit sink 消费经过验证的 plan；尚未 lowering 的 opcode 生
 不完整实现。寄存器与控制流基础操作直接 lowering，可能调用、yield、close 或执行复杂 Lua 语义的
 操作通过 versioned Runtime ABI slow path 返回共享 scheduler，不在生成方法中复制解释器状态机。
 
-M9 的 ABI-v2 Tier 1 进一步直接 lowering primitive unary/binary/bitwise/comparison、numeric-for、
+Runtime ABI v2 的 Tier 1 进一步直接 lowering primitive unary/binary/bitwise/comparison、numeric-for、
 upvalue access 和 guarded empty-range `Close`。primitive guard 在 reservation 和副作用之前运行；
 失败从同一 canonical PC 进入 generic path，只计费一次。Tier 2 与 Loop OSR 均关闭时，method plan
 省略逐指令 observation helper。canonical module/function/observation-mode 的 verified plan 使用
@@ -783,9 +753,7 @@ tests/
 
 Syntax 与 EmmyLua 不引用 Runtime；CodeGen 仅依赖稳定 Runtime ABI；Runtime 不反向依赖 Compiler；标准库通过 Runtime Abstractions 获取宿主能力。跨层数据结构放在最窄的共同抽象项目，禁止形成循环引用。
 
-`0.7.0-alpha.1` 已落地 `Lunil.Compiler` 与 `Lunil.Hosting`；`0.7.0-alpha.2` 已落地
-`Lunil.EmmyLua`；`0.7.0-alpha.3` 已落地 `Lunil.Analysis`；`0.7.0-alpha.4` 已落地
-`Lunil.Workspace`；`0.7.0-alpha.5` 已落地 `Lunil.Cli`。Analysis 依赖 Core/Syntax/EmmyLua/Semantics；Compiler 依赖
+Analysis 依赖 Core/Syntax/EmmyLua/Semantics；Compiler 依赖
 Analysis/Core/Syntax/EmmyLua/Semantics/IR；Workspace 依赖 Compiler/Analysis；Hosting 依赖
 Workspace/Compiler/IR/Runtime/StandardLibrary/CodeGen.Cil；CLI 组合
 Compiler/Workspace/Hosting/IR/CodeGen/Runtime/StandardLibrary，同时保持命令解析、配置、诊断、
@@ -819,32 +787,12 @@ sandbox filesystem 与各命令执行器之间的单向依赖。
   CI95 下界不低于 1.00 倍，并保持单一路由和零 timed-region fallback/deopt；
 - 未通过全部语义测试的优化不得进入默认优化级别。
 
-0.2.0 的 Windows x64/.NET 10 Release 基线使用 `benchmarks/Lunil.Runtime.Benchmarks` 固化。1,000,000 次 table get/set 的代表值约为 199 ns/op，单次 10,000 轮空 numeric-for 约 5.2 ms，带加法约 9.9 ms，1,000 个 table 的 full logical GC 约 0.71 ms。空循环的稳态执行固定分配约 5 KiB（frame/结果对象），不再随 10,000 次循环迭代增长；单元门槛为每次热执行不超过 16 KiB。数值仅作为本机回归基线，不是跨硬件的绝对门槛。
-
-M8 可用 `scripts/Measure-BackendPerformance.ps1` 重复运行同进程内九次 cold sample 与跨进程
-多轮统计。2026-07-12 Windows x64 三轮中位数显示 interpreter/Tier1/Tier2/Loop OSR 稳态分别为
-5.796/11.656/12.135/3.500 ms/op；Tier 1 编译 p95 为 18.966 ms。结果只决定当前默认策略，
-不会作为不同硬件间的绝对门槛；原始结果继续由六 RID CI 保存。
-
-2026-07-13 的 M13 win-x64 五进程记录将相同 runner 扩展为 interpreter/Tier 1/Tier 2/
-Loop-OSR-off/Loop-OSR 五行，并为 OSR 单独生成 qualification decision。exact-numeric OSR 的
-arithmetic median 为 interpreter 的 8.516 倍、disabled 配置的 128.737 倍，compile p95 3.080 ms，
-allocation slope 为 0，liveness cache hit 100%；负负载 on/off median 最低为 lua_calls 的 0.935 倍。
-六 RID CI 只聚合每个 runner 的 decision，不把共享硬件绝对时间作为 build failure。
-
-M14 将 on/off 顺序按进程交替，并把负负载 startup、automatic acceptance、guard failure 纳入门槛。
-win-x64 五进程记录达到 8.670 倍 interpreter、115.995 倍 disabled、3.538 ms compile p95；四项负负载
-warm median 为 0.993/0.982/1.007/0.987，startup median 均不低于 0.984，且 accepted、managed install
-与 guard failure 均为 0。真实六 RID aggregate 仍是默认 rollout 的必要条件。
-
-2026-07-16 的 M19 跨运行时门禁使用相同 Lua 源码、六轮平衡顺序和逐轮配对 ratio。
-managed warmup 后在计时区外显式完成 CLR GC reset，避免将上一 runtime 的遗留 heap 状态带入
-下一样本。win-x64 的九 engine × 八 workload × 六轮共 432 个结果全部正确；Auto/Tier 2
-相对 MoonSharp 的 geomean 为 1.655/1.691 倍，逐 workload 最低为 `string_build` 的
-1.233/1.233 倍，其 CI95 下界为 1.126/1.145。六 RID 聚合对缺失、重复、schema 不兼容、
-incomplete 或任一 workload gate 失败均 fail closed；原生 Lua 始终保持报告中的 `1.000x` 基准。
-真实 hosted run `29459923109` 的六个 RID 与 aggregate 全部通过：96 个 Auto/Tier 2 门禁无失败，
-跨 48 个 measurement 的 MoonSharp-relative geomean 为 1.980/1.979 倍。
+后端微基准使用 `scripts/Measure-BackendPerformance.ps1` 测量启动、稳态吞吐、分配、编译 p95、
+code bytes、route、guard/deopt 与 owner release。跨运行时套件使用完全相同的 Lua source、平衡执行
+顺序、逐轮配对 ratio 与 bootstrap CI；managed warmup 后在计时区外执行 CLR GC reset，避免把上一
+runtime 的遗留 heap 状态带入下一样本。六 RID aggregate 对缺失、重复、schema 不兼容、结果错误、
+incomplete 或任一 workload gate 失败均 fail closed。当前发布数据、图表、复现命令和量化门禁见
+[性能文档](performance.md)与 [`0.9.0` 路线图](roadmap-0.9.0.md)。
 
 ## 15. 可观测性与失败模型
 

@@ -8,12 +8,12 @@
 ## Context
 
 The original CoreCLR JIT productization kept `LuaJitExecutorOptions.Default.Policy` at
-`InterpreterOnly` because the M8 measurements did not satisfy the approved throughput and
-compile-latency gates. M9 introduced Runtime ABI v2 direct lowering, deterministic benefit
+`InterpreterOnly` because its first backend measurements did not satisfy the approved throughput
+and compile-latency gates. Runtime ABI v2 introduced direct lowering, deterministic benefit
 eligibility, owner-safe verified-plan caching, bounded compilation cancellation, and repeated
 cross-RID evidence collection.
 
-The post-M9 main CI evidence covers five independent processes per RID and nine cold compilation
+The accepted rollout evidence covers five independent processes per RID and nine cold compilation
 samples per process on win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64. All six
 RIDs reported:
 
@@ -58,4 +58,4 @@ independently gated by `EnableLoopOsr=true`.
   configuration change.
 - Tier 2 and Loop OSR remain experimental opt-ins and require independent future ADRs before
   either default changes.
-- The six-RID evidence and focused soak must be repeated for the rollout commit before merge.
+- The six-RID evidence and focused soak are required for every rollout candidate.

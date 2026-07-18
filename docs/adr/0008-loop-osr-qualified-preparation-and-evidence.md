@@ -9,7 +9,7 @@
 
 ADR 0007 removed constructor-time Loop OSR preparation, delayed natural-loop analysis to the
 configured hotness threshold, and required exact-numeric runtime observation before queue admission.
-The real six-RID CI run `29241821560` proved the semantic part of that contract: every RID accepted
+The six-RID qualification report proved the semantic part of that contract: every RID accepted
 the arithmetic candidate, rejected every negative workload automatically, installed no managed
 negative method, observed no negative guard failure, and passed the startup gate.
 
@@ -71,15 +71,14 @@ acceptance and before compilation completion, while a short loop, a structural m
 a non-exact runtime profile publish no preparation event. Existing specialized, fallback, widening,
 concurrency, cache, lifetime, budget, debug, GC, and capability tests remain unchanged.
 
-Local diagnostic repetitions before the implementation showed why the evidence needed strengthening:
+Diagnostic repetitions showed why the evidence needed strengthening:
 ten balanced win-x64 processes produced medians of 0.96x for table access and 1.01x for metamethods,
 but individual ten-operation ratios ranged from 0.87x to 1.05x and 0.81x to 1.23x. Raising each row to
 30 warm operations across six balanced processes produced 1.01x and 1.07x respectively, with minima
 of 0.92x and 0.99x. This changes sample quality, not the acceptance floor.
 
-The final local win-x64 Release record at
-`artifacts/backend-performance/win-x64/20260713-104847` used six balanced processes, nine cold
-samples per process, and 30 warm operations per row. It reported:
+The win-x64 qualification used six balanced processes, nine cold samples per process, and 30 warm
+operations per row. It reported:
 
 - 7.547x arithmetic median speedup over the interpreter, bootstrap 95% interval
   `[6.311x, 7.860x]`;
@@ -93,9 +92,8 @@ samples per process, and 30 warm operations per row. It reported:
   1.016x, 0.977x, and 0.988x for lua calls, table access, metamethods, and coroutine/error/hook.
 
 Every negative workload retained zero automatic acceptance, zero guard failures, and zero managed
-installations. The local RID qualifies. The protected six-RID workflow must still repeat this exact
-contract; its aggregate, rather than this ADR alone, is the authority for the separate default-rollout
-change.
+installations. The six-RID aggregate, rather than this ADR alone, is the authority for a separate
+default-rollout change.
 
 ## Consequences
 

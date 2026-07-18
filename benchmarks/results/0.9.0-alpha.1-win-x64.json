@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "release": "0.9.0-alpha.1",
+  "source": {
+    "commit": "9deb9e5d545d878fa4eba79a8840c6c2b6d6468c",
+    "rid": "win-x64",
+    "runtime": ".NET 10.0.3",
+    "rounds": 6,
+    "targetMilliseconds": 250,
+    "complete": true,
+    "performanceGatePassed": true
+  },
+  "overall": [
+    { "engine": "LuaJIT", "speedupVsNativeLua": 9.000, "speedupVsMoonSharp": 136.329 },
+    { "engine": "Native Lua 5.4", "speedupVsNativeLua": 1.000, "speedupVsMoonSharp": 15.222 },
+    { "engine": "Lunil Auto JIT", "speedupVsNativeLua": 0.589, "speedupVsMoonSharp": 9.024 },
+    { "engine": "Lunil Tier 2", "speedupVsNativeLua": 0.587, "speedupVsMoonSharp": 8.927 },
+    { "engine": "Lunil Loop OSR", "speedupVsNativeLua": 0.123, "speedupVsMoonSharp": 1.874 },
+    { "engine": "Lunil Tier 1", "speedupVsNativeLua": 0.082, "speedupVsMoonSharp": 1.256 },
+    { "engine": "MoonSharp", "speedupVsNativeLua": 0.066, "speedupVsMoonSharp": 1.000 },
+    { "engine": "Lunil interpreter", "speedupVsNativeLua": 0.042, "speedupVsMoonSharp": 0.637 }
+  ]
+}
