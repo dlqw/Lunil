@@ -17,10 +17,24 @@ internal static class LuaNumericRegionPlanner
         LuaNaturalLoopRegion region,
         IEnumerable<LuaNumericRegionTypeHint> hints,
         CancellationToken cancellationToken = default) => TryCreate(
+        function,
+        region,
+        hints,
+        boundDirectCalls: null,
+        tableSites: null,
+        cancellationToken);
+
+    public static LuaNumericRegionPlan? TryCreate(
+        LuaIrFunction function,
+        LuaNaturalLoopRegion region,
+        IEnumerable<LuaNumericRegionTypeHint> hints,
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        CancellationToken cancellationToken) => TryCreate(
             function,
             region,
             hints,
-            boundDirectCalls: null,
+            boundDirectCalls,
+            tableSites: null,
             cancellationToken);
 
     public static LuaNumericRegionPlan? TryCreate(
@@ -28,6 +42,7 @@ internal static class LuaNumericRegionPlanner
         LuaNaturalLoopRegion region,
         IEnumerable<LuaNumericRegionTypeHint> hints,
         IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        IReadOnlyDictionary<int, LuaNumericRegionTableSite>? tableSites,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(function);
@@ -89,7 +104,8 @@ internal static class LuaNumericRegionPlanner
                     pc,
                     before[pc],
                     solver,
-                    boundDirectCalls))
+                    boundDirectCalls,
+                    tableSites))
             {
                 return null;
             }
@@ -128,6 +144,7 @@ internal static class LuaNumericRegionPlanner
                     kindsBefore[pc],
                     kindsAfter[pc],
                     boundDirectCalls,
+                    tableSites,
                     ref directNumericInstructionCount))
             {
                 return null;
@@ -187,6 +204,10 @@ internal static class LuaNumericRegionPlanner
             registers,
             backedges,
             directNumericInstructionCount,
+            region.ProgramCounters
+                .Where(pc => tableSites?.ContainsKey(pc) == true)
+                .Select(pc => tableSites![pc])
+                .ToImmutableArray(),
             budgetSites,
             maximumBackedgeSegmentInstructionCost,
             HotInstructionBudgetCheckCount: 0,
@@ -418,7 +439,8 @@ internal static class LuaNumericRegionPlanner
         int pc,
         ImmutableArray<ValueDefinition>[] before,
         ExactTypeSolver solver,
-        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls)
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        IReadOnlyDictionary<int, LuaNumericRegionTableSite>? tableSites)
     {
         var instruction = function.Instructions[pc];
         switch (instruction.Opcode)
@@ -463,6 +485,32 @@ internal static class LuaNumericRegionPlanner
                     TryGetUseId(solver, before[instruction.A], out _);
             case LuaIrOpcode.NumericForLoop:
                 return ApplyNumericForConstraints(instruction, pc, before, solver);
+            case LuaIrOpcode.GetTable:
+                return TryGetTableSite(
+                        function,
+                        pc,
+                        LuaNumericRegionTableOperation.Get,
+                        tableSites,
+                        out _) &&
+                    TryAssignUse(
+                        solver,
+                        before[instruction.B],
+                        LuaNumericRegionValueKind.Tagged) &&
+                    TryGetUseId(solver, before[instruction.C], out _) &&
+                    solver.TryGetId(new ValueDefinition(pc, instruction.A), out _);
+            case LuaIrOpcode.SetTable:
+                return TryGetTableSite(
+                        function,
+                        pc,
+                        LuaNumericRegionTableOperation.Set,
+                        tableSites,
+                        out _) &&
+                    TryAssignUse(
+                        solver,
+                        before[instruction.A],
+                        LuaNumericRegionValueKind.Tagged) &&
+                    TryGetUseId(solver, before[instruction.B], out _) &&
+                    TryGetUseId(solver, before[instruction.C], out _);
             case LuaIrOpcode.Call:
                 return ApplyDirectCallConstraints(
                     function,
@@ -719,6 +767,7 @@ internal static class LuaNumericRegionPlanner
         ImmutableArray<LuaNumericRegionValueKind> before,
         ImmutableArray<LuaNumericRegionValueKind> after,
         IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        IReadOnlyDictionary<int, LuaNumericRegionTableSite>? tableSites,
         ref int directNumericInstructionCount)
     {
         var instruction = function.Instructions[pc];
@@ -778,6 +827,26 @@ internal static class LuaNumericRegionPlanner
                     directNumericInstructionCount += valid ? 1 : 0;
                     return valid;
                 }
+            case LuaIrOpcode.GetTable:
+                return TryGetTableSite(
+                        function,
+                        pc,
+                        LuaNumericRegionTableOperation.Get,
+                        tableSites,
+                        out _) &&
+                    Kind(before, instruction.B) == LuaNumericRegionValueKind.Tagged &&
+                    IsTableKeyKind(Kind(before, instruction.C)) &&
+                    IsRepresentable(Kind(after, instruction.A));
+            case LuaIrOpcode.SetTable:
+                return TryGetTableSite(
+                        function,
+                        pc,
+                        LuaNumericRegionTableOperation.Set,
+                        tableSites,
+                        out _) &&
+                    Kind(before, instruction.A) == LuaNumericRegionValueKind.Tagged &&
+                    IsTableKeyKind(Kind(before, instruction.B)) &&
+                    IsRepresentable(Kind(before, instruction.C));
             case LuaIrOpcode.Call:
                 {
                     var valid = boundDirectCalls is not null &&
@@ -967,7 +1036,7 @@ internal static class LuaNumericRegionPlanner
         instruction.Opcode switch
         {
             LuaIrOpcode.LoadConstant or LuaIrOpcode.Move or LuaIrOpcode.Unary or
-                LuaIrOpcode.Binary => [instruction.A],
+                LuaIrOpcode.Binary or LuaIrOpcode.GetTable => [instruction.A],
             LuaIrOpcode.SetTop when instruction.A >= 0 && instruction.A <= registerCount =>
                 Enumerable.Range(instruction.A, registerCount - instruction.A),
             LuaIrOpcode.NumericForLoop =>
@@ -994,6 +1063,7 @@ internal static class LuaNumericRegionPlanner
             LuaIrConstantKind.Boolean => LuaNumericRegionValueKind.Boolean,
             LuaIrConstantKind.Integer => LuaNumericRegionValueKind.Integer,
             LuaIrConstantKind.Float => LuaNumericRegionValueKind.Float,
+            LuaIrConstantKind.String => LuaNumericRegionValueKind.Tagged,
             _ => LuaNumericRegionValueKind.Unknown,
         };
 
@@ -1013,10 +1083,36 @@ internal static class LuaNumericRegionPlanner
     private static bool IsNumeric(LuaNumericRegionValueKind kind) =>
         kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float;
 
+    private static bool IsTableKeyKind(LuaNumericRegionValueKind kind) =>
+        kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Tagged;
+
     private static bool IsComparison(LuaIrBinaryOperator operation) => operation is
         LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
         LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
         LuaIrBinaryOperator.GreaterThan or LuaIrBinaryOperator.GreaterThanOrEqual;
+
+    private static bool TryGetTableSite(
+        LuaIrFunction function,
+        int programCounter,
+        LuaNumericRegionTableOperation operation,
+        IReadOnlyDictionary<int, LuaNumericRegionTableSite>? tableSites,
+        out LuaNumericRegionTableSite tableSite)
+    {
+        if (tableSites is null ||
+            !tableSites.TryGetValue(programCounter, out tableSite) ||
+            tableSite.ProgramCounter != programCounter ||
+            tableSite.Operation != operation ||
+            (uint)tableSite.TableDefinitionProgramCounter >=
+                (uint)function.Instructions.Length ||
+            function.Instructions[tableSite.TableDefinitionProgramCounter].Opcode !=
+                LuaIrOpcode.NewTable)
+        {
+            tableSite = default;
+            return false;
+        }
+
+        return true;
+    }
 
     private static bool IsTakenBackedge(
         LuaIrInstruction instruction,

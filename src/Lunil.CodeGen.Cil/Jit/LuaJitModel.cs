@@ -294,6 +294,22 @@ public sealed record LuaJitStatistics(
 
     /// <summary>Compiled call/return exits consumed inside the direct-call trampoline.</summary>
     public long SchedulerExitsAvoided { get; init; }
+
+    /// <summary>
+    /// Sampled estimate of dense-slot, cached-field, or cached-metamethod table PIC probes that
+    /// hit. The first observation is recorded exactly and steady-state probes are aggregated in
+    /// bounded batches to avoid an atomic operation on every table access.
+    /// </summary>
+    public long TablePicHits { get; init; }
+
+    /// <summary>
+    /// Sampled estimate of table PIC probes that required cache population or a generic lookup.
+    /// The first observation is exact; subsequent steady-state probes use bounded aggregation.
+    /// </summary>
+    public long TablePicMisses { get; init; }
+
+    /// <summary>Cached table or metatable entries rejected after a guarded mutation.</summary>
+    public long TablePicInvalidations { get; init; }
 }
 
 public sealed record LuaJitTier2Eligibility(

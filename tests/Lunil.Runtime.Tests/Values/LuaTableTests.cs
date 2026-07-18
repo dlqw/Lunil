@@ -168,6 +168,62 @@ public sealed class LuaTableTests
     }
 
     [Fact]
+    public void IntegerPicFastPathBuildsABoundedSparseArrayWithoutWeakeningContracts()
+    {
+        var state = CreateDeterministicState();
+        var table = state.CreateTable();
+        var key2 = LuaValue.FromInteger(2);
+        var value = state.CreateTable();
+        var initialLogicalSize = table.LogicalSize;
+
+        Assert.True(table.SetIntegerValueNoMetatable(
+            key2,
+            2,
+            LuaValue.FromTable(value)));
+        Assert.Equal(2, table.ArrayCapacity);
+        Assert.Equal(0, table.HashCount);
+        Assert.Equal(initialLogicalSize + 32, table.LogicalSize);
+        Assert.True(table.Get(LuaValue.FromInteger(1)).IsNil);
+        Assert.Equal(LuaValue.FromTable(value), table.Get(key2));
+
+        state.SetGlobal("table", LuaValue.FromTable(table));
+        state.Heap.CollectFull();
+        Assert.True(value.IsAlive);
+
+        var farKey = LuaValue.FromInteger(5);
+        Assert.False(table.SetIntegerValueNoMetatable(
+            farKey,
+            5,
+            LuaValue.FromInteger(50)));
+        Assert.Equal(2, table.ArrayCapacity);
+        Assert.Equal(1, table.HashCount);
+        Assert.Equal(LuaValue.FromInteger(50), table.Get(farKey));
+
+        var existingHashTable = state.CreateTable();
+        existingHashTable.Set(key2, LuaValue.FromInteger(10));
+        Assert.False(existingHashTable.SetIntegerValueNoMetatable(
+            key2,
+            2,
+            LuaValue.FromInteger(20)));
+        Assert.Equal(0, existingHashTable.ArrayCapacity);
+        Assert.Equal(1, existingHashTable.HashCount);
+        Assert.Equal(LuaValue.FromInteger(20), existingHashTable.Get(key2));
+
+        var foreignState = CreateDeterministicState();
+        Assert.Throws<LuaRuntimeException>(() => table.SetIntegerValueNoMetatable(
+            farKey,
+            5,
+            LuaValue.FromTable(foreignState.CreateTable())));
+
+        table.SetMetatable(state.CreateTable());
+        Assert.False(table.SetIntegerValueNoMetatable(
+            LuaValue.FromInteger(3),
+            3,
+            LuaValue.FromInteger(30)));
+        Assert.True(table.Get(LuaValue.FromInteger(3)).IsNil);
+    }
+
+    [Fact]
     public void SequentialArrayAppendFastPathMigratesTheContiguousHashTail()
     {
         var state = CreateDeterministicState();

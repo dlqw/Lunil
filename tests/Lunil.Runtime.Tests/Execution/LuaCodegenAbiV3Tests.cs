@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
@@ -182,6 +183,170 @@ public sealed class LuaCodegenAbiV3Tests
         Assert.False(guardedCallCache.TryMatchOrAdd(state.CreateMainClosure(otherModule)));
     }
 
+    [Fact]
+    public void DenseIntegerTablePicReadsUpdatesAndAppendsWithGcAndOwnerChecks()
+    {
+        var (state, thread, frame, context) = CreateFrame();
+        var table = state.CreateTable();
+        var first = state.CreateTable();
+        var second = state.CreateTable();
+        table.Set(LuaValue.FromInteger(1), LuaValue.FromTable(first));
+        thread.Stack[0] = LuaValue.FromTable(table);
+        thread.Stack[1] = LuaValue.FromInteger(1);
+        thread.Stack[2] = LuaValue.FromTable(second);
+        var counters = new TestTablePicCounterSink();
+        var cache = new LuaCodegenTableSiteCache(counters);
+
+        Assert.Equal(
+            LuaCodegenPicExecutionResult.Executed,
+            LuaCodegenAbiV3.TryExecuteTableGetPic(context, thread, frame, cache, 3, 0, 1));
+        Assert.Same(first, thread.Stack[3].AsTable());
+        Assert.Equal(
+            LuaCodegenPicExecutionResult.Executed,
+            LuaCodegenAbiV3.TryExecuteTableSetPic(context, thread, frame, cache, 0, 1, 2));
+        Assert.Same(second, table.Get(LuaValue.FromInteger(1)).AsTable());
+
+        thread.Stack[1] = LuaValue.FromInteger(2);
+        thread.Stack[2] = LuaValue.FromInteger(42);
+        Assert.Equal(
+            LuaCodegenPicExecutionResult.Executed,
+            LuaCodegenAbiV3.TryExecuteTableSetPic(context, thread, frame, cache, 0, 1, 2));
+        Assert.Equal(LuaValue.FromInteger(42), table.Get(LuaValue.FromInteger(2)));
+        Assert.Equal(3, counters.Hits);
+
+        state.SetGlobal("root", LuaValue.FromTable(table));
+        state.Heap.CollectFull();
+        Assert.True(second.IsAlive);
+
+        var foreignState = new LuaState();
+        thread.Stack[1] = LuaValue.FromInteger(3);
+        Assert.Throws<LuaRuntimeException>(() =>
+            thread.Stack[2] = LuaValue.FromTable(foreignState.CreateTable()));
+        Assert.True(table.Get(LuaValue.FromInteger(3)).IsNil);
+    }
+
+    [Fact]
+    public void StringFieldPicHitsAndInvalidatesAcrossTombstoneRehashAndMetatableMutation()
+    {
+        var (state, thread, frame, context) = CreateFrame();
+        var table = state.CreateTable();
+        var key = String(state, "field");
+        table.Set(key, LuaValue.FromInteger(1));
+        thread.Stack[0] = LuaValue.FromTable(table);
+        thread.Stack[1] = key;
+        var counters = new TestTablePicCounterSink();
+        var cache = new LuaCodegenTableSiteCache(counters);
+
+        LuaValue Read()
+        {
+            Assert.Equal(
+                LuaCodegenPicExecutionResult.Executed,
+                LuaCodegenAbiV3.TryExecuteTableGetPic(
+                    context,
+                    thread,
+                    frame,
+                    cache,
+                    2,
+                    0,
+                    1));
+            return thread.Stack[2];
+        }
+
+        Assert.Equal(LuaValue.FromInteger(1), Read());
+        Assert.Equal(LuaValue.FromInteger(1), Read());
+        Assert.Equal(1, counters.Misses);
+        Assert.Equal(1, counters.Hits);
+
+        table.Set(key, LuaValue.FromInteger(2));
+        Assert.Equal(LuaValue.FromInteger(2), Read());
+        Assert.Equal(2, counters.Hits);
+
+        table.Set(key, LuaValue.Nil);
+        Assert.True(Read().IsNil);
+        Assert.Equal(1, counters.Invalidations);
+        table.Set(key, LuaValue.FromInteger(3));
+        Assert.Equal(LuaValue.FromInteger(3), Read());
+
+        for (var index = 0; index < 512; index++)
+        {
+            table.Set(String(state, $"rehash-{index}"), LuaValue.FromInteger(index));
+        }
+
+        Assert.Equal(LuaValue.FromInteger(3), Read());
+        Assert.True(counters.Invalidations >= 2);
+
+        var metatable = state.CreateTable();
+        table.SetMetatable(metatable);
+        Assert.Equal(LuaValue.FromInteger(3), Read());
+        table.SetMetatable(null);
+        Assert.Equal(LuaValue.FromInteger(3), Read());
+        Assert.True(counters.Invalidations >= 4);
+    }
+
+    [Fact]
+    public void StringFieldPicIsBoundedAndDoesNotRetainTableOrKeyOwners()
+    {
+        var (state, thread, frame, context) = CreateFrame();
+        var cache = new LuaCodegenTableSiteCache();
+        for (var index = 0; index < 8; index++)
+        {
+            var table = state.CreateTable();
+            var key = String(state, $"field-{index}");
+            table.Set(key, LuaValue.FromInteger(index));
+            thread.Stack[0] = LuaValue.FromTable(table);
+            thread.Stack[1] = key;
+            Assert.Equal(
+                LuaCodegenPicExecutionResult.Executed,
+                LuaCodegenAbiV3.TryExecuteTableGetPic(
+                    context,
+                    thread,
+                    frame,
+                    cache,
+                    2,
+                    0,
+                    1));
+        }
+
+        Assert.Equal(4, cache.FieldEntryCount);
+
+        var (weakCache, weakTable, weakKey) = CreateAndReleaseStringPicOwners();
+        for (var attempt = 0;
+             attempt < 10 && (weakTable.IsAlive || weakKey.IsAlive);
+             attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        Assert.False(weakTable.IsAlive);
+        Assert.False(weakKey.IsAlive);
+        GC.KeepAlive(weakCache);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (LuaCodegenTableSiteCache Cache, WeakReference Table, WeakReference Key)
+        CreateAndReleaseStringPicOwners()
+    {
+        var (state, thread, frame, context) = CreateFrame();
+        var table = state.CreateTable();
+        var key = state.Strings.GetOrCreate("ephemeral-field"u8);
+        table.Set(LuaValue.FromString(key), LuaValue.FromInteger(1));
+        thread.Stack[0] = LuaValue.FromTable(table);
+        thread.Stack[1] = LuaValue.FromString(key);
+        var cache = new LuaCodegenTableSiteCache();
+        Assert.Equal(
+            LuaCodegenPicExecutionResult.Executed,
+            LuaCodegenAbiV3.TryExecuteTableGetPic(context, thread, frame, cache, 2, 0, 1));
+        var weakTable = new WeakReference(table);
+        var weakKey = new WeakReference(key);
+        thread.Stack[0] = LuaValue.Nil;
+        thread.Stack[1] = LuaValue.Nil;
+        thread.Stack[2] = LuaValue.Nil;
+        state.Heap.CollectFull();
+        return (cache, weakTable, weakKey);
+    }
+
     private static (
         LuaState State,
         LuaThread Thread,
@@ -224,4 +389,19 @@ public sealed class LuaCodegenAbiV3Tests
 
     private static LuaValue String(LuaState state, string value) =>
         LuaValue.FromString(state.Strings.GetOrCreate(System.Text.Encoding.UTF8.GetBytes(value)));
+
+    private sealed class TestTablePicCounterSink : ILuaCodegenTablePicCounterSink
+    {
+        public long Hits { get; private set; }
+
+        public long Misses { get; private set; }
+
+        public long Invalidations { get; private set; }
+
+        public void RecordHit() => Hits++;
+
+        public void RecordMiss() => Misses++;
+
+        public void RecordInvalidation() => Invalidations++;
+    }
 }

@@ -22,6 +22,7 @@ public enum LuaJitOptimizationKind : byte
     TableSetPic,
     KnownClosureCall,
     FixedResultWindowReuse,
+    PrimitiveBinary,
 }
 
 public sealed record LuaJitOptimization(
@@ -165,6 +166,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             module,
             function,
             profile,
+            optimized,
             boundDirectCalls,
             cancellationToken);
         var optimizationDescriptions = optimized.Values
@@ -292,6 +294,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             ? optimized.Values.Count(static item => item.Kind is
                 LuaJitOptimizationKind.NumericUnary or
                 LuaJitOptimizationKind.NumericBinary or
+                LuaJitOptimizationKind.PrimitiveBinary or
                 LuaJitOptimizationKind.TableGetPic or
                 LuaJitOptimizationKind.TableSetPic or
                 LuaJitOptimizationKind.KnownClosureCall)
@@ -427,6 +430,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static bool HasNonNumericSpecialization(
         ImmutableDictionary<int, OptimizedInstruction> optimized) =>
         optimized.Values.Any(static optimization => optimization.Kind is
+            LuaJitOptimizationKind.PrimitiveBinary or
             LuaJitOptimizationKind.TableGetPic or
             LuaJitOptimizationKind.TableSetPic or
             LuaJitOptimizationKind.KnownClosureCall);
@@ -435,9 +439,23 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaIrModule module,
         LuaIrFunction function,
         LuaJitFunctionProfile profile,
+        ImmutableDictionary<int, OptimizedInstruction> optimized,
         IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
         CancellationToken cancellationToken)
     {
+        var tableSites = optimized.Values
+            .Where(static optimization =>
+                optimization.TableDefinitionProgramCounter >= 0 &&
+                optimization.Kind is (LuaJitOptimizationKind.TableGetPic or
+                    LuaJitOptimizationKind.TableSetPic))
+            .ToDictionary(
+                static optimization => optimization.ProgramCounter,
+                static optimization => new LuaNumericRegionTableSite(
+                    optimization.ProgramCounter,
+                    optimization.TableDefinitionProgramCounter,
+                    optimization.Kind == LuaJitOptimizationKind.TableGetPic
+                        ? LuaNumericRegionTableOperation.Get
+                        : LuaNumericRegionTableOperation.Set));
         var candidates = ImmutableArray.CreateBuilder<LuaNumericRegionPlan>();
         foreach (var region in LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
             module,
@@ -451,6 +469,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 region,
                 BuildNumericRegionHints(function, region, profile),
                 boundDirectCalls,
+                tableSites,
                 cancellationToken);
             if (plan is not null)
             {
@@ -569,6 +588,206 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         }
 
         return result.ToImmutable();
+    }
+
+    private static void AddCompilerProvenTablePics(
+        LuaIrFunction function,
+        ImmutableDictionary<int, OptimizedInstruction>.Builder result)
+    {
+        var exactTableDefinitions = BuildExactTableDefinitions(function);
+        for (var pc = 0; pc < function.Instructions.Length; pc++)
+        {
+            var definitions = exactTableDefinitions[pc];
+            if (definitions is null)
+            {
+                continue;
+            }
+
+            var instruction = function.Instructions[pc];
+            var targetRegister = instruction.Opcode switch
+            {
+                LuaIrOpcode.GetTable => instruction.B,
+                LuaIrOpcode.SetTable => instruction.A,
+                _ => -1,
+            };
+            if (targetRegister < 0 ||
+                definitions[targetRegister] < 0)
+            {
+                continue;
+            }
+
+            var definition = definitions[targetRegister];
+            if (result.TryGetValue(pc, out var existing))
+            {
+                if (existing.Kind is LuaJitOptimizationKind.TableGetPic or
+                    LuaJitOptimizationKind.TableSetPic)
+                {
+                    result[pc] = existing with { TableDefinitionProgramCounter = definition };
+                }
+
+                continue;
+            }
+
+            result.Add(
+                pc,
+                OptimizedInstruction.Table(
+                    pc,
+                    instruction.Opcode == LuaIrOpcode.GetTable
+                        ? LuaJitOptimizationKind.TableGetPic
+                        : LuaJitOptimizationKind.TableSetPic,
+                    [],
+                    definition));
+        }
+    }
+
+    private static int[]?[] BuildExactTableDefinitions(LuaIrFunction function)
+    {
+        var definitions = new int[]?[function.Instructions.Length];
+        if (definitions.Length == 0)
+        {
+            return definitions;
+        }
+
+        var entry = new int[function.RegisterCount];
+        Array.Fill(entry, -1);
+        definitions[0] = entry;
+        var pending = new Queue<int>();
+        pending.Enqueue(0);
+        while (pending.TryDequeue(out var pc))
+        {
+            var outgoing = (int[])definitions[pc]!.Clone();
+            ApplyExactTableDefinitions(function, pc, outgoing);
+            foreach (var successor in GetInstructionSuccessors(function, pc))
+            {
+                var successorDefinitions = definitions[successor];
+                if (successorDefinitions is null)
+                {
+                    definitions[successor] = (int[])outgoing.Clone();
+                    pending.Enqueue(successor);
+                    continue;
+                }
+
+                var changed = false;
+                for (var register = 0; register < successorDefinitions.Length; register++)
+                {
+                    if (successorDefinitions[register] == outgoing[register])
+                    {
+                        continue;
+                    }
+
+                    if (successorDefinitions[register] >= 0)
+                    {
+                        successorDefinitions[register] = -1;
+                        changed = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    pending.Enqueue(successor);
+                }
+            }
+        }
+
+        return definitions;
+    }
+
+    private static void ApplyExactTableDefinitions(
+        LuaIrFunction function,
+        int pc,
+        int[] definitions)
+    {
+        var instruction = function.Instructions[pc];
+        switch (instruction.Opcode)
+        {
+            case LuaIrOpcode.NewTable:
+                definitions[instruction.A] = pc;
+                break;
+            case LuaIrOpcode.Move:
+                definitions[instruction.A] = definitions[instruction.B];
+                break;
+            case LuaIrOpcode.LoadConstant:
+            case LuaIrOpcode.GetUpvalue:
+            case LuaIrOpcode.GetTable:
+            case LuaIrOpcode.Closure:
+            case LuaIrOpcode.Unary:
+            case LuaIrOpcode.Binary:
+                definitions[instruction.A] = -1;
+                break;
+            case LuaIrOpcode.LoadNil:
+                ClearExactTableDefinitions(definitions, instruction.A, instruction.B);
+                break;
+            case LuaIrOpcode.SetTop:
+                ClearExactTableDefinitions(
+                    definitions,
+                    instruction.A,
+                    function.RegisterCount - instruction.A);
+                break;
+            case LuaIrOpcode.JumpIfFalse:
+            case LuaIrOpcode.JumpIfTrue:
+                if (instruction.D != 0)
+                {
+                    ClearExactTableDefinitions(
+                        definitions,
+                        instruction.C,
+                        function.RegisterCount - instruction.C);
+                }
+
+                break;
+            case LuaIrOpcode.VarArg:
+                ClearExactTableDefinitions(
+                    definitions,
+                    instruction.A,
+                    instruction.B < 0
+                        ? function.RegisterCount - instruction.A
+                        : instruction.B);
+                break;
+            case LuaIrOpcode.Call:
+                ClearExactTableDefinitions(
+                    definitions,
+                    instruction.A,
+                    instruction.C < 0
+                        ? function.RegisterCount - instruction.A
+                        : instruction.C);
+                break;
+            case LuaIrOpcode.NumericForPrepare:
+            case LuaIrOpcode.NumericForLoop:
+                ClearExactTableDefinitions(
+                    definitions,
+                    instruction.A,
+                    Math.Min(4, function.RegisterCount - instruction.A));
+                break;
+        }
+    }
+
+    private static void ClearExactTableDefinitions(int[] definitions, int start, int count) =>
+        definitions.AsSpan(start, count).Fill(-1);
+
+    private static IEnumerable<int> GetInstructionSuccessors(
+        LuaIrFunction function,
+        int pc)
+    {
+        var instruction = function.Instructions[pc];
+        switch (instruction.Opcode)
+        {
+            case LuaIrOpcode.Jump:
+                yield return instruction.B;
+                yield break;
+            case LuaIrOpcode.JumpIfFalse:
+            case LuaIrOpcode.JumpIfTrue:
+            case LuaIrOpcode.NumericForPrepare:
+            case LuaIrOpcode.NumericForLoop:
+                yield return instruction.B;
+                break;
+            case LuaIrOpcode.Return:
+            case LuaIrOpcode.TailCall:
+                yield break;
+        }
+
+        if (pc + 1 < function.Instructions.Length)
+        {
+            yield return pc + 1;
+        }
     }
 
     [UnconditionalSuppressMessage(
@@ -913,6 +1132,14 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                             site.FirstOperandKinds,
                             site.SecondOperandKinds));
                     break;
+                case LuaIrOpcode.Binary when IsStablePrimitiveBinary(instruction, site):
+                    result.Add(
+                        site.ProgramCounter,
+                        OptimizedInstruction.PrimitiveBinary(
+                            site.ProgramCounter,
+                            site.FirstOperandKinds,
+                            site.SecondOperandKinds));
+                    break;
                 case LuaIrOpcode.JumpIfFalse:
                 case LuaIrOpcode.JumpIfTrue:
                     if (site.Samples != 0 &&
@@ -958,6 +1185,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     break;
             }
         }
+
+        AddCompilerProvenTablePics(function, result);
 
         return result.ToImmutable();
     }
@@ -1082,10 +1311,31 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         kinds != LuaJitValueKinds.None &&
         (kinds & ~(LuaJitValueKinds.Integer | LuaJitValueKinds.Float)) == 0;
 
+    private static bool IsStablePrimitiveBinary(
+        LuaIrInstruction instruction,
+        LuaJitSiteProfile site)
+    {
+        var operation = (LuaIrBinaryOperator)instruction.D;
+        if (operation is LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual)
+        {
+            return IsExactPrimitiveKind(site.FirstOperandKinds) &&
+                IsExactPrimitiveKind(site.SecondOperandKinds);
+        }
+
+        return operation is (LuaIrBinaryOperator.LessThan or
+                LuaIrBinaryOperator.LessThanOrEqual or LuaIrBinaryOperator.GreaterThan or
+                LuaIrBinaryOperator.GreaterThanOrEqual) &&
+            site.FirstOperandKinds == LuaJitValueKinds.String &&
+            site.SecondOperandKinds == LuaJitValueKinds.String;
+    }
+
+    private static bool IsExactPrimitiveKind(LuaJitValueKinds kinds) => kinds is
+        LuaJitValueKinds.Nil or LuaJitValueKinds.Boolean or LuaJitValueKinds.String;
+
     private static bool IsStableTablePic(LuaJitSiteProfile site) =>
-        !site.IsMegamorphic &&
         site.FirstOperandKinds == LuaJitValueKinds.Table &&
-        !site.TableShapes.IsEmpty;
+        (site.SecondOperandKinds == LuaJitValueKinds.Integer ||
+            !site.IsMegamorphic && !site.TableShapes.IsEmpty);
 
     private sealed class NumericRegionTier2Program
     {
@@ -1329,6 +1579,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         return null;
                     }
                 case LuaJitOptimizationKind.NumericBinary:
+                case LuaJitOptimizationKind.PrimitiveBinary:
                     {
                         var left = LuaCodegenAbiV2.ReadRegisterUnchecked(
                             thread,
@@ -1350,7 +1601,12 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         }
 
                         var operation = (LuaIrBinaryOperator)instruction.D;
-                        var value = optimization.FirstKinds == LuaJitValueKinds.Integer &&
+                        var value = optimization.Kind == LuaJitOptimizationKind.PrimitiveBinary
+                            ? LuaValueOperations.BinaryPrimitiveSpecialized(
+                                operation,
+                                left,
+                                right)
+                            : optimization.FirstKinds == LuaJitValueKinds.Integer &&
                             optimization.SecondKinds == LuaJitValueKinds.Integer
                             ? LuaValueOperations.BinaryIntegerSpecialized(operation, left, right)
                             : LuaValueOperations.Binary(context.State, operation, left, right);
@@ -1812,6 +2068,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
         public bool ReusesFixedResultWindow { get; init; }
 
+        public int TableDefinitionProgramCounter { get; init; } = -1;
+
         public int DestinationRegister { get; init; }
 
         public LuaValue FoldedValue { get; init; }
@@ -1868,6 +2126,18 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 SecondKinds = second,
             };
 
+        public static OptimizedInstruction PrimitiveBinary(
+            int pc,
+            LuaJitValueKinds first,
+            LuaJitValueKinds second) => new()
+            {
+                ProgramCounter = pc,
+                Kind = LuaJitOptimizationKind.PrimitiveBinary,
+                Guard = $"exact primitive operand kinds {first} x {second}",
+                FirstKinds = first,
+                SecondKinds = second,
+            };
+
         public static OptimizedInstruction Branch(int pc, bool taken) => new()
         {
             ProgramCounter = pc,
@@ -1879,12 +2149,16 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         public static OptimizedInstruction Table(
             int pc,
             LuaJitOptimizationKind kind,
-            ImmutableArray<LuaJitTableShapeProfile> shapes) => new()
+            ImmutableArray<LuaJitTableShapeProfile> shapes,
+            int tableDefinitionProgramCounter = -1) => new()
             {
                 ProgramCounter = pc,
                 Kind = kind,
-                Guard = $"table shape matches one of {shapes.Length} PIC entries",
+                Guard = shapes.IsEmpty
+                    ? "target register has a dominating unique table definition; runtime key/PIC guards apply"
+                    : $"table shape matches one of {shapes.Length} PIC entries",
                 TableShapes = shapes,
+                TableDefinitionProgramCounter = tableDefinitionProgramCounter,
             };
 
         public static OptimizedInstruction KnownCall(

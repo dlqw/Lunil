@@ -134,6 +134,44 @@ public sealed class LuaTable : LuaGcObject
     }
 
     /// <summary>
+    /// Performs the single array-or-hash probe required for a key already guarded as an integer.
+    /// The supplied value preserves exact Lua integer key identity without repeating numeric-kind
+    /// normalization in the generic lookup path.
+    /// </summary>
+    internal bool TryGetIntegerEntry(
+        LuaValue key,
+        long index,
+        out LuaValue value,
+        out LuaTableExistingEntry entry)
+    {
+        var offset = index - 1;
+        if ((ulong)offset < (ulong)_array.Count)
+        {
+            value = _array[(int)offset];
+            if (!value.IsNil)
+            {
+                entry = LuaTableExistingEntry.Array((int)offset);
+                return true;
+            }
+
+            entry = default;
+            return false;
+        }
+
+        var bucketIndex = FindBucket(key);
+        if (bucketIndex >= 0 && _buckets[bucketIndex].State == BucketState.Occupied)
+        {
+            value = _buckets[bucketIndex].Value;
+            entry = LuaTableExistingEntry.Hash(bucketIndex);
+            return true;
+        }
+
+        value = LuaValue.Nil;
+        entry = default;
+        return false;
+    }
+
+    /// <summary>
     /// Updates an index already known to address the allocated dense array part. The index
     /// check deliberately precedes owner validation so a caller can cheaply fall through to
     /// append or hash handling without validating the value twice.
@@ -190,6 +228,55 @@ public sealed class LuaTable : LuaGcObject
     }
 
     /// <summary>
+    /// Sets an integer key on a table already guarded as having no metatable. Array updates and
+    /// sequential appends retain the dense fast path; all other indices route directly to the hash
+    /// part without repeating the failed array probe in <see cref="Set"/>.
+    /// </summary>
+    internal bool SetIntegerValueNoMetatable(LuaValue key, long index, LuaValue value)
+    {
+        if (_metatable is not null)
+        {
+            return false;
+        }
+
+        var offset = index - 1;
+        if ((ulong)offset < (ulong)_array.Count)
+        {
+            Owner.WriteBarrier(this, value);
+            SetArray((int)offset, value);
+            return true;
+        }
+
+        var appendsSingleLeadingHole = _array.Count == 0 &&
+            offset == 1 &&
+            FindBucket(key) < 0;
+        if ((offset == _array.Count || appendsSingleLeadingHole) && !value.IsNil)
+        {
+            Owner.WriteBarrier(this, value);
+            var appendedSlots = checked((int)(offset - _array.Count + 1));
+            Owner.AdjustLogicalSize(this, appendedSlots * 16L);
+            EnsureArrayAppendCapacity();
+            if (appendedSlots == 2)
+            {
+                _array.Add(LuaValue.Nil);
+            }
+
+            _array.Add(value);
+            IncrementShapeVersion();
+            IncrementContentVersion();
+            IncrementStorageVersion();
+            MigrateArrayTail();
+            return true;
+        }
+
+        Owner.ValidateValue(value);
+        var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
+        barrierOwner.WriteBackValidated(value);
+        SetHash(key, value);
+        return false;
+    }
+
+    /// <summary>
     /// Performs one raw lookup and, when the key is present, returns an opaque handle that can
     /// update that exact entry without probing the table again. The handle never exposes array
     /// or hash storage to code-generation consumers and is valid only until the next table
@@ -232,6 +319,106 @@ public sealed class LuaTable : LuaGcObject
         value = LuaValue.Nil;
         entry = default;
         return false;
+    }
+
+    /// <summary>
+    /// Reads an opaque entry whose table/key identity and mutation versions were already guarded
+    /// by a code-generation cache. The handle is revalidated against the current storage so a
+    /// stale or collected weak-cache entry fails closed instead of exposing bucket layout.
+    /// </summary>
+    internal bool TryReadExistingEntry(
+        LuaTableExistingEntry entry,
+        LuaValue key,
+        out LuaValue value)
+    {
+        Owner.ValidateValue(key);
+        if (entry.IsArray)
+        {
+            if ((uint)entry.Index < (uint)_array.Count &&
+                !_array[entry.Index].IsNil &&
+                TryGetArrayIndex(key, out var arrayIndex) &&
+                arrayIndex - 1 == entry.Index)
+            {
+                value = _array[entry.Index];
+                return true;
+            }
+
+            value = LuaValue.Nil;
+            return false;
+        }
+
+        if ((uint)entry.Index < (uint)_buckets.Length)
+        {
+            ref readonly var bucket = ref _buckets[entry.Index];
+            if (bucket.State == BucketState.Occupied && KeysMatch(bucket, key))
+            {
+                value = bucket.Value;
+                return true;
+            }
+        }
+
+        value = LuaValue.Nil;
+        return false;
+    }
+
+    /// <summary>
+    /// Revalidates a cached hash entry for an exact interned string identity without repeating a
+    /// hash probe. A content-equal but non-identical string deliberately misses this fast path.
+    /// </summary>
+    internal bool TryReadExistingStringEntry(
+        LuaTableExistingEntry entry,
+        LuaString key,
+        out LuaValue value)
+    {
+        if (!entry.IsArray && (uint)entry.Index < (uint)_buckets.Length)
+        {
+            ref readonly var bucket = ref _buckets[entry.Index];
+            if (bucket.State == BucketState.Occupied &&
+                bucket.Key.Kind == LuaValueKind.String &&
+                ReferenceEquals(bucket.Key.AsString(), key))
+            {
+                value = bucket.Value;
+                return true;
+            }
+        }
+
+        value = LuaValue.Nil;
+        return false;
+    }
+
+    /// <summary>Updates an exact interned-string cache entry after it was revalidated.</summary>
+    internal void SetExistingStringEntry(
+        LuaTableExistingEntry entry,
+        LuaString key,
+        LuaValue value)
+    {
+        if (entry.IsArray || (uint)entry.Index >= (uint)_buckets.Length)
+        {
+            throw new InvalidOperationException("A stale Lua table string entry was used.");
+        }
+
+        ref var bucket = ref _buckets[entry.Index];
+        if (bucket.State != BucketState.Occupied ||
+            bucket.Key.Kind != LuaValueKind.String ||
+            !ReferenceEquals(bucket.Key.AsString(), key))
+        {
+            throw new InvalidOperationException("A stale Lua table string entry was used.");
+        }
+
+        Owner.WriteBarrier(this, value);
+        if (value.IsNil)
+        {
+            bucket.MakeTombstone();
+            _hashCount--;
+            _tombstoneCount++;
+            IncrementShapeVersion();
+            IncrementContentVersion();
+        }
+        else if (bucket.Value != value)
+        {
+            bucket.Value = value;
+            IncrementContentVersion();
+        }
     }
 
     /// <summary>Updates an entry returned by the immediately preceding raw lookup.</summary>

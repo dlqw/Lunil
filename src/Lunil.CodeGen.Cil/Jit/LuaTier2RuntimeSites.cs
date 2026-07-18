@@ -14,6 +14,7 @@ internal sealed class LuaTier2RuntimeSites
     private readonly LuaDirectCompiledMethod?[] _directCallSites;
     private readonly List<LuaTier2RuntimeSites> _counterChildren = [];
     private LuaDirectCallCounterSink? _directCallCounters;
+    private LuaTablePicCounterSink? _tablePicCounters;
 
     public LuaTier2RuntimeSites(
         int instructionCount,
@@ -47,6 +48,21 @@ internal sealed class LuaTier2RuntimeSites
         }
     }
 
+    internal void BindTablePicCounters(LuaTablePicCounterSink counters)
+    {
+        ArgumentNullException.ThrowIfNull(counters);
+        Volatile.Write(ref _tablePicCounters, counters);
+        foreach (var site in _tableSites)
+        {
+            site?.BindCounters(counters);
+        }
+
+        foreach (var child in _counterChildren)
+        {
+            child.BindTablePicCounters(counters);
+        }
+    }
+
     internal void AttachCounterChild(LuaTier2RuntimeSites child)
     {
         ArgumentNullException.ThrowIfNull(child);
@@ -59,6 +75,11 @@ internal sealed class LuaTier2RuntimeSites
         if (Volatile.Read(ref _directCallCounters) is { } counters)
         {
             child.BindDirectCallCounters(counters);
+        }
+
+        if (Volatile.Read(ref _tablePicCounters) is { } tablePicCounters)
+        {
+            child.BindTablePicCounters(tablePicCounters);
         }
     }
 
@@ -115,7 +136,9 @@ internal sealed class LuaTier2RuntimeSites
             return site;
         }
 
-        var created = new LuaCodegenTableSiteCache();
+        var created = Volatile.Read(ref _tablePicCounters) is { } counters
+            ? new LuaCodegenTableSiteCache(counters)
+            : new LuaCodegenTableSiteCache();
         return Interlocked.CompareExchange(
             ref _tableSites[programCounter],
             created,
@@ -140,6 +163,31 @@ internal sealed class LuaTier2RuntimeSites
             created,
             null) ?? created;
     }
+}
+
+internal sealed class LuaTablePicCounterSink : ILuaCodegenTablePicCounterSink
+{
+    private long _hits;
+    private long _misses;
+    private long _invalidations;
+
+    public bool SupportsWeightedSampling => true;
+
+    public long Hits => Interlocked.Read(ref _hits);
+
+    public long Misses => Interlocked.Read(ref _misses);
+
+    public long Invalidations => Interlocked.Read(ref _invalidations);
+
+    public void RecordHit() => Interlocked.Increment(ref _hits);
+
+    public void RecordMiss() => Interlocked.Increment(ref _misses);
+
+    public void RecordInvalidation() => Interlocked.Increment(ref _invalidations);
+
+    public void RecordHits(int count) => Interlocked.Add(ref _hits, count);
+
+    public void RecordMisses(int count) => Interlocked.Add(ref _misses, count);
 }
 
 internal sealed class LuaDirectCallCounterSink
