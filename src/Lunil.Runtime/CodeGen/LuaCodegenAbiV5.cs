@@ -94,12 +94,17 @@ public static class LuaCodegenAbiV5
         LuaValue target,
         LuaCodegenTableSiteCache cache,
         long key,
-        long value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            key,
-            LuaValue.FromInteger(value));
+        long value)
+    {
+        if (!TryBindTable(ref cachedTable, target, out var table))
+        {
+            return false;
+        }
+
+        var taggedValue = LuaValue.FromInteger(value);
+        return table.TrySetOrAppendArrayNonCollectableValue(key, taggedValue) ||
+            TrySetIntegerSlow(cache, table, key, taggedValue);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool TrySetCompilerProvenIntegerTableFloatValue(
@@ -107,12 +112,17 @@ public static class LuaCodegenAbiV5
         LuaValue target,
         LuaCodegenTableSiteCache cache,
         long key,
-        double value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            key,
-            LuaValue.FromFloat(value));
+        double value)
+    {
+        if (!TryBindTable(ref cachedTable, target, out var table))
+        {
+            return false;
+        }
+
+        var taggedValue = LuaValue.FromFloat(value);
+        return table.TrySetOrAppendArrayNonCollectableValue(key, taggedValue) ||
+            TrySetIntegerSlow(cache, table, key, taggedValue);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool TrySetCompilerProvenIntegerTableBooleanValue(
@@ -120,33 +130,41 @@ public static class LuaCodegenAbiV5
         LuaValue target,
         LuaCodegenTableSiteCache cache,
         long key,
-        bool value) => TrySetCompilerProvenIntegerTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            key,
-            LuaValue.FromBoolean(value));
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TrySetCompilerProvenIntegerTableNonCollectableValue(
-        ref LuaTable? cachedTable,
-        LuaValue target,
-        LuaCodegenTableSiteCache cache,
-        long key,
-        LuaValue value)
+        bool value)
     {
         if (!TryBindTable(ref cachedTable, target, out var table))
         {
             return false;
         }
 
-        if (table.TrySetOrAppendArrayNonCollectableValue(key, value))
-        {
-            return true;
-        }
-
-        return TrySetIntegerSlow(cache, table, key, value);
+        var taggedValue = LuaValue.FromBoolean(value);
+        return table.TrySetOrAppendArrayNonCollectableValue(key, taggedValue) ||
+            TrySetIntegerSlow(cache, table, key, taggedValue);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundIntegerTableIntegerValue(
+        LuaTable table,
+        long key,
+        long value) => table.TrySetOrAppendArrayNonCollectableValue(
+            key,
+            LuaValue.FromInteger(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundIntegerTableFloatValue(
+        LuaTable table,
+        long key,
+        double value) => table.TrySetOrAppendArrayNonCollectableValue(
+            key,
+            LuaValue.FromFloat(value));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundIntegerTableBooleanValue(
+        LuaTable table,
+        long key,
+        bool value) => table.TrySetOrAppendArrayNonCollectableValue(
+            key,
+            LuaValue.FromBoolean(value));
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool TrySetIntegerSlow(
@@ -254,13 +272,29 @@ public static class LuaCodegenAbiV5
         LuaCodegenTableSiteCache cache,
         ref LuaCodegenTableRegionSite regionSite,
         LuaValue key,
-        long value) => TrySetCompilerProvenStringTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            ref regionSite,
+        long value)
+    {
+        if (!TryBindTable(ref cachedTable, target, out var table) ||
+            key.TryGetString() is not { } stringKey)
+        {
+            return false;
+        }
+
+        var taggedValue = LuaValue.FromInteger(value);
+        if (TryReadRegionEntry(table, stringKey, cache, ref regionSite, out _))
+        {
+            table.SetValidatedExistingStringNonCollectableEntry(regionSite.Entry, taggedValue);
+            return true;
+        }
+
+        return TrySetStringSlow(
+            table,
+            stringKey,
             key,
-            LuaValue.FromInteger(value));
+            taggedValue,
+            cache,
+            ref regionSite);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool TrySetCompilerProvenStringTableFloatValue(
@@ -269,13 +303,29 @@ public static class LuaCodegenAbiV5
         LuaCodegenTableSiteCache cache,
         ref LuaCodegenTableRegionSite regionSite,
         LuaValue key,
-        double value) => TrySetCompilerProvenStringTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            ref regionSite,
+        double value)
+    {
+        if (!TryBindTable(ref cachedTable, target, out var table) ||
+            key.TryGetString() is not { } stringKey)
+        {
+            return false;
+        }
+
+        var taggedValue = LuaValue.FromFloat(value);
+        if (TryReadRegionEntry(table, stringKey, cache, ref regionSite, out _))
+        {
+            table.SetValidatedExistingStringNonCollectableEntry(regionSite.Entry, taggedValue);
+            return true;
+        }
+
+        return TrySetStringSlow(
+            table,
+            stringKey,
             key,
-            LuaValue.FromFloat(value));
+            taggedValue,
+            cache,
+            ref regionSite);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool TrySetCompilerProvenStringTableBooleanValue(
@@ -284,22 +334,7 @@ public static class LuaCodegenAbiV5
         LuaCodegenTableSiteCache cache,
         ref LuaCodegenTableRegionSite regionSite,
         LuaValue key,
-        bool value) => TrySetCompilerProvenStringTableNonCollectableValue(
-            ref cachedTable,
-            target,
-            cache,
-            ref regionSite,
-            key,
-            LuaValue.FromBoolean(value));
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TrySetCompilerProvenStringTableNonCollectableValue(
-        ref LuaTable? cachedTable,
-        LuaValue target,
-        LuaCodegenTableSiteCache cache,
-        ref LuaCodegenTableRegionSite regionSite,
-        LuaValue key,
-        LuaValue value)
+        bool value)
     {
         if (!TryBindTable(ref cachedTable, target, out var table) ||
             key.TryGetString() is not { } stringKey)
@@ -307,9 +342,10 @@ public static class LuaCodegenAbiV5
             return false;
         }
 
+        var taggedValue = LuaValue.FromBoolean(value);
         if (TryReadRegionEntry(table, stringKey, cache, ref regionSite, out _))
         {
-            table.SetValidatedExistingStringNonCollectableEntry(regionSite.Entry, value);
+            table.SetValidatedExistingStringNonCollectableEntry(regionSite.Entry, taggedValue);
             return true;
         }
 
@@ -317,9 +353,60 @@ public static class LuaCodegenAbiV5
             table,
             stringKey,
             key,
-            value,
+            taggedValue,
             cache,
             ref regionSite);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundStringTableIntegerValue(
+        LuaTable table,
+        ref LuaCodegenTableRegionSite regionSite,
+        long value)
+    {
+        if (!TryReadBoundRegionEntry(table, ref regionSite))
+        {
+            return false;
+        }
+
+        table.SetValidatedExistingStringNonCollectableEntry(
+            regionSite.Entry,
+            LuaValue.FromInteger(value));
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundStringTableFloatValue(
+        LuaTable table,
+        ref LuaCodegenTableRegionSite regionSite,
+        double value)
+    {
+        if (!TryReadBoundRegionEntry(table, ref regionSite))
+        {
+            return false;
+        }
+
+        table.SetValidatedExistingStringNonCollectableEntry(
+            regionSite.Entry,
+            LuaValue.FromFloat(value));
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TrySetBoundStringTableBooleanValue(
+        LuaTable table,
+        ref LuaCodegenTableRegionSite regionSite,
+        bool value)
+    {
+        if (!TryReadBoundRegionEntry(table, ref regionSite))
+        {
+            return false;
+        }
+
+        table.SetValidatedExistingStringNonCollectableEntry(
+            regionSite.Entry,
+            LuaValue.FromBoolean(value));
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -408,6 +495,16 @@ public static class LuaCodegenAbiV5
         value = LuaValue.Nil;
         return false;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TryReadBoundRegionEntry(
+        LuaTable table,
+        ref LuaCodegenTableRegionSite regionSite) =>
+        regionSite.HasEntry &&
+        ReferenceEquals(regionSite.Table, table) &&
+        regionSite.Key is { } key &&
+        regionSite.MetatableVersion == table.MetatableVersion &&
+        table.TryReadExistingStringEntry(regionSite.Entry, key, out _);
 }
 
 /// <summary>

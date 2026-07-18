@@ -59,15 +59,13 @@ public sealed class LuaCodegenAbiV5Tests
             cache,
             3,
             30));
+        Assert.False(LuaCodegenAbiV5.TrySetBoundIntegerTableBooleanValue(table, 3, true));
 
         table.SetMetatable(null);
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableFloatValue(
-            ref cachedTable,
-            target,
-            cache,
-            3,
-            1.5));
+        Assert.True(LuaCodegenAbiV5.TrySetBoundIntegerTableFloatValue(table, 3, 1.5));
         Assert.Equal(LuaValue.FromFloat(1.5), table.Get(LuaValue.FromInteger(3)));
+        Assert.True(LuaCodegenAbiV5.TrySetBoundIntegerTableIntegerValue(table, 3, 4));
+        Assert.Equal(LuaValue.FromInteger(4), table.Get(LuaValue.FromInteger(3)));
     }
 
     [Fact]
@@ -97,12 +95,9 @@ public sealed class LuaCodegenAbiV5Tests
             out var value));
         Assert.Equal(LuaValue.FromInteger(1), value);
 
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableFloatValue(
-            ref cachedTable,
-            target,
-            cache,
+        Assert.True(LuaCodegenAbiV5.TrySetBoundStringTableFloatValue(
+            table,
             ref regionSite,
-            key,
             2.5));
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
             ref cachedTable,
@@ -113,12 +108,9 @@ public sealed class LuaCodegenAbiV5Tests
             out value));
         Assert.Equal(LuaValue.FromFloat(2.5), value);
 
-        Assert.True(LuaCodegenAbiV5.TrySetCompilerProvenStringTableBooleanValue(
-            ref cachedTable,
-            target,
-            cache,
+        Assert.True(LuaCodegenAbiV5.TrySetBoundStringTableBooleanValue(
+            table,
             ref regionSite,
-            key,
             true));
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
             ref cachedTable,
@@ -129,7 +121,17 @@ public sealed class LuaCodegenAbiV5Tests
             out value));
         Assert.Equal(LuaValue.FromBoolean(true), value);
 
+        Assert.True(LuaCodegenAbiV5.TrySetBoundStringTableIntegerValue(
+            table,
+            ref regionSite,
+            3));
+        Assert.Equal(LuaValue.FromInteger(3), table.Get(key));
+
         table.Set(key, LuaValue.Nil);
+        Assert.False(LuaCodegenAbiV5.TrySetBoundStringTableIntegerValue(
+            table,
+            ref regionSite,
+            4));
         Assert.True(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue(
             ref cachedTable,
             target,
