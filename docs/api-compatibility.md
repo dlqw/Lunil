@@ -1,7 +1,7 @@
 # Versioned API and package compatibility
 
-Lunil keeps compatibility data by pre-1.0 minor line. Historical data is immutable, and the active
-prerelease line uses exact public-API and package gates so additions, removals, signature changes, or
+Lunil keeps compatibility data by pre-1.0 minor line. Historical data is immutable, and the stable
+`0.8` line uses exact public-API and package gates so additions, removals, signature changes, or
 asset changes cannot enter accidentally.
 
 ## Compatibility lines
@@ -37,8 +37,8 @@ stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
 `LuaJitProfileRemapper` result/status types. These additions are versioned Alpha contracts backed
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
-The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
-active `0.8.0-rc.1` version they read and update only `api/0.8.0/`.
+The validation scripts derive the active compatibility line from `Directory.Build.props`; with
+stable `0.8.0` they read and update only `api/0.8.0/`.
 
 ## Public API baseline
 
