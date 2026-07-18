@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.1-7c3aed?style=flat-square">
+  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.2-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,7 +28,7 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 
 > [!NOTE]
 > Stable `0.8.0` is the supported release and benchmark baseline. The current source is
-> `0.9.0-alpha.1`; Alpha builds may change API and backend behavior before feature freeze.
+> `0.9.0-alpha.2`; Alpha builds may change API and backend behavior before feature freeze.
 
 ## Performance
 
@@ -61,10 +61,17 @@ and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher
 
 ![Lunil 0.8.0 Auto JIT by workload](assets/performance/0.8.0-auto-workloads.svg)
 
-The current `0.9.0-alpha.1` source also passes the complete win-x64 correctness, route, telemetry,
-and MoonSharp stability matrix: Auto JIT measures `0.589x` native Lua and `9.024x` MoonSharp on that
-machine. It is not compared as a version delta against the six-RID report because the hardware is
-different.
+The current `0.9.0-alpha.2` source passes the same six-RID cross-runtime matrix and the complete
+backend correctness, NativeAOT, route, telemetry, startup, allocation, and code-size qualification:
+
+| Source | Auto vs native Lua | Auto vs MoonSharp | Tier 2 compile allocation p95 | Loop OSR compile allocation p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Stable `0.8.0` | 0.680x | 9.974x | 317,776 B | 259,232 B |
+| `0.9.0-alpha.2` | 0.697x | 9.918x | 250,912 B | 191,416 B |
+
+Throughput rows are independent six-RID qualification runs, not a paired hardware claim. The
+machine-readable Alpha 2 report also includes compile p95, allocation growth, startup, and
+unchanged-route regression ratios.
 
 See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
 reproduction commands. The [0.9.0 roadmap](docs/roadmap-0.9.0.md) defines the next performance
@@ -216,7 +223,8 @@ deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integrat
 
 ## Contributing
 
-Issues and focused pull requests are welcome. Work on a `feature/*`, `fix/*`, or `docs/*` branch,
+Issues and focused pull requests are welcome. Work on a `feature/*`, `perf/*`, `fix/*`, or `docs/*`
+branch,
 add tests appropriate to the impact, and run build, tests, formatting, and relevant documentation
 checks before requesting review. See [Branch management](docs/branching.md).
 

@@ -62,18 +62,31 @@ the primary `0.9.0` optimization targets.
 
 ## Current development snapshot
 
-`0.9.0-alpha.1` has a complete win-x64 run using the same workloads, engine matrix, six-round
-balance, and 250 ms calibration protocol:
+`0.9.0-alpha.2` has complete six-RID cross-runtime and backend qualification using the same
+workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 
 | Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
 | --- | ---: | ---: | --- |
 | `0.8.0`, six release RIDs | 0.680x | 9.974x | Passed |
-| `0.9.0-alpha.1`, win-x64 | 0.589x | 9.024x | Passed |
+| `0.9.0-alpha.2`, six release RIDs | 0.697x | 9.918x | Passed |
 
-The two rows are not a version-to-version speedup comparison: they were measured on different
-hardware. The development row demonstrates current-source correctness, route stability, and
-performance shape. Release claims require a new six-RID run. Its compact result is available at
-[`benchmarks/results/0.9.0-alpha.1-win-x64.json`](../benchmarks/results/0.9.0-alpha.1-win-x64.json).
+The two rows are independent qualification runs rather than a paired hardware speedup claim. The
+development row demonstrates current-source correctness, route stability, and performance shape.
+
+| Alpha 2 backend metric | Six-RID result | `0.9.0` limit |
+| --- | ---: | ---: |
+| Tier 2 compile p95 | 3.6045 ms | ≤ 5 ms |
+| Tier 2 compile allocation p95 | 250,912 B | ≤ 262,144 B |
+| Loop OSR compile p95 | 4.794 ms | ≤ 7.5 ms |
+| Loop OSR preparation p95 | 0.096 ms | ≤ 2 ms |
+| Loop OSR compile allocation p95 | 191,416 B | ≤ 196,608 B |
+| Maximum region allocation growth | 22,184 B/instruction | ≤ 32,768 B/instruction |
+| Minimum unchanged-route startup ratio | 0.967x | ≥ 0.95x |
+| Maximum unchanged-route execution allocation | 1.014x | ≤ 1.05x |
+| Maximum unchanged-route estimated code size | 1.000x | ≤ 1.15x |
+
+The compact source report is available at
+[`benchmarks/results/0.9.0-alpha.2-performance.json`](../benchmarks/results/0.9.0-alpha.2-performance.json).
 
 ## Reproduce the benchmark
 

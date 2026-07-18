@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "release": "0.9.0-alpha.2",
+  "source": {
+    "productCommit": "06deccadd467ed0b29ee80a68955a8162a59ec87",
+    "backendWorkflowRun": 29640370974,
+    "crossRuntimeWorkflowRun": 29640378703,
+    "rids": [
+      "win-x64",
+      "win-arm64",
+      "linux-x64",
+      "linux-arm64",
+      "osx-x64",
+      "osx-arm64"
+    ],
+    "rounds": 6,
+    "crossRuntimeTargetMilliseconds": 250
+  },
+  "crossRuntime": {
+    "complete": true,
+    "performanceGatePassed": true,
+    "auto": {
+      "speedupVsNativeLua": 0.6968599988233981,
+      "speedupVsMoonSharp": 9.917994258844328
+    },
+    "tier2": {
+      "speedupVsNativeLua": 0.7014164730262494,
+      "speedupVsMoonSharp": 9.999323361072298
+    },
+    "minimumAutoRid": {
+      "rid": "linux-arm64",
+      "speedupVsNativeLua": 0.4321515926864373,
+      "speedupVsMoonSharp": 9.233484096351212
+    },
+    "autoWorkloads": [
+      {
+        "name": "arithmetic",
+        "speedupVsNativeLua": 1.161251617765782,
+        "speedupVsMoonSharp": 25.406608561185017
+      },
+      {
+        "name": "fib_iter",
+        "speedupVsNativeLua": 2.881250841725954,
+        "speedupVsMoonSharp": 40.65377220539722
+      },
+      {
+        "name": "mandelbrot",
+        "speedupVsNativeLua": 0.5651681911128437,
+        "speedupVsMoonSharp": 8.624705050274887
+      },
+      {
+        "name": "control_flow",
+        "speedupVsNativeLua": 2.1094670445476016,
+        "speedupVsMoonSharp": 34.00147139996234
+      },
+      {
+        "name": "function_calls",
+        "speedupVsNativeLua": 1.3160585584606497,
+        "speedupVsMoonSharp": 17.850179529610696
+      },
+      {
+        "name": "table_access",
+        "speedupVsNativeLua": 0.29188350271977825,
+        "speedupVsMoonSharp": 7.603757480036014
+      },
+      {
+        "name": "sieve",
+        "speedupVsNativeLua": 0.06032172230663581,
+        "speedupVsMoonSharp": 1.5070396369278307
+      },
+      {
+        "name": "string_build",
+        "speedupVsNativeLua": 0.6016555583828701,
+        "speedupVsMoonSharp": 1.5111437919285453
+      }
+    ]
+  },
+  "backend": {
+    "tier2": {
+      "maximumCompileP95Milliseconds": 3.6045,
+      "maximumCompileAllocatedP95Bytes": 250912.0,
+      "maximumRegionAllocationSlopeBytesPerInstruction": 22184.0,
+      "maximumExecutionAllocationRatioVs080": 1.0016836819978598,
+      "maximumEstimatedCodeSizeRatioVs080": 1.0
+    },
+    "loopOsr": {
+      "maximumCompileP95Milliseconds": 4.7940000000000005,
+      "maximumPreparationP95Milliseconds": 0.096,
+      "maximumCompileAllocatedP95Bytes": 191416.0,
+      "maximumRegionAllocationSlopeBytesPerInstruction": 15078.857143,
+      "minimumUnchangedRouteStartupRatio": 0.967364905889496,
+      "maximumExecutionAllocationRatioVs080": 1.0139762403913348,
+      "maximumEstimatedCodeSizeRatioVs080": 1.0
+    }
+  }
+}

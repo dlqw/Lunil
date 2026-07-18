@@ -119,6 +119,15 @@ $tier2Result = [pscustomobject]@{
         $tier2Selected | Measure-Object Tier2LivenessCacheHitRate -Minimum).Minimum
     MaximumTier2CompileAllocatedP95Bytes = (
         $tier2Selected | Measure-Object Tier2CompileAllocatedP95Bytes -Maximum).Maximum
+    MaximumNumericRegionCompileAllocationSlopeBytesInstruction = (
+        $tier2Selected |
+            Measure-Object NumericRegionCompileAllocationSlopeBytesInstruction -Maximum).Maximum
+    MaximumAllocationRatioVs080 = (
+        $tier2Selected.VersionBaselineComparisons |
+            Measure-Object AllocationRatioVs080 -Maximum).Maximum
+    MaximumCodeSizeRatioVs080 = (
+        $tier2Selected.VersionBaselineComparisons |
+            Measure-Object CodeSizeRatioVs080 -Maximum).Maximum
     MaximumTier2NumericRegionHotInstructionBudgetCheckCount = (
         $tier2Selected |
             Measure-Object Tier2NumericRegionHotInstructionBudgetCheckCount -Maximum).Maximum
@@ -196,6 +205,15 @@ $loopOsrResult = [pscustomobject]@{
         $loopOsrSelected | Measure-Object LoopOsrLivenessCacheHitRate -Minimum).Minimum
     MaximumLoopOsrCompileAllocatedP95Bytes = (
         $loopOsrSelected | Measure-Object LoopOsrCompileAllocatedP95Bytes -Maximum).Maximum
+    MaximumNumericRegionCompileAllocationSlopeBytesInstruction = (
+        $loopOsrSelected |
+            Measure-Object NumericRegionCompileAllocationSlopeBytesInstruction -Maximum).Maximum
+    MaximumAllocationRatioVs080 = (
+        $loopOsrSelected.VersionBaselineComparisons |
+            Measure-Object AllocationRatioVs080 -Maximum).Maximum
+    MaximumCodeSizeRatioVs080 = (
+        $loopOsrSelected.VersionBaselineComparisons |
+            Measure-Object CodeSizeRatioVs080 -Maximum).Maximum
     MaximumLoopOsrNumericRegionHotInstructionBudgetCheckCount = (
         $loopOsrSelected |
             Measure-Object LoopOsrNumericRegionHotInstructionBudgetCheckCount -Maximum).Maximum

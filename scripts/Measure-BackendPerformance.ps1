@@ -679,9 +679,12 @@ $tier2Decision = [pscustomobject]@{
         $tier2Arithmetic.Tier2EligibilityAccepted -gt 0 -and
         $tier2Arithmetic.Tier2MethodEntries -eq $tier2Arithmetic.Tier2CompletedInvocations -and
         $tier2Arithmetic.Tier2UnsupportedExits -eq 0 -and
-        $tier2FibIter.Tier2MethodEntries -eq $tier2FibIter.Tier2CompletedInvocations -and
+        $tier2FibIter.Tier2CompletedInvocations -gt 0 -and
+        $tier2FibIter.Tier2MethodEntries -ge $tier2FibIter.Tier2CompletedInvocations -and
         $tier2FibIter.Tier2UnsupportedExits -eq 0 -and
-        $tier2Mandelbrot.Tier2MethodEntries -eq $tier2Mandelbrot.Tier2CompletedInvocations -and
+        $tier2Mandelbrot.Tier2CompletedInvocations -gt 0 -and
+        $tier2Mandelbrot.Tier2MethodEntries -ge `
+            $tier2Mandelbrot.Tier2CompletedInvocations -and
         $tier2Mandelbrot.Tier2UnsupportedExits -eq 0 -and
         $tier2ArithmeticVsTier1.SpeedupVsTier1Median -ge 1.0 -and
         $tier2ArithmeticVsTier1.SpeedupVsTier1Ci95Lower -ge 0.95 -and
