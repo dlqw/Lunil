@@ -8,7 +8,7 @@ public sealed record LuaHeapOptions
 
     public long StepSizeBytes { get; init; } = 4 * 1024;
 
-    public int StepObjectBudget { get; init; } = 64;
+    public int StepObjectBudget { get; init; } = 32;
 
     public int MinorCyclesBeforeMajor { get; init; } = 8;
 

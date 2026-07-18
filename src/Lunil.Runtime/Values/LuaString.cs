@@ -158,9 +158,9 @@ public sealed class LuaStringPool
     }
 
     /// <summary>
-    /// Caches the common short-string/integer concatenation shape. The cache is bounded and only
-    /// returns entries whose Lua GC object is still alive; retaining a bounded managed reference
-    /// avoids rebuilding the same short values between collections without changing Lua liveness.
+    /// Caches the common short-string/integer concatenation shape without retaining either
+    /// logical Lua string strongly. The bound keeps data-dependent integer streams from turning
+    /// this fast path into an unbounded per-state cache.
     /// </summary>
     internal bool TryGetOrCreateIntegerConcat(
         LuaString text,
@@ -183,11 +183,10 @@ public sealed class LuaStringPool
         if (cached.StringObjectId == text.ObjectId &&
             cached.Integer == integer &&
             cached.TextFirst == textFirst &&
-            cached.Value is { } cachedValue)
+            cached.Value is not null)
         {
-            if (cachedValue.IsAlive)
+            if (cached.Value.TryGetTarget(out result!) && result.IsAlive)
             {
-                result = cachedValue;
                 return true;
             }
         }
@@ -214,7 +213,7 @@ public sealed class LuaStringPool
             text.ObjectId,
             integer,
             textFirst,
-            result);
+            new WeakReference<LuaString>(result));
 
         return true;
     }
@@ -237,5 +236,5 @@ public sealed class LuaStringPool
         long StringObjectId,
         long Integer,
         bool TextFirst,
-        LuaString? Value);
+        WeakReference<LuaString>? Value);
 }
