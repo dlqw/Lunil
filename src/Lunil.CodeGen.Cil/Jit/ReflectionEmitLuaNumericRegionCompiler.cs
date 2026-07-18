@@ -53,6 +53,10 @@ internal static class LuaNumericRegionRuntime
 /// </summary>
 internal static class ReflectionEmitLuaNumericRegionCompiler
 {
+    // Touching this method runs the type initializer and resolves the shared ABI MethodInfo set
+    // before a timed Tier 2 or loop-OSR compilation. Both entry modes use this one emitter.
+    internal static void PrepareRuntimeAbi() => _ = CanExecuteCompiledFrame;
+
     private delegate LuaCompiledExit LuaCompiledNumericRegionMethodWithSites(
         LuaExecutionContext context,
         LuaThread thread,

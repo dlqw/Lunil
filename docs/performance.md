@@ -1,0 +1,101 @@
+# Performance
+
+Lunil publishes cross-runtime performance results with every performance-sensitive release. The
+suite runs identical Lua source on native PUC Lua 5.4.8, LuaJIT, MoonSharp, and each Lunil execution
+configuration. Native Lua is normalized to `1.000x`; values above `1.000x` are faster.
+
+## Published `0.8.0` baseline
+
+The stable baseline covers eight workloads on all six release RIDs:
+
+- `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`;
+- six balanced rounds per engine and workload;
+- a 250 ms CPU calibration target with a 4× measured-batch safety factor;
+- process CPU time per verified logical operation;
+- runtime creation, source loading, compilation, and warmup outside the primary interval.
+
+The source data comes from the immutable `0.8.0` product tree and the accepted
+[six-RID performance workflow](https://github.com/dlqw/Lunil/actions/runs/29633696197). The compact
+machine-readable summary is committed at
+[`benchmarks/results/0.8.0-cross-runtime.json`](../benchmarks/results/0.8.0-cross-runtime.json).
+
+### Overall runtime comparison
+
+| Engine | Geomean vs native Lua | Geomean vs MoonSharp |
+| --- | ---: | ---: |
+| LuaJIT | 11.488x | 168.397x |
+| Native Lua 5.4 | 1.000x | 14.657x |
+| Lunil Tier 2 | 0.682x | 9.988x |
+| **Lunil Auto JIT** | **0.680x** | **9.974x** |
+| Lunil Loop OSR | 0.113x | 1.659x |
+| Lunil Tier 1 | 0.105x | 1.543x |
+| MoonSharp | 0.068x | 1.000x |
+| Lunil interpreter | 0.050x | 0.726x |
+
+![Runtime comparison for Lunil 0.8.0](../assets/performance/0.8.0-runtime-overview.svg)
+
+### Auto JIT by workload
+
+| Workload | Vs native Lua | Vs MoonSharp | Primary characteristic |
+| --- | ---: | ---: | --- |
+| Arithmetic | 1.110x | 24.659x | Integer numeric loop |
+| Iterative Fibonacci | 2.801x | 40.813x | Repeated numeric calls |
+| Mandelbrot | 0.559x | 8.757x | Floating-point control flow |
+| Control flow | 2.070x | 34.874x | Branches and loops |
+| Function calls | 1.204x | 17.133x | Fixed and variable returns |
+| Table access | 0.299x | 8.348x | Array and field reads/writes |
+| Prime sieve | 0.059x | 1.464x | Tables mixed with arithmetic |
+| String build | 0.591x | 1.521x | Conversion, concatenation, `table.concat` |
+
+![Auto JIT workload comparison for Lunil 0.8.0](../assets/performance/0.8.0-auto-workloads.svg)
+
+Auto JIT and explicit Tier 2 passed the release stability gate on every workload and RID: at least
+`1.05x` paired median speedup over MoonSharp, a paired bootstrap CI95 lower bound of at least
+`1.00x`, one stable route, correct results, and clean fallback/deoptimization telemetry.
+
+The data also makes the remaining gap explicit. Numeric loops, control flow, and qualified calls
+are already competitive with native Lua; table-heavy mixed workloads and string construction are
+the primary `0.9.0` optimization targets.
+
+## Current development snapshot
+
+`0.9.0-alpha.1` has a complete win-x64 run using the same workloads, engine matrix, six-round
+balance, and 250 ms calibration protocol:
+
+| Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
+| --- | ---: | ---: | --- |
+| `0.8.0`, six release RIDs | 0.680x | 9.974x | Passed |
+| `0.9.0-alpha.1`, win-x64 | 0.589x | 9.024x | Passed |
+
+The two rows are not a version-to-version speedup comparison: they were measured on different
+hardware. The development row demonstrates current-source correctness, route stability, and
+performance shape. Release claims require a new six-RID run. Its compact result is available at
+[`benchmarks/results/0.9.0-alpha.1-win-x64.json`](../benchmarks/results/0.9.0-alpha.1-win-x64.json).
+
+## Reproduce the benchmark
+
+Install the pinned native tools once, then run the complete matrix:
+
+```powershell
+./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier win-x64
+./scripts/Measure-CrossRuntimePerformance.ps1 `
+  -RuntimeIdentifier win-x64 `
+  -Rounds 6 `
+  -TargetMilliseconds 250 `
+  -NoProvision
+```
+
+Regenerate or verify the committed charts:
+
+```powershell
+./scripts/New-PerformanceCharts.ps1
+./scripts/New-PerformanceCharts.ps1 -Verify
+```
+
+Absolute timings are hardware-specific. Valid version comparisons use the same machine, toolchain,
+workload sources, balanced order, and paired samples. The release aggregate uses normalized ratios
+and rejects missing RIDs, incorrect results, incomplete engine matrices, unstable routes, or failed
+confidence bounds.
+
+The `0.9.0` target matrix and promotion gates are defined in the
+[`0.9.0` roadmap](roadmap-0.9.0.md).

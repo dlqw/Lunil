@@ -5,7 +5,7 @@
 <h1 align="center">Lunil</h1>
 
 <p align="center">
-  面向现代 .NET、以正确性为先的 Lua 5.4 编译器与托管运行时。
+  面向现代 .NET、正确性优先的 Lua 5.4 编译器与托管运行时。
 </p>
 
 <p align="center">
@@ -14,169 +14,85 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="版本" src="https://img.shields.io/badge/version-0.8.0--alpha.13-7c3aed?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
+  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.1-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
-  <img alt="平台" src="https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-0ea5e9?style=flat-square">
 </p>
 
-Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器管线与运行时。它在保留 Lua
-面向字节的源码及二进制字符串语义的同时，提供不可变语法树、语义分析、
-经过验证的 canonical IR、PUC Lua 二进制 chunk 互操作、托管解释器和显式逻辑垃圾回收器。
+Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10 运行时。源码和 PUC Lua
+二进制 chunk 会汇入同一个经过验证的 canonical IR，再通过参考解释器或基于 profile 的 CoreCLR
+JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
-> [!IMPORTANT]
-> 当前源码版本是稳定版 **`0.8.0`**，不带产品变化地交付 `0.8.0-rc.1` 验收的 interpreter、
-> Tier 1/Tier 2 JIT、loop OSR、公共 API、assembly、package、IR/profile 和证据 schema 范围。
-> Lua persisted/static AOT 继续保持移除，.NET NativeAOT 解释器兼容继续受支持；稳定版
-> `0.7.0` 保持不可变。
+> [!NOTE]
+> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.1`；Alpha 阶段的
+> API 与后端行为在功能冻结前仍可能变化。
 
-## 目录
+## 性能
 
-- [为什么选择 Lunil](#为什么选择-lunil)
-- [项目状态](#项目状态)
-- [功能](#功能)
-- [快速开始](#快速开始)
-- [将 Lunil 用作库](#将-lunil-用作库)
-- [技术架构](#技术架构)
-- [仓库结构](#仓库结构)
-- [兼容性与平台](#兼容性与平台)
-- [软件包与发布](#软件包与发布)
-- [文档索引](#文档索引)
-- [参与贡献](#参与贡献)
-- [安全问题](#安全问题)
-- [开源许可](#开源许可)
+稳定版 `0.8.0` 使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
+上测试。原生 PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。
 
-## 为什么选择 Lunil
+| 引擎 | 相对原生 Lua 几何均值 | 相对 MoonSharp 几何均值 |
+| --- | ---: | ---: |
+| LuaJIT | 11.488x | 168.397x |
+| 原生 Lua 5.4 | 1.000x | 14.657x |
+| Lunil Tier 2 | 0.682x | 9.988x |
+| **Lunil Auto JIT** | **0.680x** | **9.974x** |
+| Lunil Loop OSR | 0.113x | 1.659x |
+| Lunil Tier 1 | 0.105x | 1.543x |
+| MoonSharp | 0.068x | 1.000x |
+| Lunil 解释器 | 0.050x | 0.726x |
 
-- **Lua 语义优先**：目标是忠实实现 Lua 5.4.8 的语法、opcode、数值行为、多返回值、
-  vararg、协程、元表、待关闭变量和二进制 chunk，不用 CLR 行为静默替代 Lua 行为。
-- **托管且可嵌入**：面向 .NET 10 使用 C# 实现，提供显式所有权、资源预算、handle、
-  protected error 和宿主 API。
-- **统一且可验证的 IR**：源码编译与导入的 PUC Lua chunk 最终汇合到同一份 canonical
-  register IR，并执行结构和控制流验证。
-- **面向多层执行后端**：reference interpreter、profile-guided CoreCLR Tier 1/Tier 2 JIT
-  与带守卫的精确数值 loop OSR 共享同一套 verified execution contract。.NET NativeAOT 部署
-  继续使用同一 compiler/runtime surface，动态代码不可用时确定性回退解释器。
-- **可测试性是架构的一部分**：内置确定性 fuzz、GC stress、畸形输入、二进制往返和
-  PUC Lua 差分测试。
+![Lunil 0.8.0 运行时对比](assets/performance/0.8.0-runtime-overview.svg)
 
-## 项目状态
+| Auto JIT workload | 相对原生 Lua | 相对 MoonSharp |
+| --- | ---: | ---: |
+| 算术循环 | 1.110x | 24.659x |
+| 迭代 Fibonacci | 2.801x | 40.813x |
+| Mandelbrot | 0.559x | 8.757x |
+| 控制流 | 2.070x | 34.874x |
+| 函数调用 | 1.204x | 17.133x |
+| 表访问 | 0.299x | 8.348x |
+| 素数筛 | 0.059x | 1.464x |
+| 字符串构建 | 0.591x | 1.521x |
 
-| 领域 | 状态 | 说明 |
-| --- | --- | --- |
-| Lexer 与 parser | 已实现 | 完整 Lua 5.4 文法、无损 trivia、有界错误恢复 |
-| Binding 与 lowering | 已实现 | 局部变量、捕获、`_ENV`、属性、label/goto、verified canonical IR |
-| 二进制 chunk | 已实现 | 有界 Lua 5.4 reader/writer/verifier 与 PUC prototype 转换 |
-| Reference interpreter | 已实现 | 调用、vararg、多返回值、控制流、协程、错误和 close unwind |
-| Runtime 与逻辑 GC | 已实现 | 表、值、元表、配额、handle、弱表、ephemeron 和 finalizer |
-| 标准库 | 已实现 | basic、coroutine、table、string、math、utf8、package、io、os 与 debug |
-| 执行后端 | 稳定 `0.8` | 合格 interpreter、Tier 1/Tier 2 JIT 与 loop OSR；Lua persisted/static AOT 已在 `0.8.0-alpha.12` 移除 |
-| Compiler 产品 API | 稳定 `0.7` | 统一的有界 lex/parse/bind/lower/verify 管线、不可变结果、阶段诊断、取消边界和 canonical source identity |
-| Hosting 产品 API | 稳定 `0.7` | 可复用 compile/execute 宿主、Trusted/Restricted/Deterministic 能力 profile 和运行时预算 |
-| 注解产品 API | 稳定 `0.7` | 共享有界 annotation lexer/type AST、LuaLS 默认 parser、legacy EmmyLua 兼容、未知标签保留、可配置诊断和 suppression |
-| 类型与流分析 API | 稳定 `0.7` | semantic type/type-pack、annotation declaration、constraint、CFG、函数/返回推断、nil/type/assert/判别字段收窄、definite assignment、unreachable、generic、source suppression 和确定性 widening 预算 |
-| Workspace 产品 API | 稳定 `0.7` | 稳定 module/source identity、可注入 resolver、静态/动态 require 分类、SCC fixed point、内容寻址缓存、最小失效、有界并行、取消与确定性合并 |
-| CLI | 稳定 `0.7` | 已打包的 `lunil` 工具，提供 `run`/`check`/`build`/`dump`、稳定退出码、text/JSON 诊断、stdin、响应文件、分层配置、workspace 解析、资源预算与 trusted/sandbox/deterministic profile |
-| 稳定性契约 | 稳定 `0.8` | `0.8.0` 是已验收稳定产品；兼容修复使用 `0.8.1`，功能/API 工作转入 `0.9.0-alpha.1` |
+![Lunil 0.8.0 Auto JIT 分 workload 对比](assets/performance/0.8.0-auto-workloads.svg)
 
-### 当前后端就绪情况
+当前 `0.9.0-alpha.1` 源码也通过了完整的 win-x64 正确性、路由、telemetry 与 MoonSharp 稳定性
+矩阵：该机器上 Auto JIT 为原生 Lua 的 `0.589x`、MoonSharp 的 `9.024x`。由于硬件不同，这一行
+不用于计算相对六 RID 报告的版本增减。
 
-| 执行路径 | Release 行为 | `0.8.0` 就绪情况 |
-| --- | --- | --- |
-| Reference interpreter | 显式 Tier 0 与精确 fallback | 已实现，并作为语义参考实现 |
-| CoreCLR Tier 1 JIT | 对重复变热且收益资格通过的函数使用 `Auto` | 六个发布 RID 均已通过资格验证 |
-| 精确数值 Tier 2 JIT | Tier 1 资格通过后自动晋升 | 六个发布 RID 均已通过；managed semantic profile 默认留在 Tier 1 |
-| 精确数值 loop OSR | 循环结构与运行时数值资格通过后默认启用 | 六个发布 RID 均已通过；非精确数值循环会在编译前被拒绝 |
-| .NET NativeAOT / trimming | Compiler、workspace、runtime、CLI 与解释器兼容 | 六个发布 RID 均验证 build 和执行；JIT 选择会确定性回退 |
+测试方法、源数据、置信门禁与复现命令见[性能文档](docs/performance.md)；下一阶段量化目标见
+[`0.9.0` 路线图](docs/roadmap-0.9.0.md)。
 
-稳定 `0.7.0` 证据继续作为回归下限。稳定 `0.8.0` 在不改变产品代码、公共 API 或 package
-范围的前提下晋级已验收 RC；详见其[更新日志](changelogs/0.8.0.md)。Lua AOT 移除等
-breaking 变更详见 [`0.8.0` 迁移指南](docs/migration-0.8.0.md)。
+## 主要能力
 
-## 功能
+- **Lua 5.4 语义**：完整语法、二进制字符串、整数/浮点行为、多返回值、vararg、coroutine、
+  metatable、to-be-closed 变量、binary chunk 与标准库。
+- **经过验证的编译管线**：byte-oriented source text、无损语法树、绑定、类型与流分析、workspace
+  分析、canonical lowering 与独立 IR 验证。
+- **托管运行时**：显式 Lua value、table、closure、thread、upvalue、资源预算、protected error、
+  host handle、弱表、ephemeron、finalizer 与逻辑 GC。
+- **分级执行**：参考解释器、经过收益资格检查的 Tier 1、带守卫的 Tier 2，以及共享同一特化契约
+  的 loop backedge 入口。
+- **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
+- **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
+  会确定性回退解释器。
 
-### 编译器与 IR
-
-- 不可变的字节型 `SourceText`，同时提供 byte 与 UTF-16 诊断位置。
-- 保留 trivia 的无损 lexer，以及完整的数值/字符串 literal 解码。
-- 覆盖完整 Lua 5.4 文法、支持错误恢复的不可变语法树。
-- 支持局部变量、捕获、`_ENV`、属性、label 和 goto 的 lexical binding。
-- 从语法/语义模型 lowering 到经过验证的 canonical register IR。
-- 公共 `LuaCompiler` 管线，提供有界阶段选项、稳定的阶段归属诊断、取消边界、
-  不可变结果和逻辑 source identity。
-- 公共 LuaLS/legacy EmmyLua 注解前端，提供有界 lexer/type parser、独立方言 parser、
-  compatibility resolution、未知标签保留与诊断 suppression；注解不会进入 runtime IR。
-- 公共 `Lunil.Analysis` 阶段，提供不可变 semantic type/type-pack、class/alias/enum declaration、
-  structural table、overload、generic、constraint 与 CFG；流分析覆盖 nil/type/assert/判别字段/
-  短路收窄、definite assignment、unreachable、return-pack inference、source suppression 和有界 widening。
-- 公共 `Lunil.Workspace` 层，提供稳定 module/source identity、内存与 root-confined 文件 resolver、
-  direct-global 静态 `require` 提取、动态边界、确定性 SCC fixed point、依赖感知 export type、
-  内容寻址 cache、最小失效、全局预算、取消、有界并行调度和确定性结果合并。
-- 完整 Lua 5.4 opcode 模型与二进制兼容的 32 位指令布局。
-- 有界 PUC Lua 5.4 binary chunk 读取、写入、验证和转换。
-
-### 运行时
-
-- 16 字节 tagged value 表示和 Lua 二进制字符串。
-- Heap-owned table、closure、thread、upvalue 和 native callable descriptor。
-- Array 加开放寻址 hash 的 Lua table，支持 tombstone 与稳定的 `next` 遍历。
-- 支持 barrier、remembered set、弱表、ephemeron、finalizer、resurrection、配额和宿主
-  handle 的增量/分代三色逻辑 GC。
-- 支持 numeric-string coercion、资源预算、tail call、多返回值、vararg 和开放栈窗口的
-  reference interpreter。
-- 非递归协程调度器与可恢复 native continuation ABI。
-- 类型/对象共享元表派发、`pcall`/`xpcall` 和可恢复的 `__close` unwind。
-
-### 标准库
-
-- 完整托管实现 Lua 5.4 basic、coroutine、table、string、math、utf8、package、io、os
-  与 debug，可通过 `LuaStandardLibrary.InstallAll` 一次安装。
-- 显式 Lua pattern VM、`string.format`、二进制 `pack`/`unpack`，以及供 `string.dump`
-  使用的 canonical IR 到 Lua 5.4 chunk 反向生成。
-- Full/light userdata、registry、文件 userdata 生命周期、close/finalizer、debug hook、
-  嵌套可恢复 callback 与 generic-for closing value。
-- 可注入 filesystem、console、environment、operating-system、clock、process、locale、
-  timezone 和 pipe provider，便于确定性测试与宿主沙箱。
-- 支持纯 Lua `package` loader。由于 Lunil 不提供 Lua C ABI，native Lua C module 保持不支持。
-
-### 验证与质量
-
-- 面向执行的 binary chunk 与 canonical IR verifier。
-- PUC Lua 5.4.8 二进制/运行时差分 fixture，以及覆盖字符串、pattern、pack、math、UTF-8、
-  文件、加载和 debug 行为的 portable 标准库测试套件。
-- 确定性的畸形 IR、table、GC 与 coroutine fuzz。
-- GC stress、所有权测试和 runtime benchmark harness。
-- Windows、Linux、macOS CI，以及 x64/Arm64 发布产物。
-
-### 命令行产品
-
-- `lunil run` 会先对源码 workspace 做预检，也可直接执行通过验证的 PUC Lua 5.4 chunk；
-  主 chunk vararg 与全局 `arg` 会被正确发布，程序输出与诊断保持分离。
-- `lunil check` 支持多入口跨模块类型分析；`lunil build` 输出便携 Lua 5.4 chunk；
-  `lunil dump` 可用 text/JSON 查看 summary、syntax、annotations、analysis、IR 与 chunk。
-  已移除的 `--target aot` 会返回稳定诊断 `LUNIL0006`。
-- defaults、`lunil.json`、`LUNIL_*` 环境变量、响应文件与直接 CLI 参数具有明确优先级；
-  trusted、root-confined 只读 sandbox 与 deterministic profile 均支持输入、指令、栈、调用深度和
-  heap 预算。
-- `--execution auto|interpreter|jit`、JSON `execution` 与 `LUNIL_EXECUTION` 选择合格执行
-  后端；`auto` 在动态代码可用时使用 JIT，在 NativeAOT 使用解释器，check/build/dump 不再
-  初始化执行宿主。
-- `Lunil.Cli` .NET tool package 与 RID bundle 经过安装/执行 smoke；NativeAOT、trimmed
-  single-file 与 ReadyToRun CLI 发布会在 CI 中验证 parser、配置、JSON 诊断与 build。
+由于 Lunil 不公开 Lua C ABI，因此不支持原生 Lua C module。
 
 ## 快速开始
 
 ### 环境要求
 
-- [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0) 或兼容的
-  10.0 patch 版本；
-- Git；
-- 可选：用于互操作 fixture 的 PUC Lua 5.4.8 工具。
+- [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0) 或兼容的 .NET 10 patch；
+- 从源码构建时需要 Git。
 
-### 安装并使用 CLI
+### CLI
 
-从已经配置的 GitHub Packages source 安装 tag 对应的工具包，或在源码 checkout 中直接运行项目：
+从已配置的 GitHub Packages source 安装稳定版 `0.8.0`，或直接在源码 checkout 中运行：
 
 ```bash
 dotnet tool install --global Lunil.Cli --version 0.8.0
@@ -188,8 +104,8 @@ lunil build app.lua --target chunk --output app.luac
 lunil dump app.lua --kind analysis --format json
 ```
 
-使用 `-` 读取 stdin 源码，使用 `@arguments.rsp` 读取 UTF-8 响应文件，并通过 `lunil.json`
-保存项目默认值。配置、profile、诊断和退出码详见 [CLI 参考](docs/cli.md)。
+使用 `-` 读取 stdin 源码，使用 `@arguments.rsp` 读取 UTF-8 响应文件，并通过 `lunil.json` 保存项目
+默认值。命令、profile、诊断与退出码见 [CLI 参考](docs/cli.md)。
 
 ### 从源码构建
 
@@ -201,40 +117,15 @@ dotnet build Lunil.sln --configuration Release --no-restore
 dotnet test Lunil.sln --configuration Release --no-build --no-restore
 ```
 
-检查格式或运行 benchmark：
+## 嵌入 Lunil
 
-```bash
-dotnet format Lunil.sln --verify-no-changes --no-restore
-dotnet run --configuration Release \
-  --project benchmarks/Lunil.Runtime.Benchmarks -- 1000000
-```
-
-跨运行时工作流会构建固定版本的原生 Lua 5.4.8 与 LuaJIT，并用完全相同的 Lua 源码对比
-MoonSharp 和 Lunil 全部配置。原生 Lua 始终是 `1.000x` 基准；Lunil Auto 与 Tier 2 的发布门禁
-要求每个 workload 相对 MoonSharp 的中位加速至少为 `1.05x`，配对 CI95 下界至少为 `1.00x`：
-
-```powershell
-./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier win-x64
-./scripts/Measure-CrossRuntimePerformance.ps1 `
-  -RuntimeIdentifier win-x64 -Rounds 6 -TargetMilliseconds 250 -NoProvision
-```
-
-已验收的 Windows x64 矩阵与六 RID CI run `29459923109` 的全部 workload 门禁均通过；CI 会拒绝
-任何缺失、不完整或门禁失败的 RID 报告。完整结果与证据契约见
-[跨运行时性能工作流](docs/cross-runtime-performance.md)。
-
-## 将 Lunil 用作库
-
-Tag 发布提供六 RID bundle，并将对应的 `Lunil.*` NuGet package 和 symbol package
-发布到 GitHub Packages；也可以从源码 checkout 直接引用项目。
+引用稳定版 Hosting package：
 
 ```xml
 <PackageReference Include="Lunil.Hosting" Version="0.8.0" />
 ```
 
-高层宿主通过一个可复用 state 完成编译、验证、标准库安装和执行。默认 profile 为
-Restricted，默认执行后端为 `Auto`：动态代码 runtime 使用合格 JIT，否则使用 reference
-interpreter。Trusted 能力、确定性 capability 与强制执行后端都必须显式选择：
+通过可复用的 Restricted host 编译并执行：
 
 ```csharp
 using Lunil.Hosting;
@@ -248,7 +139,7 @@ const string lua = """
     return total
     """;
 
-var host = new LuaHost(LuaHostOptions.Restricted);
+using var host = new LuaHost(LuaHostOptions.Restricted);
 var run = host.RunUtf8(lua, "@examples/sum.lua");
 
 if (!run.CompilationSucceeded)
@@ -257,7 +148,6 @@ if (!run.CompilationSucceeded)
     {
         Console.Error.WriteLine($"{diagnostic.Phase} {diagnostic.Code}: {diagnostic.Message}");
     }
-
     return;
 }
 
@@ -267,245 +157,65 @@ if (run.Execution?.Signal != LuaVmSignal.Completed)
 }
 
 Console.WriteLine(run.Execution.Values[0].AsInteger()); // 55
-Console.WriteLine(host.SelectedExecutionBackend);       // Jit 或 Interpreter
 ```
 
-将 `LuaHostOptions.ExecutionBackend` 设为 `Interpreter` 可固定 Tier 0 路径，设为 `Jit` 则
-要求 runtime 支持动态代码。`LuaHost.IsDynamicCodeAvailable` 报告当前能力；JIT executor
-首次惰性执行后可通过 `LuaHost.JitStatistics` 获取 telemetry。
+可通过 `LuaHostOptions.ExecutionBackend` 强制解释器或动态 JIT。默认 `Auto` 在动态代码可用时使用
+合格 JIT，否则使用参考解释器。Compiler、Syntax、Analysis、Workspace、IR、Runtime 与标准库 package
+也可独立使用。
 
-执行经过验证的 PUC Lua 5.4 binary chunk：
-
-```csharp
-var bytecode = File.ReadAllBytes("program.luac");
-var host = new LuaHost(LuaHostOptions.Restricted);
-var result = host.ExecuteBinaryChunk(bytecode);
-```
-
-成功的 `require` 会记录为经过 cache 当前值校验的模块记录。host state 空闲时，文件模块可在
-不暴露半成品 cache 的前提下重新读取、编译、执行并提交：
-
-```csharp
-var reload = host.ReloadModule("settings", new LuaModuleReloadOptions
-{
-    CachePolicy = LuaModuleReloadCachePolicy.PatchExistingTable,
-});
-
-if (!reload.Succeeded)
-{
-    Console.Error.WriteLine($"{reload.Status}: {reload.Message}");
-}
-```
-
-`ReplaceCache` 发布新值，`PatchExistingTable` 保留已有模块表引用，`Custom` 则把 cache 合并
-交给宿主。编译失败不会执行；执行或 policy 失败会恢复旧 `package.loaded` 值与记录，
-`SideEffectsMayHaveOccurred` 用于报告任意 Lua/宿主副作用无法回滚。preload 与自定义 searcher
-loader 会使用已记录的 loader data 重放；`loadfile`/`dofile` 不会登记为具名模块。已有局部函数
-引用若具有相同稳定 lexical key 与完整 upvalue layout，reload 会原子发布新 function version，
-同时保留原 closure identity 与 upvalue cell。active/suspended frame 继续使用入栈时 snapshot 的旧
-immutable version，后续调用读取新版本；不兼容 layout 保持旧代码并通过 `FunctionMigrations` 报告。
-
-同一个 host 还公开可复用增量 workspace，且不会改变 runtime `package`/`require` 行为：
-
-```csharp
-using Lunil.Workspace;
-
-using var host = new LuaHost(LuaHostOptions.Restricted);
-var workspace = await host.AnalyzeWorkspaceAsync([
-    LuaWorkspaceDocument.FromUtf8(
-        "app",
-        "local dep = require('dep')\nreturn dep.value + 1"),
-    LuaWorkspaceDocument.FromUtf8("dep", "return { value = 41 }"),
-]);
-
-Console.WriteLine(workspace.GetModule("app")!.ExportedType.DisplayName); // integer
-```
-
-`LuaCompiler`、`LuaExecutor` 以及各 syntax、annotation、analysis、workspace、semantic、IR 底层包仍可独立
-使用。`LuaHost` 是产品级嵌入入口；需要明确固定到 Tier 0 reference backend 时仍可直接使用
-`LuaInterpreter`。
-
-`LuaJitExecutor` 是 CoreCLR 动态后端。release 默认 policy 为 `Auto`：先由解释器执行，只有
-确定性收益检查通过且重复变热的函数才会进入 Tier 1 编译队列。稳定的整数、浮点与混合数值
-profile 会在资格分析可保证生成 `ExactNumericSpecializedCil` 时自动晋升；稳定的 table PIC 与已知
-闭包 call site 使用 `GuardedSpecializedCil`，并可在同一个方法中把 guarded 外层路径与 unboxed
-数值区域组合。无法原生发射或 profile 扩宽为多态的 shape 继续留在 Tier 1。guard 失败时精确 deopt
-回 canonical execution，并用扩宽后的 profile 重新执行资格检查。设置 `EnableTier2=false` 可完全关闭 Tier 2
-profile 采集与导入；只有显式设置 `EnableTier2ManagedFallback=true` 才会允许仍属实验性的
-`ManagedProfileProgram` 路径。NativeAOT 等动态代码不可用环境继续精确回退解释器且不采集 Tier 2
-profile。
-
-动态 JIT 的 `Invalidate`、`ClearCache` 与 executor dispose 形成严格 module-generation quiescence
-边界：旧 delegate 不再接受入口，生成代码在 backedge 以 `BackendInvalidated` 返回，并等待所有旧
-lease 退出后才完成失效。源码修订后可调用 `LuaJitProfileRemapper.Remap`；只有 lexical identity、
-签名、upvalue layout 与完整 canonical `Opcode/A/B/C/D` 流均未变化的函数才复用观测，self-module
-call target 会重写到目标 identity，其他变化函数使用空 profile。
-
-Loop OSR 现在独立默认开启，但只接受资格分析可保证生成 `GuardedExactNumericCil` 的 verified
-natural loop，且分析会延后到 backedge 达到热度阈值。进入队列
-前还必须成功观察全部数值 guard site 的精确 integer/float operand；非数值或元方法 operand 会通过
-`JIT3105` 永久拒绝，不编译也不产生 guard churn。specialized emitter 只会在运行时数值资格通过后
-惰性准备，因此负负载与短循环不承担一次性初始化成本。load/move、控制流、numeric-for、guarded
-close 和精确数值操作会在生成的循环方法中执行，同时保留 canonical PC、预算、hook/debug、GC 与
-deopt 守卫。只有显式设置 `EnableLoopOsrManagedFallback=true` 才恢复实验性的 managed canonical
-loop 与 guard widening 路径。设置 `EnableLoopOsr=false` 可完整关闭分析、资格采样、emitter 准备与
-编译；动态代码不可用时无论配置默认值如何都保持同样的完整回退。
-
-Lua persisted/static AOT、artifact/loader API 与 `Lunil.Build` package 已在
-`0.8.0-alpha.12` 移除。现有 consumer 应通过 `LuaHost`、`LuaInterpreter` 或
-`LuaJitExecutor` 执行 verified module；旧 CLI/config/environment AOT target 会以
-`LUNIL0006` fail closed，不会静默选择其他后端。迁移细节见本版本 changelog 与
-[NativeAOT 兼容指南](docs/nativeaot-build-integration.md)。
-
-处理不可信源码或 bytecode 时，应根据宿主需求配置有界 parser/chunk option、解释器
-instruction/stack budget 和 heap quota。
-
-### .NET NativeAOT 与 trimming
-
-普通 Lunil consumer 可使用 `PublishAot=true` 或 `PublishTrimmed=true` 发布。Compiler、workspace、
-hosting、CLI 与 reference interpreter 仍可用；`LuaJitExecutor` 会报告动态代码不可用并通过
-解释器执行，同时不采集 JIT profile。六 RID fixture 将 trimming warning 视为错误，并验证源码
-编译、workspace 分析、运行时执行与 JIT capability fallback。详见
-[NativeAOT 兼容指南](docs/nativeaot-build-integration.md)。
-
-## 技术架构
+## 架构
 
 ```mermaid
 flowchart LR
-    Source[Lua source bytes] --> Text[SourceText]
-    Text --> Lexer[Lossless lexer]
-    Lexer --> Parser[Error-tolerant parser]
-    Parser --> Binder[Semantic binder]
-    Text --> Annotation[LuaLS / EmmyLua annotations]
-    Annotation --> Analysis[Type + flow analysis]
-    Binder --> Analysis
-    Analysis --> Workspace[Incremental module workspace]
-    Binder --> Lowerer[Canonical lowering]
-
-    Chunk[PUC Lua 5.4 chunk] --> Reader[Reader + verifier]
-    Reader --> Converter[Prototype converter]
-
-    Lowerer --> IR[Verified canonical register IR]
-    Converter --> IR
+    Source[Lua source bytes] --> Compiler[Compiler + analysis]
+    Chunk[PUC Lua 5.4 chunk] --> Reader[Chunk reader + verifier]
+    Compiler --> IR[Verified canonical IR]
+    Reader --> IR
     IR --> Interpreter[Reference interpreter]
-    Interpreter --> Runtime[Lua runtime model]
-    Runtime --> Heap[Logical heap + GC]
-
-    IR --> JIT[CoreCLR Tier 1 / Tier 2 JIT]
+    IR --> Tier1[CoreCLR Tier 1]
+    Tier1 --> Tier2[Tier 2 specialization]
+    Tier2 --> Entry[Function or loop entry]
+    Interpreter --> Runtime[Lua runtime + logical GC]
+    Entry --> Runtime
 ```
 
-编译器边界以 byte 为基础，发布不可变 syntax、annotation、semantic、type 与控制流模型，并将
-运行时行为 lowering 到与后端无关的 IR；静态分析元数据不会进入该 IR。运行时显式建模 Lua
-object、所有权、stack、continuation 与逻辑 GC，不依赖 CLR object 生命周期隐式表达 Lua 语义。
-这为解释器和后续执行后端提供了共同的语义契约。
+所有执行路径共享 canonical PC、精确指令计数、资源预算、safe point、debug 行为、失效与 fallback
+语义。完整架构见[编译器设计](docs/compiler-design.md)。
 
-## 仓库结构
+## 兼容性
 
-```text
-Lunil/
-├── src/
-│   ├── Lunil.Core/              # source text、diagnostic、Lua numeric
-│   ├── Lunil.Syntax/            # lexer、token、parser、immutable syntax
-│   ├── Lunil.EmmyLua/           # LuaLS 与 legacy EmmyLua 注解前端
-│   ├── Lunil.Analysis/          # semantic type、CFG、constraint 与流分析
-│   ├── Lunil.Workspace/         # 模块图、resolver 与增量分析 cache
-│   ├── Lunil.Semantics/         # binding 与 canonical lowering
-│   ├── Lunil.Compiler/          # 公共有界编译管线与不可变结果
-│   ├── Lunil.IR/                # canonical IR 与 Lua 5.4 binary chunk
-│   ├── Lunil.Runtime/           # value、table、GC、interpreter、coroutine
-│   ├── Lunil.Hosting/           # 可复用宿主、能力 profile 与执行边界
-│   ├── Lunil.CodeGen.Cil/       # typed CIL plan 与分级 CoreCLR JIT
-│   ├── Lunil.Cli/               # 已打包的 run/check/build/dump 命令行产品
-│   └── Lunil.StandardLibrary/   # 标准库注册和模块
-├── tests/                       # unit、差分、fuzz 与 GC stress 测试
-├── benchmarks/                  # runtime benchmark harness
-├── docs/                        # 架构、ABI、分支与版本文档
-├── scripts/                     # release bundle 与 NuGet 打包脚本
-├── changelogs/                  # 按版本组织的发布日志
-└── .github/workflows/           # CI 与 tag 驱动的发布自动化
-```
+- 语言目标：Lua 5.4.8。
+- 运行时目标：.NET 10。
+- 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
+- Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
+- 稳定线：`0.8.x`；当前开发线：`0.9.0-alpha.N`。
 
-## 兼容性与平台
+相对 `0.7.0` 的破坏性变更（包括移除 Lua persisted/static AOT）见
+[`0.8.0` 迁移指南](docs/migration-0.8.0.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
+[.NET NativeAOT 与 trimming](docs/nativeaot-build-integration.md)。
 
-- **语言目标**：Lua 5.4.8。
-- **运行时目标**：.NET 10。
-- **CI 主机**：Windows、Ubuntu Linux、macOS。
-- **发布 RID**：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、
-  `osx-arm64`。
-- **Binary chunk**：严格有界的 Lua 5.4 格式和显式 target 描述；不兼容的数值表示会被拒绝，
-  不会静默截断。
-
-兼容性契约和当前里程碑的非目标请阅读[编译器设计](docs/compiler-design.md)。
-
-## 软件包与发布
-
-Lunil 遵循 [SemVer 2.0](https://semver.org/lang/zh-CN/)；`X.Y.Z` 与预发布后缀表达的是
-两个不同维度：
-
-| 版本变化 | 使用场景 |
-| --- | --- |
-| `X` major | `1.0.0` 之后的新稳定兼容性世代；当稳定版使用者必须进行有意的破坏性迁移时递增 |
-| `Y` minor | `1.0.0` 前的下一个开发里程碑，或 `1.0.0` 后向后兼容的功能版本 |
-| `Z` patch | 已发布稳定 `X.Y.0` 系列上的向后兼容修复与改进 |
-| `alpha.N` | 正在进行功能/API 开发；允许功能未完成与破坏性更新 |
-| `beta.N` | 功能和公共 API 范围已冻结；只进行兼容性、诊断、文档与性能加固 |
-| `rc.N` | 稳定版候选；只接受阻断发布的问题修复 |
-| 无后缀 | 稳定版，只能由审核通过的 RC 晋级得到 |
-
-活跃 `0.8.0` 的晋级顺序是：
-
-```text
-0.8.0-alpha.N -> 0.8.0-beta.N -> 0.8.0-rc.N -> 0.8.0
-```
-
-当前源码版本是稳定版 **`0.8.0`**。稳定版 `0.7.0`、其 tag 与 `api/0.7.0` 保持
-不可变。完整 `0.8` 功能、公共 API、assembly 和 package 范围冻结在 `api/0.8.0` 中；
-向后兼容修复使用 `0.8.1`。新 backend、API、IR 和生成器工作从 `0.9.0-alpha.1` 开始。
-
-不可变的 `v<SemVer>` tag 会触发版本一致性验证、六 RID bundle、带 symbol 的 NuGet
-package、GitHub Packages 发布和 GitHub Release。带 suffix 的版本会自动标记为 prerelease。
-兼容性和晋级规则见[版本策略](docs/versioning.md)。
-
-## 文档索引
+## 文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [编译器设计](docs/compiler-design.md) | 架构、兼容性契约、IR 和后端设计 |
-| [0.7.0 路线图](docs/roadmap-0.7.0.md) | Compiler/Hosting 基础、注解、分析、workspace、CLI 与晋级门槛 |
-| [`0.8.0` 迁移](docs/migration-0.8.0.md) | Lua AOT 与 `Lunil.Build` 移除、runtime/chunk 替代、稳定诊断与 NativeAOT 区分 |
-| [版本化 API/package 兼容性](docs/api-compatibility.md) | 冻结 `0.7` 与 `0.8` 声明、NuGet 资产、验证规则与更新命令 |
-| [CLI 参考](docs/cli.md) | 命令、配置优先级、profile、诊断、产物与退出码 |
-| [执行后端 ABI](docs/adr/0001-execution-backend-abi-v1.md) | 已冻结的 scheduler、PC、预算、safe-point 与 codegen 契约 |
-| [Loop OSR 性能生产化](docs/adr/0006-loop-osr-performance-productionization.md) | 精确数值 OSR 代码形态、资格、守卫、fallback 与性能门槛 |
-| [Loop OSR rollout 证据闭环](docs/adr/0008-loop-osr-qualified-preparation-and-evidence.md) | 资格通过后的惰性 emitter 准备与平衡高样本 rollout 证据 |
-| [Loop OSR 自动默认 rollout](docs/adr/0009-loop-osr-auto-default-rollout.md) | 六 RID 授权、release 默认值与显式 opt-out 契约 |
-| [历史 Persisted CIL AOT ADR](docs/adr/0010-persisted-cil-aot-performance-productionization.md) | 已被取代，保留为迁移历史记录 |
-| [历史 persisted-profile ADR](docs/adr/0015-persisted-profile-guided-numeric-regions.md) | 已被取代，保留为迁移历史记录 |
-| [后端性能基线](docs/backend-performance-baseline.md) | Interpreter/JIT 基线与测量方法；已移除 AOT 的结果仅作历史记录 |
-| [跨运行时性能工作流](docs/cross-runtime-performance.md) | 原生 Lua 基线、LuaJIT/MoonSharp/Lunil 矩阵、可复现工具链与六 RID 汇报 |
-| [.NET NativeAOT 兼容](docs/nativeaot-build-integration.md) | Trimming、publish mode、解释器 fallback 与六 RID 验证 |
-| [运行时 continuation ABI](docs/runtime-continuation-abi.md) | `0.3.0` 冻结的 continuation/yield 边界 |
-| [PUC prototype 导入](docs/puc-prototype-import.md) | PUC Lua prototype 到 canonical IR 的转换 |
-| [版本策略](docs/versioning.md) | SemVer、alpha/beta/RC 晋级与发布流程 |
-| [分支管理](docs/branching.md) | 受保护的 `main`、分支命名与合并策略 |
-| [更新日志](changelogs/) | 按版本组织的发布说明 |
+| [性能](docs/performance.md) | 当前测试数据、图表、方法与复现方式 |
+| [`0.9.0` 路线图](docs/roadmap-0.9.0.md) | 性能目标、交付阶段与发布门禁 |
+| [编译器设计](docs/compiler-design.md) | 编译器、IR、运行时与执行架构 |
+| [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
+| [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |
+| [版本策略](docs/versioning.md) | 兼容性版本线与发布通道 |
+| [更新日志](changelogs/) | 按版本组织的社区发布说明 |
 
 ## 参与贡献
 
-欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`fix/*` 或 `docs/*` 分支上
-开发，根据影响补充测试与 changelog，并在提交前运行完整 build、test 和 format 命令。
-`main` 受保护，所有必需检查通过后使用 squash merge。
-
-参与前请阅读[分支管理](docs/branching.md)。
+欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`fix/*` 或 `docs/*` 分支上开发，按影响
+补充测试，并在请求审核前运行 build、test、format 与相关文档检查。详见[分支管理](docs/branching.md)。
 
 ## 安全问题
 
-疑似安全漏洞请不要提交公开 issue。请通过
-[GitHub 私密漏洞报告](https://github.com/dlqw/Lunil/security/advisories/new)提交最小复现、
-受影响版本和影响评估。
+疑似安全漏洞请通过 [GitHub 私密漏洞报告](https://github.com/dlqw/Lunil/security/advisories/new)
+提交，不要创建公开 issue。
 
-## 开源许可
+## 许可证
 
-Lunil 使用 [MIT License](LICENSE) 开源。
-
-Lua 是 Lua.org、PUC-Rio 的商标。Lunil 是独立实现，与 Lua.org 或 PUC-Rio 无隶属或背书关系。
+Lunil 使用 [MIT License](LICENSE)。

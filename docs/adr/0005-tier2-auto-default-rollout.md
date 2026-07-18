@@ -11,13 +11,13 @@
 
 ADR 0004 productionized an exact integer, float, and mixed-numeric Tier 2 `DynamicMethod`, but
 kept `EnableTier2=false` because the same switch also admitted the managed profile-program path.
-The final six-RID M11 evidence showed that exact-numeric Tier 2 exceeded its throughput,
+The accepted six-RID evidence showed that exact-numeric Tier 2 exceeded its throughput,
 allocation, compilation-latency, and code-shape gates on every supported RID. Table, closure,
 call, metamethod, coroutine, and unwind-heavy profiles still did not have a non-regressing
 managed Tier 2 result.
 
 A default rollout therefore cannot treat all profile-guided plans alike. It needs a deterministic
-promotion contract that admits only the code shape covered by the M11 evidence, cannot be bypassed
+promotion contract that admits only the qualified exact-numeric code shape, cannot be bypassed
 by imported profiles or custom compilers, and adds no profile overhead when dynamic code is
 unavailable.
 
@@ -66,7 +66,7 @@ Loop OSR remains independently disabled by default.
 
 ## Evidence
 
-The prerequisite six-RID M11 CI run `29227359052` reported `ExactNumericSpecializedCil` on
+The prerequisite six-RID report produced `ExactNumericSpecializedCil` on
 win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64. The minimum arithmetic
 bootstrap 95% lower bound was 7.086x, maximum Tier 2 compilation p95 was 3.228 ms, every RID had a
 100% liveness-cache hit rate and zero allocation slope, and maximum compilation allocation was

@@ -14,8 +14,7 @@ automatic exact-numeric acceptance, automatic negative rejection, and unchanged 
 warm-throughput floors. Negative workloads must also produce zero guard failures and zero managed
 installations.
 
-The protected six-RID CI run `29244862401` evaluated commit
-`dc7410225ad014f137257815a4b6c970a5ce5c0e` and reported `AllRidsQualify=true`. Across win-x64,
+The accepted six-RID qualification report covered win-x64,
 win-arm64, linux-x64, linux-arm64, osx-x64, and osx-arm64:
 
 - the minimum arithmetic bootstrap 95% lower bound was 4.349x;
@@ -67,14 +66,12 @@ that the default-enabled option still creates no Loop OSR registry activity when
 is closed. The NativeAOT fixture asserts the complete default tuple and continues to execute through
 the static AOT/interpreter path.
 
-The rollout branch must repeat Release solution tests, formatting, six-process local evidence,
-synthetic six-RID aggregation, NativeAOT, trimmed single-file, ReadyToRun, NuGet packaging, release
-bundle, and public-repository hygiene before merge. Protected CI must then repeat the real six-RID
-aggregate with the new default.
+Verification covers Release solution tests, formatting, balanced multi-process evidence, six-RID
+aggregation, NativeAOT, trimmed single-file, ReadyToRun, NuGet packaging, release bundles, and
+public-repository hygiene.
 
-The six-process local win-x64 rollout record at
-`artifacts/backend-performance/win-x64/20260713-113245` used the release default for its positive
-row and qualified with a 7.941x arithmetic median speedup, bootstrap interval
+The balanced win-x64 rollout record used the release default for its positive row and qualified with
+a 7.941x arithmetic median speedup, bootstrap interval
 `[6.242x, 11.615x]`, a 118.505x median over the explicit disabled pair, bootstrap interval
 `[93.004x, 158.071x]`, 0.545 ms preparation p95, 3.099 ms compilation p95, 45,092-byte compilation
 allocation p95, zero allocation slope, and 100% liveness-cache hits. Negative warm medians ranged

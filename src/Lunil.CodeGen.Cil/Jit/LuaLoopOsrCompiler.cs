@@ -10,6 +10,10 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.CodeGen.Cil.Jit;
 
+internal readonly record struct LuaLoopOsrEmissionMetrics(
+    TimeSpan CilEmissionDuration,
+    TimeSpan DelegateCreationDuration);
+
 public sealed record LuaJitOsrRegisterMap(int CanonicalRegister, int CompiledSlot);
 
 public sealed record LuaJitOsrEntryMap(
@@ -444,12 +448,6 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
             : 2 + numericRegionPlan.Registers.Count(register =>
                 verifiedRegion.Liveness.LiveBefore[verifiedRegion.HeaderProgramCounter]
                     .Contains(register.Register));
-        var legacySpecializedEligible = allowSpecializedCil && numericRegionPlan is null &&
-            ReflectionEmitLuaLoopOsrCompiler.IsEligible(
-                function,
-                verifiedPlan,
-                out specializedInstructionCount,
-                out guardCount);
         var specializationPlanningDuration = Stopwatch.GetElapsedTime(specializationStarted);
         var codeKind = LuaJitLoopOsrCodeKind.ManagedCanonicalProgram;
         LuaCompiledMethod method;
@@ -479,21 +477,6 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                 NumericRegionHotInstructionBudgetCheckCount =
                     numericRegionPlan.HotInstructionBudgetCheckCount,
             };
-        }
-        else if (legacySpecializedEligible && TryCompileSpecializedCil(
-                function,
-                verifiedPlan,
-                cancellationToken,
-                out var specializedMethod,
-                out var specializedCodeBytes,
-                out specializedInstructionCount,
-                out guardCount,
-                out emissionMetrics))
-        {
-            method = specializedMethod;
-            estimatedCodeBytes = specializedCodeBytes;
-            codeKind = LuaJitLoopOsrCodeKind.GuardedExactNumericCil;
-            verifiedPlan = verifiedPlan with { CodeKind = codeKind };
         }
         else
         {
@@ -565,32 +548,10 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
     [UnconditionalSuppressMessage(
         "AOT",
         "IL3050",
-        Justification = "Loop OSR compilation is reached only after the dynamic-code capability check.")]
-    private static bool TryCompileSpecializedCil(
-        LuaIrFunction function,
-        LuaJitLoopOsrPlan plan,
-        CancellationToken cancellationToken,
-        [NotNullWhen(true)] out LuaCompiledMethod? method,
-        out long estimatedCodeBytes,
-        out int specializedInstructionCount,
-        out int guardCount,
-        out LuaLoopOsrEmissionMetrics metrics) => ReflectionEmitLuaLoopOsrCompiler.TryCompile(
-            function,
-            plan,
-            cancellationToken,
-            out method,
-            out estimatedCodeBytes,
-            out specializedInstructionCount,
-            out guardCount,
-            out metrics);
-
-    [UnconditionalSuppressMessage(
-        "AOT",
-        "IL3050",
         Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
     private static bool PrepareCompilerCore()
     {
-        ReflectionEmitLuaLoopOsrCompiler.PrepareRuntimeAbi();
+        ReflectionEmitLuaNumericRegionCompiler.PrepareRuntimeAbi();
         return true;
     }
 

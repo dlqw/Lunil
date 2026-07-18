@@ -9,8 +9,8 @@
 ## Context
 
 ADR 0006 productionized `GuardedExactNumericCil` Loop OSR while retaining
-`EnableLoopOsr=false`. Its local win-x64 record passed the arithmetic, allocation, compilation,
-code-kind, and negative workload gates. The subsequent real six-RID CI run `29238433084` also used
+`EnableLoopOsr=false`. Its win-x64 qualification passed the arithmetic, allocation, compilation,
+code-kind, and negative workload gates. The subsequent six-RID qualification report also used
 the exact code kind on every RID, installed no managed arithmetic OSR, kept allocation slope at
 zero, achieved a minimum arithmetic bootstrap 95% lower bound of 7.215x, and kept compilation p95
 at or below 5.978 ms.
@@ -78,9 +78,8 @@ backedge threshold produces no eligibility event or compilation request. Existin
 managed fallback, guard widening, concurrency, LRU, owner lifetime, budget/debug/GC, and dynamic-code
 capability tests continue to pass.
 
-The final local win-x64 Release record at
-`artifacts/backend-performance/win-x64/20260713-095107`, using five independent processes,
-`iterations=1,000,000`, and nine cold samples per process, reported:
+The balanced win-x64 qualification used five independent processes, `iterations=1,000,000`, and
+nine cold samples per process. It reported:
 
 - 8.670x arithmetic median speedup over the interpreter, bootstrap 95% interval
   `[6.765x, 10.089x]`;
@@ -107,5 +106,5 @@ before any default change.
   intentional qualification cost and is bounded by the existing threshold.
 - A loop that ever observes a non-exact operand is permanently rejected in the specialized-only
   path. Hosts needing polymorphic widening must explicitly enable managed fallback.
-- Benchmark comparison is less sensitive to fixed order, but shared-runner timing is still evidence,
-  not a hard CI failure; the aggregate JSON remains the rollout authority reviewed before merge.
+- Benchmark comparison is less sensitive to fixed order, but shared-runner timing remains supporting
+  evidence rather than a portable absolute threshold.

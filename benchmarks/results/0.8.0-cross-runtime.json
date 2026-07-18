@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "release": "0.8.0",
+  "source": {
+    "tag": "v0.8.0",
+    "productCommit": "eb017623fcb0550bfd025ab2b192e9607c682d6c",
+    "workflowRun": 29633696197,
+    "generatedAtUtc": "2026-07-18T06:31:38.1588046Z",
+    "rids": [
+      "win-x64",
+      "win-arm64",
+      "linux-x64",
+      "linux-arm64",
+      "osx-x64",
+      "osx-arm64"
+    ],
+    "workloads": 8,
+    "rounds": 6,
+    "targetMilliseconds": 250,
+    "baselineEngine": "lua54",
+    "comparisonEngine": "moonsharp",
+    "complete": true,
+    "performanceGatePassed": true
+  },
+  "overall": [
+    { "engine": "LuaJIT", "speedupVsNativeLua": 11.487656549665038, "speedupVsMoonSharp": 168.39650851674645, "kind": "reference" },
+    { "engine": "Native Lua 5.4", "speedupVsNativeLua": 1.0, "speedupVsMoonSharp": 14.656877986782186, "kind": "reference" },
+    { "engine": "Lunil Tier 2", "speedupVsNativeLua": 0.6823442388937457, "speedupVsMoonSharp": 9.988481551592866, "kind": "lunil" },
+    { "engine": "Lunil Auto JIT", "speedupVsNativeLua": 0.6795240847770517, "speedupVsMoonSharp": 9.97381685293755, "kind": "lunil-primary" },
+    { "engine": "Lunil Loop OSR", "speedupVsNativeLua": 0.11311533059994702, "speedupVsMoonSharp": 1.6588976362216699, "kind": "lunil" },
+    { "engine": "Lunil Tier 1", "speedupVsNativeLua": 0.1054647577293278, "speedupVsMoonSharp": 1.5426529792898172, "kind": "lunil" },
+    { "engine": "MoonSharp", "speedupVsNativeLua": 0.06823629337419214, "speedupVsMoonSharp": 1.0, "kind": "reference" },
+    { "engine": "Lunil interpreter", "speedupVsNativeLua": 0.04957393842602068, "speedupVsMoonSharp": 0.7264625133614887, "kind": "lunil" }
+  ],
+  "autoWorkloads": [
+    { "workload": "arithmetic", "speedupVsNativeLua": 1.110, "speedupVsMoonSharp": 24.659 },
+    { "workload": "fib_iter", "speedupVsNativeLua": 2.801, "speedupVsMoonSharp": 40.813 },
+    { "workload": "mandelbrot", "speedupVsNativeLua": 0.559, "speedupVsMoonSharp": 8.757 },
+    { "workload": "control_flow", "speedupVsNativeLua": 2.070, "speedupVsMoonSharp": 34.874 },
+    { "workload": "function_calls", "speedupVsNativeLua": 1.204, "speedupVsMoonSharp": 17.133 },
+    { "workload": "table_access", "speedupVsNativeLua": 0.299, "speedupVsMoonSharp": 8.348 },
+    { "workload": "sieve", "speedupVsNativeLua": 0.059, "speedupVsMoonSharp": 1.464 },
+    { "workload": "string_build", "speedupVsNativeLua": 0.591, "speedupVsMoonSharp": 1.521 }
+  ],
+  "backendCosts": {
+    "tier2MaximumCompilationP95Milliseconds": 3.672,
+    "tier2MaximumCompileAllocatedP95Bytes": 317776,
+    "tier2MaximumRegionAllocationSlopeBytesPerInstruction": 37757.714286,
+    "loopOsrMaximumCompilationP95Milliseconds": 5.2165,
+    "loopOsrMaximumPreparationP95Milliseconds": 1.1495,
+    "loopOsrMaximumCompileAllocatedP95Bytes": 259232,
+    "loopOsrMaximumRegionAllocationSlopeBytesPerInstruction": 28337.142857
+  }
+}

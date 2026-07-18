@@ -4784,7 +4784,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public void LoopOsrWidensToManagedFallbackAfterSpecializedGuardFailure()
+    public void LoopOsrManagedFallbackDoesNotUseRemovedLegacySpecializedEmitter()
     {
         using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
         {
@@ -4843,14 +4843,9 @@ public sealed class LuaJitExecutorTests
                 jitEvent.Kind == LuaJitEventKind.LoopOsrCompilationCompleted)
             .Select(static jitEvent => jitEvent.LoopOsrCompilationMetrics?.CodeKind)
             .ToArray();
-        Assert.Equal(
-            [
-                LuaJitLoopOsrCodeKind.GuardedExactNumericCil,
-                LuaJitLoopOsrCodeKind.ManagedCanonicalProgram,
-            ],
-            codeKinds);
-        Assert.True(executor.Statistics.LoopOsrGuardFailures >= 1);
-        Assert.True(executor.Statistics.LoopOsrInvalidations >= 1);
+        Assert.Equal([LuaJitLoopOsrCodeKind.ManagedCanonicalProgram], codeKinds);
+        Assert.Equal(0, executor.Statistics.LoopOsrGuardFailures);
+        Assert.Equal(0, executor.Statistics.LoopOsrInvalidations);
     }
 
     [Fact]
