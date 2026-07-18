@@ -1,8 +1,8 @@
 # Versioned API and package compatibility
 
-Lunil keeps compatibility data by pre-1.0 minor line. Historical data is immutable, while the
-active Alpha line uses the same exact gates as a reviewed snapshot so API and package changes
-cannot enter accidentally.
+Lunil keeps compatibility data by pre-1.0 minor line. Historical data is immutable, and the active
+Beta line uses exact public-API and package gates so additions, removals, signature changes, or
+asset changes cannot enter accidentally.
 
 ## Compatibility lines
 
@@ -14,13 +14,13 @@ must continue to match the stable `v0.7.0` tag; later feature work never rewrite
 
 ### Active `0.8.0`
 
-[`api/0.8.0/`](../api/0.8.0/) records the reviewed public API and package snapshot for
-`0.8.0-alpha.13`. Alpha remains open to intentional, changelog-backed API changes, so this is not a
-Beta freeze. The exact gate still rejects an unreviewed addition, removal, signature change,
-dependency edge, or package asset. Entering `0.8.0-beta.1` will turn the accepted snapshot into the
-frozen contract for the rest of the `0.8` line.
+[`api/0.8.0/`](../api/0.8.0/) freezes the public API, assembly, and package scope accepted at
+`0.8.0-beta.1`. Its exact gates reject additions, removals, signature or nullability changes,
+dependency edges, package identities, and package-asset changes throughout Beta, RC, and stable
+`0.8.x` maintenance unless a deliberate backward-compatible fix requires a reviewed baseline
+update. Breaking work waits for `0.9.0`.
 
-The Alpha snapshot intentionally widens the advanced
+The frozen `0.8` contract intentionally widens the advanced
 `LuaCompiledExit.InstructionsConsumed` code-generation ABI property from `int` to `long`. The
 scheduler's 64-bit activation budget and remaining JIT emitters prevent one compiled entry from
 overflowing after more than `Int32.MaxValue` canonical instructions. See
@@ -38,7 +38,7 @@ stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with an
-active `0.8.0-alpha.13` version they read and update only `api/0.8.0/`.
+active `0.8.0-beta.1` version they read and update only `api/0.8.0/`.
 
 ## Public API baseline
 
@@ -52,7 +52,8 @@ dotnet tool restore
 ./scripts/Test-PublicApiBaselines.ps1 -Configuration Release
 ```
 
-Only an intentional, version-reviewed API decision may update the active declarations:
+Only an intentional, backward-compatible and version-reviewed API decision may update the active
+declarations:
 
 ```powershell
 ./scripts/Update-PublicApiBaselines.ps1 -Configuration Release
@@ -60,8 +61,8 @@ git diff -- api/0.8.0
 git diff --exit-code v0.7.0 -- api/0.7.0
 ```
 
-Alpha changes must be described in the matching changelog and retain correct runtime/package
-behavior. Beta and RC follow the stricter promotion policy in [versioning](versioning.md).
+Beta and RC updates are limited by the promotion policy in [versioning](versioning.md); new API and
+backend features wait for `0.9.0`.
 
 ## Package baseline
 

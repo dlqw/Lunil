@@ -6,11 +6,11 @@ one version declared in `Directory.Build.props`:
 
 ```xml
 <VersionPrefix>0.8.0</VersionPrefix>
-<VersionSuffix>alpha.13</VersionSuffix>
+<VersionSuffix>beta.1</VersionSuffix>
 ```
 
-The resulting source/package version is `0.8.0-alpha.13` and its eventual immutable tag is
-`v0.8.0-alpha.13`. A stable release omits `VersionSuffix` only after an accepted RC.
+The resulting source/package version is `0.8.0-beta.1` and its eventual immutable tag is
+`v0.8.0-beta.1`. A stable release omits `VersionSuffix` only after an accepted RC.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -121,31 +121,31 @@ Stable `0.7.0` removes the suffix from that accepted candidate without product-c
 public-API-baseline, or package-scope changes. Backward-compatible fixes on this stable line use
 `0.7.1`; new feature or API work starts at `0.8.0-alpha.1`.
 
-## Current `0.8.0-alpha.15` decision
+## Current `0.8.0-beta.1` decision
 
 The `0.8.0` Alpha sequence has completed the planned backend feature work: `alpha.12` removed the
 persisted/static Lua AOT product and converted remaining JIT accounting to 64-bit; `alpha.13`
 introduced the compact reference loop; `alpha.14` added generation-bound direct compiled calls;
-and `alpha.15` adds bounded weak table/operand PICs, exact primitive non-numeric guards, and guarded
+and `alpha.15` added bounded weak table/operand PICs, exact primitive non-numeric guards, and guarded
 table side operations inside verified numeric regions. Every table, key, result-kind, metatable,
 mutation-version, budget, and GC assumption remains guarded, and failure resumes the shared
 canonical path at the exact instruction.
 
-The current scope is recorded in
-[`changelogs/0.8.0-alpha.15.md`](../changelogs/0.8.0-alpha.15.md) and
-[ADR 0021](adr/0021-bounded-table-operand-pics.md). After this Alpha is accepted, `0.8.0-beta.1`
-freezes feature and public-API scope; later 0.8 prereleases accept only compatibility, diagnostics,
-documentation, release-gate, and performance-convergence fixes. New backend/API/IR features move to
-`0.9.0-alpha.1`.
+`0.8.0-beta.1` accepts that Alpha sequence and freezes the feature, public-API, assembly, package,
+canonical-IR, JIT-profile, and evidence-schema scope. The accepted surface is recorded in
+[`changelogs/0.8.0-beta.1.md`](../changelogs/0.8.0-beta.1.md), the
+[`0.8.0` migration guide](migration-0.8.0.md), and the Alpha ADRs. Later `0.8` prereleases accept
+only compatibility, diagnostics, documentation, reliability, release-gate, and
+performance-convergence fixes. New backend/API/IR features move to `0.9.0-alpha.1`.
 
-The `api/0.8.0` declarations and package data are reviewed Alpha snapshots, not a compatibility
-freeze. `api/0.7.0` remains identical to stable `v0.7.0`. Promotion beyond Alpha requires the full
-format, test, conformance, package, publish-mode, six-RID, and performance gates; the suffix will
-not be removed directly from Alpha.
+The `api/0.8.0` declarations freeze 13 assemblies and 13 packages for the rest of the `0.8` line.
+`api/0.7.0` remains identical to stable `v0.7.0`. Promotion to RC requires the full format, test,
+conformance, package, publish-mode, six-RID, and performance gates; the suffix is removed only from
+an accepted RC with no intervening product change.
 
-The removal is a breaking change on the not-yet-frozen `0.8` minor line and is never backported to
-`0.7.x` patches. Stable patches remain backward-compatible; later public API/backend redesign starts
-on the next minor line rather than being hidden in a patch or reused prerelease number.
+The Lua AOT removal is a frozen breaking change relative to stable `0.7.0` and is never backported
+to `0.7.x` patches. Stable patches remain backward-compatible; later public API/backend redesign
+starts on the next minor line rather than being hidden in a patch or reused prerelease number.
 
 ## Release procedure
 
