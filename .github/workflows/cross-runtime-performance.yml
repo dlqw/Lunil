@@ -51,11 +51,9 @@ env:
   BENCHMARK_TARGET_MS: ${{ inputs.target-milliseconds || '250' }}
 
 jobs:
-  measure:
+  measure-full:
     name: Measure (${{ matrix.rid }})
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.full-matrix) ||
-      matrix.rid == 'win-x64'
+    if: github.event_name == 'workflow_dispatch' && inputs.full-matrix
     strategy:
       fail-fast: false
       matrix:
@@ -119,10 +117,48 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  measure-smoke:
+    name: Measure smoke (win-x64)
+    if: github.event_name != 'workflow_dispatch' || !inputs.full-matrix
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Restore and build benchmark host
+        run: >-
+          dotnet build
+          benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
+          --configuration Release
+          -p:ContinuousIntegrationBuild=true
+      - name: Build pinned native Lua and LuaJIT
+        shell: pwsh
+        run: ./scripts/Install-CrossRuntimeBenchmarkTools.ps1 -RuntimeIdentifier 'win-x64'
+      - name: Run native + Lunil Auto smoke test
+        shell: pwsh
+        run: >-
+          ./scripts/Measure-CrossRuntimePerformance.ps1
+          -RuntimeIdentifier 'win-x64'
+          -Workloads string_build
+          -Engines lunil_auto
+          -Rounds 2
+          -TargetMilliseconds 100
+          -Configuration Release -NoProvision -NoBuild -SkipReference
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cross-runtime-performance-smoke-win-x64
+          path: artifacts/cross-runtime-performance/win-x64/**
+          if-no-files-found: error
+          retention-days: 14
+
   aggregate:
     name: Aggregate native-Lua and MoonSharp gates
     if: github.event_name == 'workflow_dispatch' && inputs.full-matrix
-    needs: measure
+    needs: measure-full
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
