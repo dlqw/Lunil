@@ -1,7 +1,7 @@
 {
   "SchemaVersion": 1,
   "CompatibilityLine": "0.8.0",
-  "ChangePolicy": "reviewed-public-api-snapshot",
+  "ChangePolicy": "exact-public-api-freeze",
   "Generator": {
     "Package": "Meziantou.Framework.PublicApiGenerator.Tool",
     "Version": "2.0.2"

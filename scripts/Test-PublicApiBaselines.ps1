@@ -13,7 +13,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$activeVersion = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
 $compatibilityLine = (& (Join-Path $PSScriptRoot 'Get-LunilCompatibilityLine.ps1')).Trim()
+$changePolicy = if ($activeVersion -match '-alpha\.') {
+    'reviewed-public-api-snapshot'
+}
+else {
+    'exact-public-api-freeze'
+}
+$policyLabel = if ($changePolicy -eq 'exact-public-api-freeze') { 'frozen' } else { 'reviewed' }
 $generatorVersion = '2.0.2'
 $baselineDirectory = Join-Path $repositoryRoot "api/$compatibilityLine"
 $generatedDirectory = Join-Path $repositoryRoot 'artifacts/public-api/generated'
@@ -133,7 +141,7 @@ try {
     $manifest = [ordered]@{
         SchemaVersion = 1
         CompatibilityLine = $compatibilityLine
-        ChangePolicy = 'reviewed-public-api-snapshot'
+        ChangePolicy = $changePolicy
         Generator = [ordered]@{
             Package = 'Meziantou.Framework.PublicApiGenerator.Tool'
             Version = $generatorVersion
@@ -153,7 +161,7 @@ try {
     }
     else {
         Assert-TextMatches $manifestPath $manifestText
-        Write-Host "Verified $($assemblies.Count) reviewed public API baselines for $compatibilityLine."
+        Write-Host "Verified $($assemblies.Count) $policyLabel public API baselines for $compatibilityLine."
     }
 }
 finally {
