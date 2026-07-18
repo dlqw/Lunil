@@ -850,14 +850,14 @@ arithmetic, comparisons, and accumulators stay in CLR locals. Exact hot-block/co
 write barriers, ownership, metatable guards, and canonical-PC deoptimization are unchanged. See
 [ADR 0021](adr/0021-bounded-table-operand-pics.md).
 
-The four-round balanced win-x64 evidence is
-`artifacts/backend-performance/win-x64/20260717-233934` on .NET 10.0.3. Every process executed 30
-verified warm operations after three cold compile samples.
+The exact product commit is `7907c7aa7001b78d07610af3a36b4d259eaf332a`. Its six-round balanced
+win-x64 evidence is `artifacts/backend-performance/win-x64/20260717-235856` on .NET 10.0.3. Every
+process executed 30 verified warm operations after nine cold compile samples.
 
 | Workload | Tier 1 warm median | Tier 2 warm median | Paired speedup median | Paired samples |
 |---|---:|---:|---:|---:|
-| `sieve` | 9.619 ms | 1.725 ms | **5.38x** | 5.20x–5.70x |
-| `table_access` | 1.162 ms | 344.318 µs | **3.26x** | 3.16x–3.69x |
+| `sieve` | 9.673 ms | 1.693 ms | **5.64x** | 4.99x–5.80x |
+| `table_access` | 1.152 ms | 265.880 µs | **4.41x** | 3.85x–5.39x |
 
 `sieve` installed three numeric regions with 18 unboxed numeric locals and four direct numeric
 instructions; `table_access` installed one region with nine unboxed locals and three direct numeric
@@ -865,3 +865,10 @@ instructions. Both retained `GuardedSpecializedCil`, reported zero table PIC inv
 unexpected guard/deopt exits, and exceeded the 1.50x target in every paired round. The remaining
 Tier 2 negative-workload gate list was empty. Production table hit/miss telemetry is a sampled
 estimate (first event exact, then batches of 256); invalidation telemetry remains exact.
+
+`NegativeWorkloadGateFailures` is empty and the target-workload Tier 2 compilation p95 values are
+below 3 ms. The aggregate `QualifiesThisRid` value is nevertheless false because the arithmetic
+compile-allocation p95 (317,184 B against 262,144 B) and numeric-region allocation slope
+(35,396.57 B/instruction against 32,768 B/instruction) remain above their gates. The alpha.14
+baseline already failed the same gates at 309,376 B and 34,676 B/instruction; alpha.15 does not
+relax or claim qualification of those unrelated limits.
