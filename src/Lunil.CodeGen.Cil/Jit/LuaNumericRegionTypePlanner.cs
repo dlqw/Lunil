@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using Lunil.IR.Canonical;
 
 namespace Lunil.CodeGen.Cil.Jit;
@@ -285,8 +286,12 @@ internal static class LuaNumericRegionPlanner
             visiting[programCounter] = true;
             var instruction = function.Instructions[programCounter];
             var successorMaximum = 0;
-            foreach (var successor in Successors(instruction, programCounter))
+            var successorCount = SuccessorCount(instruction);
+            for (var successorIndex = 0;
+                 successorIndex < successorCount;
+                 successorIndex++)
             {
+                var successor = SuccessorAt(instruction, programCounter, successorIndex);
                 if (!inside.Contains(successor) ||
                     IsCutBackedge(instruction, programCounter, successor))
                 {
@@ -317,10 +322,10 @@ internal static class LuaNumericRegionPlanner
             }
         }
 
-        var byProgramCounter = Enumerable.Repeat(
-                new LuaNumericRegionBudgetSite(ProgramCounter: -1, 0, 0, 0, 0, 0, 0, 0, 0),
-                function.Instructions.Length)
-            .ToArray();
+        var byProgramCounter = new LuaNumericRegionBudgetSite[function.Instructions.Length];
+        Array.Fill(
+            byProgramCounter,
+            new LuaNumericRegionBudgetSite(ProgramCounter: -1, 0, 0, 0, 0, 0, 0, 0, 0));
         foreach (var pc in region.ProgramCounters)
         {
             var block = blocks[blockIndexByProgramCounter[pc]];
@@ -356,7 +361,7 @@ internal static class LuaNumericRegionPlanner
             return false;
         }
 
-        sites = byProgramCounter.ToImmutableArray();
+        sites = ImmutableCollectionsMarshal.AsImmutableArray(byProgramCounter);
         return true;
     }
 
@@ -397,20 +402,22 @@ internal static class LuaNumericRegionPlanner
             scheduled.Remove(pc);
             var outgoing = after[pc];
             Array.Copy(before[pc], outgoing, outgoing.Length);
-            foreach (var register in WrittenRegisters(
-                         function.Instructions[pc],
-                         function.RegisterCount))
+            if (!ApplyWrittenDefinitions(
+                    outgoing,
+                    function.Instructions[pc],
+                    function.RegisterCount,
+                    pc))
             {
-                if ((uint)register >= (uint)function.RegisterCount)
-                {
-                    return false;
-                }
-
-                outgoing[register] = [new ValueDefinition(pc, register)];
+                return false;
             }
 
-            foreach (var successor in Successors(function.Instructions[pc], pc))
+            var instruction = function.Instructions[pc];
+            var successorCount = SuccessorCount(instruction);
+            for (var successorIndex = 0;
+                 successorIndex < successorCount;
+                 successorIndex++)
             {
+                var successor = SuccessorAt(instruction, pc, successorIndex);
                 if (!inside.Contains(successor) ||
                     !MergeDefinitionState(before[successor], outgoing) ||
                     !scheduled.Add(successor))
@@ -735,8 +742,8 @@ internal static class LuaNumericRegionPlanner
             ExactTypeSolver solver,
             CancellationToken cancellationToken)
     {
-        var result = ImmutableArray.CreateBuilder<
-            ImmutableArray<LuaNumericRegionValueKind>>(function.Instructions.Length);
+        var result = new ImmutableArray<LuaNumericRegionValueKind>[
+            function.Instructions.Length];
         for (var pc = 0; pc < function.Instructions.Length; pc++)
         {
             if ((pc & 63) == 0)
@@ -745,20 +752,20 @@ internal static class LuaNumericRegionPlanner
             }
             if (!states.TryGetValue(pc, out var state))
             {
-                result.Add([]);
+                result[pc] = [];
                 continue;
             }
 
-            var kinds = ImmutableArray.CreateBuilder<LuaNumericRegionValueKind>(state.Length);
+            var kinds = new LuaNumericRegionValueKind[state.Length];
             for (var register = 0; register < state.Length; register++)
             {
-                kinds.Add(ResolveKind(state[register], solver));
+                kinds[register] = ResolveKind(state[register], solver);
             }
 
-            result.Add(kinds.MoveToImmutable());
+            result[pc] = ImmutableCollectionsMarshal.AsImmutableArray(kinds);
         }
 
-        return result.MoveToImmutable();
+        return ImmutableCollectionsMarshal.AsImmutableArray(result);
     }
 
     private static bool VerifyInstruction(
@@ -1030,32 +1037,66 @@ internal static class LuaNumericRegionPlanner
         return changed;
     }
 
-    private static IEnumerable<int> WrittenRegisters(
+    private static bool ApplyWrittenDefinitions(
+        ImmutableArray<ValueDefinition>[] state,
         LuaIrInstruction instruction,
-        int registerCount) =>
-        instruction.Opcode switch
+        int registerCount,
+        int programCounter)
+    {
+        bool Set(int register)
         {
-            LuaIrOpcode.LoadConstant or LuaIrOpcode.Move or LuaIrOpcode.Unary or
-                LuaIrOpcode.Binary or LuaIrOpcode.GetTable => [instruction.A],
-            LuaIrOpcode.SetTop when instruction.A >= 0 && instruction.A <= registerCount =>
-                Enumerable.Range(instruction.A, registerCount - instruction.A),
-            LuaIrOpcode.NumericForLoop =>
-                [instruction.A, instruction.A + 1, instruction.A + 3],
-            LuaIrOpcode.Call when instruction.A >= 0 && instruction.C >= 0 &&
-                instruction.A + instruction.C <= registerCount =>
-                Enumerable.Range(instruction.A, registerCount - instruction.A),
-            _ => [],
-        };
+            if ((uint)register >= (uint)registerCount)
+            {
+                return false;
+            }
 
-    private static IEnumerable<int> Successors(
-        LuaIrInstruction instruction,
-        int programCounter) => instruction.Opcode switch
+            state[register] = [new ValueDefinition(programCounter, register)];
+            return true;
+        }
+
+        switch (instruction.Opcode)
         {
-            LuaIrOpcode.Jump => [instruction.B],
-            LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
-                LuaIrOpcode.NumericForLoop => [instruction.B, programCounter + 1],
-            _ => [programCounter + 1],
-        };
+            case LuaIrOpcode.LoadConstant:
+            case LuaIrOpcode.Move:
+            case LuaIrOpcode.Unary:
+            case LuaIrOpcode.Binary:
+            case LuaIrOpcode.GetTable:
+                return Set(instruction.A);
+            case LuaIrOpcode.SetTop when
+                instruction.A >= 0 && instruction.A <= registerCount:
+            case LuaIrOpcode.Call when
+                instruction.A >= 0 && instruction.C >= 0 &&
+                instruction.A + instruction.C <= registerCount:
+                for (var register = instruction.A; register < registerCount; register++)
+                {
+                    if (!Set(register))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            case LuaIrOpcode.NumericForLoop:
+                return Set(instruction.A) && Set(instruction.A + 1) && Set(instruction.A + 3);
+            default:
+                return true;
+        }
+    }
+
+    private static int SuccessorCount(LuaIrInstruction instruction) =>
+        instruction.Opcode is LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
+            LuaIrOpcode.NumericForLoop
+            ? 2
+            : 1;
+
+    private static int SuccessorAt(
+        LuaIrInstruction instruction,
+        int programCounter,
+        int index) => index == 0 && instruction.Opcode is
+            LuaIrOpcode.Jump or LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue or
+            LuaIrOpcode.NumericForLoop
+                ? instruction.B
+                : programCounter + 1;
 
     private static LuaNumericRegionValueKind ConstantKind(LuaIrConstant constant) =>
         constant.Kind switch

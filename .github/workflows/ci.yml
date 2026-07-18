@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "feature/**"
+      - "perf/**"
       - "fix/**"
       - "docs/**"
       - "release/**"

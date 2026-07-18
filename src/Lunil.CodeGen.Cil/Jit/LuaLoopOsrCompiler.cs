@@ -371,7 +371,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         cancellationToken.ThrowIfCancellationRequested();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var errors = LuaIrVerifier.Verify(module);
+        var errors = LuaIrVerificationCache.Verify(module);
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || (uint)plan.FunctionId >= (uint)module.Functions.Length)
         {

@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.1-7c3aed?style=flat-square">
+  <img alt="开发版本" src="https://img.shields.io/badge/development-0.9.0--alpha.2-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -26,7 +26,7 @@ Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.1`；Alpha 阶段的
+> 稳定版 `0.8.0` 是当前支持版本与性能基线。当前源码版本为 `0.9.0-alpha.2`；Alpha 阶段的
 > API 与后端行为在功能冻结前仍可能变化。
 
 ## 性能
@@ -60,9 +60,16 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 
 ![Lunil 0.8.0 Auto JIT 分 workload 对比](assets/performance/0.8.0-auto-workloads.svg)
 
-当前 `0.9.0-alpha.1` 源码也通过了完整的 win-x64 正确性、路由、telemetry 与 MoonSharp 稳定性
-矩阵：该机器上 Auto JIT 为原生 Lua 的 `0.589x`、MoonSharp 的 `9.024x`。由于硬件不同，这一行
-不用于计算相对六 RID 报告的版本增减。
+当前 `0.9.0-alpha.2` 源码也通过了相同的六 RID 跨运行时矩阵，以及完整的后端正确性、
+NativeAOT、路由、telemetry、启动、分配和 code-size 资格验证：
+
+| 源码版本 | Auto 相对原生 Lua | Auto 相对 MoonSharp | Tier 2 编译分配 p95 | Loop OSR 编译分配 p95 |
+| --- | ---: | ---: | ---: | ---: |
+| 稳定版 `0.8.0` | 0.680x | 9.974x | 317,776 B | 259,232 B |
+| `0.9.0-alpha.2` | 0.697x | 9.918x | 250,912 B | 192,112 B |
+
+吞吐数据来自两次独立的六 RID 资格运行，不作为同硬件配对增幅结论。Alpha 2 的机器可读报告还
+包含编译 p95、分配增长、启动与未改变路由的回归比例。
 
 测试方法、源数据、置信门禁与复现命令见[性能文档](docs/performance.md)；下一阶段量化目标见
 [`0.9.0` 路线图](docs/roadmap-0.9.0.md)。
@@ -208,7 +215,8 @@ flowchart LR
 
 ## 参与贡献
 
-欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`fix/*` 或 `docs/*` 分支上开发，按影响
+欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`perf/*`、`fix/*` 或 `docs/*` 分支上
+开发，按影响
 补充测试，并在请求审核前运行 build、test、format 与相关文档检查。详见[分支管理](docs/branching.md)。
 
 ## 安全问题

@@ -17,6 +17,36 @@ namespace Lunil.CodeGen.Cil.Tests;
 public sealed class LuaNumericRegionTests
 {
     [Fact]
+    public void NaturalLoopAnalysisReusesImmutableModuleResultsAndHonorsCancellation()
+    {
+        var module = Compile("local total = 0; for i = 1, 10 do total = total + i end; return total");
+
+        var first = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+            module,
+            0,
+            out var firstCacheHit,
+            CancellationToken.None);
+        var second = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+            module,
+            0,
+            out var secondCacheHit,
+            CancellationToken.None);
+
+        Assert.False(firstCacheHit);
+        Assert.True(secondCacheHit);
+        Assert.Same(Assert.Single(first), Assert.Single(second));
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.Throws<OperationCanceledException>(() =>
+            LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+                module,
+                0,
+                out _,
+                cancellation.Token));
+    }
+
+    [Fact]
     public void Tier2SelectsTheMaximalVersionedNestedNumericRegion()
     {
         var module = Compile("""

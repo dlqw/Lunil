@@ -75,6 +75,33 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericIlLocal Dirty,
         LuaNumericIlLocal ActiveKind);
 
+    private readonly struct NumericRegionLabelMap(
+        ImmutableArray<int> programCounters,
+        LuaNumericIlLabel[] labels)
+    {
+        public LuaNumericIlLabel this[int programCounter] =>
+            TryGetValue(programCounter, out var label)
+                ? label
+                : throw new InvalidOperationException(
+                    $"Numeric region has no label for PC {programCounter}.");
+
+        public bool TryGetValue(int programCounter, out LuaNumericIlLabel label)
+        {
+            var index = programCounters.BinarySearch(programCounter);
+            if (index >= 0 && labels[index].Id >= 0)
+            {
+                label = labels[index];
+                return true;
+            }
+
+            label = default;
+            return false;
+        }
+
+        public LuaNumericIlLabel GetValueOrDefault(int programCounter) =>
+            TryGetValue(programCounter, out var label) ? label : new(-1);
+    }
+
     private static readonly Type[] CompiledMethodParameters =
     [
         typeof(LuaExecutionContext),
@@ -394,45 +421,43 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var integerTemporary = generator.DeclareLocal(typeof(long));
         var integerRemainder = generator.DeclareLocal(typeof(long));
         var floatingTemporary = generator.DeclareLocal(typeof(double));
-        var hotBodyLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var hotChargeLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var coldSlowTailLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var resumeLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var entryLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var budgetLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var guardLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var hotSemanticDeoptLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var coldSemanticDeoptLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var hotDirectBudgetLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var coldDirectBudgetLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var hotDirectSafepointLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
-        var coldDirectSafepointLabels = plan.Region.ProgramCounters.ToDictionary(
-            static pc => pc,
-            _ => generator.DefineLabel());
+        var hotBodyLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var hotChargeLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var coldSlowTailLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var resumeLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var entryLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var budgetLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        var guardLabels = DefineLabels(generator, plan.Region.ProgramCounters);
+        bool RequiresSemanticDeoptimization(int pc) =>
+            function.Instructions[pc].Opcode is LuaIrOpcode.Binary or
+                LuaIrOpcode.GetTable or LuaIrOpcode.SetTable or LuaIrOpcode.Call;
+        bool IsBoundDirectCall(int pc) =>
+            function.Instructions[pc].Opcode == LuaIrOpcode.Call &&
+            boundDirectCalls?.ContainsKey(pc) == true;
+        var hotSemanticDeoptLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            RequiresSemanticDeoptimization);
+        var coldSemanticDeoptLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            RequiresSemanticDeoptimization);
+        var hotDirectBudgetLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            IsBoundDirectCall);
+        var coldDirectBudgetLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            IsBoundDirectCall);
+        var hotDirectSafepointLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            IsBoundDirectCall);
+        var coldDirectSafepointLabels = DefineLabels(
+            generator,
+            plan.Region.ProgramCounters,
+            IsBoundDirectCall);
         var budgetBoundary = generator.DefineLabel();
         var safepointBoundary = generator.DefineLabel();
         var guardBoundary = generator.DefineLabel();
@@ -553,9 +578,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 integerTemporary,
                 integerRemainder,
                 floatingTemporary,
-                hotSemanticDeoptLabels[pc],
-                hotDirectBudgetLabels[pc],
-                hotDirectSafepointLabels[pc],
+                hotSemanticDeoptLabels.GetValueOrDefault(pc),
+                hotDirectBudgetLabels.GetValueOrDefault(pc),
+                hotDirectSafepointLabels.GetValueOrDefault(pc),
                 cancellationToken);
 
             generator.MarkLabel(coldSlowTailLabels[pc]);
@@ -590,9 +615,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 integerTemporary,
                 integerRemainder,
                 floatingTemporary,
-                coldSemanticDeoptLabels[pc],
-                coldDirectBudgetLabels[pc],
-                coldDirectSafepointLabels[pc],
+                coldSemanticDeoptLabels.GetValueOrDefault(pc),
+                coldDirectBudgetLabels.GetValueOrDefault(pc),
+                coldDirectSafepointLabels.GetValueOrDefault(pc),
                 cancellationToken);
         }
 
@@ -608,50 +633,68 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
             generator.Emit(OpCodes.Br, guardBoundary);
 
-            generator.MarkLabel(hotSemanticDeoptLabels[pc]);
-            EmitSubtractPendingInstructions(
-                generator,
-                pending,
-                plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
-            EmitInt32(generator, plan.GetBudgetSite(pc).DeoptimizationProgramCounter);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, guardBoundary);
+            if (hotSemanticDeoptLabels.TryGetValue(pc, out var hotSemanticDeopt))
+            {
+                generator.MarkLabel(hotSemanticDeopt);
+                EmitSubtractPendingInstructions(
+                    generator,
+                    pending,
+                    plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
+                EmitInt32(generator, plan.GetBudgetSite(pc).DeoptimizationProgramCounter);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, guardBoundary);
+            }
 
-            generator.MarkLabel(coldSemanticDeoptLabels[pc]);
-            EmitCancelLocalInstructionReservation(generator, remaining, pending);
-            EmitInt32(generator, plan.GetBudgetSite(pc).DeoptimizationProgramCounter);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, guardBoundary);
+            if (coldSemanticDeoptLabels.TryGetValue(pc, out var coldSemanticDeopt))
+            {
+                generator.MarkLabel(coldSemanticDeopt);
+                EmitCancelLocalInstructionReservation(generator, remaining, pending);
+                EmitInt32(generator, plan.GetBudgetSite(pc).DeoptimizationProgramCounter);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, guardBoundary);
+            }
 
-            generator.MarkLabel(hotDirectBudgetLabels[pc]);
-            EmitSubtractPendingInstructions(
-                generator,
-                pending,
-                plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
-            EmitInt32(generator, pc);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, budgetBoundary);
+            if (hotDirectBudgetLabels.TryGetValue(pc, out var hotDirectBudget))
+            {
+                generator.MarkLabel(hotDirectBudget);
+                EmitSubtractPendingInstructions(
+                    generator,
+                    pending,
+                    plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
+                EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, budgetBoundary);
+            }
 
-            generator.MarkLabel(coldDirectBudgetLabels[pc]);
-            EmitCancelLocalInstructionReservation(generator, remaining, pending);
-            EmitInt32(generator, pc);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, budgetBoundary);
+            if (coldDirectBudgetLabels.TryGetValue(pc, out var coldDirectBudget))
+            {
+                generator.MarkLabel(coldDirectBudget);
+                EmitCancelLocalInstructionReservation(generator, remaining, pending);
+                EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, budgetBoundary);
+            }
 
-            generator.MarkLabel(hotDirectSafepointLabels[pc]);
-            EmitSubtractPendingInstructions(
-                generator,
-                pending,
-                plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
-            EmitInt32(generator, pc);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, safepointBoundary);
+            if (hotDirectSafepointLabels.TryGetValue(pc, out var hotDirectSafepoint))
+            {
+                generator.MarkLabel(hotDirectSafepoint);
+                EmitSubtractPendingInstructions(
+                    generator,
+                    pending,
+                    plan.GetBudgetSite(pc).FailureInstructionRollbackCount);
+                EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, safepointBoundary);
+            }
 
-            generator.MarkLabel(coldDirectSafepointLabels[pc]);
-            EmitCancelLocalInstructionReservation(generator, remaining, pending);
-            EmitInt32(generator, pc);
-            generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
-            generator.Emit(OpCodes.Br, safepointBoundary);
+            if (coldDirectSafepointLabels.TryGetValue(pc, out var coldDirectSafepoint))
+            {
+                generator.MarkLabel(coldDirectSafepoint);
+                EmitCancelLocalInstructionReservation(generator, remaining, pending);
+                EmitInt32(generator, pc);
+                generator.Emit(OpCodes.Stloc, boundaryProgramCounter);
+                generator.Emit(OpCodes.Br, safepointBoundary);
+            }
         }
 
         generator.MarkLabel(budgetBoundary);
@@ -915,9 +958,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        NumericRegionLabelMap bodyLabels,
+        NumericRegionLabelMap blockEntryLabels,
+        NumericRegionLabelMap resumeLabels,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         Dictionary<int, LuaNumericIlLocal> tableSiteLocals,
@@ -1454,9 +1497,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         int pc,
         LuaIrInstruction instruction,
         LuaBoundDirectCall directCall,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        NumericRegionLabelMap bodyLabels,
+        NumericRegionLabelMap blockEntryLabels,
+        NumericRegionLabelMap resumeLabels,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         LuaNumericIlLocal remaining,
@@ -1837,9 +1880,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        NumericRegionLabelMap bodyLabels,
+        NumericRegionLabelMap blockEntryLabels,
+        NumericRegionLabelMap resumeLabels,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         LuaNumericIlLocal remaining,
@@ -1927,9 +1970,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericExecutionPath executionPath,
         int pc,
         LuaIrInstruction instruction,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        NumericRegionLabelMap bodyLabels,
+        NumericRegionLabelMap blockEntryLabels,
+        NumericRegionLabelMap resumeLabels,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         LuaNumericIlLocal remaining,
@@ -2070,9 +2113,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericExecutionPath executionPath,
         int sourceProgramCounter,
         int targetProgramCounter,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> bodyLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> blockEntryLabels,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> resumeLabels,
+        NumericRegionLabelMap bodyLabels,
+        NumericRegionLabelMap blockEntryLabels,
+        NumericRegionLabelMap resumeLabels,
         Dictionary<(int Register, LuaNumericRegionValueKind Kind), LuaNumericIlLocal> valueLocals,
         Dictionary<int, NumericDirtyState> dirtyLocals,
         LuaNumericIlLocal remaining,
@@ -2433,17 +2476,35 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     private static void EmitSwitch(
         LuaNumericRegionIlGenerator generator,
         int instructionCount,
-        IReadOnlyDictionary<int, LuaNumericIlLabel> labels,
+        NumericRegionLabelMap labels,
         LuaNumericIlLabel invalidatedExit)
     {
         var dispatch = new LuaNumericIlLabel[instructionCount];
         for (var pc = 0; pc < dispatch.Length; pc++)
         {
-            dispatch[pc] = labels.GetValueOrDefault(pc, invalidatedExit);
+            dispatch[pc] = labels.TryGetValue(pc, out var label) ? label : invalidatedExit;
         }
 
         generator.Emit(OpCodes.Switch, dispatch);
         generator.Emit(OpCodes.Br, invalidatedExit);
+    }
+
+    private static NumericRegionLabelMap DefineLabels(
+        LuaNumericRegionIlGenerator generator,
+        ImmutableArray<int> programCounters,
+        Func<int, bool>? include = null)
+    {
+        var labels = new LuaNumericIlLabel[programCounters.Length];
+        Array.Fill(labels, new LuaNumericIlLabel(-1));
+        for (var index = 0; index < programCounters.Length; index++)
+        {
+            if (include is null || include(programCounters[index]))
+            {
+                labels[index] = generator.DefineLabel();
+            }
+        }
+
+        return new NumericRegionLabelMap(programCounters, labels);
     }
 
     private static Type LocalType(LuaNumericRegionValueKind kind) => kind switch

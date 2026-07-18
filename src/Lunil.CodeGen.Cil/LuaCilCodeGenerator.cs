@@ -65,7 +65,7 @@ public static class LuaCilCodeGenerator
         ArgumentNullException.ThrowIfNull(module);
         cancellationToken.ThrowIfCancellationRequested();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var irErrors = LuaIrVerifier.Verify(module);
+        var irErrors = LuaIrVerificationCache.Verify(module);
         cancellationToken.ThrowIfCancellationRequested();
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!irErrors.IsEmpty)
