@@ -5,11 +5,11 @@ Git tags, changelog names, binary bundle names, and GitHub releases all derive f
 one version declared in `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.8.0</VersionPrefix>
+<VersionPrefix>0.9.0</VersionPrefix>
+<VersionSuffix>alpha.1</VersionSuffix>
 ```
 
-The resulting source/package version is stable `0.8.0` and its immutable tag is `v0.8.0`.
-`VersionSuffix` was removed only after accepting `0.8.0-rc.1`.
+The resulting source/package version is `0.9.0-alpha.1`; stable `v0.8.0` remains immutable.
 
 The three numeric fields select the compatibility line; the optional suffix selects
 the maturity channel of a build on that line. A backend passing its performance gates
@@ -42,6 +42,7 @@ actual maturity and allowed-change policy.
 | Accept an RC without further code changes | Remove the suffix and publish `0.8.0` from the accepted commit |
 | Fix a backward-compatible defect after stable `0.7.0` | Publish `0.7.1` |
 | Begin the next feature/API milestone after `0.7.0` | Start `0.8.0-alpha.1` |
+| Begin backend/API architecture work after stable `0.8.0` | Start `0.9.0-alpha.1` |
 
 Documentation-only release preparation does not consume a new prerelease number when the
 current number has not been published. Once a prerelease tag exists, every code or release
@@ -149,6 +150,19 @@ to `0.7.x` patches. Stable patches remain backward-compatible; later public API/
 starts on the next minor line rather than being hidden in a patch or reused prerelease number.
 Backward-compatible fixes to stable `0.8.0` use `0.8.1`; new feature/API/backend work starts at
 `0.9.0-alpha.1`.
+
+## Current `0.9.0-alpha.1` decision
+
+Stable `0.8.0` is the immutable behavior, ABI, API/package, and performance baseline. The first
+`0.9` Alpha removes the obsolete Loop OSR-only IL emitter: Tier 2 function-entry and Loop OSR
+backedge-entry compilation now share the same natural-loop analysis, exact type proof, budget plan,
+numeric emitter, and canonical deoptimization contract. Loop OSR remains independently configurable
+for isolation and uses the managed canonical program when the shared proof is unavailable.
+
+[ADR 0022](adr/0022-unified-numeric-specialization-pass.md) also retains the internal compiler
+interfaces as deterministic lifecycle-test seams and rejects a source-generator backend. No Lua AOT
+surface is restored. The reviewed `api/0.9.0` snapshot contains the same 13 public assemblies and
+packages as stable `0.8.0`; Alpha may change it only through explicit versioned review.
 
 ## Release procedure
 

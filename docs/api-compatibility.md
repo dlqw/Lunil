@@ -1,8 +1,8 @@
 # Versioned API and package compatibility
 
-Lunil keeps compatibility data by pre-1.0 minor line. Historical data is immutable, and the stable
-`0.8` line uses exact public-API and package gates so additions, removals, signature changes, or
-asset changes cannot enter accidentally.
+Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable, while
+the active `0.9` Alpha uses reviewed public-API and package snapshots so intentional architecture
+work is visible without rewriting stable `0.8` declarations.
 
 ## Compatibility lines
 
@@ -12,7 +12,7 @@ asset changes cannot enter accidentally.
 `0.7` line. The declarations, manifest, and package assets under [`api/0.7.0/`](../api/0.7.0/)
 must continue to match the stable `v0.7.0` tag; later feature work never rewrites them.
 
-### Active `0.8.0`
+### Frozen `0.8.0`
 
 [`api/0.8.0/`](../api/0.8.0/) freezes the public API, assembly, and package scope accepted at
 `0.8.0-beta.1`. Its exact gates reject additions, removals, signature or nullability changes,
@@ -37,8 +37,14 @@ stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
 `LuaJitProfileRemapper` result/status types. These additions are versioned Alpha contracts backed
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
+### Active `0.9.0`
+
+[`api/0.9.0/`](../api/0.9.0/) is the reviewed Alpha snapshot for the current 13 assemblies and
+13 packages. `0.9.0-alpha.1` makes no public API or package-scope change relative to stable `0.8.0`,
+but keeps separate baselines so later reviewed Alpha work never mutates the stable line.
+
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with
-stable `0.8.0` they read and update only `api/0.8.0/`.
+`0.9.0-alpha.1` they read and update only `api/0.9.0/`.
 
 ## Public API baseline
 
@@ -57,8 +63,8 @@ declarations:
 
 ```powershell
 ./scripts/Update-PublicApiBaselines.ps1 -Configuration Release
-git diff -- api/0.8.0
-git diff --exit-code v0.7.0 -- api/0.7.0
+git diff -- api/0.9.0
+git diff --exit-code v0.8.0 -- api/0.8.0
 ```
 
 Beta and RC updates are limited by the promotion policy in [versioning](versioning.md); new API and
@@ -90,8 +96,8 @@ The update command is reserved for a reviewed package-boundary change:
 
 ```powershell
 ./scripts/Update-PackageBaseline.ps1 -Version $version
-git diff -- api/0.8.0/packages.json
-git diff --exit-code v0.7.0 -- api/0.7.0/packages.json
+git diff -- api/0.9.0/packages.json
+git diff --exit-code v0.8.0 -- api/0.8.0/packages.json
 ```
 
 Normal CI and tag-triggered release workflows enforce the active gates. Stable patch fixes update

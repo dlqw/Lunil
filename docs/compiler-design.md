@@ -673,8 +673,10 @@ upvalue access 和 guarded empty-range `Close`。primitive guard 在 reservation
 owner-scoped `ConditionalWeakTable` 缓存；显式 plan limit 不共享缓存，module 回收不会被 plan 反向
 阻止。Reflection.Emit ABI method lookup 和首次 DynamicMethod 基础设施在 executor startup 预热；
 动态代码可用且 Tier 2 未关闭时还会按进程预热完整 profile planning、deopt-map build 与
-specialized emission pipeline。Loop OSR specialized emitter 改为在 hotness 和运行时数值资格通过后
-惰性初始化，因此即使 release 默认启用 OSR，冷函数、短循环和 NativeAOT 进程也不承担该初始化成本。
+specialized emission pipeline。`0.9.0-alpha.1` 删除 Loop OSR 专属旧 emitter：函数入口与回边入口
+都由 `LuaNumericRegionAnalyzer`、`LuaNumericRegionPlanner` 和
+`ReflectionEmitLuaNumericRegionCompiler` 组成的同一 pass 处理；共享 proof 失败时只走 canonical
+managed fallback，不再尝试第二套较宽松 emitter。详见 [ADR 0022](adr/0022-unified-numeric-specialization-pass.md)。
 
 ### 9.3 已移除的 Lua AOT
 
