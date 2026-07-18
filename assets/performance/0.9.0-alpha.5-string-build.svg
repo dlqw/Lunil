@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">Lunil 0.9.0-alpha.5 string_build performance</title>
+  <desc id="desc">Normalized CPU time per operation on win-x64, native Lua equals 1.000x.</desc>
+  <rect width="900" height="360" fill="#0f172a" rx="18"/>
+  <text x="48" y="54" fill="#f8fafc" font-family="Segoe UI,Arial,sans-serif" font-size="24" font-weight="700">string_build · normalized throughput</text>
+  <text x="48" y="82" fill="#94a3b8" font-family="Segoe UI,Arial,sans-serif" font-size="14">0.9.0-alpha.5 · win-x64 · six balanced rounds · native Lua = 1.000x</text>
+  <line x1="270" y1="112" x2="270" y2="300" stroke="#334155"/>
+  <line x1="270" y1="300" x2="820" y2="300" stroke="#334155"/>
+  <g fill="#64748b" font-family="Segoe UI,Arial,sans-serif" font-size="12">
+    <text x="266" y="322">0.0</text><text x="403" y="322">0.25</text><text x="540" y="322">0.50</text><text x="678" y="322">0.75</text><text x="813" y="322">1.00</text>
+  </g>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="15" fill="#e2e8f0">
+    <text x="48" y="145">Native Lua 5.4</text><text x="48" y="205">Lunil Auto JIT</text><text x="48" y="265">MoonSharp</text>
+  </g>
+  <rect x="270" y="124" width="550" height="30" rx="6" fill="#38bdf8"/>
+  <rect x="270" y="184" width="443" height="30" rx="6" fill="#a78bfa"/>
+  <rect x="270" y="244" width="279" height="30" rx="6" fill="#64748b"/>
+  <g fill="#f8fafc" font-family="Segoe UI,Arial,sans-serif" font-size="15" font-weight="600">
+    <text x="832" y="145" text-anchor="end">1.000x</text><text x="725" y="205">0.805x</text><text x="561" y="265">0.508x</text>
+  </g>
+  <text x="48" y="346" fill="#64748b" font-family="Segoe UI,Arial,sans-serif" font-size="11">CPU nanoseconds per logical operation; higher normalized value is faster.</text>
+</svg>

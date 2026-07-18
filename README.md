@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.4-7c3aed?style=flat-square">
+  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.5-7c3aed?style=flat-square">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,11 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 
 > [!NOTE]
 > Stable `0.8.0` is the supported release and benchmark baseline. The current source is
-> `0.9.0-alpha.4`; Alpha builds may change API and backend behavior before feature freeze.
+> `0.9.0-alpha.5`; Alpha builds may change API and backend behavior before feature freeze.
 
 ## Performance
 
-The current `0.9.0-alpha.4` report uses identical Lua source across eight workloads, six balanced
+The latest `0.9.0-alpha.4` release qualification uses identical Lua source across eight workloads, six balanced
 rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
 
 | Engine | Geomean vs native Lua | Geomean vs MoonSharp |
@@ -71,10 +71,24 @@ runs, not paired same-machine speedups.
 | `0.9.0-alpha.3` | 0.947x | 1.289x | 0.569x |
 | **`0.9.0-alpha.4`** | **1.326x** | **2.348x** | **4.307x** |
 
-The current source also passes backend correctness, NativeAOT, trimming, package/API, route,
-telemetry, startup, allocation, and code-size qualification. The
+The Alpha 4 qualification also passed backend correctness, NativeAOT, trimming, package/API, route,
+telemetry, startup, allocation, and code-size checks. The
 [machine-readable report](benchmarks/results/0.9.0-alpha.4-performance.json) includes exact values
 and backend costs.
+
+### Alpha 5 string-build qualification
+
+Alpha 5 focuses on transient string allocation, concatenation, and `table.concat`. The current
+single-RID win-x64 qualification sample uses six balanced rounds and keeps native Lua as the
+normalization baseline; it is reported separately from the release matrix:
+
+| Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
+| --- | ---: | ---: | ---: |
+| Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
+| **Lunil Auto JIT** | **169.837 µs** | **0.805x** | **1.615x** |
+| MoonSharp | 283.203 µs | 0.508x | 1.000x |
+
+![Lunil 0.9.0-alpha.5 string-build comparison](assets/performance/0.9.0-alpha.5-string-build.svg)
 
 See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
 reproduction commands. The [0.9.0 roadmap](docs/roadmap-0.9.0.md) defines the next performance
@@ -208,9 +222,8 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
   layouts are rejected rather than truncated.
 - Stable line: `0.8.x`; active development line: `0.9.0-alpha.N`.
 
-Breaking changes from `0.7.0`, including the removal of Lua persisted/static AOT, are documented in
-the [0.8.0 migration guide](docs/migration-0.8.0.md). .NET NativeAOT remains supported as a host
-deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
+Compatibility changes and deployment notes are documented in the [0.8.0 migration guide](docs/migration-0.8.0.md).
+.NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
 
 ## Documentation
 

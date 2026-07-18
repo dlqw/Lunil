@@ -62,7 +62,7 @@ the primary `0.9.0` optimization targets.
 
 ## Current development snapshot
 
-`0.9.0-alpha.4` has complete six-RID cross-runtime and backend qualification using the same
+`0.9.0-alpha.4` is the latest complete six-RID cross-runtime and backend qualification using the same
 workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 
 | Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
@@ -102,6 +102,17 @@ release gates:
 
 The compact source report is available at
 [`benchmarks/results/0.9.0-alpha.4-performance.json`](../benchmarks/results/0.9.0-alpha.4-performance.json).
+
+`0.9.0-alpha.5` extends the string-build path. The following win-x64 qualification sample records a
+six-round result; it is intentionally reported separately from the six-RID release matrix:
+
+| Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
+| --- | ---: | ---: | ---: |
+| Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
+| **Lunil Auto JIT** | **169.837 µs** | **0.805x** | **1.615x** |
+| MoonSharp | 283.203 µs | 0.508x | 1.000x |
+
+![Runtime comparison for Lunil 0.9.0-alpha.5 string_build](../assets/performance/0.9.0-alpha.5-string-build.svg)
 
 ## Reproduce the benchmark
 
