@@ -288,6 +288,12 @@ namespace Lunil.IR.Lua53
         BigEndian = 1
     }
 
+    public static class Lua53CanonicalPrototypeWriter
+    {
+        public static Lunil.IR.Lua53.Lua53Chunk CreateChunk(Lunil.IR.Canonical.LuaIrModule module, int functionId, Lunil.IR.Lua53.Lua53ChunkTarget? target = null) => throw null;
+        public static byte[] Write(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebugInformation = false, Lunil.IR.Lua53.Lua53ChunkTarget? target = null) => throw null;
+    }
+
     public sealed class Lua53Chunk : System.IEquatable<Lunil.IR.Lua53.Lua53Chunk>
     {
         public Lunil.IR.Lua53.Lua53ChunkTarget Target { get => throw null; init { } }
@@ -357,6 +363,11 @@ namespace Lunil.IR.Lua53
         public bool Equals(Lunil.IR.Lua53.Lua53ChunkTarget other) => throw null;
     }
 
+    public static class Lua53ChunkWriter
+    {
+        public static byte[] Write(Lunil.IR.Lua53.Lua53Chunk chunk, bool stripDebugInformation = false) => throw null;
+    }
+
     public sealed class Lua53Constant : System.IEquatable<Lunil.IR.Lua53.Lua53Constant>
     {
         public Lunil.IR.Lua53.Lua53ConstantKind Kind { get => throw null; init { } }
@@ -412,6 +423,10 @@ namespace Lunil.IR.Lua53
         public int ConstantB { get => throw null; }
         public int ConstantC { get => throw null; }
         public Lua53Instruction(uint RawValue) { }
+        public static Lunil.IR.Lua53.Lua53Instruction CreateAbc(Lunil.IR.Lua53.Lua53Opcode opcode, int a, int b, int c) => throw null;
+        public static Lunil.IR.Lua53.Lua53Instruction CreateABx(Lunil.IR.Lua53.Lua53Opcode opcode, int a, int bx) => throw null;
+        public static Lunil.IR.Lua53.Lua53Instruction CreateASignedBx(Lunil.IR.Lua53.Lua53Opcode opcode, int a, int signedBx) => throw null;
+        public static Lunil.IR.Lua53.Lua53Instruction CreateAx(Lunil.IR.Lua53.Lua53Opcode opcode, int ax) => throw null;
         #nullable disable
         public override string ToString() => throw null;
         #nullable restore

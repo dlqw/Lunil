@@ -145,7 +145,7 @@ public static class Lua53ChunkReader
                 constants.Add(ReadConstant());
             }
 
-            var upvalueCount = ReadByte();
+            var upvalueCount = ReadInt("upvalue count");
             AddToBudget(ref _debugEntryCount, upvalueCount, _options.MaximumUpvalueCount,
                 "upvalue count");
             EnsureCountFitsRemaining(upvalueCount, 2, "upvalue count");

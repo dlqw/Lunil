@@ -2,8 +2,10 @@ using Lunil.Cli.CommandLine;
 using Lunil.Cli.Diagnostics;
 using Lunil.Cli.IO;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 
 namespace Lunil.Cli.Commands;
@@ -25,7 +27,9 @@ internal static class BuildCommand
             {
                 modules.Add(new BuildModule(
                     input.ModuleName,
-                    Lua54PrototypeConverter.Convert(input.Bytes)));
+                    context.Options.LanguageVersion == LuaLanguageVersion.Lua53
+                        ? Lua53PrototypeConverter.Convert(input.Bytes)
+                        : Lua54PrototypeConverter.Convert(input.Bytes)));
             }
             catch (Exception exception) when (exception is Lua54ChunkFormatException or
                 InvalidDataException or ArgumentException)
@@ -96,10 +100,15 @@ internal static class BuildCommand
         foreach (var module in modules.OrderBy(static module => module.Name, StringComparer.Ordinal))
         {
             context.CancellationToken.ThrowIfCancellationRequested();
-            var bytes = Lua54CanonicalPrototypeWriter.Write(
-                module.Module,
-                functionId: 0,
-                context.Options.StripDebug);
+            var bytes = module.Module.LanguageVersion == LuaLanguageVersion.Lua53
+                ? Lua53CanonicalPrototypeWriter.Write(
+                    module.Module,
+                    functionId: 0,
+                    context.Options.StripDebug)
+                : Lua54CanonicalPrototypeWriter.Write(
+                    module.Module,
+                    functionId: 0,
+                    context.Options.StripDebug);
             var path = outputIsDirectory
                 ? Path.Combine(output, GetArtifactRelativePath(module.Name) + ".luac")
                 : output;

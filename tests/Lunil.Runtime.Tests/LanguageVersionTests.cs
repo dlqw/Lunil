@@ -83,7 +83,7 @@ public sealed class LanguageVersionTests
         WriteInt32(bytes, 1);
         bytes.Add(19);
         WriteInt64(bytes, 42);
-        bytes.Add(1);
+        WriteInt32(bytes, 1);
         bytes.AddRange([1, 0]);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 2);

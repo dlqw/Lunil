@@ -463,6 +463,49 @@ public sealed class LunilCliTests
     }
 
     [Fact]
+    public async Task Lua53BuildProducesLua53ChunkThatRunsWithLua53Selection()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("app53.lua", "print(_VERSION, 6 * 7)");
+        var output = Path.Combine(fixture.Root, "app53.luac");
+
+        var build = await fixture.RunAsync(
+            "build",
+            script,
+            "-o",
+            output,
+            "--lua-version",
+            "5.3");
+        var run = await fixture.RunAsync(
+            "run",
+            output,
+            "--lua-version",
+            "5.3");
+
+        Assert.Equal(0, build.ExitCode);
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal("Lua 5.3\t42\n", run.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Lua53DumpChunkUsesLua53OpcodeAdapter()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("dump53.lua", "return 42");
+
+        var result = await fixture.RunAsync(
+            "dump",
+            script,
+            "--kind",
+            "chunk",
+            "--lua-version",
+            "5.3");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("LoadConstant", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task BinaryChunkRuntimeErrorsUseExecutionExitCode()
     {
         using var fixture = new CliFixture();

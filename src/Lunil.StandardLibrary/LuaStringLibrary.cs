@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Numerics;
 using System.Text;
 using System.Buffers;
+using Lunil.Core;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -473,10 +475,15 @@ internal static class LuaStringLibrary
         var strip = arguments.Length > 1 && arguments[1].IsTruthy;
         try
         {
-            var bytes = Lua54CanonicalPrototypeWriter.Write(
-                closure.Module,
-                closure.Function.Id,
-                strip);
+            var bytes = closure.Module.LanguageVersion == LuaLanguageVersion.Lua53
+                ? Lua53CanonicalPrototypeWriter.Write(
+                    closure.Module,
+                    closure.Function.Id,
+                    strip)
+                : Lua54CanonicalPrototypeWriter.Write(
+                    closure.Module,
+                    closure.Function.Id,
+                    strip);
             return [String(state, bytes)];
         }
         catch (Exception exception) when (

@@ -140,6 +140,12 @@ public static class Lua53PrototypeConverter
 
         private void ConvertInstruction(Lua53Instruction instruction)
         {
+            if (!Lua53GeneratedOpcodeTable.IsDefined(instruction.Opcode))
+            {
+                throw new InvalidDataException(
+                    $"Unsupported Lua 5.3 opcode {Lua53GeneratedOpcodeTable.GetName(instruction.Opcode)}.");
+            }
+
             switch (instruction.Opcode)
             {
                 case Lua53Opcode.Move:
@@ -341,8 +347,38 @@ public static class Lua53PrototypeConverter
             EmitRk(Scratch0, instruction.B, instruction.IsConstantB);
             EmitRk(Scratch1, instruction.C, instruction.IsConstantC);
             Emit(LuaIrOpcode.Binary, Scratch2, Scratch0, Scratch1, (int)operation);
-            EmitConditionalJump(instruction.A != 0, Scratch2, GetCompanionJumpTarget());
+            if (_sourceProgramCounter + 1 < Prototype.Code.Length &&
+                Prototype.Code[_sourceProgramCounter + 1].Opcode == Lua53Opcode.Jump)
+            {
+                EmitConditionalJump(instruction.A != 0, Scratch2, GetCompanionJumpTarget());
+                return;
+            }
+
+            var result = _sourceProgramCounter + 1 < Prototype.Code.Length
+                ? Prototype.Code[_sourceProgramCounter + 1]
+                : default;
+            if (result.Opcode != Lua53Opcode.LoadBoolean || result.B != 1)
+            {
+                throw new InvalidDataException(
+                    "Lua 5.3 comparison must be followed by a conditional jump or boolean materialization.");
+            }
+
+            var materializedOperation = instruction.A != 0
+                ? operation
+                : InvertComparison(operation);
+            _instructions.RemoveAt(_instructions.Count - 1);
+            Emit(LuaIrOpcode.Binary, Scratch2, Scratch0, Scratch1,
+                (int)materializedOperation);
+            EmitConditionalJump(false, Scratch2, _sourceProgramCounter + 2);
         }
+
+        private static LuaIrBinaryOperator InvertComparison(LuaIrBinaryOperator operation) => operation switch
+        {
+            LuaIrBinaryOperator.Equal => LuaIrBinaryOperator.NotEqual,
+            LuaIrBinaryOperator.LessThan => LuaIrBinaryOperator.GreaterThanOrEqual,
+            LuaIrBinaryOperator.LessThanOrEqual => LuaIrBinaryOperator.GreaterThan,
+            _ => throw new InvalidDataException("Unknown comparison operator."),
+        };
 
         private void EmitBinaryRk(Lua53Instruction instruction, LuaIrBinaryOperator operation)
         {

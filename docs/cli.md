@@ -26,7 +26,8 @@ lunil dump <input> [--kind <kind>] [--format text|json] [options]
   text or `lunil.dump.v1` JSON. `--output -` or no output path writes to stdout.
 - `--lua-version 5.1|5.2|5.3|5.4|5.5` selects the explicit language contract. Lua 5.4 is the
   default. The Lua 5.3 source/interpreter path and Lua 5.3 binary-chunk importer are available in
-  the current 0.10.0 development slice; versions whose semantics are not implemented yet fail
+  the current 0.10.0 development slice, including Lua 5.3 chunk build and `string.dump` output;
+  versions whose semantics are not implemented yet fail
   with a diagnostic rather than silently using Lua 5.4.
 
 `--output` is valid only for `build` and `dump`; `--target` and `--strip-debug` only for `build`;

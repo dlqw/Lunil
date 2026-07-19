@@ -26,13 +26,18 @@ binary chunk format are not identical to Lua 5.4.
    reader.
 5. Binary loading dispatches from the runtime state's language version. Reader resource budgets
    remain enforced when the existing host/runtime reader options are supplied.
+6. The first zero-runtime-cost generation boundary is `Lunil.IR.Generators`, which generates the
+   Lua 5.3 opcode validity/name table from `Lua53Opcode`. Future generated codecs will extend this
+   boundary without moving version selection into the VM hot loop.
 
 ## Scope of this slice
 
 The slice covers the source/compiler/runtime/hosting path, the Lua 5.3 standard-library boundary,
-and verified import of Lua 5.3 chunks into canonical IR. Canonical Lua 5.3 chunk writing and the
-complete PUC Lua 5.3 conformance corpus remain follow-up work in the same task; until then the
-existing Lua 5.4 build target must not emit a mislabeled Lua 5.3 chunk.
+Lua 5.3 canonical chunk writing, and verified import of Lua 5.3 chunks into canonical IR. The
+official Lua 5.3.4 test archive is pinned with selected upstream fixtures, while the full suite
+remains an incremental conformance target because it contains platform, internal-API, and
+unsupported-library cases. An opt-in PUC Lua 5.3 differential corpus is available through
+`LUNIL_PUC_LUA53` (or `lua5.3`/`lua53` on PATH).
 
 ## Consequences
 
@@ -40,5 +45,5 @@ existing Lua 5.4 build target must not emit a mislabeled Lua 5.3 chunk.
 - Lua 5.1, 5.2, and 5.5 still return `LUA0001`; they are not mapped to Lua 5.3 or Lua 5.4.
 - The Lua 5.3 adapter can evolve its header, prototype, and opcode verification independently from
   `Lunil.IR.Lua54`.
-- The remaining work is explicit: complete opcode edge cases, add a canonical Lua 5.3 writer, and
-  register official Lua 5.3 conformance/differential fixtures.
+- The remaining work is explicit: complete opcode edge cases and grow the selected official
+  conformance set as the Lua 5.3 standard-library and runtime matrix expands.

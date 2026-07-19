@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Values;
 
@@ -114,6 +115,19 @@ public static class LuaRuntimeOperations
                 LuaValueOperations.Unary(operation, numericOperand));
         }
 
+        if (operation == LuaIrUnaryOperator.BitwiseNot &&
+            state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+            LuaValueOperations.TryToNumber(operand, out var numericBitwiseOperand))
+        {
+            if (!numericBitwiseOperand.TryGetInteger(out var integerOperand))
+            {
+                throw new LuaRuntimeException("number has no integer representation");
+            }
+
+            return LuaOperationResolution.Immediate(
+                LuaValueOperations.Unary(operation, LuaValue.FromInteger(integerOperand)));
+        }
+
         if (operation == LuaIrUnaryOperator.BitwiseNot && IsNumber(operand) &&
             !operand.TryGetInteger(out _))
         {
@@ -181,16 +195,37 @@ public static class LuaRuntimeOperations
                 LuaValueOperations.Binary(state, operation, numericLeft, numericRight));
         }
 
-        if (IsBitwise(operation) && IsNumber(left) && IsNumber(right))
+        if (IsBitwise(operation) && state.LanguageVersion == LuaLanguageVersion.Lua53)
+        {
+            long leftValue = 0;
+            long rightValue = 0;
+            var leftInteger = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise) &&
+                numericLeftBitwise.TryGetInteger(out leftValue);
+            var rightInteger = LuaValueOperations.TryToNumber(right, out var numericRightBitwise) &&
+                numericRightBitwise.TryGetInteger(out rightValue);
+            if (leftInteger && rightInteger)
+            {
+                return LuaOperationResolution.Immediate(
+                    LuaValueOperations.Binary(
+                        state,
+                        operation,
+                        LuaValue.FromInteger(leftValue),
+                        LuaValue.FromInteger(rightValue)));
+            }
+
+            if (LuaValueOperations.TryToNumber(left, out _) ||
+                LuaValueOperations.TryToNumber(right, out _))
+            {
+                throw new LuaRuntimeException("number has no integer representation");
+            }
+        }
+
+        if (IsBitwise(operation) && state.LanguageVersion != LuaLanguageVersion.Lua53 &&
+            IsNumber(left) && IsNumber(right))
         {
             if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
             {
-                var positiveInfinity =
-                    left.Kind == LuaValueKind.Float && double.IsPositiveInfinity(left.AsFloat()) ||
-                    right.Kind == LuaValueKind.Float && double.IsPositiveInfinity(right.AsFloat());
-                throw new LuaRuntimeException(positiveInfinity
-                    ? "number (field 'huge') has no integer representation"
-                    : "number has no integer representation");
+                throw new LuaRuntimeException("number has no integer representation");
             }
 
             return LuaOperationResolution.Immediate(

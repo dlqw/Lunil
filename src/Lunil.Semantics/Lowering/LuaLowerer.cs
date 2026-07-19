@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -774,15 +775,17 @@ public static class LuaLowerer
                 LowerExpressionList(expressionList, controlBase, 4);
                 _nextRegister = controlBase + 4;
                 _localTop = _nextRegister;
-                Emit(new LuaIrInstruction(
-                    LuaIrOpcode.MarkToBeClosed,
-                    controlBase + 3,
-                    span: statement.Span));
-                // The fourth generic-for control register is an implicit to-be-closed
-                // local. It has no bound symbol, but a goto leaving this loop must still
-                // close it (and every nested local) before reaching its label.
-                _activeSyntheticCloseRegisters.Add(controlBase + 3);
-                _activeToBeClosedRegisters.Add(controlBase + 3);
+                if (_owner._model.LanguageVersion == LuaLanguageVersion.Lua54)
+                {
+                    Emit(new LuaIrInstruction(
+                        LuaIrOpcode.MarkToBeClosed,
+                        controlBase + 3,
+                        span: statement.Span));
+                    // Lua 5.4 models the fourth generic-for control register as an implicit
+                    // to-be-closed local. Lua 5.3 has no close protocol for this register.
+                    _activeSyntheticCloseRegisters.Add(controlBase + 3);
+                    _activeToBeClosedRegisters.Add(controlBase + 3);
+                }
                 for (var index = 0; index < 4; index++)
                 {
                     AddSyntheticLocal("(for state)");
