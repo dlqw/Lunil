@@ -7,7 +7,6 @@ on:
       - "feature/**"
       - "perf/**"
       - "fix/**"
-      - "docs/**"
       - "release/**"
   pull_request:
     branches:
@@ -65,7 +64,13 @@ jobs:
 
           $lightOnly = $true
           foreach ($path in $paths) {
-            $isLightPath = $path -match '^(docs/|changelogs/|assets/performance/|benchmarks/results/|README\.md$|README\.zh-CN\.md$|\.github/pull_request_template\.md$)'
+            # The chart generator only transforms checked-in benchmark data into SVG assets; it
+            # does not compile product code or alter benchmark workloads. Keep chart/documentation
+            # changes on the lightweight documentation boundary while retaining full validation for
+            # all other scripts and build inputs.
+            $isChartGenerator = $path -eq 'scripts/New-PerformanceCharts.ps1'
+            $isLightPath = $isChartGenerator -or
+              $path -match '^(docs/|changelogs/|assets/performance/|benchmarks/results/|README\.md$|README\.zh-CN\.md$|\.github/pull_request_template\.md$)'
             if (-not $isLightPath) {
               $lightOnly = $false
               Write-Host "Full validation required by: $path"

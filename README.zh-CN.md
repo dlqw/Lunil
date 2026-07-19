@@ -25,28 +25,24 @@ Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.9.0` 是当前支持版本与性能基线。本版本保持 Lua 5.4.8 语义，并通过六个发布 RID
-> 的资格门禁。
+> 稳定版 `0.9.0` 是当前支持版本与性能基线，在六个发布 RID 上保持 Lua 5.4.8 语义。
 
 ## 性能
 
-`0.9.0` 的发布资格测量使用完全相同的 Lua 源码，在八个 workload、六轮平衡采样和全部六个发布 RID
-上测试。原生 PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。
+`0.9.0` 的结果使用完全相同的 Lua 源码，在八个工作负载、六轮平衡采样和全部六个发布 RID
+上测试。PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。参考运行时为 PUC Lua 5.4.8、LuaJIT 2.1
+和 MoonSharp 2.0.0。
 
-| 引擎 | 相对原生 Lua 几何均值 | 相对 MoonSharp 几何均值 |
-| --- | ---: | ---: |
-| LuaJIT | 11.518x | 164.301x |
-| 原生 Lua 5.4 | 1.000x | 14.287x |
-| Lunil Tier 2 | 1.702x | 24.314x |
-| **Lunil Auto JIT** | **1.688x** | **24.089x** |
-| Lunil Loop OSR | 0.157x | 2.238x |
-| Lunil Tier 1 | 0.106x | 1.504x |
-| MoonSharp | 0.070x | 1.000x |
-| Lunil 解释器 | 0.051x | 0.725x |
+| 引擎 | 版本 | 相对 PUC Lua 5.4.8 几何均值 | 相对 MoonSharp 2.0.0 几何均值 |
+| --- | --- | ---: | ---: |
+| LuaJIT | 2.1（commit `3c4f9fe`） | 11.518x | 164.301x |
+| PUC Lua | 5.4.8 | 1.000x | 14.287x |
+| **Lunil Auto JIT** | **0.9.0** | **1.688x** | **24.089x** |
+| MoonSharp | 2.0.0 | 0.070x | 1.000x |
 
 ![Lunil 0.9.0 运行时对比](assets/performance/0.9.0-runtime-overview.svg)
 
-| Auto JIT workload | 相对原生 Lua | 相对 MoonSharp |
+| Auto JIT 工作负载 | 相对 PUC Lua 5.4.8 | 相对 MoonSharp 2.0.0 |
 | --- | ---: | ---: |
 | 算术循环 | 1.643x | 36.094x |
 | 迭代 Fibonacci | 3.232x | 46.988x |
@@ -57,26 +53,10 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 | 素数筛 | 0.530x | 12.698x |
 | 字符串构建 | 2.164x | 5.372x |
 
-![Lunil 0.9.0 Auto JIT 分 workload 对比](assets/performance/0.9.0-auto-workloads.svg)
+![Lunil 0.9.0 Auto JIT 按工作负载对比](assets/performance/0.9.0-auto-workloads.svg)
 
-稳定版让稳定的字符串-数字拼接与密集字符串数组写入留在同一个带守卫 Tier 2 区域内。分段证据
-没有证明需要新增密集 `table.concat` 批量复制路径；沿用现有 concat 实现时，完整 `string_build`
-workload 已达到原生 Lua 的 `2.164x`。下表来自各版本独立的六 RID 资格测试，不代表同机器配对增幅。
-
-| 版本 | Auto 总体 | 控制流 | 字符串构建 |
-| --- | ---: | ---: | ---: |
-| 稳定版 `0.8.0` | 0.680x | 2.070x | 0.591x |
-| `0.9.0-alpha.4` | 1.326x | 1.937x | 0.592x |
-| `0.9.0-alpha.5` | 1.688x | 2.101x | 2.164x |
-| **`0.9.0`** | **1.688x** | **2.101x** | **2.164x** |
-
-已接受源码完成了 Beta 资格矩阵：全部路线图目标、后端成本、conformance/differential、NativeAOT、
-trimming、包/API、路由、telemetry、启动、分配和 code-size 门禁均通过。
-[机器可读报告](benchmarks/results/0.9.0-performance.json)记录了精确值、产品提交和已通过的
-workflow run。
-
-测试方法、源数据、置信门禁与复现命令见[性能文档](docs/performance.md)；下一阶段量化目标见
-[`0.9.0` 路线图](docs/roadmap-0.9.0.md)。
+默认 Auto JIT 在 `string_build` 工作负载上达到 PUC Lua 5.4.8 的 `2.164x`。测试方法、固定的
+参考版本与复现命令见[性能文档](docs/performance.zh-CN.md)；精确结果见[机器可读数据集](benchmarks/results/0.9.0-performance.json)。
 
 ## 主要能力
 
@@ -86,8 +66,7 @@ workflow run。
   分析、canonical lowering 与独立 IR 验证。
 - **托管运行时**：显式 Lua value、table、closure、thread、upvalue、资源预算、protected error、
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
-- **分级执行**：参考解释器、经过收益资格检查的 Tier 1 和带守卫的 Tier 2。Loop OSR 是把运行中
-  的循环通过回边切入同一专用代码的入口机制，而不是额外的执行级别。
+- **自适应执行**：动态代码可用时，默认 Auto JIT 选择经过验证的编译路径；否则使用参考解释器。
 - **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
@@ -103,10 +82,10 @@ workflow run。
 
 ### CLI
 
-从已配置的 GitHub Packages source 安装稳定版 `0.8.0`，或直接在源码 checkout 中运行：
+从已配置的 GitHub Packages source 安装稳定版 `0.9.0`，或直接在源码 checkout 中运行：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0
+dotnet tool install --global Lunil.Cli --version 0.9.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -191,7 +170,7 @@ flowchart LR
 ```
 
 所有执行路径共享 canonical PC、精确指令计数、资源预算、safe point、debug 行为、失效与 fallback
-语义。完整架构见[编译器设计](docs/compiler-design.md)。
+语义。完整架构见[编译器设计（简体中文）](docs/compiler-design.zh-CN.md)。
 
 ## 兼容性
 
@@ -202,15 +181,14 @@ flowchart LR
 - 稳定线：`0.9.x`；下一条开发线将在启动时另行记录。
 
 兼容性变更和部署说明见 [`0.8.0` 迁移指南](docs/migration-0.8.0.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
-[.NET NativeAOT 与 trimming](docs/nativeaot-build-integration.md)。
+[.NET NativeAOT 与 trimming（简体中文）](docs/nativeaot-build-integration.zh-CN.md)。
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [性能](docs/performance.md) | 当前测试数据、图表、方法与复现方式 |
-| [`0.9.0` 路线图](docs/roadmap-0.9.0.md) | 性能目标、交付阶段与发布门禁 |
-| [编译器设计](docs/compiler-design.md) | 编译器、IR、运行时与执行架构 |
+| [性能](docs/performance.zh-CN.md) | 当前数据、图表、方法与复现方式 |
+| [编译器设计（简体中文）](docs/compiler-design.zh-CN.md) | 编译器、IR、运行时与执行架构 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
 | [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |
 | [版本策略](docs/versioning.md) | 兼容性版本线与发布通道 |

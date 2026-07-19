@@ -26,28 +26,25 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.9.0` is the supported release and current performance baseline. The release preserves
-> Lua 5.4.8 semantics and the reviewed six-RID qualification contract.
+> Stable `0.9.0` is the supported release and current performance baseline. It preserves Lua 5.4.8
+> semantics across the six published release RIDs.
 
 ## Performance
 
-The `0.9.0` release qualification uses identical Lua source across eight workloads, six balanced
-rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
+The `0.9.0` results use identical Lua source across eight workloads, six balanced rounds, and all
+six release RIDs. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. The reference runtimes
+are PUC Lua 5.4.8, LuaJIT 2.1, and MoonSharp 2.0.0.
 
-| Engine | Geomean vs native Lua | Geomean vs MoonSharp |
-| --- | ---: | ---: |
-| LuaJIT | 11.518x | 164.301x |
-| Native Lua 5.4 | 1.000x | 14.287x |
-| Lunil Tier 2 | 1.702x | 24.314x |
-| **Lunil Auto JIT** | **1.688x** | **24.089x** |
-| Lunil Loop OSR | 0.157x | 2.238x |
-| Lunil Tier 1 | 0.106x | 1.504x |
-| MoonSharp | 0.070x | 1.000x |
-| Lunil interpreter | 0.051x | 0.725x |
+| Engine | Version | Geomean vs PUC Lua 5.4.8 | Geomean vs MoonSharp 2.0.0 |
+| --- | --- | ---: | ---: |
+| LuaJIT | 2.1 (commit `3c4f9fe`) | 11.518x | 164.301x |
+| PUC Lua | 5.4.8 | 1.000x | 14.287x |
+| **Lunil Auto JIT** | **0.9.0** | **1.688x** | **24.089x** |
+| MoonSharp | 2.0.0 | 0.070x | 1.000x |
 
 ![Lunil 0.9.0 runtime comparison](assets/performance/0.9.0-runtime-overview.svg)
 
-| Auto JIT workload | Vs native Lua | Vs MoonSharp |
+| Auto JIT workload | Vs PUC Lua 5.4.8 | Vs MoonSharp 2.0.0 |
 | --- | ---: | ---: |
 | Arithmetic | 1.643x | 36.094x |
 | Iterative Fibonacci | 3.232x | 46.988x |
@@ -60,27 +57,10 @@ rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`
 
 ![Lunil 0.9.0 Auto JIT by workload](assets/performance/0.9.0-auto-workloads.svg)
 
-The stable release keeps stable string-number concatenation and dense string-array writes in one guarded Tier 2
-region. Segmented evidence did not justify a separate dense `table.concat` bulk-copy path; the full
-`string_build` workload reached `2.164x` native Lua with the existing concat implementation. The rows
-below are independent six-RID qualification runs, not paired same-machine speedups.
-
-| Version | Auto overall | Control flow | String build |
-| --- | ---: | ---: | ---: |
-| Stable `0.8.0` | 0.680x | 2.070x | 0.591x |
-| `0.9.0-alpha.4` | 1.326x | 1.937x | 0.592x |
-| `0.9.0-alpha.5` | 1.688x | 2.101x | 2.164x |
-| **`0.9.0`** | **1.688x** | **2.101x** | **2.164x** |
-
-The accepted source completed the Beta qualification matrix: all roadmap targets, backend costs,
-conformance/differential suites, NativeAOT, trimming, package/API, route, telemetry, startup,
-allocation, and code-size gates passed. The
-[machine-readable report](benchmarks/results/0.9.0-performance.json) records exact values,
-the product commit, and the accepted workflow runs.
-
-See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
-reproduction commands. The [0.9.0 roadmap](docs/roadmap-0.9.0.md) defines the next performance
-targets.
+The default Auto JIT reaches `2.164x` PUC Lua 5.4.8 on the `string_build` workload. Detailed
+methodology, pinned reference versions, and reproduction commands are in
+[Performance](docs/performance.md). Exact release values are also available in the
+[machine-readable dataset](benchmarks/results/0.9.0-performance.json).
 
 ## Highlights
 
@@ -90,8 +70,8 @@ targets.
   flow analysis, workspace analysis, canonical lowering, and independent IR verification.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
-- **Tiered execution** — reference interpreter, benefit-qualified Tier 1, and guarded Tier 2. Loop
-  OSR is the backedge entry mechanism that transfers a running loop into the same specialized code.
+- **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
+  is available and otherwise uses the reference interpreter.
 - **Embeddable and sandboxable** — reusable hosting API with restricted, trusted, and deterministic
   capability profiles.
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
@@ -177,7 +157,7 @@ Console.WriteLine(run.Execution.Values[0].AsInteger()); // 55
 ```
 
 `LuaHostOptions.ExecutionBackend` can require the interpreter or dynamic JIT. The default `Auto`
-policy uses the qualified JIT when dynamic code is available and the reference interpreter
+policy uses the verified JIT when dynamic code is available and the reference interpreter
 otherwise. Lower-level compiler, syntax, analysis, workspace, IR, runtime, and standard-library
 packages are also available independently.
 
@@ -218,7 +198,6 @@ Compatibility changes and deployment notes are documented in the [0.8.0 migratio
 | Document | Purpose |
 | --- | --- |
 | [Performance](docs/performance.md) | Current benchmark data, charts, methodology, and reproduction |
-| [0.9.0 roadmap](docs/roadmap-0.9.0.md) | Performance targets, delivery stages, and release gates |
 | [Compiler design](docs/compiler-design.md) | Compiler, IR, runtime, and execution architecture |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
 | [API compatibility](docs/api-compatibility.md) | Versioned public API and package baselines |

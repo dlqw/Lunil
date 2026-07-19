@@ -28,9 +28,6 @@ This example produces `0.9.0-alpha.1`. Stable tags `v0.8.0` and `v0.9.0` remain 
 | `0.10.0-beta.N` | Future feature freeze | Compatibility, diagnostics, documentation, reliability, and performance hardening |
 | `0.10.0-rc.N` | Future release candidate | Release-blocking fixes only |
 
-The scope and promotion gates for the active line are defined in the
-[`0.9.0` roadmap](roadmap-0.9.0.md).
-
 ## Prerelease channels
 
 1. `alpha.N` permits active feature and API development.

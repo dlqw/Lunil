@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
   <title id="title">Lunil 0.9.0-alpha.5 Auto JIT by workload</title>
-  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to native Lua 5.4.</desc>
+  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to PUC Lua 5.4.8.</desc>
   <rect width="1120" height="620" rx="20" fill="#f8fafc"/>
   <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Auto JIT by workload</text>
-  <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.9.0-alpha.5 · six-RID geometric mean · native Lua 5.4 = 1.000×</text>
+  <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.9.0-alpha.5 · six-RID geometric mean · PUC Lua 5.4.8 = 1.000×</text>
   <line x1="250.0" y1="126" x2="250.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
   <text x="250.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">0.0×</text>
   <line x1="406.0" y1="126" x2="406.0" y2="532" stroke="#0f766e" stroke-width="1"/>
@@ -40,5 +40,5 @@
   <text x="226" y="478" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">String build</text>
   <rect x="250" y="460" width="338.0" height="26" rx="6" fill="#6d28d9"/>
   <text x="597.6" y="478" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">2.164×</text>
-  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Purple bars above the green 1.000× line are faster than native Lua.</text>
+  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Purple bars above the green 1.000× line are faster than PUC Lua 5.4.8.</text>
 </svg>

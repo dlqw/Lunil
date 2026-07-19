@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
   <title id="title">Lunil 0.9.0 runtime comparison</title>
-  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to native Lua 5.4.</desc>
+  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to PUC Lua 5.4.8.</desc>
   <rect width="1120" height="620" rx="20" fill="#f8fafc"/>
   <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Runtime comparison</text>
   <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.9.0 · geometric mean across 8 workloads × 6 release RIDs</text>
@@ -16,29 +16,17 @@
   <text x="832.1" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">3×</text>
   <line x1="981.6" y1="126" x2="981.6" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
   <text x="981.6" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">10×</text>
-  <text x="236" y="142" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">LuaJIT</text>
+  <text x="236" y="142" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">LuaJIT 2.1</text>
   <rect x="260" y="124" width="739.0" height="26" rx="6" fill="#0e7490"/>
   <text x="1009.0" y="142" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">11.518×</text>
-  <text x="236" y="190" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Native Lua 5.4</text>
+  <text x="236" y="190" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">PUC Lua 5.4.8</text>
   <rect x="260" y="172" width="436.0" height="26" rx="6" fill="#0f766e"/>
   <text x="706.0" y="190" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.000×</text>
-  <text x="236" y="238" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Tier 2</text>
-  <rect x="260" y="220" width="502.0" height="26" rx="6" fill="#a78bfa"/>
-  <text x="772.0" y="238" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.702×</text>
-  <text x="236" y="286" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Auto JIT</text>
-  <rect x="260" y="268" width="501.0" height="26" rx="6" fill="#6d28d9"/>
-  <text x="771.0" y="286" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.688×</text>
-  <text x="236" y="334" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Loop OSR</text>
-  <rect x="260" y="316" width="205.0" height="26" rx="6" fill="#a78bfa"/>
-  <text x="475.0" y="334" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.157×</text>
-  <text x="236" y="382" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Tier 1</text>
-  <rect x="260" y="364" width="156.0" height="26" rx="6" fill="#a78bfa"/>
-  <text x="426.0" y="382" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.106×</text>
-  <text x="236" y="430" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">MoonSharp</text>
-  <rect x="260" y="412" width="105.0" height="26" rx="6" fill="#64748b"/>
-  <text x="375.0" y="430" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.070×</text>
-  <text x="236" y="478" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil interpreter</text>
-  <rect x="260" y="460" width="65.0" height="26" rx="6" fill="#a78bfa"/>
-  <text x="335.0" y="478" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.051×</text>
-  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · native Lua 5.4 = 1.000×</text>
+  <text x="236" y="238" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Auto JIT 0.9.0</text>
+  <rect x="260" y="220" width="501.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="771.0" y="238" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.688×</text>
+  <text x="236" y="286" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">MoonSharp 2.0.0</text>
+  <rect x="260" y="268" width="105.0" height="26" rx="6" fill="#64748b"/>
+  <text x="375.0" y="286" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.070×</text>
+  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · PUC Lua 5.4.8 = 1.000×</text>
 </svg>
