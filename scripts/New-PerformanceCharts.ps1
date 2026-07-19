@@ -29,6 +29,21 @@ function Get-EngineColor([string] $Kind, [string] $Engine) {
     return '#64748b'
 }
 
+function Get-PublicEngineLabel([string] $Engine) {
+    switch ($Engine) {
+        'LuaJIT' { return 'LuaJIT 2.1' }
+        'Native Lua 5.4' { return 'PUC Lua 5.4.8' }
+        'Lunil Auto JIT' { return "Lunil Auto JIT $($data.release)" }
+        'MoonSharp' { return 'MoonSharp 2.0.0' }
+        default { return $Engine }
+    }
+}
+
+function Get-PublicOverall($Report) {
+    $publicEngines = @('LuaJIT', 'Native Lua 5.4', 'Lunil Auto JIT', 'MoonSharp')
+    return @($Report.overall | Where-Object { $_.engine -in $publicEngines })
+}
+
 function New-EngineOverviewSvg($Report) {
     $width = 1120
     $height = 620
@@ -41,7 +56,7 @@ function New-EngineOverviewSvg($Report) {
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">')
     $lines.Add("  <title id=`"title`">Lunil $($Report.release) runtime comparison</title>")
-    $lines.Add('  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to native Lua 5.4.</desc>')
+    $lines.Add('  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to PUC Lua 5.4.8.</desc>')
     $lines.Add('  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>')
     $lines.Add('  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Runtime comparison</text>')
     $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · geometric mean across 8 workloads × 6 release RIDs</text>")
@@ -54,20 +69,20 @@ function New-EngineOverviewSvg($Report) {
         $lines.Add("  <text x=`"$x`" y=`"552`" text-anchor=`"middle`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"12`" fill=`"#64748b`">$(Format-Number $tick '0.##')×</text>")
     }
     $row = 0
-    foreach ($engine in $Report.overall) {
+    foreach ($engine in (Get-PublicOverall $Report)) {
         $y = 142 + ($row * 48)
         $barY = $y - 18
         $end = $plotLeft + (([Math]::Log([double]$engine.speedupVsNativeLua) - [Math]::Log($minimum)) / ([Math]::Log($maximum) - [Math]::Log($minimum))) * $plotWidth
         $barWidth = [Math]::Max(4, $end - $plotLeft)
         $color = Get-EngineColor $engine.kind $engine.engine
-        $lines.Add("  <text x=`"236`" y=`"$y`" text-anchor=`"end`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" font-weight=`"600`" fill=`"#1e293b`">$(Escape-Xml $engine.engine)</text>")
+        $lines.Add("  <text x=`"236`" y=`"$y`" text-anchor=`"end`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" font-weight=`"600`" fill=`"#1e293b`">$(Escape-Xml (Get-PublicEngineLabel $engine.engine))</text>")
         $lines.Add("  <rect x=`"$plotLeft`" y=`"$barY`" width=`"$(Format-Number $barWidth '0.0')`" height=`"26`" rx=`"6`" fill=`"$color`"/>")
         $labelX = [Math]::Min($plotRight - 2, $end + 10)
         $anchor = if ($end + 76 -gt $plotRight) { 'end' } else { 'start' }
         $lines.Add("  <text x=`"$(Format-Number $labelX '0.0')`" y=`"$y`" text-anchor=`"$anchor`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"14`" font-weight=`"700`" fill=`"#0f172a`">$(Format-Number $engine.speedupVsNativeLua)×</text>")
         $row++
     }
-    $lines.Add('  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · native Lua 5.4 = 1.000×</text>')
+    $lines.Add('  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · PUC Lua 5.4.8 = 1.000×</text>')
     $lines.Add('</svg>')
     return ($lines -join "`n") + "`n"
 }
@@ -105,10 +120,10 @@ function New-WorkloadSvg($Report) {
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">')
     $lines.Add("  <title id=`"title`">Lunil $($Report.release) Auto JIT by workload</title>")
-    $lines.Add('  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to native Lua 5.4.</desc>')
+    $lines.Add('  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to PUC Lua 5.4.8.</desc>')
     $lines.Add('  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>')
     $lines.Add('  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Auto JIT by workload</text>')
-    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · six-RID geometric mean · native Lua 5.4 = 1.000×</text>")
+    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · six-RID geometric mean · PUC Lua 5.4.8 = 1.000×</text>")
     foreach ($tick in $ticks) {
         $position = $plotLeft + ($tick / $maximum) * $plotWidth
         $stroke = if ($tick -eq 1.0) { '#0f766e' } else { '#cbd5e1' }
@@ -128,7 +143,7 @@ function New-WorkloadSvg($Report) {
         $lines.Add("  <text x=`"$(Format-Number ($plotLeft + $barWidth + 10) '0.0')`" y=`"$y`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"14`" font-weight=`"700`" fill=`"#0f172a`">$(Format-Number $workload.speedupVsNativeLua)×</text>")
         $row++
     }
-    $lines.Add('  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Purple bars above the green 1.000× line are faster than native Lua.</text>')
+    $lines.Add('  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Purple bars above the green 1.000× line are faster than PUC Lua 5.4.8.</text>')
     $lines.Add('</svg>')
     return ($lines -join "`n") + "`n"
 }

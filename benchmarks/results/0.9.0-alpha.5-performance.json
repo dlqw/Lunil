@@ -1,10 +1,24 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "release": "0.9.0-alpha.5",
+  "referenceRuntimes": {
+    "pucLua": {
+      "name": "PUC Lua",
+      "version": "5.4.8",
+      "sourceSha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
+    },
+    "luaJit": {
+      "name": "LuaJIT",
+      "version": "2.1",
+      "commit": "3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3"
+    },
+    "moonSharp": {
+      "name": "MoonSharp",
+      "version": "2.0.0",
+      "package": "MoonSharp"
+    }
+  },
   "source": {
-    "productCommit": "56a420c7d5f65f6549b5de1dcf30458c3b6e699e",
-    "backendWorkflowRun": 29681734316,
-    "crossRuntimeWorkflowRun": 29681347394,
     "rids": [
       "win-x64",
       "win-arm64",
@@ -17,20 +31,13 @@
     "rounds": 6,
     "targetMilliseconds": 250,
     "baselineEngine": "lua54",
-    "comparisonEngine": "moonsharp",
-    "complete": true,
-    "performanceGatePassed": true,
-    "roadmapTargetGatePassed": true
+    "comparisonEngine": "moonsharp"
   },
   "overall": [
     { "engine": "LuaJIT", "speedupVsNativeLua": 11.518353778054456, "speedupVsMoonSharp": 164.3007040855923, "kind": "reference" },
     { "engine": "Native Lua 5.4", "speedupVsNativeLua": 1.0, "speedupVsMoonSharp": 14.287149128682428, "kind": "reference" },
-    { "engine": "Lunil Tier 2", "speedupVsNativeLua": 1.7017186992502533, "speedupVsMoonSharp": 24.313793236292494, "kind": "lunil" },
     { "engine": "Lunil Auto JIT", "speedupVsNativeLua": 1.6884100442007832, "speedupVsMoonSharp": 24.089089396057418, "kind": "lunil-primary" },
-    { "engine": "Lunil Loop OSR", "speedupVsNativeLua": 0.1566150078430037, "speedupVsMoonSharp": 2.2375259111936345, "kind": "lunil" },
-    { "engine": "Lunil Tier 1", "speedupVsNativeLua": 0.10553119534545793, "speedupVsMoonSharp": 1.5039635443544872, "kind": "lunil" },
-    { "engine": "MoonSharp", "speedupVsNativeLua": 0.070003464623696, "speedupVsMoonSharp": 1.0, "kind": "reference" },
-    { "engine": "Lunil interpreter", "speedupVsNativeLua": 0.05071815396637644, "speedupVsMoonSharp": 0.7246655183191881, "kind": "lunil" }
+    { "engine": "MoonSharp", "speedupVsNativeLua": 0.070003464623696, "speedupVsMoonSharp": 1.0, "kind": "reference" }
   ],
   "autoWorkloads": [
     { "workload": "arithmetic", "speedupVsNativeLua": 1.6425109753338745, "speedupVsMoonSharp": 36.09404809182652 },
@@ -41,58 +48,5 @@
     { "workload": "table_access", "speedupVsNativeLua": 0.4775593895275649, "speedupVsMoonSharp": 12.466903666548488 },
     { "workload": "sieve", "speedupVsNativeLua": 0.5298768618666762, "speedupVsMoonSharp": 12.698119062287322 },
     { "workload": "string_build", "speedupVsNativeLua": 2.16399954082988, "speedupVsMoonSharp": 5.37180535462017 }
-  ],
-  "tier2Workloads": [
-    { "workload": "arithmetic", "speedupVsNativeLua": 1.646466541347786, "speedupVsMoonSharp": 35.956276417186494 },
-    { "workload": "fib_iter", "speedupVsNativeLua": 3.4193189060302043, "speedupVsMoonSharp": 49.76906700260783 },
-    { "workload": "mandelbrot", "speedupVsNativeLua": 4.193357606766855, "speedupVsMoonSharp": 63.52825280288584 },
-    { "workload": "control_flow", "speedupVsNativeLua": 2.1061465283151475, "speedupVsMoonSharp": 35.128381677970744 },
-    { "workload": "function_calls", "speedupVsNativeLua": 2.585038257634754, "speedupVsMoonSharp": 35.57819134690812 },
-    { "workload": "table_access", "speedupVsNativeLua": 0.47981520980936404, "speedupVsMoonSharp": 12.614993621169099 },
-    { "workload": "sieve", "speedupVsNativeLua": 0.5269176735318281, "speedupVsMoonSharp": 12.590293659458254 },
-    { "workload": "string_build", "speedupVsNativeLua": 2.164090495187124, "speedupVsMoonSharp": 5.411974327529818 }
-  ],
-  "targets": {
-    "minimumOverallVsNativeLua": 0.85,
-    "minimumOverallVsMoonSharp": 12.0,
-    "minimumPerRidVsNativeLua": 0.6,
-    "actualMinimumPerRidVsNativeLua": 1.1026197619032179,
-    "workloadMinimumVsNativeLua": {
-      "arithmetic": 1.1,
-      "fib_iter": 2.8,
-      "mandelbrot": 0.75,
-      "control_flow": 2.0,
-      "function_calls": 1.5,
-      "table_access": 0.45,
-      "sieve": 0.12,
-      "string_build": 0.75
-    },
-    "allPassed": true
-  },
-  "backendCosts": {
-    "tier2MaximumCompilationP95Milliseconds": 3.9235,
-    "tier2MaximumCompileAllocatedP95Bytes": 243208,
-    "tier2MaximumRegionAllocationSlopeBytesPerInstruction": 21777.142857,
-    "loopOsrMaximumCompilationP95Milliseconds": 5.6835,
-    "loopOsrMaximumPreparationP95Milliseconds": 0.113,
-    "loopOsrMaximumCompileAllocatedP95Bytes": 184168,
-    "loopOsrMaximumRegionAllocationSlopeBytesPerInstruction": 14646.857143,
-    "maximumExecutionAllocationRatioVs080": 1.01032635592721,
-    "maximumEstimatedCodeSizeRatioVs080": 1.12421635806969,
-    "tier2AllRidsQualify": true,
-    "loopOsrAllRidsQualify": true
-  },
-  "betaQualification": {
-    "gitCommit": "56a420c7d5f65f6549b5de1dcf30458c3b6e699e",
-    "crossRuntimeWorkflowRun": 29681347394,
-    "ciWorkflowRun": 29681734316,
-    "crossRuntimeRoadmapTargetsPassed": true,
-    "crossRuntimeStabilityPassed": true,
-    "tier2BackendCostsPassed": true,
-    "loopOsrBackendCostsPassed": true,
-    "conformanceAndDifferentialPassed": true,
-    "nativeAotAndPublishModesPassed": true,
-    "packagesAndPublicApiPassed": true,
-    "complete": true
-  }
+  ]
 }
