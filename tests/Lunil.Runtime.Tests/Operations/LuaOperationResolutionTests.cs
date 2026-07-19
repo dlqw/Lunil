@@ -52,4 +52,25 @@ public sealed class LuaOperationResolutionTests
         Assert.Equal(20_000, observedArguments);
         Assert.InRange(allocated, 0, 256);
     }
+
+    [Fact]
+    public void ReusesOwnedOverflowArgumentsAtRuntimeBoundaries()
+    {
+        var callable = LuaValue.FromFunction(new LuaNativeFunction("callable", static (_, _) => []));
+        var source = new[]
+        {
+            LuaValue.FromInteger(1),
+            LuaValue.FromInteger(2),
+            LuaValue.FromInteger(3),
+            LuaValue.FromInteger(4),
+        };
+        var resolution = LuaOperationResolution.Call(callable, source);
+
+        var first = resolution.MaterializeArgumentsForRuntime();
+        var second = resolution.MaterializeArgumentsForRuntime();
+
+        Assert.NotSame(source, first);
+        Assert.Same(first, second);
+        Assert.Equal(source, first);
+    }
 }

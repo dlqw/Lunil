@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -275,13 +276,12 @@ public static class LuaDebugApi
         return lines.Distinct().Order();
     }
 
-    private static IEnumerable<LuaIrLocalVariable> ActiveLocals(
+    private static ReadOnlySpan<LuaIrLocalVariable> ActiveLocals(
         LuaThread thread,
         LuaFrame frame)
     {
         var pc = EffectiveProgramCounter(thread, frame);
-        return frame.Function.LocalVariables.Where(local =>
-            local.StartProgramCounter <= pc && pc < local.EndProgramCounter);
+        return frame.FunctionVersion.GetActiveDebugLocals(pc);
     }
 
     private static bool TryResolveLocalSlot(
@@ -291,7 +291,7 @@ public static class LuaDebugApi
         out string name,
         out int stackIndex)
     {
-        var active = ActiveLocals(thread, frame).ToArray();
+        var active = ActiveLocals(thread, frame);
         if (index <= active.Length)
         {
             name = Name(active[index - 1].Name);
@@ -437,7 +437,8 @@ public static class LuaDebugApi
     private static void MarkDefined(bool[] defined, int start, int count)
     {
         var first = Math.Clamp(start, 0, defined.Length);
-        var end = Math.Clamp(checked(start + count), first, defined.Length);
+        var end = Math.Clamp(unchecked(start + count), first, defined.Length);
+        Debug.Assert(end >= first);
         for (var register = first; register < end; register++)
         {
             defined[register] = true;

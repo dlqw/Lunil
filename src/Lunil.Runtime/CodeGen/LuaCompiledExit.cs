@@ -124,7 +124,8 @@ public readonly record struct LuaCompiledExit
 [EditorBrowsable(EditorBrowsableState.Never)]
 public sealed class LuaExecutionContext
 {
-    private long _instructionsConsumed;
+    private long _instructionCountAtEntry;
+    private long _remainingInstructionCount;
     private int _lastObservedProgramCounter;
     private long _lastObservedInstructionCount;
     private LuaBackendGeneration? _backendGeneration;
@@ -153,13 +154,14 @@ public sealed class LuaExecutionContext
 
     public LuaThread Thread { get; private set; } = null!;
 
-    public long RemainingInstructionCount { get; private set; }
+    public long RemainingInstructionCount => _remainingInstructionCount;
 
     public ulong DebugModeVersion { get; private set; }
 
     public bool HasExactDebugHooks { get; private set; }
 
-    internal long InstructionsConsumed => _instructionsConsumed;
+    internal long InstructionsConsumed =>
+        _instructionCountAtEntry - _remainingInstructionCount;
 
     internal LuaExecutionEngine? ExecutionEngine { get; private set; }
 
@@ -201,7 +203,7 @@ public sealed class LuaExecutionContext
         ArgumentNullException.ThrowIfNull(thread);
         ArgumentOutOfRangeException.ThrowIfNegative(remainingInstructionCount);
         state.Heap.ValidateValue(Values.LuaValue.FromThread(thread));
-        _instructionsConsumed = 0;
+        _instructionCountAtEntry = remainingInstructionCount;
         _lastObservedProgramCounter = -1;
         _lastObservedInstructionCount = -1;
         _exitFrame = null;
@@ -209,7 +211,7 @@ public sealed class LuaExecutionContext
         Scheduler = scheduler;
         State = state;
         Thread = thread;
-        RemainingInstructionCount = remainingInstructionCount;
+        _remainingInstructionCount = remainingInstructionCount;
         DebugModeVersion = thread.DebugModeVersion;
         HasExactDebugHooks = thread.DebugHookMask != LuaDebugHookMask.None;
     }
@@ -222,21 +224,19 @@ public sealed class LuaExecutionContext
             return false;
         }
 
-        RemainingInstructionCount -= instructionCount;
-        _instructionsConsumed = checked(_instructionsConsumed + instructionCount);
+        _remainingInstructionCount -= instructionCount;
         return true;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryReserveSingleInterpreterInstruction()
     {
-        if (RemainingInstructionCount == 0)
+        if (_remainingInstructionCount == 0)
         {
             return false;
         }
 
-        RemainingInstructionCount--;
-        _instructionsConsumed++;
+        _remainingInstructionCount--;
         return true;
     }
 
@@ -295,13 +295,13 @@ public sealed class LuaExecutionContext
     internal bool TryBeginInstructionObservation(int programCounter)
     {
         if (_lastObservedProgramCounter == programCounter &&
-            _lastObservedInstructionCount == _instructionsConsumed)
+            _lastObservedInstructionCount == InstructionsConsumed)
         {
             return false;
         }
 
         _lastObservedProgramCounter = programCounter;
-        _lastObservedInstructionCount = _instructionsConsumed;
+        _lastObservedInstructionCount = InstructionsConsumed;
         return true;
     }
 }

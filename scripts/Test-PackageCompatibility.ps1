@@ -18,9 +18,11 @@ $baselinePath = Join-Path $repositoryRoot "api/$compatibilityLine/packages.json"
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
 }
-$escapedCompatibilityLine = [Regex]::Escape($compatibilityLine)
-if ($Version -notmatch "^$escapedCompatibilityLine(?:-[0-9A-Za-z.-]+)?$") {
-    throw "Package compatibility validation only accepts the active $compatibilityLine line: $Version"
+$compatibilityParts = $compatibilityLine.Split('.')
+$escapedCompatibilityPrefix = [Regex]::Escape(
+    "$($compatibilityParts[0]).$($compatibilityParts[1])")
+if ($Version -notmatch "^$escapedCompatibilityPrefix\.[0-9]+(?:-[0-9A-Za-z.-]+)?$") {
+    throw "Package compatibility validation only accepts the active $($compatibilityParts[0]).$($compatibilityParts[1]).x line: $Version"
 }
 if ([string]::IsNullOrWhiteSpace($PackageDirectory)) {
     $PackageDirectory = Join-Path $repositoryRoot 'artifacts/package-compatibility/packages'

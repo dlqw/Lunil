@@ -21,7 +21,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         LuaState state,
         LuaThread thread,
         LuaFrame frame,
-        LuaIrInstruction instruction)
+        in LuaIrInstruction instruction)
     {
         if (RequiresExactDebugHookDispatch(thread, frame))
         {

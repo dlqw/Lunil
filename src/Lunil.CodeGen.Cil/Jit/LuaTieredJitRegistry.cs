@@ -175,7 +175,7 @@ internal sealed class LuaTieredJitRegistry :
         LuaState state,
         LuaThread thread,
         LuaFrame frame,
-        LuaIrInstruction instruction)
+        in LuaIrInstruction instruction)
     {
         var module = frame.Module;
         var functionRoute = GetFunctionRoute(module, frame.Function.Id);
@@ -458,7 +458,7 @@ internal sealed class LuaTieredJitRegistry :
         LuaThread thread,
         LuaFrame frame,
         int programCounter,
-        LuaIrInstruction instruction)
+        in LuaIrInstruction instruction)
     {
         if (_options.Policy == LuaJitPolicy.InterpreterOnly ||
             Volatile.Read(ref _disposed) != 0)
