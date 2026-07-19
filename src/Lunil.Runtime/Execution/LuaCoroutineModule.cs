@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Execution;
@@ -52,7 +53,11 @@ internal static class LuaCoroutineModule
         Set(state, module, "status", LuaValue.FromFunction(StatusDescriptor));
         Set(state, module, "isyieldable", LuaValue.FromFunction(IsYieldableDescriptor));
         Set(state, module, "wrap", LuaValue.FromFunction(WrapFactoryDescriptor));
-        Set(state, module, "close", LuaValue.FromFunction(CloseDescriptor));
+        if (state.LanguageVersion == LuaLanguageVersion.Lua54)
+        {
+            Set(state, module, "close", LuaValue.FromFunction(CloseDescriptor));
+        }
+
         return module;
     }
 

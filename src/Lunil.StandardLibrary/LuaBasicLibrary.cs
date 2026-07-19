@@ -37,6 +37,11 @@ internal static class LuaBasicLibrary
         state.SetGlobal("next", LuaValue.FromFunction(NextDescriptor));
         SetStepFunction(state, "pairs", Pairs);
         state.InstallProtectedCallFunctions();
+        if (state.LanguageVersion == LuaLanguageVersion.Lua54)
+        {
+            SetFunction(state, "warn", Warn);
+        }
+
         SetStepFunction(state, "print", Print);
         SetFunction(state, "rawequal", RawEqual);
         SetFunction(state, "rawget", RawGet);
@@ -47,7 +52,6 @@ internal static class LuaBasicLibrary
         SetFunction(state, "tonumber", ToNumber);
         SetStepFunction(state, "tostring", ToStringStep);
         SetFunction(state, "type", Type);
-        SetFunction(state, "warn", Warn);
         state.SetGlobal("_G", LuaValue.FromTable(state.Globals));
         state.SetGlobal(
             "_VERSION",

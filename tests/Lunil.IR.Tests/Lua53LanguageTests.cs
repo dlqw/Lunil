@@ -2,66 +2,22 @@ using System.Buffers.Binary;
 using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua53;
-using Lunil.Runtime;
-using Lunil.Runtime.Execution;
 
-namespace Lunil.Runtime.Tests;
+namespace Lunil.IR.Tests;
 
-public sealed class LanguageVersionTests
+public sealed class Lua53LanguageTests
 {
     [Fact]
-    public void StatePublishesConfiguredLanguageVersion()
+    public void ReadsAndConvertsLua53SimpleReturnChunk()
     {
-        var state = new LuaState(new LuaStateOptions
-        {
-            LanguageVersion = LuaLanguageVersion.Lua53,
-        });
+        var chunk = Lua53ChunkReader.Read(CreateSimpleReturnChunk());
+        var module = Lua53PrototypeConverter.Convert(chunk);
 
-        Assert.Equal(LuaLanguageVersion.Lua53, state.LanguageVersion);
-    }
-
-    [Fact]
-    public void Lua53StateLoadsLua53BinaryChunk()
-    {
-        var state = new LuaState(new LuaStateOptions
-        {
-            LanguageVersion = LuaLanguageVersion.Lua53,
-        });
-
-        var result = new LuaInterpreter().ExecuteBinaryChunk(state, CreateSimpleReturnChunk());
-
-        Assert.Equal(LuaVmSignal.Completed, result.Signal);
-        Assert.Equal(42, result.Values[0].AsInteger());
-    }
-
-    [Fact]
-    public void StateRejectsAClosureFromAnotherLanguageContract()
-    {
-        var state = new LuaState(new LuaStateOptions
-        {
-            LanguageVersion = LuaLanguageVersion.Lua53,
-        });
-        var module = new LuaIrModule
-        {
-            LanguageVersion = LuaLanguageVersion.Lua54,
-            Functions =
-            [
-                new LuaIrFunction
-                {
-                    Id = 0,
-                    Span = default,
-                    RegisterCount = 1,
-                    Instructions = [new LuaIrInstruction(LuaIrOpcode.Return, 0, 0)],
-                    BasicBlocks = LuaIrControlFlow.Build(
-                        [new LuaIrInstruction(LuaIrOpcode.Return, 0, 0)]),
-                },
-            ],
-        };
-
-        var error = Assert.Throws<LuaRuntimeException>(() => state.CreateMainClosure(module));
-
-        Assert.Contains("Lua 5.3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("Lua 5.4", error.Message, StringComparison.Ordinal);
+        Assert.Equal(LuaLanguageVersion.Lua53, module.LanguageVersion);
+        Assert.Single(module.Functions);
+        Assert.Equal(LuaIrOpcode.LoadConstant, module.Functions[0].Instructions[0].Opcode);
+        Assert.Equal(LuaIrOpcode.Return, module.Functions[0].Instructions[1].Opcode);
+        Assert.Equal(42, module.Functions[0].Constants[0].Integer);
     }
 
     private static byte[] CreateSimpleReturnChunk()
@@ -73,13 +29,14 @@ public sealed class LanguageVersionTests
         WriteInt64(bytes, 0x5678);
         WriteInt64(bytes, BitConverter.DoubleToInt64Bits(370.5));
         bytes.Add(1);
+
         WriteSizeT(bytes, 0);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 0);
         bytes.AddRange([0, 0, 2]);
         WriteInt32(bytes, 2);
-        WriteUInt32(bytes, Instruction(Lua53Opcode.LoadConstant, bx: 0));
-        WriteUInt32(bytes, Instruction(Lua53Opcode.Return, b: 2));
+        WriteUInt32(bytes, Instruction(Lua53Opcode.LoadConstant, a: 0, bx: 0));
+        WriteUInt32(bytes, Instruction(Lua53Opcode.Return, a: 0, b: 2));
         WriteInt32(bytes, 1);
         bytes.Add(19);
         WriteInt64(bytes, 42);

@@ -20,6 +20,19 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua53RejectsLua54LocalAttributes()
+    {
+        var result = LuaParser.Parse(
+            SourceText.FromUtf8("local value <const> = 1"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua53 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua53 });
+
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.Code == "LUA2010" &&
+            diagnostic.Message.Contains("Lua 5.4", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ParserRejectsMismatchedLexerAndParserVersions()
     {
         var lexing = LuaLexer.Lex(

@@ -104,7 +104,7 @@ public sealed class LuaCompiler
         cancellationToken.ThrowIfCancellationRequested();
 
         var diagnostics = ImmutableArray.CreateBuilder<LuaCompilationDiagnostic>();
-        if (Options.LanguageVersion != LuaLanguageVersion.Lua54)
+        if (Options.LanguageVersion is not (LuaLanguageVersion.Lua53 or LuaLanguageVersion.Lua54))
         {
             diagnostics.Add(new LuaCompilationDiagnostic(
                 LuaCompilationPhase.Configuration,

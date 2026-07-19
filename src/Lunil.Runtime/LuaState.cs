@@ -1,6 +1,7 @@
 using System.Text;
 using Lunil.Core;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
@@ -275,10 +276,28 @@ public sealed class LuaState
     public LuaClosure LoadBinaryChunk(
         ReadOnlySpan<byte> binaryChunk,
         Lua54ChunkReaderOptions? options = null) =>
-        CreateMainClosure(Lua54PrototypeConverter.Convert(binaryChunk, options));
+        CreateMainClosure(LanguageVersion == LuaLanguageVersion.Lua53
+            ? Lua53PrototypeConverter.Convert(binaryChunk, TranslateReaderOptions(options))
+            : Lua54PrototypeConverter.Convert(binaryChunk, options));
 
     public LuaClosure LoadBinaryChunk(Lua54Chunk chunk) =>
         CreateMainClosure(Lua54PrototypeConverter.Convert(chunk));
+
+    private static Lua53ChunkReaderOptions? TranslateReaderOptions(
+        Lua54ChunkReaderOptions? options) => options is null
+            ? null
+            : new Lua53ChunkReaderOptions
+            {
+                MaximumChunkBytes = options.MaximumChunkBytes,
+                MaximumPrototypeDepth = options.MaximumPrototypeDepth,
+                MaximumPrototypeCount = options.MaximumPrototypeCount,
+                MaximumInstructionCount = options.MaximumInstructionCount,
+                MaximumConstantCount = options.MaximumConstantCount,
+                MaximumUpvalueCount = options.MaximumUpvalueCount,
+                MaximumStringBytes = options.MaximumStringBytes,
+                MaximumDebugEntryCount = options.MaximumDebugEntryCount,
+                AllowTrailingData = options.AllowTrailingData,
+            };
 
     internal void AttachLoadedModuleCache(LuaTable loaded)
     {

@@ -117,16 +117,15 @@ public sealed class LunilCliTests
     }
 
     [Fact]
-    public async Task ExplicitUnimplementedLuaVersionIsReportedWithoutLua54Fallback()
+    public async Task Lua53VersionRunsWithoutLua54Fallback()
     {
         using var fixture = new CliFixture();
-        var script = fixture.Write("version.lua", "return 1");
+        var script = fixture.Write("version.lua", "print(_VERSION, 5 // 2)");
 
         var result = await fixture.RunAsync("run", script, "--lua-version", "5.3");
 
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("not implemented yet", result.StandardError, StringComparison.Ordinal);
-        Assert.Contains("LUA0001", result.StandardError, StringComparison.Ordinal);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("Lua 5.3\t2\n", result.StandardOutput);
     }
 
     [Fact]
@@ -428,7 +427,7 @@ public sealed class LunilCliTests
         fixture.Environment["LUNIL_LUA_VERSION"] = "5.4";
 
         var fromEnvironment = await fixture.RunAsync("run", script);
-        var fromCli = await fixture.RunAsync("run", script, "--lua-version", "5.3");
+        var fromCli = await fixture.RunAsync("run", script, "--lua-version", "5.1");
 
         Assert.Equal(0, fromEnvironment.ExitCode);
         Assert.Equal(1, fromCli.ExitCode);

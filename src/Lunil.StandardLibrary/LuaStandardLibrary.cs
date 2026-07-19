@@ -4,10 +4,10 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.StandardLibrary;
 
-/// <summary>Registration entry points for standard-library modules implemented by Lunil.</summary>
+/// <summary>Registration entry points for versioned standard-library modules implemented by Lunil.</summary>
 public static class LuaStandardLibrary
 {
-    /// <summary>Installs every PUC Lua 5.4 standard library into the state.</summary>
+    /// <summary>Installs every standard-library module supported by the state's Lua version.</summary>
     public static LuaTable InstallAll(
         LuaState state,
         LuaStandardLibraryOptions? options = null)
@@ -37,7 +37,7 @@ public static class LuaStandardLibrary
         LuaTable module) =>
         loaded.Set(LuaLibraryHelpers.String(state, name), LuaValue.FromTable(module));
 
-    /// <summary>Installs the Lua 5.4 basic library into the global environment.</summary>
+    /// <summary>Installs the version-selected basic library into the global environment.</summary>
     public static LuaTable InstallBasic(
         LuaState state,
         LuaStandardLibraryOptions? options = null)
@@ -125,7 +125,7 @@ public static class LuaStandardLibrary
 
     private static void EnsureImplemented(LuaState state)
     {
-        if (state.LanguageVersion != LuaLanguageVersion.Lua54)
+        if (state.LanguageVersion is not (LuaLanguageVersion.Lua53 or LuaLanguageVersion.Lua54))
         {
             throw new NotSupportedException(
                 $"The {LuaLanguageVersions.GetDisplayName(state.LanguageVersion)} standard library " +

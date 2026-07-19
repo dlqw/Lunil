@@ -434,9 +434,17 @@ public static class LuaParser
 
             if (Current.Kind == LuaTokenKind.LessThan)
             {
+                var attributeStart = Current.Span.Start;
                 children.Add(Consume());
                 children.Add(Match(LuaTokenKind.Identifier));
                 children.Add(Match(LuaTokenKind.GreaterThan));
+                if (_options.LanguageVersion != LuaLanguageVersion.Lua54)
+                {
+                    AddDiagnostic(
+                        "LUA2010",
+                        TextSpan.FromBounds(attributeStart, Current.Span.Start),
+                        "Local attributes are only available in Lua 5.4.");
+                }
             }
 
             return CreateNode(LuaSyntaxKind.AttributedName, children);

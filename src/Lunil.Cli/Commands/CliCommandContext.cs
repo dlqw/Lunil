@@ -77,7 +77,8 @@ internal sealed record CliCommandContext(
             Profile = profile,
             LanguageVersion = Options.LanguageVersion,
             ExecutionBackend = executionBackend,
-            InstallStandardLibrary = Options.LanguageVersion == LuaLanguageVersion.Lua54,
+            InstallStandardLibrary = Options.LanguageVersion is
+                LuaLanguageVersion.Lua53 or LuaLanguageVersion.Lua54,
             StandardLibrary = capabilities,
             ModuleResolver = resolver,
             State = LuaStateOptions.Default with
