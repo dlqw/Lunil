@@ -2698,24 +2698,19 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             var written = generator.DefineLabel();
             generator.Emit(OpCodes.Ldloc, state.Dirty);
             generator.Emit(OpCodes.Brfalse, clean);
-            foreach (var promoted in plan.Registers.Where(candidate =>
-                         candidate.Register == register))
+            if (state.StableKind != LuaNumericRegionValueKind.Unknown)
             {
-                var nextKind = generator.DefineLabel();
-                generator.Emit(OpCodes.Ldloc, state.ActiveKind);
-                EmitInt32(generator, (int)promoted.Kind);
-                generator.Emit(OpCodes.Bne_Un, nextKind);
                 generator.Emit(OpCodes.Ldarg_1);
                 generator.Emit(OpCodes.Ldarg_2);
                 EmitInt32(generator, register);
                 generator.Emit(
                     OpCodes.Ldloc,
-                    NumericLocal(valueLocals, register, promoted.Kind));
-                if (promoted.Kind != LuaNumericRegionValueKind.Tagged)
+                    NumericLocal(valueLocals, register, state.StableKind));
+                if (state.StableKind != LuaNumericRegionValueKind.Tagged)
                 {
                     generator.Emit(
                         OpCodes.Call,
-                        promoted.Kind switch
+                        state.StableKind switch
                         {
                             LuaNumericRegionValueKind.Integer => FromInteger,
                             LuaNumericRegionValueKind.Float => FromFloat,
@@ -2725,15 +2720,47 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                         });
                 }
                 generator.Emit(OpCodes.Call, WriteRegister);
-                generator.Emit(OpCodes.Br, written);
-                generator.MarkLabel(nextKind);
+            }
+            else
+            {
+                foreach (var promoted in plan.Registers.Where(candidate =>
+                             candidate.Register == register))
+                {
+                    var nextKind = generator.DefineLabel();
+                    generator.Emit(OpCodes.Ldloc, state.ActiveKind);
+                    EmitInt32(generator, (int)promoted.Kind);
+                    generator.Emit(OpCodes.Bne_Un, nextKind);
+                    generator.Emit(OpCodes.Ldarg_1);
+                    generator.Emit(OpCodes.Ldarg_2);
+                    EmitInt32(generator, register);
+                    generator.Emit(
+                        OpCodes.Ldloc,
+                        NumericLocal(valueLocals, register, promoted.Kind));
+                    if (promoted.Kind != LuaNumericRegionValueKind.Tagged)
+                    {
+                        generator.Emit(
+                            OpCodes.Call,
+                            promoted.Kind switch
+                            {
+                                LuaNumericRegionValueKind.Integer => FromInteger,
+                                LuaNumericRegionValueKind.Float => FromFloat,
+                                LuaNumericRegionValueKind.Boolean => FromBoolean,
+                                LuaNumericRegionValueKind.String => FromString,
+                                _ => throw new InvalidOperationException(),
+                            });
+                    }
+                    generator.Emit(OpCodes.Call, WriteRegister);
+                    generator.Emit(OpCodes.Br, written);
+                    generator.MarkLabel(nextKind);
+                }
+
+                generator.Emit(
+                    OpCodes.Ldstr,
+                    $"Dirty numeric register r{register} has no active promoted kind.");
+                generator.Emit(OpCodes.Newobj, InvalidOperationExceptionConstructor);
+                generator.Emit(OpCodes.Throw);
             }
 
-            generator.Emit(
-                OpCodes.Ldstr,
-                $"Dirty numeric register r{register} has no active promoted kind.");
-            generator.Emit(OpCodes.Newobj, InvalidOperationExceptionConstructor);
-            generator.Emit(OpCodes.Throw);
             generator.MarkLabel(written);
             generator.Emit(OpCodes.Ldc_I4_0);
             generator.Emit(OpCodes.Stloc, state.Dirty);
