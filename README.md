@@ -14,8 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.8.0-16a34a?style=flat-square"></a>
-  <img alt="Development version" src="https://img.shields.io/badge/development-0.9.0--alpha.5-7c3aed?style=flat-square">
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.9.0-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -27,68 +26,57 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.8.0` is the supported release and benchmark baseline. The current source is
-> `0.9.0-alpha.5`; Alpha builds may change API and backend behavior before feature freeze.
+> Stable `0.9.0` is the supported release and current performance baseline. The release preserves
+> Lua 5.4.8 semantics and the reviewed six-RID qualification contract.
 
 ## Performance
 
-The latest `0.9.0-alpha.4` release qualification uses identical Lua source across eight workloads, six balanced
+The `0.9.0` release qualification uses identical Lua source across eight workloads, six balanced
 rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
 
 | Engine | Geomean vs native Lua | Geomean vs MoonSharp |
 | --- | ---: | ---: |
-| LuaJIT | 11.215x | 159.275x |
-| Native Lua 5.4 | 1.000x | 14.216x |
-| Lunil Tier 2 | 1.328x | 18.956x |
-| **Lunil Auto JIT** | **1.326x** | **18.863x** |
-| Lunil Loop OSR | 0.147x | 2.083x |
-| Lunil Tier 1 | 0.106x | 1.512x |
+| LuaJIT | 11.518x | 164.301x |
+| Native Lua 5.4 | 1.000x | 14.287x |
+| Lunil Tier 2 | 1.702x | 24.314x |
+| **Lunil Auto JIT** | **1.688x** | **24.089x** |
+| Lunil Loop OSR | 0.157x | 2.238x |
+| Lunil Tier 1 | 0.106x | 1.504x |
 | MoonSharp | 0.070x | 1.000x |
-| Lunil interpreter | 0.051x | 0.724x |
+| Lunil interpreter | 0.051x | 0.725x |
 
-![Lunil 0.9.0-alpha.4 runtime comparison](assets/performance/0.9.0-alpha.4-runtime-overview.svg)
+![Lunil 0.9.0 runtime comparison](assets/performance/0.9.0-runtime-overview.svg)
 
 | Auto JIT workload | Vs native Lua | Vs MoonSharp |
 | --- | ---: | ---: |
-| Arithmetic | 1.106x | 24.262x |
-| Iterative Fibonacci | 3.279x | 45.424x |
-| Mandelbrot | 4.307x | 64.841x |
-| Control flow | 1.937x | 31.871x |
-| Function calls | 2.348x | 31.870x |
-| Table access | 0.455x | 11.830x |
-| Prime sieve | 0.498x | 12.380x |
-| String build | 0.592x | 1.508x |
+| Arithmetic | 1.643x | 36.094x |
+| Iterative Fibonacci | 3.232x | 46.988x |
+| Mandelbrot | 4.210x | 63.829x |
+| Control flow | 2.101x | 34.773x |
+| Function calls | 2.568x | 35.421x |
+| Table access | 0.478x | 12.467x |
+| Prime sieve | 0.530x | 12.698x |
+| String build | 2.164x | 5.372x |
 
-![Lunil 0.9.0-alpha.4 Auto JIT by workload](assets/performance/0.9.0-alpha.4-auto-workloads.svg)
+![Lunil 0.9.0 Auto JIT by workload](assets/performance/0.9.0-auto-workloads.svg)
 
-The calls and floating-point release moves `function_calls` from `1.204x` to `2.348x` native Lua
-and `mandelbrot` from `0.559x` to `4.307x`. The rows below are independent six-RID qualification
-runs, not paired same-machine speedups.
+The stable release keeps stable string-number concatenation and dense string-array writes in one guarded Tier 2
+region. Segmented evidence did not justify a separate dense `table.concat` bulk-copy path; the full
+`string_build` workload reached `2.164x` native Lua with the existing concat implementation. The rows
+below are independent six-RID qualification runs, not paired same-machine speedups.
 
-| Version | Auto overall | Function calls | Mandelbrot |
+| Version | Auto overall | Control flow | String build |
 | --- | ---: | ---: | ---: |
-| Stable `0.8.0` | 0.680x | 1.204x | 0.559x |
-| `0.9.0-alpha.3` | 0.947x | 1.289x | 0.569x |
-| **`0.9.0-alpha.4`** | **1.326x** | **2.348x** | **4.307x** |
+| Stable `0.8.0` | 0.680x | 2.070x | 0.591x |
+| `0.9.0-alpha.4` | 1.326x | 1.937x | 0.592x |
+| `0.9.0-alpha.5` | 1.688x | 2.101x | 2.164x |
+| **`0.9.0`** | **1.688x** | **2.101x** | **2.164x** |
 
-The Alpha 4 qualification also passed backend correctness, NativeAOT, trimming, package/API, route,
-telemetry, startup, allocation, and code-size checks. The
-[machine-readable report](benchmarks/results/0.9.0-alpha.4-performance.json) includes exact values
-and backend costs.
-
-### Alpha 5 string-build qualification
-
-Alpha 5 focuses on transient string allocation, concatenation, and `table.concat`. The current
-single-RID win-x64 qualification sample uses six balanced rounds and keeps native Lua as the
-normalization baseline; it is reported separately from the release matrix:
-
-| Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
-| --- | ---: | ---: | ---: |
-| Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
-| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | recorded baseline |
-| MoonSharp | 283.203 µs | 0.508x | 1.000x |
-
-![Lunil 0.9.0-alpha.5 string-build comparison](assets/performance/0.9.0-alpha.5-string-build.svg)
+The accepted source completed the Beta qualification matrix: all roadmap targets, backend costs,
+conformance/differential suites, NativeAOT, trimming, package/API, route, telemetry, startup,
+allocation, and code-size gates passed. The
+[machine-readable report](benchmarks/results/0.9.0-performance.json) records exact values,
+the product commit, and the accepted workflow runs.
 
 See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
 reproduction commands. The [0.9.0 roadmap](docs/roadmap-0.9.0.md) defines the next performance
@@ -121,10 +109,10 @@ Native Lua C modules are not supported because Lunil does not expose the Lua C A
 
 ### CLI
 
-Install stable `0.8.0` from the configured GitHub Packages source, or run from a checkout:
+Install stable `0.9.0` from the configured GitHub Packages source, or run from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.8.0
+dotnet tool install --global Lunil.Cli --version 0.9.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -151,7 +139,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 Reference the stable hosting package:
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.8.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.9.0" />
 ```
 
 Compile and execute through a reusable restricted host:
@@ -220,7 +208,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
-- Stable line: `0.8.x`; active development line: `0.9.0-alpha.N`.
+- Stable line: `0.9.x`; the next development line will be documented when it opens.
 
 Compatibility changes and deployment notes are documented in the [0.8.0 migration guide](docs/migration-0.8.0.md).
 .NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).

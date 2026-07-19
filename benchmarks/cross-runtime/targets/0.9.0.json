@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "release": "0.9.0",
+  "requiredRids": [
+    "win-x64",
+    "win-arm64",
+    "linux-x64",
+    "linux-arm64",
+    "osx-x64",
+    "osx-arm64"
+  ],
+  "crossRuntime": {
+    "autoEngine": "lunil_auto",
+    "minimumGeometricMeanSpeedupVsNativeLua": 0.85,
+    "minimumGeometricMeanSpeedupVsMoonSharp": 12.0,
+    "minimumPerRidGeometricMeanSpeedupVsNativeLua": 0.60,
+    "workloadMinimumSpeedupVsNativeLua": {
+      "arithmetic": 1.10,
+      "fib_iter": 2.80,
+      "mandelbrot": 0.75,
+      "control_flow": 2.00,
+      "function_calls": 1.50,
+      "table_access": 0.45,
+      "sieve": 0.12,
+      "string_build": 0.75
+    }
+  },
+  "backend": {
+    "maximumTier2CompilationP95Milliseconds": 5.0,
+    "maximumLoopOsrCompilationP95Milliseconds": 7.5,
+    "maximumLoopOsrPreparationP95Milliseconds": 2.0,
+    "maximumTier2CompileAllocatedP95Bytes": 262144,
+    "maximumLoopOsrCompileAllocatedP95Bytes": 196608,
+    "maximumNumericRegionAllocationGrowthBytesPerInstruction": 32768,
+    "maximumHotExecutionAllocationSlopeBytesPerIteration": 0.01,
+    "minimumRejectedWorkloadStartupSpeedupVs080": 0.95,
+    "maximumGeneratedCodeSizeRatioVs080": 1.15,
+    "maximumExecutionAllocationRatioVs080": 1.05
+  }
+}

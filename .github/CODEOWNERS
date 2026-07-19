@@ -1,1 +1,16 @@
-* @dlqw
+# Product behavior, tests, build inputs, release automation, and compatibility baselines
+# require the repository owner. Community prose and generated performance assets are
+# intentionally exempt from automatic code-owner review; branch protection may still
+# require an ordinary reviewer when policy calls for it.
+/src/** @dlqw
+/tests/** @dlqw
+/benchmarks/** @dlqw
+/scripts/** @dlqw
+/.github/workflows/** @dlqw
+/.github/CODEOWNERS @dlqw
+/Directory.Build.* @dlqw
+/Lunil.sln @dlqw
+/global.json @dlqw
+/dotnet-tools.json @dlqw
+/api/** @dlqw
+/LICENSE @dlqw

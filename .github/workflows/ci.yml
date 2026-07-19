@@ -22,8 +22,65 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  change_scope:
+    name: Determine change scope
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.scope.outputs.heavy }}
+      docs-only: ${{ steps.scope.outputs.docs-only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: scope
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zeroSha = '0000000000000000000000000000000000000000'
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            $paths = @('workflow_dispatch')
+          }
+          elseif ($env:EVENT_NAME -eq 'pull_request') {
+            $paths = @(git diff --name-only "$($env:BASE_SHA)...$($env:HEAD_SHA)")
+          }
+          elseif ($env:BEFORE_SHA -and $env:BEFORE_SHA -ne $zeroSha) {
+            $paths = @(git diff --name-only $env:BEFORE_SHA $env:CURRENT_SHA)
+          }
+          else {
+            $paths = @(git ls-tree -r --name-only $env:CURRENT_SHA)
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to determine changed paths.'
+          }
+          if ($paths.Count -eq 0) {
+            throw 'No changed paths were reported; refusing to classify the run as documentation-only.'
+          }
+
+          $lightOnly = $true
+          foreach ($path in $paths) {
+            $isLightPath = $path -match '^(docs/|changelogs/|assets/performance/|benchmarks/results/|README\.md$|README\.zh-CN\.md$|\.github/pull_request_template\.md$)'
+            if (-not $isLightPath) {
+              $lightOnly = $false
+              Write-Host "Full validation required by: $path"
+            }
+          }
+          $docsOnly = $lightOnly -and $env:EVENT_NAME -ne 'workflow_dispatch'
+          $heavy = -not $docsOnly
+          "heavy=$($heavy.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "docs-only=$($docsOnly.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "Change scope: heavy=$heavy; docs-only=$docsOnly"
+
   build-and-test:
     name: Build and test (${{ matrix.os }})
+    needs: change_scope
+    if: needs.change_scope.outputs.heavy == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -119,9 +176,12 @@ jobs:
   backend-performance-decision:
     name: Aggregate Tier 1/Tier 2/Loop OSR six-RID evidence
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    needs: build-and-test
+      needs.change_scope.outputs.heavy == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    needs:
+      - change_scope
+      - build-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -141,7 +201,10 @@ jobs:
 
   conformance-evidence-decision:
     name: Aggregate conformance and stability six-RID evidence
-    needs: build-and-test
+    needs:
+      - change_scope
+      - build-and-test
+    if: needs.change_scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -161,6 +224,7 @@ jobs:
 
   formatting-and-packages:
     name: Formatting and packages
+    needs: change_scope
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -174,40 +238,51 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/New-PerformanceCharts.ps1 -Verify
-          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.4-performance.json -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.5-performance.json -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-performance.json -Verify
       - uses: actions/setup-dotnet@v6
+        if: needs.change_scope.outputs.heavy == 'true'
         with:
           global-json-file: global.json
           cache: true
           cache-dependency-path: "**/*.csproj"
       - name: Restore
+        if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet restore Lunil.sln
       - name: Restore public API baseline tool
+        if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet tool restore
       - name: Verify formatting
+        if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet format Lunil.sln --verify-no-changes --no-restore
       - name: Read version
         id: version
+        if: needs.change_scope.outputs.heavy == 'true'
         shell: pwsh
         run: |
           $version = ./scripts/Get-LunilVersion.ps1
           "value=$version" >> $env:GITHUB_OUTPUT
       - name: Build NuGet packages
+        if: needs.change_scope.outputs.heavy == 'true'
         shell: pwsh
         run: ./scripts/New-NuGetPackages.ps1 -Version '${{ steps.version.outputs.value }}'
       - name: Verify frozen public APIs
+        if: needs.change_scope.outputs.heavy == 'true'
         shell: pwsh
         run: ./scripts/Test-PublicApiBaselines.ps1 -Configuration Release -NoBuild -NoRestore
       - name: Verify package compatibility and local consumers
+        if: needs.change_scope.outputs.heavy == 'true'
         shell: pwsh
         run: >-
           ./scripts/Test-PackageCompatibility.ps1
           -Version '${{ steps.version.outputs.value }}'
           -PackageDirectory artifacts/packages -NoPack
       - name: Install and smoke-test CLI tool package
+        if: needs.change_scope.outputs.heavy == 'true'
         shell: pwsh
         run: ./scripts/Test-LunilCliPackage.ps1 -Version '${{ steps.version.outputs.value }}'
       - uses: actions/upload-artifact@v7
+        if: needs.change_scope.outputs.heavy == 'true'
         with:
           name: lunil-nuget
           path: |

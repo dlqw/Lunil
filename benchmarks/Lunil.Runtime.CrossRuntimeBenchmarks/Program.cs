@@ -41,9 +41,12 @@ var commit = GetOption(args, "--commit=") ?? Environment.GetEnvironmentVariable(
 var workloadFilter = SplitFilter(GetOption(args, "--workloads="));
 var engineFilter = SplitFilter(GetOption(args, "--engines="));
 var skipReference = args.Contains("--skip-reference", StringComparer.Ordinal);
+var includeDiagnostics = args.Contains("--include-diagnostics", StringComparer.Ordinal);
 
 var workloads = suite.Workloads
-    .Where(workload => workloadFilter.Count == 0 || workloadFilter.Contains(workload.Name))
+    .Where(workload => workloadFilter.Count == 0
+        ? workload.Role == BenchmarkWorkloadRole.Release || includeDiagnostics
+        : workloadFilter.Contains(workload.Name))
     .ToArray();
 if (workloads.Length == 0)
 {
@@ -104,7 +107,7 @@ Console.WriteLine($"Cross-runtime performance report written to {outputDirectory
 
 static void ValidateSuite(BenchmarkSuite suite, string suiteRoot)
 {
-    if (suite.SchemaVersion != 1)
+    if (suite.SchemaVersion != 2)
     {
         throw new InvalidOperationException(
             $"Unsupported cross-runtime benchmark schema {suite.SchemaVersion}.");
@@ -141,7 +144,8 @@ static void ValidateSuite(BenchmarkSuite suite, string suiteRoot)
 
     foreach (var workload in suite.Workloads)
     {
-        if (!double.IsFinite(workload.ExpectedPerOperation) ||
+        if (!Enum.IsDefined(workload.Role) ||
+            !double.IsFinite(workload.ExpectedPerOperation) ||
             !File.Exists(Path.Combine(suiteRoot, workload.File)))
         {
             throw new InvalidOperationException($"Invalid workload definition {workload.Name}.");

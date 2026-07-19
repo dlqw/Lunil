@@ -2,6 +2,8 @@
 param(
     [string] $InputDirectory,
     [string] $OutputDirectory,
+    [string] $TargetPolicyPath,
+    [switch] $EnforceRoadmapTargets,
     [string[]] $ExpectedRids = @(
         'win-x64', 'win-arm64', 'linux-x64', 'linux-arm64', 'osx-x64', 'osx-arm64')
 )
@@ -15,6 +17,19 @@ if ([string]::IsNullOrWhiteSpace($InputDirectory)) {
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot 'artifacts/cross-runtime-performance'
+}
+if ([string]::IsNullOrWhiteSpace($TargetPolicyPath)) {
+    $TargetPolicyPath = Join-Path $repositoryRoot 'benchmarks/cross-runtime/targets/0.9.0.json'
+}
+$TargetPolicyPath = [IO.Path]::GetFullPath($TargetPolicyPath)
+if (-not (Test-Path -LiteralPath $TargetPolicyPath)) {
+    throw "Cross-runtime target policy was not found: $TargetPolicyPath"
+}
+$targetPolicy = Get-Content -Raw -LiteralPath $TargetPolicyPath | ConvertFrom-Json
+if ($targetPolicy.schemaVersion -ne 1 -or
+    [string]::IsNullOrWhiteSpace($targetPolicy.release) -or
+    $null -eq $targetPolicy.crossRuntime) {
+    throw "Cross-runtime target policy is invalid: $TargetPolicyPath"
 }
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
@@ -30,7 +45,7 @@ $actualRids = @($reports | ForEach-Object { $_.environment.rid })
 $missingRids = @($ExpectedRids | Where-Object { $_ -notin $actualRids })
 if ($missingRids.Count -gt 0) { throw "Missing cross-runtime reports: $($missingRids -join ', ')." }
 foreach ($report in $reports) {
-    if ($report.schemaVersion -ne 2) {
+    if ($report.schemaVersion -notin @(2, 3)) {
         throw "Cross-runtime report for $($report.environment.rid) has unsupported schema $($report.schemaVersion)."
     }
     if (-not $report.completeness.complete) {
@@ -43,6 +58,26 @@ foreach ($report in $reports) {
     }
 }
 
+$policyRids = @($targetPolicy.requiredRids)
+if (@(Compare-Object $ExpectedRids $policyRids).Count -ne 0) {
+    throw "Expected RIDs do not match target policy $($targetPolicy.release)."
+}
+$releaseWorkloadNames = @($reports[0].workloads | Where-Object {
+    $role = $_.PSObject.Properties['role']
+    $null -eq $role -or [string]::Equals(
+        [string]$role.Value,
+        'Release',
+        [StringComparison]::OrdinalIgnoreCase)
+} | ForEach-Object name)
+if ($releaseWorkloadNames.Count -eq 0) {
+    throw 'No release workloads were found in the cross-runtime reports.'
+}
+$targetWorkloadNames = @(
+    $targetPolicy.crossRuntime.workloadMinimumSpeedupVsNativeLua.PSObject.Properties.Name)
+if (@(Compare-Object $releaseWorkloadNames $targetWorkloadNames).Count -ne 0) {
+    throw "Release workloads do not match target policy $($targetPolicy.release)."
+}
+
 function Get-GeometricMean([double[]] $Values) {
     if ($Values.Count -eq 0) { return 0.0 }
     return [Math]::Exp(($Values | ForEach-Object { [Math]::Log($_) } | Measure-Object -Average).Average)
@@ -51,10 +86,14 @@ function Get-GeometricMean([double[]] $Values) {
 $engineIds = @($reports[0].engines | ForEach-Object id)
 $aggregateEngines = foreach ($engineId in $engineIds) {
     $values = @($reports | ForEach-Object {
-        $_.results | Where-Object engine -eq $engineId | ForEach-Object speedupVsNativeLua
+        $_.results | Where-Object {
+            $_.engine -eq $engineId -and $_.workload -in $releaseWorkloadNames
+        } | ForEach-Object speedupVsNativeLua
     })
     $comparisonValues = @($reports | ForEach-Object {
-        $_.results | Where-Object engine -eq $engineId | ForEach-Object speedupVsComparison
+        $_.results | Where-Object {
+            $_.engine -eq $engineId -and $_.workload -in $releaseWorkloadNames
+        } | ForEach-Object speedupVsComparison
     } | Where-Object { $null -ne $_ })
     [pscustomobject]@{
         Engine = $engineId
@@ -78,7 +117,9 @@ $perRid = foreach ($report in $reports | Sort-Object { $_.environment.rid }) {
         }
     }
 }
-$perWorkload = foreach ($workload in $reports[0].workloads) {
+$perWorkload = foreach ($workload in $reports[0].workloads | Where-Object {
+    $_.name -in $releaseWorkloadNames
+}) {
     foreach ($engineId in $engineIds) {
         $values = @($reports | ForEach-Object {
             $_.results | Where-Object {
@@ -104,15 +145,76 @@ $perWorkload = foreach ($workload in $reports[0].workloads) {
     }
 }
 
+$autoEngineId = [string]$targetPolicy.crossRuntime.autoEngine
+$autoAggregate = $aggregateEngines | Where-Object Engine -eq $autoEngineId |
+    Select-Object -First 1
+$autoPerRid = @($perRid | Where-Object Engine -eq $autoEngineId)
+$targetMeasurements = [Collections.Generic.List[object]]::new()
+function Add-MinimumTargetMeasurement(
+    [string] $Name,
+    [string] $Scope,
+    [Nullable[double]] $Actual,
+    [double] $RequiredMinimum) {
+    $present = $null -ne $Actual -and [double]::IsFinite([double]$Actual)
+    $targetMeasurements.Add([pscustomobject]@{
+        Name = $Name
+        Scope = $Scope
+        Actual = if ($present) { [double]$Actual } else { $null }
+        RequiredMinimum = $RequiredMinimum
+        Passed = $present -and [double]$Actual -ge $RequiredMinimum
+    })
+}
+
+Add-MinimumTargetMeasurement `
+    'auto-geomean-vs-native-lua' `
+    'all release workloads and RIDs' `
+    $autoAggregate.GeometricMeanSpeedupVsNativeLua `
+    ([double]$targetPolicy.crossRuntime.minimumGeometricMeanSpeedupVsNativeLua)
+Add-MinimumTargetMeasurement `
+    'auto-geomean-vs-moonsharp' `
+    'all release workloads and RIDs' `
+    $autoAggregate.GeometricMeanSpeedupVsMoonSharp `
+    ([double]$targetPolicy.crossRuntime.minimumGeometricMeanSpeedupVsMoonSharp)
+$minimumPerRidAuto = if ($autoPerRid.Count -eq $ExpectedRids.Count) {
+    ($autoPerRid | Measure-Object GeometricMeanSpeedupVsNativeLua -Minimum).Minimum
+}
+else {
+    $null
+}
+Add-MinimumTargetMeasurement `
+    'auto-minimum-per-rid-geomean-vs-native-lua' `
+    'release workloads' `
+    $minimumPerRidAuto `
+    ([double]$targetPolicy.crossRuntime.minimumPerRidGeometricMeanSpeedupVsNativeLua)
+foreach ($property in $targetPolicy.crossRuntime.workloadMinimumSpeedupVsNativeLua.PSObject.Properties) {
+    $row = $perWorkload | Where-Object {
+        $_.Workload -eq $property.Name -and $_.Engine -eq $autoEngineId
+    } | Select-Object -First 1
+    Add-MinimumTargetMeasurement `
+        "auto-$($property.Name)-vs-native-lua" `
+        'six-RID workload geomean' `
+        $row.GeometricMeanSpeedupVsNativeLua `
+        ([double]$property.Value)
+}
+$roadmapTargetGatePassed = $targetMeasurements.Count -gt 0 -and
+    @($targetMeasurements | Where-Object { -not $_.Passed }).Count -eq 0
+
 $merged = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
     expectedRids = $ExpectedRids
     actualRids = $actualRids | Sort-Object
     baselineEngine = 'lua54'
     comparisonEngine = 'moonsharp'
     complete = $missingRids.Count -eq 0
-    performanceGatePassed = $true
+    stabilityGatePassed = $true
+    roadmapTargetGate = [ordered]@{
+        policyRelease = [string]$targetPolicy.release
+        policyPath = [IO.Path]::GetRelativePath($repositoryRoot, $TargetPolicyPath).Replace('\', '/')
+        passed = $roadmapTargetGatePassed
+        measurements = $targetMeasurements.ToArray()
+    }
+    performanceGatePassed = $roadmapTargetGatePassed
     engines = $aggregateEngines
     perRid = $perRid
     perWorkload = $perWorkload
@@ -162,6 +264,24 @@ foreach ($row in $perWorkload) {
 }
 $lines.Add('')
 $lines.Add('Lunil Auto and Tier 2 passed the per-workload MoonSharp median/CI/route/telemetry gate on all six RIDs.')
+$lines.Add('')
+$lines.Add("## $($targetPolicy.release) roadmap target gate")
+$lines.Add('')
+$lines.Add('| Target | Scope | Actual | Required | Result |')
+$lines.Add('|---|---|---:|---:|---|')
+foreach ($measurement in $targetMeasurements) {
+    $actual = if ($null -eq $measurement.Actual) { 'missing' } else { '{0:F3}x' -f $measurement.Actual }
+    $lines.Add(('| {0} | {1} | {2} | ≥ {3:F3}x | {4} |' -f `
+        $measurement.Name, $measurement.Scope, $actual,
+        $measurement.RequiredMinimum, $(if ($measurement.Passed) { 'PASS' } else { 'FAIL' })))
+}
+$lines.Add('')
+$lines.Add("Roadmap target gate: **$(if ($roadmapTargetGatePassed) { 'PASS' } else { 'FAIL' })**.")
 $markdownPath = Join-Path $OutputDirectory 'cross-runtime-six-rid-report.md'
 $lines | Set-Content -LiteralPath $markdownPath -Encoding utf8
 Write-Host "Merged cross-runtime report written to $markdownPath"
+if ($EnforceRoadmapTargets -and -not $roadmapTargetGatePassed) {
+    $failures = @($targetMeasurements | Where-Object { -not $_.Passed } |
+        ForEach-Object { "$($_.Name): actual=$($_.Actual), required>=$($_.RequiredMinimum)" })
+    throw "$($targetPolicy.release) roadmap target gate failed: $($failures -join '; ')."
+}

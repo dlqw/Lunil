@@ -85,7 +85,10 @@ internal sealed class CrossRuntimeBenchmarkRunner
                         expected,
                         valid,
                         measurement.Route,
-                        measurement.Telemetry);
+                        measurement.Telemetry,
+                        measurement.ManagedAllocatedBytes is { } allocatedBytes
+                            ? allocatedBytes / (double)operationCount
+                            : null);
                     samples.Add(sample);
                     Console.WriteLine(
                         $"sample workload={workload.Name}, engine={engine.Descriptor.Id}, " +

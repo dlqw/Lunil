@@ -111,6 +111,64 @@ public sealed class LuaNumericRegionTests
     }
 
     [Fact]
+    public void Tier2RegionExecutesStringIntegerConcatAndDenseArraySetTogether()
+    {
+        var module = Compile("""
+            local parts, stableParts = {}, {}
+            local stable = "fixed"
+            for index = 1, 1000 do
+                parts[index] = "item" .. (index % 100)
+                stableParts[index] = stable
+            end
+            return parts[1], parts[1000], stableParts[500]
+            """);
+        using var executor = CreateTier2Executor();
+
+        for (var execution = 0; execution < 5; execution++)
+        {
+            var result = ExecuteFresh(executor, module);
+            Assert.Equal("item1", result.Values[0].AsString().ToString());
+            Assert.Equal("item0", result.Values[1].AsString().ToString());
+            Assert.Equal("fixed", result.Values[2].AsString().ToString());
+        }
+
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2CodeKind.GuardedSpecializedCil, plan.CodeKind);
+        Assert.Equal(1, plan.NumericRegionCount);
+        Assert.True(plan.DirectNumericInstructionCount >= 3);
+        Assert.True(executor.Statistics.Tier2MethodEntries > 0);
+        Assert.Equal(0, executor.Statistics.Tier2UnsupportedExits);
+    }
+
+    [Fact]
+    public void Tier2RegionPreservesStringFloatAndNumberStringOperandOrder()
+    {
+        var module = Compile("""
+            local left, right, length = "", "", 0
+            for index = 1, 4 do
+                left = "v" .. (index + 0.5)
+                right = index .. "v"
+                length = #left
+            end
+            return left, right, length
+            """);
+        using var executor = CreateTier2Executor();
+
+        for (var execution = 0; execution < 3; execution++)
+        {
+            var result = ExecuteFresh(executor, module);
+            Assert.Equal("v4.5", result.Values[0].AsString().ToString());
+            Assert.Equal("4v", result.Values[1].AsString().ToString());
+            Assert.Equal(LuaValue.FromInteger(4), result.Values[2]);
+        }
+
+        var plan = Assert.IsType<LuaJitTier2Plan>(executor.GetTier2Plan(module, 0));
+        Assert.Equal(LuaJitTier2CodeKind.ExactNumericSpecializedCil, plan.CodeKind);
+        Assert.Equal(1, plan.NumericRegionCount);
+        Assert.True(executor.Statistics.Tier2MethodEntries > 0);
+    }
+
+    [Fact]
     public void Tier2RegionPreservesIntegerWrapFloorAndZeroDivisorDeopt()
     {
         var module = Compile("""

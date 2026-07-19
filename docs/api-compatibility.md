@@ -1,7 +1,7 @@
 # Versioned API and package compatibility
 
 Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable, while
-the active `0.9` Alpha uses reviewed public-API and package snapshots so intentional architecture
+the stable `0.9` line uses reviewed public-API and package snapshots so intentional architecture
 work is visible without rewriting stable `0.8` declarations.
 
 ## Compatibility lines
@@ -37,14 +37,14 @@ stable `0.7.0`; .NET NativeAOT/trimming compatibility remains supported. See
 `LuaJitProfileRemapper` result/status types. These additions are versioned Alpha contracts backed
 by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 
-### Active `0.9.0`
+### Frozen `0.9.0`
 
-[`api/0.9.0/`](../api/0.9.0/) is the reviewed Alpha snapshot for the current 13 assemblies and
-13 packages. `0.9.0-alpha.1` makes no public API or package-scope change relative to stable `0.8.0`,
-but keeps separate baselines so later reviewed Alpha work never mutates the stable line.
+[`api/0.9.0/`](../api/0.9.0/) is the reviewed stable snapshot for the current 13 assemblies and
+13 packages. The `0.9.0` release makes no public API or package-scope change relative to stable
+`0.8.0`, but keeps a separate baseline so later work never mutates either stable line.
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with
-`0.9.0-alpha.1` they read and update only `api/0.9.0/`.
+`0.9.0` they read and update only `api/0.9.0/`.
 
 ## Public API baseline
 
@@ -67,8 +67,8 @@ git diff -- api/0.9.0
 git diff --exit-code v0.8.0 -- api/0.8.0
 ```
 
-Beta and RC updates are limited by the promotion policy in [versioning](versioning.md); new API and
-backend features wait for `0.9.0`.
+Stable updates are limited by the promotion policy in [versioning](versioning.md); new API and
+backend features wait for the next pre-1.0 minor line.
 
 ## Package baseline
 

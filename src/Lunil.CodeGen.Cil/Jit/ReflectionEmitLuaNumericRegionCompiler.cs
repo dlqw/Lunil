@@ -44,6 +44,57 @@ internal static class LuaNumericRegionRuntime
             floatingPoint,
             integerOnLeft,
             (int)operation);
+
+    public static LuaString ConcatenateStringInteger(
+        LuaExecutionContext context,
+        LuaString text,
+        long integer,
+        bool textFirst) => LuaValueOperations.Concatenate(
+            context.State,
+            textFirst ? LuaValue.FromString(text) : LuaValue.FromInteger(integer),
+            textFirst ? LuaValue.FromInteger(integer) : LuaValue.FromString(text)).AsString();
+
+    public static LuaString ConcatenateStringFloat(
+        LuaExecutionContext context,
+        LuaString text,
+        double number,
+        bool textFirst) => LuaValueOperations.Concatenate(
+            context.State,
+            textFirst ? LuaValue.FromString(text) : LuaValue.FromFloat(number),
+            textFirst ? LuaValue.FromFloat(number) : LuaValue.FromString(text)).AsString();
+
+    public static bool TrySetCompilerProvenIntegerTableStringValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        LuaString value) => LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableValue(
+            ref cachedTable,
+            target,
+            cache,
+            key,
+            LuaValue.FromString(value));
+
+    public static bool TrySetBoundIntegerTableStringValue(
+        LuaTable table,
+        long key,
+        LuaString value) => table.TrySetOrAppendArrayValue(
+            key,
+            LuaValue.FromString(value));
+
+    public static bool TrySetCompilerProvenStringTableStringValue(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        LuaString value) => LuaCodegenAbiV5.TrySetCompilerProvenStringTableValue(
+            ref cachedTable,
+            target,
+            cache,
+            ref regionSite,
+            key,
+            LuaValue.FromString(value));
 }
 
 /// <summary>
@@ -73,7 +124,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
 
     private readonly record struct NumericDirtyState(
         LuaNumericIlLocal Dirty,
-        LuaNumericIlLocal ActiveKind);
+        LuaNumericIlLocal ActiveKind,
+        LuaNumericRegionValueKind StableKind);
 
     private readonly struct NumericRegionLabelMap(
         ImmutableArray<int> programCounters,
@@ -180,6 +232,16 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(long),
             typeof(bool),
         ]);
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableStringValue = Method(
+        typeof(LuaNumericRegionRuntime),
+        nameof(LuaNumericRegionRuntime.TrySetCompilerProvenIntegerTableStringValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(long),
+            typeof(LuaString),
+        ]);
     private static readonly MethodInfo TrySetBoundIntegerTableIntegerValue = Method(
         typeof(LuaCodegenAbiV5),
         nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableIntegerValue),
@@ -192,6 +254,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaCodegenAbiV5),
         nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableBooleanValue),
         [typeof(LuaTable), typeof(long), typeof(bool)]);
+    private static readonly MethodInfo TrySetBoundIntegerTableStringValue = Method(
+        typeof(LuaNumericRegionRuntime),
+        nameof(LuaNumericRegionRuntime.TrySetBoundIntegerTableStringValue),
+        [typeof(LuaTable), typeof(long), typeof(LuaString)]);
     private static readonly MethodInfo TryGetCompilerProvenStringTableValue = Method(
         typeof(LuaCodegenAbiV5),
         nameof(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue),
@@ -246,6 +312,17 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(LuaCodegenTableRegionSite).MakeByRefType(),
             typeof(LuaValue),
             typeof(bool),
+        ]);
+    private static readonly MethodInfo TrySetCompilerProvenStringTableStringValue = Method(
+        typeof(LuaNumericRegionRuntime),
+        nameof(LuaNumericRegionRuntime.TrySetCompilerProvenStringTableStringValue),
+        [
+            typeof(LuaTable).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaCodegenTableSiteCache),
+            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
+            typeof(LuaValue),
+            typeof(LuaString),
         ]);
     private static readonly MethodInfo TrySetBoundStringTableIntegerValue = Method(
         typeof(LuaCodegenAbiV5),
@@ -335,6 +412,13 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaValue),
         nameof(LuaValue.AsBoolean),
         []);
+    private static readonly MethodInfo AsString = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.AsString),
+        []);
+    private static readonly MethodInfo GetStringLength = PropertyGetter(
+        typeof(LuaString),
+        nameof(LuaString.Length));
     private static readonly MethodInfo FromInteger = Method(
         typeof(LuaValue),
         nameof(LuaValue.FromInteger),
@@ -347,6 +431,10 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaValue),
         nameof(LuaValue.FromBoolean),
         [typeof(bool)]);
+    private static readonly MethodInfo FromString = Method(
+        typeof(LuaValue),
+        nameof(LuaValue.FromString),
+        [typeof(LuaString)]);
     private static readonly MethodInfo MathFloor = Method(
         typeof(Math),
         nameof(Math.Floor),
@@ -367,6 +455,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaCodegenAbiV4),
         nameof(LuaCodegenAbiV4.CompareMixed),
         [typeof(long), typeof(double), typeof(bool), typeof(int)]);
+    private static readonly MethodInfo ConcatenateStringInteger = Method(
+        typeof(LuaNumericRegionRuntime),
+        nameof(LuaNumericRegionRuntime.ConcatenateStringInteger),
+        [typeof(LuaExecutionContext), typeof(LuaString), typeof(long), typeof(bool)]);
+    private static readonly MethodInfo ConcatenateStringFloat = Method(
+        typeof(LuaNumericRegionRuntime),
+        nameof(LuaNumericRegionRuntime.ConcatenateStringFloat),
+        [typeof(LuaExecutionContext), typeof(LuaString), typeof(double), typeof(bool)]);
     private static readonly MethodInfo ContinueExit = Method(
         typeof(LuaCompiledExit),
         nameof(LuaCompiledExit.Continue),
@@ -471,14 +567,31 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var valueLocals = plan.Registers.ToDictionary(
             static register => (register.Register, register.Kind),
             register => generator.DeclareLocal(LocalType(register.Kind)));
-        var dirtyLocals = plan.Registers
-            .Select(static register => register.Register)
-            .Distinct()
-            .ToDictionary(
-            static register => register,
-            _ => new NumericDirtyState(
-                generator.DeclareLocal(typeof(bool)),
-                generator.DeclareLocal(typeof(int))));
+        var dirtyLocals = new Dictionary<int, NumericDirtyState>();
+        foreach (var register in plan.Registers)
+        {
+            if (dirtyLocals.ContainsKey(register.Register))
+            {
+                continue;
+            }
+
+            var stableKind = register.Kind;
+            foreach (var candidate in plan.Registers)
+            {
+                if (candidate.Register == register.Register && candidate.Kind != stableKind)
+                {
+                    stableKind = LuaNumericRegionValueKind.Unknown;
+                    break;
+                }
+            }
+
+            dirtyLocals.Add(
+                register.Register,
+                new NumericDirtyState(
+                    generator.DeclareLocal(typeof(bool)),
+                    generator.DeclareLocal(typeof(int)),
+                    stableKind));
+        }
         var tableSiteLocals = plan.TableSites.ToDictionary(
             static site => site.ProgramCounter,
             _ => generator.DeclareLocal(typeof(LuaCodegenTableSiteCache)));
@@ -499,7 +612,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             .Distinct()
             .ToDictionary(
                 static constant => constant,
-                _ => generator.DeclareLocal(typeof(LuaValue)));
+                _ => generator.DeclareLocal(typeof(LuaString)));
         var taggedValue = generator.DeclareLocal(typeof(LuaValue));
         var directCallClosureLocals = (boundDirectCalls ??
                 ImmutableDictionary<int, LuaBoundDirectCall>.Empty)
@@ -511,7 +624,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var remaining = generator.DeclareLocal(typeof(long));
         var pending = generator.DeclareLocal(typeof(int));
         var boundaryProgramCounter = generator.DeclareLocal(typeof(int));
-        var backedgeCountdown = generator.DeclareLocal(typeof(int));
+        // Cache the exact remaining cost before the next backedge safepoint. This is
+        // equivalent to (countdown - 1) * segmentCost, but avoids a hot-path multiply.
+        var backedgeBudget = generator.DeclareLocal(typeof(long));
         var observedBackedges = mode.ObserveLoopOsrBackedge
             ? plan.BackedgeProgramCounters.ToDictionary(
                 static pc => pc,
@@ -565,6 +680,16 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var safepointBoundary = generator.DefineLabel();
         var guardBoundary = generator.DefineLabel();
         var invalidatedExit = generator.DefineLabel();
+        foreach (var state in dirtyLocals.Values)
+        {
+            if (state.StableKind == LuaNumericRegionValueKind.Unknown)
+            {
+                continue;
+            }
+
+            EmitInt32(generator, (int)state.StableKind);
+            generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        }
         var maximumBackedgePollInterval = plan.TableSites.IsEmpty
             ? MaximumBackedgePollInterval
             : Math.Min(
@@ -579,8 +704,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         EmitEntryGuard(generator, function, plan, mode, invalidatedExit);
         generator.Emit(OpCodes.Ldc_I4, int.MaxValue);
         generator.Emit(OpCodes.Stloc, minimumTop);
-        EmitInt32(generator, backedgePollInterval);
-        generator.Emit(OpCodes.Stloc, backedgeCountdown);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
+        EmitInt32(generator, backedgePollInterval - 1);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Mul);
+        generator.Emit(OpCodes.Stloc, backedgeBudget);
         generator.Emit(OpCodes.Ldarg_0);
         generator.Emit(OpCodes.Callvirt, GetRemainingInstructionCount);
         generator.Emit(OpCodes.Stloc, remaining);
@@ -598,6 +727,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             generator.Emit(OpCodes.Ldarg_2);
             EmitInt32(generator, constant);
             generator.Emit(OpCodes.Call, MaterializeConstant);
+            generator.Emit(OpCodes.Stloc, taggedValue);
+            generator.Emit(OpCodes.Ldloca, taggedValue);
+            generator.Emit(OpCodes.Call, AsString);
             generator.Emit(OpCodes.Stloc, constantLocal);
         }
 
@@ -639,7 +771,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 plan,
                 pc,
                 remaining,
-                backedgeCountdown,
+                backedgeBudget,
                 hotChargeLabels[pc],
                 coldSlowTailLabels[pc]);
 
@@ -674,7 +806,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 currentDirectCallClosure,
                 remaining,
                 pending,
-                backedgeCountdown,
+                backedgeBudget,
                 observedBackedges,
                 backedgePollInterval,
                 minimumTop,
@@ -714,7 +846,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 currentDirectCallClosure,
                 remaining,
                 pending,
-                backedgeCountdown,
+                backedgeBudget,
                 observedBackedges,
                 backedgePollInterval,
                 minimumTop,
@@ -935,6 +1067,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 LuaNumericRegionValueKind.Integer => AsInteger,
                 LuaNumericRegionValueKind.Float => AsFloat,
                 LuaNumericRegionValueKind.Boolean => AsBoolean,
+                LuaNumericRegionValueKind.String => AsString,
                 _ => throw new InvalidOperationException(
                     $"Register {register.Register} has no promoted CLR type."),
             });
@@ -965,7 +1098,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionPlan plan,
         int programCounter,
         LuaNumericIlLocal remaining,
-        LuaNumericIlLocal backedgeCountdown,
+        LuaNumericIlLocal backedgeBudget,
         LuaNumericIlLabel hotQuantum,
         LuaNumericIlLabel coldSlowTail)
     {
@@ -973,13 +1106,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Ldloc, remaining);
         EmitInt32(generator, site.MaximumInstructionCostToSafepointOrExit);
         generator.Emit(OpCodes.Conv_I8);
-        generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Ldc_I4_1);
-        generator.Emit(OpCodes.Sub);
-        generator.Emit(OpCodes.Conv_I8);
-        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
-        generator.Emit(OpCodes.Conv_I8);
-        generator.Emit(OpCodes.Mul);
+        generator.Emit(OpCodes.Ldloc, backedgeBudget);
         generator.Emit(OpCodes.Add);
         generator.Emit(OpCodes.Bge, hotQuantum);
         generator.Emit(OpCodes.Br, coldSlowTail);
@@ -1491,12 +1618,19 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             generator.Emit(OpCodes.Ldloca, tableLocal);
             generator.Emit(OpCodes.Ldloc, targetLocal);
             generator.Emit(OpCodes.Ldloc, siteLocal);
-            if (keyKind == LuaNumericRegionValueKind.Tagged)
+            if (keyKind != LuaNumericRegionValueKind.Integer)
             {
                 generator.Emit(OpCodes.Ldloca, regionSiteLocal);
             }
 
-            generator.Emit(OpCodes.Ldloc, keyLocal);
+            if (keyKind == LuaNumericRegionValueKind.Integer)
+            {
+                generator.Emit(OpCodes.Ldloc, keyLocal);
+            }
+            else
+            {
+                EmitLoadTaggedLocal(generator, keyLocal, keyKind);
+            }
             generator.Emit(OpCodes.Ldloca, taggedValue);
             generator.Emit(
                 OpCodes.Call,
@@ -1518,8 +1652,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
 
         var valueKind = plan.GetKindBefore(programCounter, instruction.C);
         var valueLocal = NumericLocal(locals, instruction.C, valueKind);
+        var canUseBoundValuePath = valueKind != LuaNumericRegionValueKind.Tagged &&
+            (keyKind == LuaNumericRegionValueKind.Integer ||
+                valueKind != LuaNumericRegionValueKind.String);
         var boundComplete = default(LuaNumericIlLabel);
-        if (valueKind != LuaNumericRegionValueKind.Tagged)
+        if (canUseBoundValuePath)
         {
             var bindOrRevalidate = generator.DefineLabel();
             boundComplete = generator.DefineLabel();
@@ -1547,6 +1684,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                             TrySetBoundIntegerTableFloatValue,
                         LuaNumericRegionValueKind.Boolean =>
                             TrySetBoundIntegerTableBooleanValue,
+                        LuaNumericRegionValueKind.String =>
+                            TrySetBoundIntegerTableStringValue,
                         _ => throw new InvalidOperationException(
                             $"Numeric-region table value kind {valueKind} cannot be bound."),
                     }
@@ -1569,12 +1708,19 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Ldloca, tableLocal);
         generator.Emit(OpCodes.Ldloc, targetLocal);
         generator.Emit(OpCodes.Ldloc, siteLocal);
-        if (keyKind == LuaNumericRegionValueKind.Tagged)
+        if (keyKind != LuaNumericRegionValueKind.Integer)
         {
             generator.Emit(OpCodes.Ldloca, regionSiteLocal);
         }
 
-        generator.Emit(OpCodes.Ldloc, keyLocal);
+        if (keyKind == LuaNumericRegionValueKind.Integer)
+        {
+            generator.Emit(OpCodes.Ldloc, keyLocal);
+        }
+        else
+        {
+            EmitLoadTaggedLocal(generator, keyLocal, keyKind);
+        }
         if (valueKind == LuaNumericRegionValueKind.Tagged)
         {
             EmitLoadTaggedLocal(generator, valueLocal, valueKind);
@@ -1595,6 +1741,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                         TrySetCompilerProvenIntegerTableFloatValue,
                     LuaNumericRegionValueKind.Boolean =>
                         TrySetCompilerProvenIntegerTableBooleanValue,
+                    LuaNumericRegionValueKind.String =>
+                        TrySetCompilerProvenIntegerTableStringValue,
                     LuaNumericRegionValueKind.Tagged =>
                         TrySetCompilerProvenIntegerTableValue,
                     _ => throw new InvalidOperationException(
@@ -1608,13 +1756,15 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                         TrySetCompilerProvenStringTableFloatValue,
                     LuaNumericRegionValueKind.Boolean =>
                         TrySetCompilerProvenStringTableBooleanValue,
+                    LuaNumericRegionValueKind.String =>
+                        TrySetCompilerProvenStringTableStringValue,
                     LuaNumericRegionValueKind.Tagged =>
                         TrySetCompilerProvenStringTableValue,
                     _ => throw new InvalidOperationException(
                         $"Numeric-region table value kind {valueKind} cannot be stored."),
                 });
         generator.Emit(OpCodes.Brfalse, semanticDeopt);
-        if (valueKind != LuaNumericRegionValueKind.Tagged)
+        if (canUseBoundValuePath)
         {
             generator.MarkLabel(boundComplete);
         }
@@ -1636,6 +1786,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 break;
             case LuaNumericRegionValueKind.Boolean:
                 generator.Emit(OpCodes.Call, FromBoolean);
+                break;
+            case LuaNumericRegionValueKind.String:
+                generator.Emit(OpCodes.Call, FromString);
                 break;
             case LuaNumericRegionValueKind.Tagged:
                 break;
@@ -1671,6 +1824,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 LuaNumericRegionValueKind.Integer => AsInteger,
                 LuaNumericRegionValueKind.Float => AsFloat,
                 LuaNumericRegionValueKind.Boolean => AsBoolean,
+                LuaNumericRegionValueKind.String => AsString,
                 _ => throw new InvalidOperationException(
                     $"Numeric-region table result kind {kind} cannot be promoted."),
             });
@@ -1713,6 +1867,11 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                     generator.Emit(OpCodes.Ldc_I4_0);
                 }
 
+                break;
+            case LuaIrUnaryOperator.Length:
+                generator.Emit(OpCodes.Ldloc, source);
+                generator.Emit(OpCodes.Callvirt, GetStringLength);
+                generator.Emit(OpCodes.Conv_I8);
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported numeric unary {operation}.");
@@ -1892,6 +2051,26 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             locals,
             instruction.A,
             plan.GetKindAfter(pc, instruction.A));
+        if (operation == LuaIrBinaryOperator.Concatenate)
+        {
+            var textFirst = leftKind == LuaNumericRegionValueKind.String;
+            var numberKind = textFirst ? rightKind : leftKind;
+            generator.Emit(OpCodes.Ldarg_0);
+            generator.Emit(OpCodes.Ldloc, textFirst ? left : right);
+            generator.Emit(OpCodes.Ldloc, textFirst ? right : left);
+            generator.Emit(textFirst ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+            generator.Emit(
+                OpCodes.Call,
+                numberKind == LuaNumericRegionValueKind.Integer
+                    ? ConcatenateStringInteger
+                    : numberKind == LuaNumericRegionValueKind.Float
+                        ? ConcatenateStringFloat
+                        : throw new InvalidOperationException(
+                            $"Unsupported numeric-region concat operand {numberKind}."));
+            generator.Emit(OpCodes.Stloc, result);
+            return;
+        }
+
         if (IsComparison(operation))
         {
             EmitComparison(
@@ -2160,7 +2339,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 OpCodes.Ldloc,
                 NumericLocal(valueLocals, instruction.A, kind));
         }
-        else if (kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float)
+        else if (kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float or
+            LuaNumericRegionValueKind.String)
         {
             generator.Emit(OpCodes.Ldc_I4_1);
         }
@@ -2443,13 +2623,22 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             generator.Emit(OpCodes.Stloc, observed);
         }
 
+        // backedgeCountdown carries the cached long budget (not a literal countdown):
+        // it starts at (pollInterval - 1) * segmentCost and is decremented once per
+        // backedge. A non-negative value is exactly the old countdown > 0 branch.
         generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Ldc_I4_1);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
         generator.Emit(OpCodes.Sub);
         generator.Emit(OpCodes.Stloc, backedgeCountdown);
         generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Brtrue, blockEntryLabels[targetProgramCounter]);
-        EmitInt32(generator, backedgePollInterval);
+        generator.Emit(OpCodes.Ldc_I8, 0L);
+        generator.Emit(OpCodes.Bge, blockEntryLabels[targetProgramCounter]);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
+        EmitInt32(generator, backedgePollInterval - 1);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Mul);
         generator.Emit(OpCodes.Stloc, backedgeCountdown);
         EmitBoundaryState(
             generator,
@@ -2509,41 +2698,69 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             var written = generator.DefineLabel();
             generator.Emit(OpCodes.Ldloc, state.Dirty);
             generator.Emit(OpCodes.Brfalse, clean);
-            foreach (var promoted in plan.Registers.Where(candidate =>
-                         candidate.Register == register))
+            if (state.StableKind != LuaNumericRegionValueKind.Unknown)
             {
-                var nextKind = generator.DefineLabel();
-                generator.Emit(OpCodes.Ldloc, state.ActiveKind);
-                EmitInt32(generator, (int)promoted.Kind);
-                generator.Emit(OpCodes.Bne_Un, nextKind);
                 generator.Emit(OpCodes.Ldarg_1);
                 generator.Emit(OpCodes.Ldarg_2);
                 EmitInt32(generator, register);
                 generator.Emit(
                     OpCodes.Ldloc,
-                    NumericLocal(valueLocals, register, promoted.Kind));
-                if (promoted.Kind != LuaNumericRegionValueKind.Tagged)
+                    NumericLocal(valueLocals, register, state.StableKind));
+                if (state.StableKind != LuaNumericRegionValueKind.Tagged)
                 {
                     generator.Emit(
                         OpCodes.Call,
-                        promoted.Kind switch
+                        state.StableKind switch
                         {
                             LuaNumericRegionValueKind.Integer => FromInteger,
                             LuaNumericRegionValueKind.Float => FromFloat,
                             LuaNumericRegionValueKind.Boolean => FromBoolean,
+                            LuaNumericRegionValueKind.String => FromString,
                             _ => throw new InvalidOperationException(),
                         });
                 }
                 generator.Emit(OpCodes.Call, WriteRegister);
-                generator.Emit(OpCodes.Br, written);
-                generator.MarkLabel(nextKind);
+            }
+            else
+            {
+                foreach (var promoted in plan.Registers.Where(candidate =>
+                             candidate.Register == register))
+                {
+                    var nextKind = generator.DefineLabel();
+                    generator.Emit(OpCodes.Ldloc, state.ActiveKind);
+                    EmitInt32(generator, (int)promoted.Kind);
+                    generator.Emit(OpCodes.Bne_Un, nextKind);
+                    generator.Emit(OpCodes.Ldarg_1);
+                    generator.Emit(OpCodes.Ldarg_2);
+                    EmitInt32(generator, register);
+                    generator.Emit(
+                        OpCodes.Ldloc,
+                        NumericLocal(valueLocals, register, promoted.Kind));
+                    if (promoted.Kind != LuaNumericRegionValueKind.Tagged)
+                    {
+                        generator.Emit(
+                            OpCodes.Call,
+                            promoted.Kind switch
+                            {
+                                LuaNumericRegionValueKind.Integer => FromInteger,
+                                LuaNumericRegionValueKind.Float => FromFloat,
+                                LuaNumericRegionValueKind.Boolean => FromBoolean,
+                                LuaNumericRegionValueKind.String => FromString,
+                                _ => throw new InvalidOperationException(),
+                            });
+                    }
+                    generator.Emit(OpCodes.Call, WriteRegister);
+                    generator.Emit(OpCodes.Br, written);
+                    generator.MarkLabel(nextKind);
+                }
+
+                generator.Emit(
+                    OpCodes.Ldstr,
+                    $"Dirty numeric register r{register} has no active promoted kind.");
+                generator.Emit(OpCodes.Newobj, InvalidOperationExceptionConstructor);
+                generator.Emit(OpCodes.Throw);
             }
 
-            generator.Emit(
-                OpCodes.Ldstr,
-                $"Dirty numeric register r{register} has no active promoted kind.");
-            generator.Emit(OpCodes.Newobj, InvalidOperationExceptionConstructor);
-            generator.Emit(OpCodes.Throw);
             generator.MarkLabel(written);
             generator.Emit(OpCodes.Ldc_I4_0);
             generator.Emit(OpCodes.Stloc, state.Dirty);
@@ -2694,8 +2911,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericDirtyState state,
         LuaNumericRegionValueKind kind)
     {
-        EmitInt32(generator, (int)kind);
-        generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        if (state.StableKind == LuaNumericRegionValueKind.Unknown)
+        {
+            EmitInt32(generator, (int)kind);
+            generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        }
+
         EmitSetDirty(generator, state.Dirty);
     }
 
@@ -2770,6 +2991,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionValueKind.Integer => typeof(long),
         LuaNumericRegionValueKind.Float => typeof(double),
         LuaNumericRegionValueKind.Boolean => typeof(bool),
+        LuaNumericRegionValueKind.String => typeof(LuaString),
         LuaNumericRegionValueKind.Tagged => typeof(LuaValue),
         _ => throw new InvalidOperationException($"{kind} is not promotable."),
     };
@@ -2788,6 +3010,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionValueKind.Integer => LuaValueKind.Integer,
         LuaNumericRegionValueKind.Float => LuaValueKind.Float,
         LuaNumericRegionValueKind.Boolean => LuaValueKind.Boolean,
+        LuaNumericRegionValueKind.String => LuaValueKind.String,
         _ => throw new InvalidOperationException($"{kind} is not a Lua value kind."),
     };
 

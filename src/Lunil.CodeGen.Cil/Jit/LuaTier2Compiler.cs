@@ -754,6 +754,25 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         instruction.A + 3,
                         site.FirstOperandKinds);
                     break;
+                case LuaIrOpcode.GetTable:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.C,
+                        site.SecondOperandKinds);
+                    break;
+                case LuaIrOpcode.SetTable:
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.B,
+                        site.SecondOperandKinds);
+                    AddNumericRegionHint(
+                        result,
+                        site.ProgramCounter,
+                        instruction.C,
+                        site.ThirdOperandKinds);
+                    break;
             }
         }
 
@@ -990,6 +1009,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaJitValueKinds.Integer => LuaNumericRegionValueKind.Integer,
             LuaJitValueKinds.Float => LuaNumericRegionValueKind.Float,
             LuaJitValueKinds.Boolean => LuaNumericRegionValueKind.Boolean,
+            LuaJitValueKinds.String => LuaNumericRegionValueKind.String,
             _ => LuaNumericRegionValueKind.Conflict,
         };
 

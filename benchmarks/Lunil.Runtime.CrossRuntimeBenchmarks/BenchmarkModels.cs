@@ -15,12 +15,19 @@ internal sealed record BenchmarkComparisonPolicy(
     double MinimumMedianSpeedup,
     double MinimumCi95Lower);
 
+internal enum BenchmarkWorkloadRole : byte
+{
+    Release,
+    Diagnostic,
+}
+
 internal sealed record BenchmarkWorkload(
     string Name,
     string Category,
     string File,
     double ExpectedPerOperation,
-    string Description);
+    string Description,
+    BenchmarkWorkloadRole Role = BenchmarkWorkloadRole.Release);
 
 internal sealed record BenchmarkSettings(
     int Rounds,
@@ -53,7 +60,8 @@ internal sealed record EngineMeasurement(
     double SetupCpuSeconds,
     double Result,
     string Route,
-    IReadOnlyDictionary<string, string> Telemetry);
+    IReadOnlyDictionary<string, string> Telemetry,
+    long? ManagedAllocatedBytes);
 
 internal sealed record BenchmarkSample(
     string Rid,
@@ -67,13 +75,15 @@ internal sealed record BenchmarkSample(
     double ExpectedResult,
     bool Valid,
     string Route,
-    IReadOnlyDictionary<string, string> Telemetry);
+    IReadOnlyDictionary<string, string> Telemetry,
+    double? ManagedAllocatedBytesPerOperation);
 
 internal sealed record ConfidenceInterval(double Lower, double Upper);
 
 internal sealed record EngineWorkloadSummary(
     string Workload,
     string Category,
+    BenchmarkWorkloadRole Role,
     string Engine,
     int Operations,
     int Samples,
@@ -81,6 +91,7 @@ internal sealed record EngineWorkloadSummary(
     double P95CpuNanosecondsPerOperation,
     double MedianAbsoluteDeviationCpuNanoseconds,
     double MedianSetupCpuMilliseconds,
+    double? MedianManagedAllocatedBytesPerOperation,
     double SpeedupVsNativeLua,
     double SpeedupCi95Lower,
     double SpeedupCi95Upper,

@@ -156,7 +156,7 @@ jobs:
           retention-days: 14
 
   aggregate:
-    name: Aggregate native-Lua and MoonSharp gates
+    name: Aggregate stability and 0.9.0 roadmap gates
     if: github.event_name == 'workflow_dispatch' && inputs.full-matrix
     needs: measure-full
     runs-on: ubuntu-latest
@@ -168,8 +168,9 @@ jobs:
           path: artifacts/cross-runtime-performance
       - name: Validate and merge all six RIDs
         shell: pwsh
-        run: ./scripts/Merge-CrossRuntimePerformanceEvidence.ps1
+        run: ./scripts/Merge-CrossRuntimePerformanceEvidence.ps1 -EnforceRoadmapTargets
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: cross-runtime-performance-six-rid-report
           path: |

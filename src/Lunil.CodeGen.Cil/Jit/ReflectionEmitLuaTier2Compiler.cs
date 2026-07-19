@@ -598,9 +598,11 @@ internal static class ReflectionEmitLuaTier2Compiler
                 case LuaJitOptimizationKind.BooleanBranch:
                     break;
                 case LuaJitOptimizationKind.NumericUnary:
-                    if (!IsExactNumericKind(optimization.FirstKinds) ||
-                        (LuaIrUnaryOperator)function.Instructions[pc].C is not
-                            (LuaIrUnaryOperator.Negate or
+                    var unaryOperation = (LuaIrUnaryOperator)function.Instructions[pc].C;
+                    if (unaryOperation == LuaIrUnaryOperator.Length
+                        ? optimization.FirstKinds != LuaJitValueKinds.String
+                        : !IsExactNumericKind(optimization.FirstKinds) ||
+                            unaryOperation is not (LuaIrUnaryOperator.Negate or
                                 LuaIrUnaryOperator.BitwiseNot or
                                 LuaIrUnaryOperator.LogicalNot))
                     {
@@ -1298,7 +1300,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         LuaJitValueKinds kinds,
         LuaIrUnaryOperator operation)
     {
-        if (operation == LuaIrUnaryOperator.LogicalNot)
+        if (operation is LuaIrUnaryOperator.LogicalNot or LuaIrUnaryOperator.Length)
         {
             return GenericUnary;
         }

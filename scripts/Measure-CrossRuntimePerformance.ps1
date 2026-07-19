@@ -18,6 +18,7 @@ param(
     [switch] $NoProvision,
     [switch] $NoBuild,
     [switch] $SkipReference,
+    [switch] $IncludeDiagnostics,
     [switch] $Quick
 )
 
@@ -99,6 +100,9 @@ try {
     }
     if ($SkipReference) {
         $runnerArguments += '--skip-reference'
+    }
+    if ($IncludeDiagnostics) {
+        $runnerArguments += '--include-diagnostics'
     }
 
     & dotnet @runnerArguments 2>&1 | Tee-Object -FilePath (Join-Path $OutputDirectory 'runner.log')
