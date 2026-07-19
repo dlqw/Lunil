@@ -32,63 +32,51 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 
 ## Performance
 
-The latest `0.9.0-alpha.4` release qualification uses identical Lua source across eight workloads, six balanced
+The latest `0.9.0-alpha.5` release qualification uses identical Lua source across eight workloads, six balanced
 rounds, and all six release RIDs. Native PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
 
 | Engine | Geomean vs native Lua | Geomean vs MoonSharp |
 | --- | ---: | ---: |
-| LuaJIT | 11.215x | 159.275x |
-| Native Lua 5.4 | 1.000x | 14.216x |
-| Lunil Tier 2 | 1.328x | 18.956x |
-| **Lunil Auto JIT** | **1.326x** | **18.863x** |
-| Lunil Loop OSR | 0.147x | 2.083x |
-| Lunil Tier 1 | 0.106x | 1.512x |
+| LuaJIT | 11.518x | 164.301x |
+| Native Lua 5.4 | 1.000x | 14.287x |
+| Lunil Tier 2 | 1.702x | 24.314x |
+| **Lunil Auto JIT** | **1.688x** | **24.089x** |
+| Lunil Loop OSR | 0.157x | 2.238x |
+| Lunil Tier 1 | 0.106x | 1.504x |
 | MoonSharp | 0.070x | 1.000x |
-| Lunil interpreter | 0.051x | 0.724x |
+| Lunil interpreter | 0.051x | 0.725x |
 
-![Lunil 0.9.0-alpha.4 runtime comparison](assets/performance/0.9.0-alpha.4-runtime-overview.svg)
+![Lunil 0.9.0-alpha.5 runtime comparison](assets/performance/0.9.0-alpha.5-runtime-overview.svg)
 
 | Auto JIT workload | Vs native Lua | Vs MoonSharp |
 | --- | ---: | ---: |
-| Arithmetic | 1.106x | 24.262x |
-| Iterative Fibonacci | 3.279x | 45.424x |
-| Mandelbrot | 4.307x | 64.841x |
-| Control flow | 1.937x | 31.871x |
-| Function calls | 2.348x | 31.870x |
-| Table access | 0.455x | 11.830x |
-| Prime sieve | 0.498x | 12.380x |
-| String build | 0.592x | 1.508x |
+| Arithmetic | 1.643x | 36.094x |
+| Iterative Fibonacci | 3.232x | 46.988x |
+| Mandelbrot | 4.210x | 63.829x |
+| Control flow | 2.101x | 34.773x |
+| Function calls | 2.568x | 35.421x |
+| Table access | 0.478x | 12.467x |
+| Prime sieve | 0.530x | 12.698x |
+| String build | 2.164x | 5.372x |
 
-![Lunil 0.9.0-alpha.4 Auto JIT by workload](assets/performance/0.9.0-alpha.4-auto-workloads.svg)
+![Lunil 0.9.0-alpha.5 Auto JIT by workload](assets/performance/0.9.0-alpha.5-auto-workloads.svg)
 
-The calls and floating-point release moves `function_calls` from `1.204x` to `2.348x` native Lua
-and `mandelbrot` from `0.559x` to `4.307x`. The rows below are independent six-RID qualification
-runs, not paired same-machine speedups.
+Alpha 5 keeps stable string-number concatenation and dense string-array writes in one guarded Tier 2
+region. Segmented evidence did not justify a separate dense `table.concat` bulk-copy path; the full
+`string_build` workload reached `2.164x` native Lua with the existing concat implementation. The rows
+below are independent six-RID qualification runs, not paired same-machine speedups.
 
-| Version | Auto overall | Function calls | Mandelbrot |
+| Version | Auto overall | Control flow | String build |
 | --- | ---: | ---: | ---: |
-| Stable `0.8.0` | 0.680x | 1.204x | 0.559x |
-| `0.9.0-alpha.3` | 0.947x | 1.289x | 0.569x |
-| **`0.9.0-alpha.4`** | **1.326x** | **2.348x** | **4.307x** |
+| Stable `0.8.0` | 0.680x | 2.070x | 0.591x |
+| `0.9.0-alpha.4` | 1.326x | 1.937x | 0.592x |
+| **`0.9.0-alpha.5`** | **1.688x** | **2.101x** | **2.164x** |
 
-The Alpha 4 qualification also passed backend correctness, NativeAOT, trimming, package/API, route,
-telemetry, startup, allocation, and code-size checks. The
-[machine-readable report](benchmarks/results/0.9.0-alpha.4-performance.json) includes exact values
-and backend costs.
-
-### Alpha 5 string-build qualification
-
-Alpha 5 focuses on transient string allocation, concatenation, and `table.concat`. The current
-single-RID win-x64 qualification sample uses six balanced rounds and keeps native Lua as the
-normalization baseline; it is reported separately from the release matrix:
-
-| Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
-| --- | ---: | ---: | ---: |
-| Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
-| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | recorded baseline |
-| MoonSharp | 283.203 µs | 0.508x | 1.000x |
-
-![Lunil 0.9.0-alpha.5 string-build comparison](assets/performance/0.9.0-alpha.5-string-build.svg)
+The Alpha 5 source completed the Beta qualification matrix: all roadmap targets, backend costs,
+conformance/differential suites, NativeAOT, trimming, package/API, route, telemetry, startup,
+allocation, and code-size gates passed. The
+[machine-readable report](benchmarks/results/0.9.0-alpha.5-performance.json) records exact values,
+the product commit, and the accepted workflow runs.
 
 See [Performance](docs/performance.md) for methodology, source data, confidence gates, and
 reproduction commands. The [0.9.0 roadmap](docs/roadmap-0.9.0.md) defines the next performance

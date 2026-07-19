@@ -65,7 +65,7 @@ to expose the cost and benefit of entering specialized code at a loop backedge.
 
 ## Current development snapshot
 
-`0.9.0-alpha.4` is the latest complete six-RID cross-runtime and backend qualification using the same
+`0.9.0-alpha.5` is the latest complete six-RID cross-runtime and backend qualification using the same
 workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 
 | Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
@@ -74,52 +74,50 @@ workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 | `0.9.0-alpha.2`, six release RIDs | 0.697x | 9.918x | Passed |
 | `0.9.0-alpha.3`, six release RIDs | 0.947x | 13.479x | Passed |
 | `0.9.0-alpha.4`, six release RIDs | 1.326x | 18.863x | Passed |
+| `0.9.0-alpha.5`, six release RIDs | 1.688x | 24.089x | Passed |
 
 These rows are independent qualification runs rather than paired hardware speedup claims. The
 development rows demonstrate current-source correctness, route stability, and performance shape.
 
-Alpha 4 compiles stable fixed-shape primitive Lua leaf calls and keeps integer, floating-point, and
-Boolean values native across qualified calls. Floating-point numeric regions now retain native
-state through comparisons, branches, and bounded backedges. The targeted workloads meet their
-release gates:
+Alpha 5 extends the shared Tier 2 region representation to stable strings. String-number
+concatenation, string length, and dense string-array writes can stay in one guarded region with
+exact operand order, table guards, write barriers, instruction budgets, and deoptimization
+ordering. Diagnostic-only component workloads showed that a new dense `table.concat` bulk-copy
+path was not justified: the existing dense-string concat path was already faster than native Lua,
+while the full `string_build` release workload passed with substantial margin.
 
-| Auto JIT workload | `0.8.0` | `0.9.0-alpha.4` | `0.9.0` target |
+| Auto JIT workload | `0.8.0` | `0.9.0-alpha.5` | `0.9.0` target |
 | --- | ---: | ---: | ---: |
-| `function_calls` | 1.204x | 2.348x | ≥ 1.500x |
-| `mandelbrot` | 0.559x | 4.307x | ≥ 0.750x |
+| `arithmetic` | 1.110x | 1.643x | ≥ 1.100x |
+| `fib_iter` | 2.801x | 3.232x | ≥ 2.800x |
+| `mandelbrot` | 0.559x | 4.210x | ≥ 0.750x |
+| `control_flow` | 2.070x | 2.101x | ≥ 2.000x |
+| `function_calls` | 1.204x | 2.568x | ≥ 1.500x |
+| `table_access` | 0.299x | 0.478x | ≥ 0.450x |
+| `sieve` | 0.059x | 0.530x | ≥ 0.120x |
+| `string_build` | 0.591x | 2.164x | ≥ 0.750x |
 
-![Runtime comparison for Lunil 0.9.0-alpha.4](../assets/performance/0.9.0-alpha.4-runtime-overview.svg)
+![Runtime comparison for Lunil 0.9.0-alpha.5](../assets/performance/0.9.0-alpha.5-runtime-overview.svg)
 
-![Auto JIT workload comparison for Lunil 0.9.0-alpha.4](../assets/performance/0.9.0-alpha.4-auto-workloads.svg)
+![Auto JIT workload comparison for Lunil 0.9.0-alpha.5](../assets/performance/0.9.0-alpha.5-auto-workloads.svg)
 
 | Current backend metric | Six-RID result | `0.9.0` limit |
 | --- | ---: | ---: |
-| Tier 2 compile p95 | 3.485 ms | ≤ 5 ms |
-| Tier 2 compile allocation p95 | 252,664 B | ≤ 262,144 B |
-| Loop OSR compile p95 | 4.777 ms | ≤ 7.5 ms |
-| Loop OSR preparation p95 | 0.086 ms | ≤ 2 ms |
-| Loop OSR compile allocation p95 | 193,864 B | ≤ 196,608 B |
-| Maximum region allocation growth | 22,408 B/instruction | ≤ 32,768 B/instruction |
-| Maximum unchanged-route execution allocation | 1.014x | ≤ 1.05x |
+| Tier 2 compile p95 | 3.924 ms | ≤ 5 ms |
+| Tier 2 compile allocation p95 | 243,208 B | ≤ 262,144 B |
+| Loop OSR compile p95 | 5.684 ms | ≤ 7.5 ms |
+| Loop OSR preparation p95 | 0.113 ms | ≤ 2 ms |
+| Loop OSR compile allocation p95 | 184,168 B | ≤ 196,608 B |
+| Maximum region allocation growth | 21,777 B/instruction | ≤ 32,768 B/instruction |
+| Maximum unchanged-route execution allocation | 1.010x | ≤ 1.05x |
 | Maximum unchanged-route estimated code size | 1.124x | ≤ 1.15x |
 
 The compact source report is available at
-[`benchmarks/results/0.9.0-alpha.4-performance.json`](../benchmarks/results/0.9.0-alpha.4-performance.json).
-
-`0.9.0-alpha.5` extends the string-build path. The following win-x64 qualification sample records a
-six-round result; it is intentionally reported separately from the six-RID release matrix:
-
-| Engine | Median CPU/op | Vs native Lua | Vs MoonSharp |
-| --- | ---: | ---: | ---: |
-| Native Lua 5.4 | 138.992 µs | 1.000x | 1.967x |
-| **Lunil Auto JIT** | **156.250 µs** | **0.833x** | recorded baseline |
-| MoonSharp | 283.203 µs | 0.508x | 1.000x |
-
-![Runtime comparison for Lunil 0.9.0-alpha.5 string_build](../assets/performance/0.9.0-alpha.5-string-build.svg)
-
-The MoonSharp comparison is retained from the accepted reference baseline; PR smoke tests do not
-rerun external engines. Full external comparison is refreshed only by the scheduled/manual release
-qualification workflow.
+[`benchmarks/results/0.9.0-alpha.5-performance.json`](../benchmarks/results/0.9.0-alpha.5-performance.json).
+It records the source revision and matching six-RID cross-runtime and Beta qualification metadata.
+The qualification also passed the official Lua 5.4.8 user-mode suite, five-backend differential
+corpus, deterministic fuzz/GC soak, NativeAOT, trimming, single-file, ReadyToRun, package consumers,
+CLI, and public API baselines on the applicable release RIDs.
 
 ## Reproduce the benchmark
 
@@ -156,9 +154,9 @@ Regenerate or verify the committed charts:
 ./scripts/New-PerformanceCharts.ps1
 ./scripts/New-PerformanceCharts.ps1 -Verify
 ./scripts/New-PerformanceCharts.ps1 `
-  -DataPath benchmarks/results/0.9.0-alpha.4-performance.json
+  -DataPath benchmarks/results/0.9.0-alpha.5-performance.json
 ./scripts/New-PerformanceCharts.ps1 `
-  -DataPath benchmarks/results/0.9.0-alpha.4-performance.json `
+  -DataPath benchmarks/results/0.9.0-alpha.5-performance.json `
   -Verify
 ```
 

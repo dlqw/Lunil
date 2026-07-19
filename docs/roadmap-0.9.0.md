@@ -84,6 +84,13 @@ Every performance change must also satisfy these bounds on all release RIDs:
 | Generated code bytes for unchanged routes | at most 1.15x `0.8.0` |
 | Execution allocation for unchanged workloads | at most 1.05x `0.8.0` |
 
+The `0.9.0-alpha.5` source has completed the Beta qualification matrix. The accepted six-RID
+cross-runtime evidence reports Auto JIT at `1.688x` native Lua and `24.089x` MoonSharp, with the
+lowest per-RID native-Lua geomean at `1.103x`. Every workload target passed, including
+`control_flow` at `2.101x` and `string_build` at `2.164x`. The matching six-RID backend,
+conformance, NativeAOT, trimming, package, and public API gates passed from the same source
+revision. Reproduction metadata is recorded in the versioned performance report.
+
 ## Delivery sequence
 
 | Stage | Status | Outcome |
@@ -92,8 +99,8 @@ Every performance change must also satisfy these bounds on all release RIDs:
 | Alpha 2 | Implemented in current source | Compilation allocation, startup, and code-size closure |
 | Alpha 3 | Implemented in current source | Table-heavy and mixed-loop throughput |
 | Alpha 4 | Implemented in current source | Calls and floating-point regions |
-| Alpha 5 | Planned | Strings and baseline execution |
-| Beta | Planned | Feature freeze and complete performance qualification |
+| Alpha 5 | Implemented in current source | Strings and baseline execution |
+| Beta | Qualification complete; freeze pending | Feature freeze and complete performance qualification |
 | RC / stable | Planned | Release-blocker-only validation and publication |
 
 ### Alpha 1 — shared specialization architecture
@@ -133,10 +140,16 @@ Every performance change must also satisfy these bounds on all release RIDs:
 
 ### Alpha 5 — strings and baseline execution
 
-- Reduce transient allocations in number-to-string conversion, concatenation, and `table.concat`.
-- Improve interpreter and Tier 1 fallback paths used by polymorphic, string-heavy, and cold code.
-- Keep binary-string semantics, locale independence, pattern behavior, and GC visibility unchanged.
-- Complete the required workload targets before feature freeze.
+- Keep stable string-number concatenation and dense string-array writes inside one guarded Tier 2
+  region while preserving operand order, table guards, write barriers, and write-before-deopt
+  ordering.
+- Publish diagnostic-only string conversion, dense array write, and `table.concat` workloads so
+  each component can be evaluated without changing the release score.
+- Retain the existing `table.concat` implementation after the segmented evidence showed that the
+  dense-string case was already faster than native Lua and was not the remaining release blocker.
+- Keep exact instruction accounting, binary-string semantics, locale independence, GC visibility,
+  and canonical restart behavior unchanged.
+- Complete every required cross-runtime and backend-cost target before feature freeze.
 
 ### Beta
 
@@ -144,6 +157,9 @@ Every performance change must also satisfy these bounds on all release RIDs:
 - Run the full six-RID cross-runtime matrix and same-machine `0.8.0` comparisons.
 - Resolve every required performance, allocation, startup, code-size, correctness, NativeAOT, and
   trimming gate; new optimization features wait for the next milestone.
+
+The current source has completed these qualification runs. Promotion to a Beta version now requires
+the feature/API freeze and release review; it does not require another optimization feature.
 
 ### Release candidate and stable release
 

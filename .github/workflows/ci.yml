@@ -174,7 +174,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/New-PerformanceCharts.ps1 -Verify
-          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.4-performance.json -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.5-performance.json -Verify
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
