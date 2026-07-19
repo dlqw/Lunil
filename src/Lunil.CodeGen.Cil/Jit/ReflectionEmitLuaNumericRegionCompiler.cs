@@ -567,25 +567,31 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var valueLocals = plan.Registers.ToDictionary(
             static register => (register.Register, register.Kind),
             register => generator.DeclareLocal(LocalType(register.Kind)));
-        var stableKindsByRegister = plan.Registers
-            .GroupBy(static register => register.Register)
-            .ToDictionary(
-                static group => group.Key,
-                static group => group
-                    .Select(static register => register.Kind)
-                    .Distinct()
-                    .ToArray());
-        var dirtyLocals = plan.Registers
-            .Select(static register => register.Register)
-            .Distinct()
-            .ToDictionary(
-            static register => register,
-            register => new NumericDirtyState(
-                generator.DeclareLocal(typeof(bool)),
-                generator.DeclareLocal(typeof(int)),
-                stableKindsByRegister[register].Length == 1
-                    ? stableKindsByRegister[register][0]
-                    : LuaNumericRegionValueKind.Unknown));
+        var dirtyLocals = new Dictionary<int, NumericDirtyState>();
+        foreach (var register in plan.Registers)
+        {
+            if (dirtyLocals.ContainsKey(register.Register))
+            {
+                continue;
+            }
+
+            var stableKind = register.Kind;
+            foreach (var candidate in plan.Registers)
+            {
+                if (candidate.Register == register.Register && candidate.Kind != stableKind)
+                {
+                    stableKind = LuaNumericRegionValueKind.Unknown;
+                    break;
+                }
+            }
+
+            dirtyLocals.Add(
+                register.Register,
+                new NumericDirtyState(
+                    generator.DeclareLocal(typeof(bool)),
+                    generator.DeclareLocal(typeof(int)),
+                    stableKind));
+        }
         var tableSiteLocals = plan.TableSites.ToDictionary(
             static site => site.ProgramCounter,
             _ => generator.DeclareLocal(typeof(LuaCodegenTableSiteCache)));
