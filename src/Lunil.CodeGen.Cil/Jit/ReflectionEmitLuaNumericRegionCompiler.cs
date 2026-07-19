@@ -124,7 +124,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
 
     private readonly record struct NumericDirtyState(
         LuaNumericIlLocal Dirty,
-        LuaNumericIlLocal ActiveKind);
+        LuaNumericIlLocal ActiveKind,
+        LuaNumericRegionValueKind StableKind);
 
     private readonly struct NumericRegionLabelMap(
         ImmutableArray<int> programCounters,
@@ -566,14 +567,25 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var valueLocals = plan.Registers.ToDictionary(
             static register => (register.Register, register.Kind),
             register => generator.DeclareLocal(LocalType(register.Kind)));
+        var stableKindsByRegister = plan.Registers
+            .GroupBy(static register => register.Register)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .Select(static register => register.Kind)
+                    .Distinct()
+                    .ToArray());
         var dirtyLocals = plan.Registers
             .Select(static register => register.Register)
             .Distinct()
             .ToDictionary(
             static register => register,
-            _ => new NumericDirtyState(
+            register => new NumericDirtyState(
                 generator.DeclareLocal(typeof(bool)),
-                generator.DeclareLocal(typeof(int))));
+                generator.DeclareLocal(typeof(int)),
+                stableKindsByRegister[register].Length == 1
+                    ? stableKindsByRegister[register][0]
+                    : LuaNumericRegionValueKind.Unknown));
         var tableSiteLocals = plan.TableSites.ToDictionary(
             static site => site.ProgramCounter,
             _ => generator.DeclareLocal(typeof(LuaCodegenTableSiteCache)));
@@ -606,7 +618,9 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var remaining = generator.DeclareLocal(typeof(long));
         var pending = generator.DeclareLocal(typeof(int));
         var boundaryProgramCounter = generator.DeclareLocal(typeof(int));
-        var backedgeCountdown = generator.DeclareLocal(typeof(int));
+        // Cache the exact remaining cost before the next backedge safepoint. This is
+        // equivalent to (countdown - 1) * segmentCost, but avoids a hot-path multiply.
+        var backedgeBudget = generator.DeclareLocal(typeof(long));
         var observedBackedges = mode.ObserveLoopOsrBackedge
             ? plan.BackedgeProgramCounters.ToDictionary(
                 static pc => pc,
@@ -660,6 +674,16 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         var safepointBoundary = generator.DefineLabel();
         var guardBoundary = generator.DefineLabel();
         var invalidatedExit = generator.DefineLabel();
+        foreach (var state in dirtyLocals.Values)
+        {
+            if (state.StableKind == LuaNumericRegionValueKind.Unknown)
+            {
+                continue;
+            }
+
+            EmitInt32(generator, (int)state.StableKind);
+            generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        }
         var maximumBackedgePollInterval = plan.TableSites.IsEmpty
             ? MaximumBackedgePollInterval
             : Math.Min(
@@ -674,8 +698,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         EmitEntryGuard(generator, function, plan, mode, invalidatedExit);
         generator.Emit(OpCodes.Ldc_I4, int.MaxValue);
         generator.Emit(OpCodes.Stloc, minimumTop);
-        EmitInt32(generator, backedgePollInterval);
-        generator.Emit(OpCodes.Stloc, backedgeCountdown);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
+        EmitInt32(generator, backedgePollInterval - 1);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Mul);
+        generator.Emit(OpCodes.Stloc, backedgeBudget);
         generator.Emit(OpCodes.Ldarg_0);
         generator.Emit(OpCodes.Callvirt, GetRemainingInstructionCount);
         generator.Emit(OpCodes.Stloc, remaining);
@@ -737,7 +765,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 plan,
                 pc,
                 remaining,
-                backedgeCountdown,
+                backedgeBudget,
                 hotChargeLabels[pc],
                 coldSlowTailLabels[pc]);
 
@@ -772,7 +800,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 currentDirectCallClosure,
                 remaining,
                 pending,
-                backedgeCountdown,
+                backedgeBudget,
                 observedBackedges,
                 backedgePollInterval,
                 minimumTop,
@@ -812,7 +840,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
                 currentDirectCallClosure,
                 remaining,
                 pending,
-                backedgeCountdown,
+                backedgeBudget,
                 observedBackedges,
                 backedgePollInterval,
                 minimumTop,
@@ -1064,7 +1092,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionPlan plan,
         int programCounter,
         LuaNumericIlLocal remaining,
-        LuaNumericIlLocal backedgeCountdown,
+        LuaNumericIlLocal backedgeBudget,
         LuaNumericIlLabel hotQuantum,
         LuaNumericIlLabel coldSlowTail)
     {
@@ -1072,13 +1100,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         generator.Emit(OpCodes.Ldloc, remaining);
         EmitInt32(generator, site.MaximumInstructionCostToSafepointOrExit);
         generator.Emit(OpCodes.Conv_I8);
-        generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Ldc_I4_1);
-        generator.Emit(OpCodes.Sub);
-        generator.Emit(OpCodes.Conv_I8);
-        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
-        generator.Emit(OpCodes.Conv_I8);
-        generator.Emit(OpCodes.Mul);
+        generator.Emit(OpCodes.Ldloc, backedgeBudget);
         generator.Emit(OpCodes.Add);
         generator.Emit(OpCodes.Bge, hotQuantum);
         generator.Emit(OpCodes.Br, coldSlowTail);
@@ -2595,13 +2617,22 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             generator.Emit(OpCodes.Stloc, observed);
         }
 
+        // backedgeCountdown carries the cached long budget (not a literal countdown):
+        // it starts at (pollInterval - 1) * segmentCost and is decremented once per
+        // backedge. A non-negative value is exactly the old countdown > 0 branch.
         generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Ldc_I4_1);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
         generator.Emit(OpCodes.Sub);
         generator.Emit(OpCodes.Stloc, backedgeCountdown);
         generator.Emit(OpCodes.Ldloc, backedgeCountdown);
-        generator.Emit(OpCodes.Brtrue, blockEntryLabels[targetProgramCounter]);
-        EmitInt32(generator, backedgePollInterval);
+        generator.Emit(OpCodes.Ldc_I8, 0L);
+        generator.Emit(OpCodes.Bge, blockEntryLabels[targetProgramCounter]);
+        EmitInt32(generator, plan.MaximumBackedgeSegmentInstructionCost);
+        generator.Emit(OpCodes.Conv_I8);
+        EmitInt32(generator, backedgePollInterval - 1);
+        generator.Emit(OpCodes.Conv_I8);
+        generator.Emit(OpCodes.Mul);
         generator.Emit(OpCodes.Stloc, backedgeCountdown);
         EmitBoundaryState(
             generator,
@@ -2847,8 +2878,12 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         NumericDirtyState state,
         LuaNumericRegionValueKind kind)
     {
-        EmitInt32(generator, (int)kind);
-        generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        if (state.StableKind == LuaNumericRegionValueKind.Unknown)
+        {
+            EmitInt32(generator, (int)kind);
+            generator.Emit(OpCodes.Stloc, state.ActiveKind);
+        }
+
         EmitSetDirty(generator, state.Dirty);
     }
 
