@@ -188,6 +188,7 @@ flowchart LR
 | 文档 | 内容 |
 | --- | --- |
 | [性能](docs/performance.zh-CN.md) | 当前数据、图表、方法与复现方式 |
+| [路线图](docs/roadmap.zh-CN.md) | Lua 版本兼容、运行时对比、CLR 互操作与热更新 |
 | [编译器设计（简体中文）](docs/compiler-design.zh-CN.md) | 编译器、IR、运行时与执行架构 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
 | [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |
