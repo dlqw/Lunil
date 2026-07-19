@@ -522,6 +522,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                     LuaJitValueKinds.Integer => LuaNumericRegionValueKind.Integer,
                     LuaJitValueKinds.Float => LuaNumericRegionValueKind.Float,
                     LuaJitValueKinds.Boolean => LuaNumericRegionValueKind.Boolean,
+                    LuaJitValueKinds.String => LuaNumericRegionValueKind.String,
                     _ => LuaNumericRegionValueKind.Conflict,
                 });
         }

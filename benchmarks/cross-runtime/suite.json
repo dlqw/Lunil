@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "baselineEngine": "lua54",
   "requiredEngines": [
     "lua54",
@@ -76,6 +76,38 @@
       "file": "workloads/string_build.lua",
       "expectedPerOperation": 6899,
       "description": "String conversion, concatenation, table construction, and table.concat."
+    },
+    {
+      "name": "string_integer_concat",
+      "category": "strings-diagnostic",
+      "file": "workloads/string_integer_concat.lua",
+      "expectedPerOperation": 5900,
+      "description": "Diagnostic-only string/integer conversion and concatenation without table traffic.",
+      "role": "diagnostic"
+    },
+    {
+      "name": "dense_string_array_set",
+      "category": "strings-diagnostic",
+      "file": "workloads/dense_string_array_set.lua",
+      "expectedPerOperation": 12,
+      "description": "Diagnostic-only dense array writes of one stable prebuilt Lua string.",
+      "role": "diagnostic"
+    },
+    {
+      "name": "table_concat_strings",
+      "category": "strings-diagnostic",
+      "file": "workloads/table_concat_strings.lua",
+      "expectedPerOperation": 6899,
+      "description": "Diagnostic-only table.concat over a persistent dense string array.",
+      "role": "diagnostic"
+    },
+    {
+      "name": "table_concat_numbers",
+      "category": "strings-diagnostic",
+      "file": "workloads/table_concat_numbers.lua",
+      "expectedPerOperation": 2899,
+      "description": "Diagnostic-only table.concat number formatting over a persistent dense array.",
+      "role": "diagnostic"
     }
   ]
 }

@@ -614,6 +614,9 @@ internal static class LuaNumericRegionPlanner
                 solver.TryAssign(destination, LuaNumericRegionValueKind.Integer),
             LuaIrUnaryOperator.LogicalNot =>
                 solver.TryAssign(destination, LuaNumericRegionValueKind.Boolean),
+            LuaIrUnaryOperator.Length =>
+                solver.TryAssign(operand, LuaNumericRegionValueKind.String) &&
+                solver.TryAssign(destination, LuaNumericRegionValueKind.Integer),
             _ => false,
         };
     }
@@ -634,7 +637,7 @@ internal static class LuaNumericRegionPlanner
         var operation = (LuaIrBinaryOperator)instruction.D;
         if (operation == LuaIrBinaryOperator.Concatenate)
         {
-            return false;
+            return solver.TryAssign(destination, LuaNumericRegionValueKind.String);
         }
 
         if (operation is LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
@@ -663,12 +666,17 @@ internal static class LuaNumericRegionPlanner
         ExactTypeSolver solver)
     {
         var operation = (LuaIrBinaryOperator)instruction.D;
-        if (operation == LuaIrBinaryOperator.Concatenate ||
-            !TryGetUseId(solver, before[instruction.B], out var left) ||
+        if (!TryGetUseId(solver, before[instruction.B], out var left) ||
             !TryGetUseId(solver, before[instruction.C], out var right) ||
             !solver.TryGetId(new ValueDefinition(pc, instruction.A), out var destination))
         {
             return false;
+        }
+
+        if (operation == LuaIrBinaryOperator.Concatenate)
+        {
+            return IsStringNumberConcatenation(solver.GetKind(left), solver.GetKind(right)) &&
+                solver.TryAssign(destination, LuaNumericRegionValueKind.String);
         }
 
         if (operation is LuaIrBinaryOperator.BitwiseAnd or LuaIrBinaryOperator.BitwiseOr or
@@ -803,6 +811,9 @@ internal static class LuaNumericRegionPlanner
                             destination == LuaNumericRegionValueKind.Integer,
                         LuaIrUnaryOperator.LogicalNot => IsPromoted(operand) &&
                             destination == LuaNumericRegionValueKind.Boolean,
+                        LuaIrUnaryOperator.Length =>
+                            operand == LuaNumericRegionValueKind.String &&
+                            destination == LuaNumericRegionValueKind.Integer,
                         _ => false,
                     };
                     directNumericInstructionCount += valid ? 1 : 0;
@@ -814,8 +825,11 @@ internal static class LuaNumericRegionPlanner
                     var right = Kind(before, instruction.C);
                     var destination = Kind(after, instruction.A);
                     var operation = (LuaIrBinaryOperator)instruction.D;
-                    var valid = IsNumeric(left) && IsNumeric(right) &&
-                        destination == BinaryResultKind(operation, left, right);
+                    var valid = operation == LuaIrBinaryOperator.Concatenate
+                        ? IsStringNumberConcatenation(left, right) &&
+                            destination == LuaNumericRegionValueKind.String
+                        : IsNumeric(left) && IsNumeric(right) &&
+                            destination == BinaryResultKind(operation, left, right);
                     directNumericInstructionCount += valid ? 1 : 0;
                     return valid;
                 }
@@ -891,6 +905,8 @@ internal static class LuaNumericRegionPlanner
         LuaNumericRegionValueKind left,
         LuaNumericRegionValueKind right) => operation switch
         {
+            LuaIrBinaryOperator.Concatenate when IsStringNumberConcatenation(left, right) =>
+                LuaNumericRegionValueKind.String,
             LuaIrBinaryOperator.Concatenate => LuaNumericRegionValueKind.Unknown,
             LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
                 LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
@@ -1110,7 +1126,7 @@ internal static class LuaNumericRegionPlanner
             LuaIrConstantKind.Boolean => LuaNumericRegionValueKind.Boolean,
             LuaIrConstantKind.Integer => LuaNumericRegionValueKind.Integer,
             LuaIrConstantKind.Float => LuaNumericRegionValueKind.Float,
-            LuaIrConstantKind.String => LuaNumericRegionValueKind.Tagged,
+            LuaIrConstantKind.String => LuaNumericRegionValueKind.String,
             _ => LuaNumericRegionValueKind.Unknown,
         };
 
@@ -1122,7 +1138,7 @@ internal static class LuaNumericRegionPlanner
 
     private static bool IsPromoted(LuaNumericRegionValueKind kind) =>
         kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float or
-            LuaNumericRegionValueKind.Boolean;
+            LuaNumericRegionValueKind.Boolean or LuaNumericRegionValueKind.String;
 
     private static bool IsRepresentable(LuaNumericRegionValueKind kind) =>
         IsPromoted(kind) || kind == LuaNumericRegionValueKind.Tagged;
@@ -1131,7 +1147,14 @@ internal static class LuaNumericRegionPlanner
         kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Float;
 
     private static bool IsTableKeyKind(LuaNumericRegionValueKind kind) =>
-        kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.Tagged;
+        kind is LuaNumericRegionValueKind.Integer or LuaNumericRegionValueKind.String or
+            LuaNumericRegionValueKind.Tagged;
+
+    private static bool IsStringNumberConcatenation(
+        LuaNumericRegionValueKind left,
+        LuaNumericRegionValueKind right) =>
+        left == LuaNumericRegionValueKind.String && IsNumeric(right) ||
+        right == LuaNumericRegionValueKind.String && IsNumeric(left);
 
     private static bool IsComparison(LuaIrBinaryOperator operation) => operation is
         LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or

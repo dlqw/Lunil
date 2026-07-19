@@ -116,7 +116,8 @@ internal sealed class ExternalLuaEngine : IBenchmarkEngine
             {
                 ["processExitCode"] = process.ExitCode.ToString(CultureInfo.InvariantCulture),
                 ["jitEnabled"] = jitEnabled.ToString(CultureInfo.InvariantCulture),
-            });
+            },
+            ManagedAllocatedBytes: null);
     }
 
     private static string ReadVersion(string executable)
@@ -185,11 +186,13 @@ internal sealed class MoonSharpEngine : IBenchmarkEngine
 
         PrepareManagedHeap();
         var setupSeconds = CpuSecondsSince(setupStarted);
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var started = Process.GetCurrentProcess().TotalProcessorTime;
         var stopwatch = Stopwatch.StartNew();
         result = script.Call(function, DynValue.NewNumber(operations));
         stopwatch.Stop();
         var elapsedSeconds = CpuSecondsSince(started);
+        var managedAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
         if (result.Type != DataType.Number)
         {
             throw new InvalidOperationException(
@@ -202,7 +205,8 @@ internal sealed class MoonSharpEngine : IBenchmarkEngine
             setupSeconds,
             result.Number,
             "moonsharp_interpreter",
-            new Dictionary<string, string>(StringComparer.Ordinal));
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            managedAllocatedBytes);
     }
 
     private static double CpuSecondsSince(TimeSpan started) =>
@@ -265,11 +269,13 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
         PrepareManagedHeap();
         var telemetryBeforeMeasurement = runner.Telemetry;
         var setupSeconds = CpuSecondsSince(setupStarted);
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var started = Process.GetCurrentProcess().TotalProcessorTime;
         var stopwatch = Stopwatch.StartNew();
         result = runner.Execute(operations);
         stopwatch.Stop();
         var elapsedSeconds = CpuSecondsSince(started);
+        var managedAllocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
         if (result.Kind is not (LuaValueKind.Integer or LuaValueKind.Float))
         {
             throw new InvalidOperationException(
@@ -282,7 +288,8 @@ internal sealed class LunilBenchmarkEngine : IBenchmarkEngine
             setupSeconds,
             result.AsFloat(),
             runner.Route,
-            runner.TelemetrySince(telemetryBeforeMeasurement));
+            runner.TelemetrySince(telemetryBeforeMeasurement),
+            managedAllocatedBytes);
     }
 
     private static LuaIrModule Compile(string source, string sourcePath)

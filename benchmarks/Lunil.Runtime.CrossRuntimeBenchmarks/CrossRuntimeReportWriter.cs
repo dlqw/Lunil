@@ -73,6 +73,7 @@ internal static class CrossRuntimeReportWriter
                 summaries.Add(new EngineWorkloadSummary(
                     workload.Name,
                     workload.Category,
+                    workload.Role,
                     engine.Id,
                     selected[0].Operations,
                     selected.Length,
@@ -80,6 +81,8 @@ internal static class CrossRuntimeReportWriter
                     Percentile(timings, 0.95d),
                     Median(timings.Select(value => Math.Abs(value - median)).ToArray()),
                     Median(selected.Select(static sample => sample.SetupCpuMilliseconds).ToArray()),
+                    MedianOptional(selected.Select(
+                        static sample => sample.ManagedAllocatedBytesPerOperation)),
                     speedup,
                     interval.Lower,
                     interval.Upper,
@@ -99,7 +102,10 @@ internal static class CrossRuntimeReportWriter
         var overall = engines.Select(engine =>
         {
             var engineSummaries = summaries
-                .Where(summary => summary.Engine == engine.Id && summary.Valid)
+                .Where(summary =>
+                    summary.Engine == engine.Id &&
+                    summary.Role == BenchmarkWorkloadRole.Release &&
+                    summary.Valid)
                 .ToArray();
             var values = engineSummaries
                 .Select(static summary => summary.SpeedupVsNativeLua)
@@ -151,7 +157,7 @@ internal static class CrossRuntimeReportWriter
             summaries.All(summary => summary.Samples == settings.Rounds));
 
         return new CrossRuntimeBenchmarkReport(
-            2,
+            3,
             environment,
             settings,
             engines,
@@ -180,10 +186,19 @@ internal static class CrossRuntimeReportWriter
     public static void RunSelfTest()
     {
         var suite = new BenchmarkSuite(
-            1,
+            2,
             "lua54",
             ["lua54", "moonsharp", "candidate"],
-            [new BenchmarkWorkload("synthetic", "test", "synthetic.lua", 1d, "Synthetic")],
+            [
+                new BenchmarkWorkload("synthetic", "test", "synthetic.lua", 1d, "Synthetic"),
+                new BenchmarkWorkload(
+                    "diagnostic",
+                    "test-diagnostic",
+                    "diagnostic.lua",
+                    1d,
+                    "Diagnostic",
+                    BenchmarkWorkloadRole.Diagnostic),
+            ],
             new BenchmarkComparisonPolicy("moonsharp", ["candidate"], 1.1d, 1d));
         var environment = new BenchmarkEnvironment(
             "self-test",
@@ -204,9 +219,12 @@ internal static class CrossRuntimeReportWriter
         var samples = new List<BenchmarkSample>();
         for (var round = 1; round <= 4; round++)
         {
-            samples.Add(Synthetic("lua54", round, 100d + round));
-            samples.Add(Synthetic("moonsharp", round, 80d + round));
-            samples.Add(Synthetic("candidate", round, 50d + round / 2d));
+            samples.Add(Synthetic("synthetic", "lua54", round, 100d + round));
+            samples.Add(Synthetic("synthetic", "moonsharp", round, 80d + round));
+            samples.Add(Synthetic("synthetic", "candidate", round, 50d + round / 2d));
+            samples.Add(Synthetic("diagnostic", "lua54", round, 120d + round));
+            samples.Add(Synthetic("diagnostic", "moonsharp", round, 90d + round));
+            samples.Add(Synthetic("diagnostic", "candidate", round, 40d + round / 2d));
         }
 
         var report = BuildReport(
@@ -216,8 +234,11 @@ internal static class CrossRuntimeReportWriter
             engines,
             suite.Workloads,
             samples);
-        var candidate = report.Results.Single(static result => result.Engine == "candidate");
+        var candidate = report.Results.Single(static result =>
+            result.Engine == "candidate" && result.Role == BenchmarkWorkloadRole.Release);
         if (!report.Completeness.Complete || !report.PerformanceGate.Passed ||
+            report.PerformanceGate.Measurements.Count != 1 ||
+            report.Overall.Single(static value => value.Engine == "candidate").Workloads != 1 ||
             Math.Abs(candidate.SpeedupVsNativeLua - 2d) > 1e-9 ||
             candidate.SpeedupVsComparison is not { } comparisonSpeedup ||
             comparisonSpeedup <= 1.5d)
@@ -254,10 +275,14 @@ internal static class CrossRuntimeReportWriter
         Console.WriteLine("Cross-runtime report self-test passed.");
     }
 
-    private static BenchmarkSample Synthetic(string engine, int round, double nanoseconds) =>
+    private static BenchmarkSample Synthetic(
+        string workload,
+        string engine,
+        int round,
+        double nanoseconds) =>
         new(
             "self-test",
-            "synthetic",
+            workload,
             engine,
             round,
             1,
@@ -273,14 +298,15 @@ internal static class CrossRuntimeReportWriter
                 ["deoptimizations"] = "0",
                 ["unexpectedDeoptimizations"] = "0",
                 ["tier2UnsupportedExits"] = "0",
-            });
+            },
+            engine == "lua54" ? null : 64d);
 
     private static string CreateSummaryCsv(CrossRuntimeBenchmarkReport report)
     {
         var builder = new StringBuilder();
         builder.AppendLine(
-            "rid,workload,category,engine,operations,samples,median_cpu_ns_op,p95_cpu_ns_op," +
-            "mad_cpu_ns,median_setup_cpu_ms,speedup_vs_native_lua,speedup_ci95_lower," +
+            "rid,workload,category,role,engine,operations,samples,median_cpu_ns_op,p95_cpu_ns_op," +
+            "mad_cpu_ns,median_setup_cpu_ms,managed_allocated_bytes_op,speedup_vs_native_lua,speedup_ci95_lower," +
             "speedup_ci95_upper,speedup_vs_moonsharp,moonsharp_speedup_ci95_lower," +
             "moonsharp_speedup_ci95_upper,routes,valid");
         foreach (var result in report.Results)
@@ -290,6 +316,7 @@ internal static class CrossRuntimeReportWriter
                 report.Environment.Rid,
                 result.Workload,
                 result.Category,
+                result.Role.ToString(),
                 result.Engine,
                 Invariant(result.Operations),
                 Invariant(result.Samples),
@@ -297,6 +324,7 @@ internal static class CrossRuntimeReportWriter
                 Invariant(result.P95CpuNanosecondsPerOperation),
                 Invariant(result.MedianAbsoluteDeviationCpuNanoseconds),
                 Invariant(result.MedianSetupCpuMilliseconds),
+                Invariant(result.MedianManagedAllocatedBytesPerOperation),
                 Invariant(result.SpeedupVsNativeLua),
                 Invariant(result.SpeedupCi95Lower),
                 Invariant(result.SpeedupCi95Upper),
@@ -317,9 +345,12 @@ internal static class CrossRuntimeReportWriter
         IReadOnlyList<BenchmarkSample> samples,
         IReadOnlyList<EngineWorkloadSummary> summaries)
     {
+        var scoredWorkloads = workloads
+            .Where(static workload => workload.Role == BenchmarkWorkloadRole.Release)
+            .ToArray();
         var measurements = new List<BenchmarkPerformanceGateMeasurement>(
-            workloads.Count * suite.Comparison.CandidateEngines.Count);
-        foreach (var workload in workloads)
+            scoredWorkloads.Length * suite.Comparison.CandidateEngines.Count);
+        foreach (var workload in scoredWorkloads)
         {
             foreach (var candidate in suite.Comparison.CandidateEngines)
             {
@@ -380,7 +411,7 @@ internal static class CrossRuntimeReportWriter
             }
         }
 
-        var expectedMeasurements = workloads.Count * suite.Comparison.CandidateEngines.Count;
+        var expectedMeasurements = scoredWorkloads.Length * suite.Comparison.CandidateEngines.Count;
         var complete = measurements.Count == expectedMeasurements;
         return new BenchmarkPerformanceGateSummary(
             suite.Comparison.ReferenceEngine,
@@ -404,7 +435,7 @@ internal static class CrossRuntimeReportWriter
         var builder = new StringBuilder();
         builder.AppendLine(
             "rid,workload,engine,round,operations,cpu_ns_op,setup_cpu_ms,result,expected," +
-            "valid,route,telemetry_json");
+            "valid,route,managed_allocated_bytes_op,telemetry_json");
         foreach (var sample in report.Samples)
         {
             AppendCsvRow(builder,
@@ -420,6 +451,7 @@ internal static class CrossRuntimeReportWriter
                 Invariant(sample.ExpectedResult),
                 sample.Valid.ToString(CultureInfo.InvariantCulture),
                 sample.Route,
+                Invariant(sample.ManagedAllocatedBytesPerOperation),
                 JsonSerializer.Serialize(sample.Telemetry),
             ]);
         }
@@ -461,7 +493,7 @@ internal static class CrossRuntimeReportWriter
             "ratios with deterministic paired bootstrap confidence intervals. Values above " +
             "`1.000x` are faster than native Lua.");
         builder.AppendLine();
-        builder.AppendLine("## Overall");
+        builder.AppendLine("## Overall release-workload score");
         builder.AppendLine();
         builder.AppendLine("| Engine | Workloads | Geomean vs native Lua | Native range | Geomean vs MoonSharp |");
         builder.AppendLine("|---|---:|---:|---:|---:|");
@@ -480,15 +512,20 @@ internal static class CrossRuntimeReportWriter
         foreach (var workload in report.Workloads)
         {
             builder.AppendLine();
-            builder.AppendLine(CultureInfo.InvariantCulture, $"## {Escape(workload.Name)}");
+            var diagnosticSuffix = workload.Role == BenchmarkWorkloadRole.Diagnostic
+                ? " (diagnostic only)"
+                : string.Empty;
+            builder.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"## {Escape(workload.Name)}{diagnosticSuffix}");
             builder.AppendLine();
             builder.AppendLine(workload.Description);
             builder.AppendLine();
             builder.AppendLine(
                 "| Engine | Median CPU | p95 CPU | Setup CPU | vs native Lua (95% CI) | " +
-                "vs MoonSharp (95% CI) | " +
+                "vs MoonSharp (95% CI) | Managed allocation/op | " +
                 "Operations | Observed route |");
-            builder.AppendLine("|---|---:|---:|---:|---:|---:|---:|---|");
+            builder.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---|");
             foreach (var result in report.Results
                          .Where(value => value.Workload == workload.Name)
                          .OrderBy(static value => value.MedianCpuNanosecondsPerOperation))
@@ -505,6 +542,7 @@ internal static class CrossRuntimeReportWriter
                     $"{result.SpeedupVsNativeLua:F3}x " +
                     $"({result.SpeedupCi95Lower:F3}–{result.SpeedupCi95Upper:F3}) | " +
                     $"{FormatOptionalInterval(result.SpeedupVsComparison, result.ComparisonSpeedupCi95Lower, result.ComparisonSpeedupCi95Upper)} | " +
+                    $"{FormatOptionalBytes(result.MedianManagedAllocatedBytesPerOperation)} | " +
                     $"{result.Operations} | {routes} |");
             }
         }
@@ -515,7 +553,7 @@ internal static class CrossRuntimeReportWriter
         builder.AppendLine(string.Format(
             CultureInfo.InvariantCulture,
             "Candidates must reach at least {0:F2}x paired median speedup and a paired bootstrap CI95 lower " +
-            "bound of {1:F2}x on every workload, with one stable compiled route and clean " +
+            "bound of {1:F2}x on every release workload, with one stable compiled route and clean " +
             "fallback/deoptimization telemetry.",
             report.PerformanceGate.MinimumMedianSpeedup,
             report.PerformanceGate.MinimumCi95Lower));
@@ -630,6 +668,14 @@ internal static class CrossRuntimeReportWriter
 
     private static double Median(IReadOnlyCollection<double> values) => Percentile(values, 0.5d);
 
+    private static double? MedianOptional(IEnumerable<double?> values)
+    {
+        var present = values.Where(static value => value.HasValue)
+            .Select(static value => value!.Value)
+            .ToArray();
+        return present.Length == 0 ? null : Median(present);
+    }
+
     private static double Percentile(IReadOnlyCollection<double> values, double percentile)
     {
         if (values.Count == 0)
@@ -666,6 +712,10 @@ internal static class CrossRuntimeReportWriter
 
     private static string FormatOptionalRatio(double? ratio) => ratio.HasValue
         ? string.Create(CultureInfo.InvariantCulture, $"{ratio.Value:F3}x")
+        : "—";
+
+    private static string FormatOptionalBytes(double? bytes) => bytes.HasValue
+        ? string.Create(CultureInfo.InvariantCulture, $"{bytes.Value:F1} B")
         : "—";
 
     private static string FormatOptionalInterval(
