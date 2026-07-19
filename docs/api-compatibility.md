@@ -44,7 +44,8 @@ by ADR 0017; they do not modify the frozen `0.7.0` declarations.
 `0.8.0`, but keeps a separate baseline so later work never mutates either stable line.
 
 The validation scripts derive the active compatibility line from `Directory.Build.props`; with
-`0.9.0` they read and update only `api/0.9.0/`.
+`0.9.1` they still read and update only `api/0.9.0/`, allowing patch releases on the `0.9.x`
+compatibility line without changing the reviewed API/package baseline.
 
 ## Public API baseline
 
