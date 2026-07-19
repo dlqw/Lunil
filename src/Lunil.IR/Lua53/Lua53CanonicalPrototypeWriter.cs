@@ -89,6 +89,7 @@ public static class Lua53CanonicalPrototypeWriter
         private readonly List<Lua53Constant> _constants = [];
         private readonly List<JumpPatch> _patches = [];
         private readonly Dictionary<int, int> _openSetListTables = [];
+        private readonly Dictionary<int, int> _openSetListSources = [];
         private readonly int[] _programCounterMap;
         private readonly int _scratch0;
         private readonly int _scratch1;
@@ -134,8 +135,12 @@ public static class Lua53CanonicalPrototypeWriter
                 if (_openSetListTables.TryGetValue(pc, out var tableRegister) &&
                     IsOpenProducer(_function.Instructions[pc]))
                 {
-                    EmitAbc(Lua53Opcode.Move, tableRegister, _function.Instructions[pc].A, 0,
-                        _function.Instructions[pc].SourceLine);
+                    var sourceTableRegister = _openSetListSources[pc];
+                    if (sourceTableRegister != tableRegister)
+                    {
+                        EmitAbc(Lua53Opcode.Move, tableRegister, sourceTableRegister, 0,
+                            _function.Instructions[pc].SourceLine);
+                    }
                 }
 
                 ConvertInstruction(pc, _function.Instructions[pc]);
@@ -184,7 +189,7 @@ public static class Lua53CanonicalPrototypeWriter
                 case LuaIrOpcode.LoadNil:
                     if (instruction.B > 0)
                     {
-                        EmitAbc(Lua53Opcode.LoadNil, instruction.A, instruction.A + instruction.B - 1, 0, line);
+                        EmitAbc(Lua53Opcode.LoadNil, instruction.A, instruction.B - 1, 0, line);
                     }
 
                     break;
@@ -200,7 +205,12 @@ public static class Lua53CanonicalPrototypeWriter
                     EmitAbc(Lua53Opcode.SetUpvalue, instruction.B, instruction.A, 0, line);
                     break;
                 case LuaIrOpcode.NewTable:
-                    EmitAbc(Lua53Opcode.NewTable, instruction.A, 0, 0, line);
+                    EmitAbc(
+                        Lua53Opcode.NewTable,
+                        instruction.A,
+                        EncodeFloatingByte(instruction.C),
+                        EncodeFloatingByte(instruction.B == 0 ? 0 : 1 << (instruction.B - 1)),
+                        line);
                     break;
                 case LuaIrOpcode.GetTable:
                     EmitAbc(Lua53Opcode.GetTable, instruction.A, instruction.B, instruction.C, line);
@@ -258,7 +268,11 @@ public static class Lua53CanonicalPrototypeWriter
                 case LuaIrOpcode.MarkToBeClosed:
                     throw new InvalidDataException("Lua 5.3 does not support to-be-closed locals.");
                 case LuaIrOpcode.NumericForPrepare:
-                    EmitTargeted(Lua53Opcode.NumericForPrepare, instruction.A, instruction.B, line);
+                    EmitTargeted(
+                        Lua53Opcode.NumericForPrepare,
+                        instruction.A,
+                        FindNumericForLoopProgramCounter(programCounter, instruction),
+                        line);
                     break;
                 case LuaIrOpcode.NumericForLoop:
                     EmitTargeted(Lua53Opcode.NumericForLoop, instruction.A, instruction.B, line);
@@ -267,6 +281,26 @@ public static class Lua53CanonicalPrototypeWriter
                     throw new InvalidDataException(
                         $"Unsupported canonical opcode {instruction.Opcode} for Lua 5.3.");
             }
+        }
+
+        private int FindNumericForLoopProgramCounter(
+            int prepareProgramCounter,
+            LuaIrInstruction prepare)
+        {
+            for (var pc = prepare.B - 1; pc > prepareProgramCounter; pc--)
+            {
+                if (_function.Instructions[pc] is
+                    {
+                        Opcode: LuaIrOpcode.NumericForLoop,
+                        A: var register,
+                    } && register == prepare.A)
+                {
+                    return pc;
+                }
+            }
+
+            throw new InvalidDataException(
+                "A Lua 5.3 numeric-for prepare instruction has no matching loop instruction.");
         }
 
         private void EmitUnary(LuaIrInstruction instruction, int line)
@@ -308,7 +342,16 @@ public static class Lua53CanonicalPrototypeWriter
                 LuaIrBinaryOperator.Concatenate => Lua53Opcode.Concatenate,
                 _ => throw new InvalidDataException("Unknown canonical binary operator."),
             };
-            EmitAbc(opcode, instruction.A, instruction.B, instruction.C, line);
+            if (operation == LuaIrBinaryOperator.Concatenate)
+            {
+                EmitAbc(Lua53Opcode.Move, _scratch0, instruction.B, 0, line);
+                EmitAbc(Lua53Opcode.Move, _scratch1, instruction.C, 0, line);
+                EmitAbc(Lua53Opcode.Concatenate, instruction.A, _scratch0, _scratch1, line);
+            }
+            else
+            {
+                EmitAbc(opcode, instruction.A, instruction.B, instruction.C, line);
+            }
         }
 
         private void EmitComparison(
@@ -334,9 +377,18 @@ public static class Lua53CanonicalPrototypeWriter
             var accepted = operation is not LuaIrBinaryOperator.NotEqual;
             EmitAbc(Lua53Opcode.Move, _scratch0, left, 0, line);
             EmitAbc(Lua53Opcode.Move, _scratch1, right, 0, line);
-            EmitAbc(Lua53Opcode.LoadBoolean, destination, 0, 0, line);
             EmitAbc(opcode, accepted ? 1 : 0, _scratch0, _scratch1, line);
+            var jumpIndex = _code.Count;
+            Emit(Lua53Instruction.CreateASignedBx(Lua53Opcode.Jump, 0, 0), line);
+            EmitAbc(Lua53Opcode.LoadBoolean, destination, 0, 1, line);
             EmitAbc(Lua53Opcode.LoadBoolean, destination, 1, 0, line);
+            _code[jumpIndex] = _code[jumpIndex] with
+            {
+                Instruction = Lua53Instruction.CreateASignedBx(
+                    Lua53Opcode.Jump,
+                    0,
+                    _code.Count - jumpIndex - 1),
+            };
         }
 
         private void EmitSetList(int programCounter, LuaIrInstruction instruction, int line)
@@ -400,6 +452,7 @@ public static class Lua53CanonicalPrototypeWriter
 
                 _openSetListTables[setList] = tableRegister;
                 _openSetListTables[producer] = tableRegister;
+                _openSetListSources[producer] = list.A;
             }
         }
 
@@ -500,13 +553,14 @@ public static class Lua53CanonicalPrototypeWriter
                 case Lua53Opcode.BitwiseXor:
                 case Lua53Opcode.ShiftLeft:
                 case Lua53Opcode.ShiftRight:
+                case Lua53Opcode.Concatenate:
                 case Lua53Opcode.Equal:
                 case Lua53Opcode.LessThan:
                 case Lua53Opcode.LessOrEqual:
                     highest = Math.Max(highest, Math.Max(instruction.B & 0xff, instruction.C & 0xff));
                     break;
                 case Lua53Opcode.LoadNil:
-                    highest = Math.Max(highest, instruction.B);
+                    highest = Math.Max(highest, instruction.A + instruction.B);
                     break;
                 case Lua53Opcode.Call:
                 case Lua53Opcode.TailCall:
@@ -549,6 +603,30 @@ public static class Lua53CanonicalPrototypeWriter
             }
 
             return result.MoveToImmutable();
+        }
+
+        private static int EncodeFloatingByte(int value)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            if (value < 8)
+            {
+                return value;
+            }
+
+            var exponent = 0;
+            while (value >= 8 << 4)
+            {
+                value = (value + 0xf) >> 4;
+                exponent += 4;
+            }
+
+            while (value >= 8 << 1)
+            {
+                value = (value + 1) >> 1;
+                exponent++;
+            }
+
+            return ((exponent + 1) << 3) | (value - 8);
         }
 
         private static Lua53Constant ConvertConstant(LuaIrConstant constant) => constant.Kind switch

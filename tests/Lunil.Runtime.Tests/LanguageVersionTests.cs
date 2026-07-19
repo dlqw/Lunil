@@ -35,6 +35,39 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua53StateExecutesPinnedOfficialCompilerChunk()
+    {
+        var path = Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "lua53",
+            "puc-lua-5.3.6-complex.luac");
+        var chunk = File.ReadAllBytes(path);
+        Assert.Equal(
+            "282A7224665CA21BF4790AEEFE017CF4E09345E9FAAA3B9DF4BF55AE3AB89A6D",
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(chunk)));
+
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+        });
+        var result = new LuaInterpreter().ExecuteBinaryChunk(state, chunk);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(10, result.Values.Length);
+        Assert.Equal(30, result.Values[0].AsInteger());
+        Assert.Equal("xab", result.Values[1].AsString().ToString());
+        Assert.Equal(2, result.Values[2].AsInteger());
+        Assert.Equal(20, result.Values[3].AsInteger());
+        Assert.Equal(7, result.Values[4].AsInteger());
+        Assert.Equal(3, result.Values[5].AsInteger());
+        Assert.Equal(41, result.Values[6].AsInteger());
+        Assert.Equal(42, result.Values[7].AsInteger());
+        Assert.Equal(15, result.Values[8].AsInteger());
+        Assert.Equal(15, result.Values[9].AsFloat());
+    }
+
+    [Fact]
     public void StateRejectsAClosureFromAnotherLanguageContract()
     {
         var state = new LuaState(new LuaStateOptions
@@ -73,7 +106,7 @@ public sealed class LanguageVersionTests
         WriteInt64(bytes, 0x5678);
         WriteInt64(bytes, BitConverter.DoubleToInt64Bits(370.5));
         bytes.Add(1);
-        WriteSizeT(bytes, 0);
+        bytes.Add(0);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 0);
         bytes.AddRange([0, 0, 2]);
@@ -91,7 +124,7 @@ public sealed class LanguageVersionTests
         WriteInt32(bytes, 1);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 1);
-        WriteSizeT(bytes, 5);
+        bytes.Add(5);
         bytes.AddRange("_ENV"u8.ToArray());
         return bytes.ToArray();
     }
@@ -102,8 +135,6 @@ public sealed class LanguageVersionTests
         ((uint)c << 14) |
         ((uint)b << 23) |
         ((uint)bx << 14);
-
-    private static void WriteSizeT(List<byte> bytes, ulong value) => WriteInt64(bytes, checked((long)value));
 
     private static void WriteInt32(List<byte> bytes, int value)
     {

@@ -28,6 +28,62 @@ public sealed class Lua53LanguageTests
     }
 
     [Fact]
+    public void Lua53ChunkWriterUsesCanonicalStringSizeEncodingForLongStrings()
+    {
+        var longString = new Lua53String(Enumerable.Repeat((byte)'x', 300).ToArray());
+        var original = new Lua53Chunk(
+            Lua53ChunkTarget.Host,
+            0,
+            new Lua53Prototype
+            {
+                Source = longString,
+                MaximumStackSize = 1,
+                Code = [Lua53Instruction.CreateAbc(Lua53Opcode.Return, 0, 1, 0)],
+                Constants = [Lua53Constant.FromString(longString, isShort: false)],
+                Upvalues = [],
+                NestedPrototypes = [],
+                LineInfo = [1],
+                LocalVariables = [],
+                UpvalueNames = [],
+            });
+
+        var roundTrip = Lua53ChunkReader.Read(Lua53ChunkWriter.Write(original));
+
+        Assert.Equal(300, roundTrip.MainPrototype.Source!.Value.Length);
+        Assert.Equal(300, roundTrip.MainPrototype.Constants[0].StringValue!.Value.Length);
+    }
+
+    [Fact]
+    public void Lua53TableHintsDecodeFromFloatingByteFields()
+    {
+        var chunk = new Lua53Chunk(
+            Lua53ChunkTarget.Host,
+            0,
+            new Lua53Prototype
+            {
+                MaximumStackSize = 1,
+                Code =
+                [
+                    Lua53Instruction.CreateAbc(Lua53Opcode.NewTable, 0, 34, 12),
+                    Lua53Instruction.CreateAbc(Lua53Opcode.Return, 0, 1, 0),
+                ],
+                Constants = [],
+                Upvalues = [],
+                NestedPrototypes = [],
+                LineInfo = [1, 1],
+                LocalVariables = [],
+                UpvalueNames = [],
+            });
+
+        var module = Lua53PrototypeConverter.Convert(chunk);
+        var table = module.Functions[0].Instructions[0];
+
+        Assert.Equal(LuaIrOpcode.NewTable, table.Opcode);
+        Assert.Equal(5, table.B);
+        Assert.Equal(80, table.C);
+    }
+
+    [Fact]
     public void ReadsAndConvertsLua53SimpleReturnChunk()
     {
         var chunk = Lua53ChunkReader.Read(CreateSimpleReturnChunk());
@@ -50,7 +106,7 @@ public sealed class Lua53LanguageTests
         WriteInt64(bytes, BitConverter.DoubleToInt64Bits(370.5));
         bytes.Add(1);
 
-        WriteSizeT(bytes, 0);
+        bytes.Add(0);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 0);
         bytes.AddRange([0, 0, 2]);
@@ -68,7 +124,7 @@ public sealed class Lua53LanguageTests
         WriteInt32(bytes, 1);
         WriteInt32(bytes, 0);
         WriteInt32(bytes, 1);
-        WriteSizeT(bytes, 5);
+        bytes.Add(5);
         bytes.AddRange("_ENV"u8.ToArray());
         return bytes.ToArray();
     }
@@ -79,8 +135,6 @@ public sealed class Lua53LanguageTests
         ((uint)c << 14) |
         ((uint)b << 23) |
         ((uint)bx << 14);
-
-    private static void WriteSizeT(List<byte> bytes, ulong value) => WriteInt64(bytes, checked((long)value));
 
     private static void WriteInt32(List<byte> bytes, int value)
     {

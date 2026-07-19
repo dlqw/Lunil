@@ -112,7 +112,9 @@ public static class LuaRuntimeOperations
             LuaValueOperations.TryToNumber(operand, out var numericOperand))
         {
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Unary(operation, numericOperand));
+                LuaValueOperations.Unary(
+                    operation,
+                    NormalizeArithmeticOperand(state, operand, numericOperand)));
         }
 
         if (operation == LuaIrUnaryOperator.BitwiseNot &&
@@ -192,7 +194,11 @@ public static class LuaRuntimeOperations
             LuaValueOperations.TryToNumber(right, out var numericRight))
         {
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Binary(state, operation, numericLeft, numericRight));
+                LuaValueOperations.Binary(
+                    state,
+                    operation,
+                    NormalizeArithmeticOperand(state, left, numericLeft),
+                    NormalizeArithmeticOperand(state, right, numericRight)));
         }
 
         if (IsBitwise(operation) && state.LanguageVersion == LuaLanguageVersion.Lua53)
@@ -439,6 +445,16 @@ public static class LuaRuntimeOperations
                 left.Kind == LuaValueKind.String && right.Kind == LuaValueKind.String,
             _ => false,
         };
+
+    private static LuaValue NormalizeArithmeticOperand(
+        LuaState state,
+        LuaValue original,
+        LuaValue numeric) =>
+        state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+        original.Kind == LuaValueKind.String &&
+        numeric.Kind == LuaValueKind.Integer
+            ? LuaValue.FromFloat(numeric.AsInteger())
+            : numeric;
 
     private static bool IsNumber(LuaValue value) =>
         value.Kind is LuaValueKind.Integer or LuaValueKind.Float;

@@ -239,10 +239,18 @@ public static class Lua53ChunkReader
 
         private Lua53String? ReadNullableString()
         {
-            var encodedSize = ReadSizeT();
-            if (encodedSize == 0)
+            var firstSizeByte = ReadByte();
+            if (firstSizeByte == 0)
             {
                 return null;
+            }
+
+            var encodedSize = firstSizeByte == byte.MaxValue
+                ? ReadSizeT()
+                : firstSizeByte;
+            if (encodedSize == 0)
+            {
+                Fail("extended string size cannot be zero");
             }
 
             var byteCount = checked(encodedSize - 1);

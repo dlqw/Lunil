@@ -7,7 +7,7 @@ namespace Lunil.IR.Lua53;
 
 public static class Lua53PrototypeConverter
 {
-    private const int ScratchRegisterCount = 3;
+    private const int MinimumScratchRegisterCount = 3;
 
     public static LuaIrModule Convert(
         ReadOnlySpan<byte> binaryChunk,
@@ -71,6 +71,7 @@ public static class Lua53PrototypeConverter
         private readonly List<JumpPatch> _patches = [];
         private readonly int[] _programCounterMap;
         private readonly int[] _sourceLines;
+        private readonly int _scratchRegisterCount;
         private int _sourceProgramCounter;
 
         public FunctionConverter(
@@ -86,6 +87,13 @@ public static class Lua53PrototypeConverter
             }
 
             _programCounterMap = new int[entry.Prototype.Code.Length + 1];
+            _scratchRegisterCount = Math.Max(
+                MinimumScratchRegisterCount,
+                entry.Prototype.Code
+                    .Where(static instruction => instruction.Opcode == Lua53Opcode.GenericForCall)
+                    .Select(static instruction => instruction.C)
+                    .DefaultIfEmpty()
+                    .Max());
             _sourceLines = entry.Prototype.LineInfo.IsEmpty
                 ? new int[entry.Prototype.Code.Length]
                 : entry.Prototype.LineInfo.ToArray();
@@ -129,7 +137,7 @@ public static class Lua53PrototypeConverter
                 LastLineDefined = Prototype.LastLineDefined,
                 ParameterCount = Prototype.ParameterCount,
                 IsVarArg = Prototype.VarArgFlags != 0,
-                RegisterCount = checked(Prototype.MaximumStackSize + ScratchRegisterCount),
+                RegisterCount = checked(Prototype.MaximumStackSize + _scratchRegisterCount),
                 Constants = _constants.ToImmutable(),
                 Upvalues = ConvertUpvalues(),
                 Instructions = instructions,
@@ -196,8 +204,9 @@ public static class Lua53PrototypeConverter
                     Emit(LuaIrOpcode.SetTable, instruction.A, Scratch0, Scratch1);
                     break;
                 case Lua53Opcode.NewTable:
-                    Emit(LuaIrOpcode.NewTable, instruction.A, instruction.C,
-                        instruction.B == 0 ? 0 : 1 << instruction.B);
+                    Emit(LuaIrOpcode.NewTable, instruction.A,
+                        EncodeHashAllocationHint(DecodeFloatingByte(instruction.C)),
+                        DecodeFloatingByte(instruction.B));
                     break;
                 case Lua53Opcode.Self:
                     Emit(LuaIrOpcode.Move, instruction.A + 1, instruction.B);
@@ -263,6 +272,11 @@ public static class Lua53PrototypeConverter
                             (int)LuaIrBinaryOperator.Concatenate);
                     }
 
+                    if (instruction.A != instruction.B)
+                    {
+                        Emit(LuaIrOpcode.Move, instruction.A, instruction.B);
+                    }
+
                     break;
                 case Lua53Opcode.Jump:
                     EmitJump(checked(_sourceProgramCounter + 1 + instruction.SignedBx));
@@ -307,13 +321,21 @@ public static class Lua53PrototypeConverter
                         checked(_sourceProgramCounter + 1 + instruction.SignedBx));
                     break;
                 case Lua53Opcode.GenericForCall:
-                    Emit(LuaIrOpcode.Call, instruction.A, 2, instruction.C,
+                    Emit(LuaIrOpcode.Move, Scratch0, instruction.A);
+                    Emit(LuaIrOpcode.Move, Scratch1, instruction.A + 1);
+                    Emit(LuaIrOpcode.Move, Scratch2, instruction.A + 2);
+                    Emit(LuaIrOpcode.Call, Scratch0, 2, instruction.C,
                         (int)LuaIrCallKind.ForIterator);
+                    for (var result = 0; result < instruction.C; result++)
+                    {
+                        Emit(LuaIrOpcode.Move, instruction.A + 3 + result, Scratch0 + result);
+                    }
+
                     break;
                 case Lua53Opcode.GenericForLoop:
-                    Emit(LuaIrOpcode.Move, instruction.A + 2, instruction.A + 1);
                     EmitConditionalJump(false, instruction.A + 1,
                         checked(_sourceProgramCounter + 1));
+                    Emit(LuaIrOpcode.Move, instruction.A, instruction.A + 1);
                     EmitJump(checked(_sourceProgramCounter + 1 + instruction.SignedBx));
                     break;
                 case Lua53Opcode.SetList:
@@ -379,6 +401,45 @@ public static class Lua53PrototypeConverter
             LuaIrBinaryOperator.LessThanOrEqual => LuaIrBinaryOperator.GreaterThan,
             _ => throw new InvalidDataException("Unknown comparison operator."),
         };
+
+        private static int DecodeFloatingByte(int value)
+        {
+            if ((uint)value > byte.MaxValue)
+            {
+                throw new InvalidDataException("Lua 5.3 table allocation hint exceeds the floating-byte field.");
+            }
+
+            if (value < 8)
+            {
+                return value;
+            }
+
+            var decoded = checked(((long)(value & 7) + 8) << ((value >> 3) - 1));
+            if (decoded > int.MaxValue)
+            {
+                throw new InvalidDataException("Lua 5.3 table allocation hint exceeds the runtime limit.");
+            }
+
+            return (int)decoded;
+        }
+
+        private static int EncodeHashAllocationHint(int entryCount)
+        {
+            if (entryCount == 0)
+            {
+                return 0;
+            }
+
+            var size = 1L;
+            var exponent = 1;
+            while (size < entryCount)
+            {
+                size <<= 1;
+                exponent++;
+            }
+
+            return exponent;
+        }
 
         private void EmitBinaryRk(Lua53Instruction instruction, LuaIrBinaryOperator operation)
         {

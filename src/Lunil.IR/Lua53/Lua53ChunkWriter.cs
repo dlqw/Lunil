@@ -171,11 +171,21 @@ public static class Lua53ChunkWriter
         {
             if (value is null)
             {
-                WriteSize(0);
+                WriteByte(0);
                 return;
             }
 
-            WriteSize(checked((ulong)value.Value.Length + 1));
+            var encodedSize = checked((ulong)value.Value.Length + 1);
+            if (encodedSize < byte.MaxValue)
+            {
+                WriteByte((byte)encodedSize);
+            }
+            else
+            {
+                WriteByte(byte.MaxValue);
+                WriteSize(encodedSize);
+            }
+
             WriteBytes(value.Value.AsSpan());
         }
 
