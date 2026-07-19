@@ -7,7 +7,6 @@ on:
       - "feature/**"
       - "perf/**"
       - "fix/**"
-      - "docs/**"
       - "release/**"
   pull_request:
     branches:
