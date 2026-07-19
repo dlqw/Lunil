@@ -176,7 +176,22 @@ jobs:
             artifacts/*.zip
             artifacts/benchmarks/*.txt
             artifacts/nativeaot/${{ matrix.rid }}/**
-          if-no-files-found: error
+            if-no-files-found: error
+
+  docs-only-build-test-contexts:
+    name: Build and test (${{ matrix.os }})
+    if: needs.change_scope.outputs.docs-only == 'true'
+    needs: change_scope
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Document the intentional lightweight path
+        run: echo "Documentation-only change; build and test are intentionally skipped."
 
   backend-performance-decision:
     name: Aggregate Tier 1/Tier 2/Loop OSR six-RID evidence
