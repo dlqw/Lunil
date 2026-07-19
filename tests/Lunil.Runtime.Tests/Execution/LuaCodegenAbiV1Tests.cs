@@ -63,6 +63,32 @@ public sealed class LuaCodegenAbiV1Tests
     }
 
     [Fact]
+    public void InterpreterAndCodegenReservationsShareExactDerivedAccounting()
+    {
+        var (state, thread, _) = CreateFrame();
+        var context = new LuaExecutionContext(state, thread, remainingInstructionCount: 300);
+
+        for (var instruction = 0; instruction < 10; instruction++)
+        {
+            Assert.True(context.TryReserveSingleInterpreterInstruction());
+        }
+
+        Assert.Equal(290, context.RemainingInstructionCount);
+        Assert.True(context.TryReserveInstructions(289));
+        Assert.Equal(1, context.RemainingInstructionCount);
+        Assert.True(context.TryReserveSingleInterpreterInstruction());
+        Assert.False(context.TryReserveSingleInterpreterInstruction());
+        Assert.Equal(0, context.RemainingInstructionCount);
+        Assert.Equal(300, context.InstructionsConsumed);
+
+        context.Reset(state, thread, remainingInstructionCount: 2);
+        Assert.Equal(0, context.InstructionsConsumed);
+        Assert.True(context.TryReserveSingleInterpreterInstruction());
+        Assert.Equal(1, context.RemainingInstructionCount);
+        Assert.Equal(1, context.InstructionsConsumed);
+    }
+
+    [Fact]
     public void ExecutionContextDetectsDebugModeChanges()
     {
         var (state, thread, _) = CreateFrame();

@@ -63,6 +63,12 @@ public readonly record struct LuaOperationResolution
         }
     }
 
+    /// <summary>
+    /// Returns the immutable argument snapshot owned by this resolution when one already exists;
+    /// small inline argument packs are materialized once for a runtime call boundary.
+    /// </summary>
+    internal LuaValue[] MaterializeArgumentsForRuntime() => _overflowArguments ?? Arguments;
+
     public LuaResultTransform Transform { get; }
 
     public LuaValue GetArgument(int index)

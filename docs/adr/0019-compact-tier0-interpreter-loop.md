@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
-- Target: `0.8.0-alpha.13`, Lua 5.4.8, .NET 10
+- Target: `0.8.0-alpha.13`; amended for `0.9.1`, Lua 5.4.8, .NET 10
 - Related: [ADR 0001](0001-execution-backend-abi-v1.md),
   [ADR 0013](0013-64-bit-instruction-accounting.md),
   [ADR 0018](0018-remove-lua-aot.md)
@@ -34,8 +34,11 @@ Starting in `0.8.0-alpha.13`:
    Pure compact instructions return a byte-sized internal result and do not materialize a
    `LuaCompiledExit`; the exit is created only at a scheduler boundary.
 3. Call, tail call, return, instruction-budget poll, and every non-continue exit return to the shared
-   scheduler. The execution context charges one unit before each instruction and reports the exact
-   accumulated `long` count on every exit.
+   scheduler. Starting in `0.9.1`, the execution context stores the entry budget and the exact
+   remaining budget, charges one unit before each executed instruction, and derives the consumed
+   count from their difference. Interpreter and generated-code reservations therefore share one
+   source of truth without a second per-instruction counter write, while deoptimization transitions
+   retain the exact accumulated `long` count and failure PC without rollback.
 4. A dispatchable hook on an ordinary visible frame disables compact execution. Hook and hidden
    frames may remain compact because recursive hook dispatch is prohibited. `LuaThread` maintains a
    derived dispatchable-hook state whenever the hook, mask, or running-hook state changes.
@@ -56,11 +59,15 @@ Starting in `0.8.0-alpha.13`:
 9. After one full continuation-state validation, a consecutive chain of instructions proven not to
    schedule Lua work reuses that validation and checks only the next-PC bound. Table/metamethod
    operations, close scheduling, safe points, hooks, and probe routes always restore the full check.
+10. Backend/accounting equality checks remain Debug-build assertions. Release builds rely on the
+    execution context as the single source of consumed-instruction truth and use the configured
+    64-bit instruction limit to bound unchecked scheduler accumulation.
 
 ## Consequences
 
 - Straight-line and loop Tier 0 work pays scheduler bookkeeping once per compact batch or semantic
-  boundary instead of once per instruction.
+  boundary instead of once per instruction, and instruction accounting performs one hot counter
+  update rather than maintaining independent remaining and consumed counters.
 - Debug hooks, exact budget failures, coroutine/protected-call transfers, close/error unwind, GC
   stress, Lua finalizers, JIT profiling, and OSR publication continue to use their existing oracles.
 - GC/finalizer latency for idle non-allocating Tier 0 work is bounded by 32 instructions rather than
@@ -75,7 +82,7 @@ Starting in `0.8.0-alpha.13`:
 - **Copy the opcode switch into `RunScheduler`:** rejected because fixes could diverge between two
   semantic kernels and the scheduler would grow around another complete interpreter.
 - **Reserve budget in blocks:** rejected because an error, hook, call, or return inside a partially
-  consumed block would need rollback and could move the exact failure PC.
+  consumed block would need rollback to preserve the exact public remaining count and failure PC.
 - **Run compactly while hooks are armed:** rejected because line/count/call/return ordering is
   observable and must not be approximated.
 - **Only service GC at calls/returns:** rejected because long non-calling loops would make logical GC

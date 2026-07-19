@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Lunil.IR.Canonical;
+using Lunil.Runtime.Debugging;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
 
@@ -112,6 +113,9 @@ public sealed class LuaFunctionVersion
 
     internal int FramelessInstructionCount => _caches.FramelessInstructionCount;
 
+    internal ReadOnlySpan<LuaIrLocalVariable> GetActiveDebugLocals(int programCounter) =>
+        _caches.GetActiveDebugLocals(programCounter);
+
     internal bool TryEnterFramelessCall() => _caches.TryEnterFramelessCall();
 
     internal LuaString GetOrCreateStringConstant(LuaState state, int constantIndex) =>
@@ -173,6 +177,7 @@ internal sealed class LuaModuleRuntimeData
 
 internal sealed class LuaFunctionVersionCaches
 {
+    private readonly LuaDebugLocalIndex _debugLocalIndex;
     private readonly LuaString?[] _materializedStringConstants;
     private readonly LuaTableAllocationHint?[] _tableAllocationHints;
     private readonly object _constantGate = new();
@@ -180,6 +185,7 @@ internal sealed class LuaFunctionVersionCaches
 
     public LuaFunctionVersionCaches(LuaIrFunction function)
     {
+        _debugLocalIndex = new LuaDebugLocalIndex(function);
         HasSourceLineInformation = function.Instructions.Any(
             static instruction => instruction.SourceLine > 0);
         _materializedStringConstants = new LuaString?[function.Constants.Length];
@@ -190,6 +196,9 @@ internal sealed class LuaFunctionVersionCaches
     public bool HasSourceLineInformation { get; }
 
     public int FramelessInstructionCount { get; }
+
+    public ReadOnlySpan<LuaIrLocalVariable> GetActiveDebugLocals(int programCounter) =>
+        _debugLocalIndex.GetActive(programCounter);
 
     public bool TryEnterFramelessCall()
     {

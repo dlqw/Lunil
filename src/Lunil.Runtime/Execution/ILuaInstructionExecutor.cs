@@ -13,7 +13,7 @@ internal interface ILuaInstructionExecutor
         LuaState state,
         LuaThread thread,
         LuaFrame frame,
-        LuaIrInstruction instruction);
+        in LuaIrInstruction instruction);
 
     LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
         LuaFrameInstructionRoute.Backend;
@@ -27,7 +27,7 @@ internal interface ILuaInstructionExecutor
         LuaThread thread,
         LuaFrame frame,
         int programCounter,
-        LuaIrInstruction instruction)
+        in LuaIrInstruction instruction)
     {
     }
 

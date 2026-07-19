@@ -25,6 +25,7 @@ public sealed class LuaExecutionKernelTests
         Assert.True(result.Values.SequenceEqual([LuaValue.FromInteger(42)]));
     }
 
+#if DEBUG
     [Fact]
     public void RejectsBackendInstructionAccountingThatBypassesTheContext()
     {
@@ -35,6 +36,7 @@ public sealed class LuaExecutionKernelTests
         Assert.Throws<InvalidOperationException>(() =>
             engine.Execute(state, state.CreateMainClosure(Compile("return 1"))));
     }
+#endif
 
     [Fact]
     public void ChargesReservedInstructionsWhenExecutionThrowsARecoverableLuaError()
@@ -70,13 +72,14 @@ public sealed class LuaExecutionKernelTests
             LuaState state,
             LuaThread thread,
             LuaFrame frame,
-            LuaIrInstruction instruction) =>
+            in LuaIrInstruction instruction) =>
             LuaCompiledExit.Deopt(
                 frame.ProgramCounter,
                 instructionsConsumed: 0,
                 LuaCompiledExitReason.UnsupportedInstruction);
     }
 
+#if DEBUG
     private sealed class InvalidAccountingInstructionExecutor : ILuaInstructionExecutor
     {
         public LuaCompiledExit Execute(
@@ -85,12 +88,13 @@ public sealed class LuaExecutionKernelTests
             LuaState state,
             LuaThread thread,
             LuaFrame frame,
-            LuaIrInstruction instruction)
+            in LuaIrInstruction instruction)
         {
             _ = context.TryReserveInstructions(1);
             return LuaCompiledExit.Continue(frame.ProgramCounter, instructionsConsumed: 0);
         }
     }
+#endif
 
     private sealed class ThrowOnceInsideProtectedCallExecutor : ILuaInstructionExecutor
     {
@@ -106,7 +110,7 @@ public sealed class LuaExecutionKernelTests
             LuaState state,
             LuaThread thread,
             LuaFrame frame,
-            LuaIrInstruction instruction)
+            in LuaIrInstruction instruction)
         {
             if (RemainingBeforeThrow is null && thread.Frames.Count > 1)
             {
