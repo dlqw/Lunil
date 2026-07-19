@@ -198,6 +198,7 @@ Compatibility changes and deployment notes are documented in the [0.8.0 migratio
 | Document | Purpose |
 | --- | --- |
 | [Performance](docs/performance.md) | Current benchmark data, charts, methodology, and reproduction |
+| [Roadmap](docs/roadmap.md) | Lua version compatibility, runtime comparisons, CLR interoperation, and hot updates |
 | [Compiler design](docs/compiler-design.md) | Compiler, IR, runtime, and execution architecture |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
 | [API compatibility](docs/api-compatibility.md) | Versioned public API and package baselines |
