@@ -14,6 +14,20 @@ Branches should be rebased on `main` before review. Pull requests are squash-mer
 must resolve review conversations, and must pass the Windows, Linux, macOS, formatting,
 and package checks. Force pushes and direct pushes to `main` are disabled.
 
+## Review and test exemptions
+
+The repository keeps automatic code-owner review focused on product and release risk. The
+CODEOWNERS file covers source, tests, benchmarks, scripts, workflows, build/version inputs,
+public API baselines, and release metadata. Community Markdown, changelogs, generated
+performance charts, and benchmark result reports do not generate a code-owner request.
+
+CI still runs the public-repository, community-documentation, and generated-chart checks for
+those documentation-only changes, but skips the six-platform restore/build/test, publish, package,
+and backend-evidence steps. Any source, test, benchmark harness, script, workflow, version,
+API-baseline, or release-configuration change makes the run full again. Manual dispatches and
+release-tag workflows always run their complete required gates; an exemption cannot weaken a
+release.
+
 ## Releases
 
 Release tags are created from `main` only. A tag must use `v<SemVer>` (for example,

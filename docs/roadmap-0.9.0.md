@@ -84,7 +84,7 @@ Every performance change must also satisfy these bounds on all release RIDs:
 | Generated code bytes for unchanged routes | at most 1.15x `0.8.0` |
 | Execution allocation for unchanged workloads | at most 1.05x `0.8.0` |
 
-The `0.9.0-alpha.5` source has completed the Beta qualification matrix. The accepted six-RID
+The accepted `0.9.0` source has completed the Beta qualification matrix. The accepted six-RID
 cross-runtime evidence reports Auto JIT at `1.688x` native Lua and `24.089x` MoonSharp, with the
 lowest per-RID native-Lua geomean at `1.103x`. Every workload target passed, including
 `control_flow` at `2.101x` and `string_build` at `2.164x`. The matching six-RID backend,
@@ -95,13 +95,13 @@ revision. Reproduction metadata is recorded in the versioned performance report.
 
 | Stage | Status | Outcome |
 | --- | --- | --- |
-| Alpha 1 | Implemented in current source | Shared Tier 2 and loop-entry specialization architecture |
-| Alpha 2 | Implemented in current source | Compilation allocation, startup, and code-size closure |
-| Alpha 3 | Implemented in current source | Table-heavy and mixed-loop throughput |
-| Alpha 4 | Implemented in current source | Calls and floating-point regions |
-| Alpha 5 | Implemented in current source | Strings and baseline execution |
-| Beta | Qualification complete; freeze pending | Feature freeze and complete performance qualification |
-| RC / stable | Planned | Release-blocker-only validation and publication |
+| Alpha 1 | Completed | Shared Tier 2 and loop-entry specialization architecture |
+| Alpha 2 | Completed | Compilation allocation, startup, and code-size closure |
+| Alpha 3 | Completed | Table-heavy and mixed-loop throughput |
+| Alpha 4 | Completed | Calls and floating-point regions |
+| Alpha 5 | Completed | Strings and baseline execution |
+| Beta | Completed | Feature/API freeze and complete performance qualification |
+| RC / stable | Released | `0.9.0` stable publication from the accepted source |
 
 ### Alpha 1 — shared specialization architecture
 
@@ -158,15 +158,16 @@ revision. Reproduction metadata is recorded in the versioned performance report.
 - Resolve every required performance, allocation, startup, code-size, correctness, NativeAOT, and
   trimming gate; new optimization features wait for the next milestone.
 
-The current source has completed these qualification runs. Promotion to a Beta version now requires
-the feature/API freeze and release review; it does not require another optimization feature.
+The accepted source completed these qualification runs. The feature/API freeze and release review
+are complete; no additional optimization feature is required for the stable release.
 
 ### Release candidate and stable release
 
 - Accept only release-blocking correctness, compatibility, packaging, or measured regression fixes.
 - Reproduce all release bundles, NuGet packages, public API baselines, conformance suites, and
   performance evidence from the accepted source.
-- Publish stable `0.9.0` only from an accepted release candidate with no product-code changes.
+- Publish stable `0.9.0` only from the accepted qualification source with no product-code changes
+  after the release review.
 
 ## Correctness and portability gates
 

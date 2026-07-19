@@ -9,7 +9,7 @@ informational versions, Git tags, changelog names, bundles, and GitHub releases 
 <VersionSuffix>alpha.1</VersionSuffix>
 ```
 
-This produces `0.9.0-alpha.1`. Stable `v0.8.0` remains immutable.
+This example produces `0.9.0-alpha.1`. Stable tags `v0.8.0` and `v0.9.0` remain immutable.
 
 ## Compatibility lines
 
@@ -22,11 +22,11 @@ This produces `0.9.0-alpha.1`. Stable `v0.8.0` remains immutable.
 
 | Line | Status | Change policy |
 | --- | --- | --- |
-| `0.8.x` | Stable | Backward-compatible fixes only |
-| `0.9.0-alpha.N` | Active development | Planned feature, API, and backend work |
-| `0.9.0-beta.N` | Feature freeze | Compatibility, diagnostics, documentation, reliability, and performance hardening |
-| `0.9.0-rc.N` | Release candidate | Release-blocking fixes only |
-| `0.9.0` | Future stable | Produced from an accepted release candidate |
+| `0.8.x` | Maintained | Backward-compatible fixes only |
+| `0.9.x` | Stable | Backward-compatible fixes only |
+| `0.10.0-alpha.N` | Future development | Planned feature, API, and backend work |
+| `0.10.0-beta.N` | Future feature freeze | Compatibility, diagnostics, documentation, reliability, and performance hardening |
+| `0.10.0-rc.N` | Future release candidate | Release-blocking fixes only |
 
 The scope and promotion gates for the active line are defined in the
 [`0.9.0` roadmap](roadmap-0.9.0.md).
@@ -43,7 +43,8 @@ The scope and promotion gates for the active line are defined in the
 Numbers increase monotonically within a channel and restart at `1` when entering the next channel:
 
 ```text
-0.9.0-alpha.1 -> alpha.2 -> ... -> beta.1 -> ... -> rc.1 -> ... -> 0.9.0
+0.9.0-alpha.1 -> ... -> 0.9.0
+0.10.0-alpha.1 -> ... -> 0.10.0
 ```
 
 ## Versioned assets

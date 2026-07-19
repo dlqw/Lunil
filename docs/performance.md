@@ -63,9 +63,9 @@ the primary `0.9.0` optimization targets.
 Loop OSR is an entry mechanism for already-running loops, not a third tier. It is measured separately
 to expose the cost and benefit of entering specialized code at a loop backedge.
 
-## Current development snapshot
+## Stable `0.9.0` release
 
-`0.9.0-alpha.5` is the latest complete six-RID cross-runtime and backend qualification using the same
+`0.9.0` is the accepted complete six-RID cross-runtime and backend qualification using the same
 workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 
 | Version and scope | Auto vs native Lua | Auto vs MoonSharp | Stability gate |
@@ -75,11 +75,12 @@ workloads, six-round balance, and 250 ms cross-runtime calibration protocol:
 | `0.9.0-alpha.3`, six release RIDs | 0.947x | 13.479x | Passed |
 | `0.9.0-alpha.4`, six release RIDs | 1.326x | 18.863x | Passed |
 | `0.9.0-alpha.5`, six release RIDs | 1.688x | 24.089x | Passed |
+| **`0.9.0`, six release RIDs** | **1.688x** | **24.089x** | **Passed** |
 
 These rows are independent qualification runs rather than paired hardware speedup claims. The
 development rows demonstrate current-source correctness, route stability, and performance shape.
 
-Alpha 5 extends the shared Tier 2 region representation to stable strings. String-number
+The stable release extends the shared Tier 2 region representation to stable strings. String-number
 concatenation, string length, and dense string-array writes can stay in one guarded region with
 exact operand order, table guards, write barriers, instruction budgets, and deoptimization
 ordering. Diagnostic-only component workloads showed that a new dense `table.concat` bulk-copy
@@ -97,9 +98,9 @@ while the full `string_build` release workload passed with substantial margin.
 | `sieve` | 0.059x | 0.530x | ≥ 0.120x |
 | `string_build` | 0.591x | 2.164x | ≥ 0.750x |
 
-![Runtime comparison for Lunil 0.9.0-alpha.5](../assets/performance/0.9.0-alpha.5-runtime-overview.svg)
+![Runtime comparison for Lunil 0.9.0](../assets/performance/0.9.0-runtime-overview.svg)
 
-![Auto JIT workload comparison for Lunil 0.9.0-alpha.5](../assets/performance/0.9.0-alpha.5-auto-workloads.svg)
+![Auto JIT workload comparison for Lunil 0.9.0](../assets/performance/0.9.0-auto-workloads.svg)
 
 | Current backend metric | Six-RID result | `0.9.0` limit |
 | --- | ---: | ---: |
@@ -113,8 +114,9 @@ while the full `string_build` release workload passed with substantial margin.
 | Maximum unchanged-route estimated code size | 1.124x | ≤ 1.15x |
 
 The compact source report is available at
-[`benchmarks/results/0.9.0-alpha.5-performance.json`](../benchmarks/results/0.9.0-alpha.5-performance.json).
-It records the source revision and matching six-RID cross-runtime and Beta qualification metadata.
+[`benchmarks/results/0.9.0-performance.json`](../benchmarks/results/0.9.0-performance.json).
+It records the accepted product revision and matching six-RID cross-runtime and Beta qualification
+metadata. The stable release contains no product-code changes after that accepted qualification.
 The qualification also passed the official Lua 5.4.8 user-mode suite, five-backend differential
 corpus, deterministic fuzz/GC soak, NativeAOT, trimming, single-file, ReadyToRun, package consumers,
 CLI, and public API baselines on the applicable release RIDs.
@@ -157,6 +159,9 @@ Regenerate or verify the committed charts:
   -DataPath benchmarks/results/0.9.0-alpha.5-performance.json
 ./scripts/New-PerformanceCharts.ps1 `
   -DataPath benchmarks/results/0.9.0-alpha.5-performance.json `
+  -Verify
+./scripts/New-PerformanceCharts.ps1 `
+  -DataPath benchmarks/results/0.9.0-performance.json `
   -Verify
 ```
 
