@@ -19,6 +19,7 @@ internal static class LuaCanonicalModuleSerializer
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write(Magic);
         writer.Write(module.FormatVersion);
+        writer.Write((byte)module.LanguageVersion);
         writer.Write(module.MainFunctionId);
         writer.Write(module.Functions.Length);
         foreach (var function in module.Functions)

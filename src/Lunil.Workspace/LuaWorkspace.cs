@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Lunil.Analysis;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 
 namespace Lunil.Workspace;
@@ -29,7 +30,15 @@ public sealed class LuaWorkspace : IDisposable
         LuaWorkspaceOptions? options = null,
         ILuaModuleResolver? resolver = null)
     {
-        Options = options ?? LuaWorkspaceOptions.Default;
+        var configured = options ?? LuaWorkspaceOptions.Default;
+        ArgumentNullException.ThrowIfNull(configured.Compiler);
+        Options = configured with
+        {
+            Compiler = configured.Compiler with
+            {
+                LanguageVersion = configured.LanguageVersion,
+            },
+        };
         _resolver = resolver;
         ValidateOptions(Options);
         _compiler = new LuaCompiler(Options.Compiler);
@@ -878,6 +887,13 @@ public sealed class LuaWorkspace : IDisposable
     {
         ArgumentNullException.ThrowIfNull(options.Compiler);
         ArgumentNullException.ThrowIfNull(options.SuppressedDiagnosticCodes);
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The workspace language version is invalid.");
+        }
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumModuleCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDependencyCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumSourceBytes);

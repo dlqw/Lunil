@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Lunil.Core;
 using Lunil.Runtime.Execution;
 
 namespace Lunil.Runtime.CodeGen;
@@ -151,6 +152,8 @@ public sealed class LuaExecutionContext
     }
 
     public LuaState State { get; private set; } = null!;
+
+    public LuaLanguageVersion LanguageVersion => State.LanguageVersion;
 
     public LuaThread Thread { get; private set; } = null!;
 

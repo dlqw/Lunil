@@ -1,5 +1,6 @@
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.StandardLibrary;
@@ -48,6 +49,12 @@ public sealed record LuaHostOptions
     };
 
     public LuaHostProfile Profile { get; init; } = LuaHostProfile.Restricted;
+
+    /// <summary>
+    /// Gets the authoritative language contract for source compilation, workspace analysis,
+    /// runtime execution, binary chunks, and standard-library installation owned by this host.
+    /// </summary>
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public LuaCompilerOptions Compiler { get; init; } = LuaCompilerOptions.Default;
 

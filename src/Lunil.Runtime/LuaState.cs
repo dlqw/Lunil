@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
@@ -23,7 +24,16 @@ public sealed class LuaState
     public LuaState(LuaStateOptions? options = null)
     {
         options ??= LuaStateOptions.Default;
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The state language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
+        LanguageVersion = options.LanguageVersion;
         Heap = new LuaHeap(options.Heap);
         Strings = new LuaStringPool(Heap);
         MemoryErrorString = Strings.GetOrCreate("not enough memory"u8);
@@ -35,6 +45,8 @@ public sealed class LuaState
         Heap.AddPermanentRoot(Registry);
         Heap.AddPermanentRoot(MainThread);
     }
+
+    public LuaLanguageVersion LanguageVersion { get; }
 
     public LuaHeap Heap { get; }
 
@@ -232,6 +244,18 @@ public sealed class LuaState
     public LuaClosure CreateMainClosure(LuaIrModule module)
     {
         ArgumentNullException.ThrowIfNull(module);
+        if (!LuaLanguageVersions.IsKnown(module.LanguageVersion))
+        {
+            throw new LuaRuntimeException("Cannot load a module with an invalid Lua language version.");
+        }
+
+        if (module.LanguageVersion != LanguageVersion)
+        {
+            throw new LuaRuntimeException(
+                $"A {LuaLanguageVersions.GetDisplayName(LanguageVersion)} state cannot load a " +
+                $"{LuaLanguageVersions.GetDisplayName(module.LanguageVersion)} module.");
+        }
+
         var function = module.Functions[module.MainFunctionId];
         var upvalues = new LuaUpvalue[function.Upvalues.Length];
         for (var index = 0; index < upvalues.Length; index++)

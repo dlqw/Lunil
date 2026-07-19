@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.Syntax.Lexing;
@@ -18,13 +19,31 @@ public static class LuaBinder
         LuaBinderOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(syntax);
-        options ??= LuaBinderOptions.Default;
+        options ??= LuaBinderOptions.Default with
+        {
+            LanguageVersion = syntax.LanguageVersion,
+        };
         ValidateOptions(options);
+        if (options.LanguageVersion != syntax.LanguageVersion)
+        {
+            throw new ArgumentException(
+                "The parser and binder language versions must match.",
+                nameof(options));
+        }
+
         return new Implementation(syntax, options).Bind();
     }
 
     private static void ValidateOptions(LuaBinderOptions options)
     {
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The binder language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumActiveLocalsPerFunction);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumUpvaluesPerFunction);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);

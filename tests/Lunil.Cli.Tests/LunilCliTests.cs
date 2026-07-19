@@ -17,6 +17,7 @@ public sealed class LunilCliTests
         Assert.Equal(0, help.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--execution <backend>", help.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--lua-version <version>", help.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
         var informationalVersion = typeof(LunilCli).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
@@ -113,6 +114,19 @@ public sealed class LunilCliTests
         Assert.Contains("auto", result.StandardError, StringComparison.Ordinal);
         Assert.Contains("interpreter", result.StandardError, StringComparison.Ordinal);
         Assert.Contains("jit", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExplicitUnimplementedLuaVersionIsReportedWithoutLua54Fallback()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("version.lua", "return 1");
+
+        var result = await fixture.RunAsync("run", script, "--lua-version", "5.3");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("not implemented yet", result.StandardError, StringComparison.Ordinal);
+        Assert.Contains("LUA0001", result.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -401,6 +415,24 @@ public sealed class LunilCliTests
         Assert.Equal("0\n", fromEnvironment.StandardOutput);
         Assert.Equal(0, fromCli.ExitCode);
         Assert.NotEqual("0\n", fromCli.StandardOutput);
+    }
+
+    [Fact]
+    public async Task LuaVersionConfigurationUsesEnvironmentAndCliPrecedence()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("version.lua", "return 1");
+        File.WriteAllText(
+            Path.Combine(fixture.Root, "lunil.json"),
+            "{ \"luaVersion\": \"5.3\" }");
+        fixture.Environment["LUNIL_LUA_VERSION"] = "5.4";
+
+        var fromEnvironment = await fixture.RunAsync("run", script);
+        var fromCli = await fixture.RunAsync("run", script, "--lua-version", "5.3");
+
+        Assert.Equal(0, fromEnvironment.ExitCode);
+        Assert.Equal(1, fromCli.ExitCode);
+        Assert.Contains("LUA0001", fromCli.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 
 namespace Lunil.Workspace;
@@ -8,6 +9,9 @@ namespace Lunil.Workspace;
 public sealed record LuaWorkspaceOptions
 {
     public static LuaWorkspaceOptions Default { get; } = new();
+
+    /// <summary>Gets the authoritative language contract for every module in this workspace.</summary>
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public LuaCompilerOptions Compiler { get; init; } = LuaCompilerOptions.Default;
 

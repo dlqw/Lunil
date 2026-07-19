@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 
 namespace Lunil.Cli.CommandLine;
 
@@ -73,6 +74,8 @@ internal sealed record CliOptions
 
     public CliProfile Profile { get; init; } = CliProfile.Trusted;
 
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
+
     public CliExecutionBackend ExecutionBackend { get; init; } = CliExecutionBackend.Auto;
 
     public CliBuildTarget BuildTarget { get; init; } = CliBuildTarget.Chunk;
@@ -105,6 +108,8 @@ internal sealed record CliConfiguration
     public CliDiagnosticFormat? DiagnosticFormat { get; init; }
 
     public CliProfile? Profile { get; init; }
+
+    public LuaLanguageVersion? LanguageVersion { get; init; }
 
     public CliExecutionBackend? ExecutionBackend { get; init; }
 

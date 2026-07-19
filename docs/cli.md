@@ -24,6 +24,9 @@ lunil dump <input> [--kind <kind>] [--format text|json] [options]
   `LUNIL0006`, phase `removed-feature`, and exit code `2`; they never masquerade as chunk output.
 - `dump` supports `summary`, `syntax`, `annotations`, `analysis`, `ir`, and `chunk`; output can be
   text or `lunil.dump.v1` JSON. `--output -` or no output path writes to stdout.
+- `--lua-version 5.1|5.2|5.3|5.4|5.5` selects the explicit language contract. Lua 5.4 is the
+  default; versions whose complete semantics are not implemented yet fail with a diagnostic rather
+  than silently using Lua 5.4.
 
 `--output` is valid only for `build` and `dump`; `--target` and `--strip-debug` only for `build`;
 `--kind` and `--format` only for `dump`. These are usage errors rather than silently ignored flags.
@@ -57,6 +60,7 @@ Supported JSON properties are:
 ```json
 {
   "profile": "deterministic",
+  "luaVersion": "5.4",
   "execution": "auto",
   "diagnosticFormat": "json",
   "buildTarget": "chunk",
@@ -75,7 +79,7 @@ Supported JSON properties are:
 ```
 
 Relative `moduleRoots` in a configuration file are resolved relative to that file. The equivalent
-environment variables are `LUNIL_PROFILE`, `LUNIL_EXECUTION`, `LUNIL_DIAGNOSTIC_FORMAT`,
+environment variables are `LUNIL_PROFILE`, `LUNIL_LUA_VERSION`, `LUNIL_EXECUTION`, `LUNIL_DIAGNOSTIC_FORMAT`,
 `LUNIL_BUILD_TARGET`, `LUNIL_DUMP_KIND`, `LUNIL_DUMP_FORMAT`, `LUNIL_MODULE_ROOTS`,
 `LUNIL_PATH_PATTERNS`,
 `LUNIL_WARNINGS_AS_ERRORS`, `LUNIL_STRIP_DEBUG`, `LUNIL_MAXIMUM_INPUT_BYTES`,

@@ -233,6 +233,7 @@ Global options:
       --path-pattern <pattern>    Add a Lua '?' path pattern.
       --module-name <name>        Override the root logical module name.
       --trusted                   Enable trusted host capabilities (default).
+      --lua-version <version>     Select Lua 5.1, 5.2, 5.3, 5.4, or 5.5 (default: 5.4).
       --sandbox                   Use a root-confined read-only file system.
       --deterministic             Use sandbox capabilities and deterministic time/hash.
       --execution <backend>       auto, interpreter, or jit (default: auto).

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 
@@ -19,6 +20,14 @@ public static class LuaLexer
 
     private static void ValidateOptions(LuaLexerOptions options)
     {
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The lexer language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumTokenCount, 2);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
     }
@@ -102,7 +111,10 @@ public static class LuaLexer
             return new LuaLexResult(
                 _source,
                 _tokens.ToImmutable(),
-                _diagnostics.ToImmutable());
+                _diagnostics.ToImmutable())
+            {
+                LanguageVersion = _options.LanguageVersion,
+            };
         }
 
         private ImmutableArray<LuaSyntaxTrivia> ReadLeadingTrivia()

@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Values;
 
@@ -12,6 +13,7 @@ public static class LuaStandardLibrary
         LuaStandardLibraryOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         var globals = InstallBasic(state, options);
         var coroutine = InstallCoroutine(state);
         var package = InstallPackage(state);
@@ -41,6 +43,7 @@ public static class LuaStandardLibrary
         LuaStandardLibraryOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaBasicLibrary.Install(state, options);
     }
 
@@ -48,6 +51,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallMath(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaMathLibrary.Install(state);
     }
 
@@ -55,6 +59,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallUtf8(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaUtf8Library.Install(state);
     }
 
@@ -62,6 +67,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallTable(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaTableLibrary.Install(state);
     }
 
@@ -69,6 +75,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallString(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaStringLibrary.Install(state);
     }
 
@@ -76,6 +83,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallPackage(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaPackageLibrary.Install(state);
     }
 
@@ -85,6 +93,7 @@ public static class LuaStandardLibrary
         LuaStandardLibraryOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaIoLibrary.Install(state, options);
     }
 
@@ -94,6 +103,7 @@ public static class LuaStandardLibrary
         LuaStandardLibraryOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaOsLibrary.Install(state, options);
     }
 
@@ -101,6 +111,7 @@ public static class LuaStandardLibrary
     public static LuaTable InstallDebug(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return LuaDebugLibrary.Install(state);
     }
 
@@ -108,6 +119,17 @@ public static class LuaStandardLibrary
     public static LuaTable InstallCoroutine(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        EnsureImplemented(state);
         return state.InstallCoroutineModule();
+    }
+
+    private static void EnsureImplemented(LuaState state)
+    {
+        if (state.LanguageVersion != LuaLanguageVersion.Lua54)
+        {
+            throw new NotSupportedException(
+                $"The {LuaLanguageVersions.GetDisplayName(state.LanguageVersion)} standard library " +
+                "is not implemented yet.");
+        }
     }
 }

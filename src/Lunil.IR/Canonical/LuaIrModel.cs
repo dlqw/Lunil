@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Text;
 
 namespace Lunil.IR.Canonical;
@@ -170,9 +171,12 @@ public sealed record LuaIrFunction
 
 public sealed record LuaIrModule
 {
-    public const int CurrentFormatVersion = 3;
+    public const int CurrentFormatVersion = 4;
 
     public int FormatVersion { get; init; } = CurrentFormatVersion;
+
+    /// <summary>Gets the source and runtime semantic contract represented by this module.</summary>
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public int MainFunctionId { get; init; }
 

@@ -63,6 +63,7 @@ public static class LuaLowerer
 
             var module = new LuaIrModule
             {
+                LanguageVersion = _model.LanguageVersion,
                 MainFunctionId = 0,
                 Functions = _functions.Select(static function =>
                     function ?? throw new InvalidOperationException("A bound function was not lowered."))

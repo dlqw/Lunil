@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Lunil.Analysis;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
@@ -18,6 +19,8 @@ public sealed record LuaCompilationResult(
     LuaIrModule? Module,
     ImmutableArray<LuaCompilationDiagnostic> Diagnostics)
 {
+    public LuaLanguageVersion LanguageVersion => Syntax.LanguageVersion;
+
     public bool Succeeded => Module is not null &&
         Diagnostics.All(static diagnostic =>
             diagnostic.Severity != DiagnosticSeverity.Error);

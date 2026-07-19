@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.IR.Canonical;
 
 namespace Lunil.IR.Lua54;
@@ -15,6 +16,13 @@ public static class Lua54CanonicalPrototypeWriter
         Lua54ChunkTarget? target = null)
     {
         ArgumentNullException.ThrowIfNull(module);
+        if (module.LanguageVersion != LuaLanguageVersion.Lua54)
+        {
+            throw new InvalidDataException(
+                $"Cannot write {LuaLanguageVersions.GetDisplayName(module.LanguageVersion)} " +
+                "semantics as a PUC Lua 5.4 chunk.");
+        }
+
         var errors = LuaIrVerifier.Verify(module);
         if (!errors.IsEmpty)
         {

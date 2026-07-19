@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text;
 using Lunil.Cli.CommandLine;
 using Lunil.Cli.IO;
+using Lunil.Core;
 using Lunil.Hosting;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -74,7 +75,9 @@ internal sealed record CliCommandContext(
         var host = new LuaHost(new LuaHostOptions
         {
             Profile = profile,
+            LanguageVersion = Options.LanguageVersion,
             ExecutionBackend = executionBackend,
+            InstallStandardLibrary = Options.LanguageVersion == LuaLanguageVersion.Lua54,
             StandardLibrary = capabilities,
             ModuleResolver = resolver,
             State = LuaStateOptions.Default with
@@ -101,7 +104,12 @@ internal sealed record CliCommandContext(
     {
         var inputArray = inputs.ToArray();
         moduleRoots = ResolveModuleRoots(inputArray);
-        return new LuaWorkspace(LuaWorkspaceOptions.Default, CreateModuleResolver(moduleRoots));
+        return new LuaWorkspace(
+            LuaWorkspaceOptions.Default with
+            {
+                LanguageVersion = Options.LanguageVersion,
+            },
+            CreateModuleResolver(moduleRoots));
     }
 
     public LuaValue[] CreateScriptArguments(LuaHost host, string input)

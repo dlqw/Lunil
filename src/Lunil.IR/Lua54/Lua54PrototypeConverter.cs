@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 
@@ -30,6 +31,7 @@ public static class Lua54PrototypeConverter
 
         var module = new LuaIrModule
         {
+            LanguageVersion = LuaLanguageVersion.Lua54,
             MainFunctionId = 0,
             Functions = functions.MoveToImmutable(),
         };

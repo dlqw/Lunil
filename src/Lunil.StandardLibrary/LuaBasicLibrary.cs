@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Numerics;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -48,7 +49,11 @@ internal static class LuaBasicLibrary
         SetFunction(state, "type", Type);
         SetFunction(state, "warn", Warn);
         state.SetGlobal("_G", LuaValue.FromTable(state.Globals));
-        state.SetGlobal("_VERSION", LuaLibraryHelpers.String(state, "Lua 5.4"));
+        state.SetGlobal(
+            "_VERSION",
+            LuaLibraryHelpers.String(
+                state,
+                LuaLanguageVersions.GetDisplayName(state.LanguageVersion)));
         return state.Globals;
     }
 

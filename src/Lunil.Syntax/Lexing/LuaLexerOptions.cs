@@ -1,3 +1,5 @@
+using Lunil.Core;
+
 namespace Lunil.Syntax.Lexing;
 
 public sealed record LuaLexerOptions
@@ -9,6 +11,8 @@ public sealed record LuaLexerOptions
         AcceptUtf8ByteOrderMark = true,
         AcceptShebang = true,
     };
+
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public bool AcceptUtf8ByteOrderMark { get; init; }
 
