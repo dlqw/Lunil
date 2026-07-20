@@ -1510,6 +1510,169 @@ namespace Lunil.IR.Lua55
         public Lua55ChunkFormatException(string reason, int offset = 0) { }
     }
 
+    public static class Lua55ChunkReader
+    {
+        public static Lunil.IR.Lua54.Lua54Chunk Read(System.ReadOnlySpan<byte> data, Lunil.IR.Lua54.Lua54ChunkReaderOptions? options = null) => throw null;
+    }
+
+    public static class Lua55ChunkWriter
+    {
+        public static byte[] Write(Lunil.IR.Lua54.Lua54Chunk chunk, bool stripDebugInformation = false) => throw null;
+    }
+
+    public static class Lua55GeneratedInstructionCodec
+    {
+        public const int MaximumA = 255;
+        public const int MaximumB = 255;
+        public const int MaximumC = 255;
+        public const int MaximumBx = 131071;
+        public const int MaximumAx = 33554431;
+        public const int SignedBxOffset = 65535;
+        public const int SignedJumpOffset = 16777215;
+        public static Lunil.IR.Lua55.Lua55Opcode DecodeOpcode(uint raw) => throw null;
+        public static int DecodeA(uint raw) => throw null;
+        public static int DecodeB(uint raw) => throw null;
+        public static int DecodeC(uint raw) => throw null;
+        public static int DecodeVB(uint raw) => throw null;
+        public static int DecodeVC(uint raw) => throw null;
+        public static bool DecodeK(uint raw) => throw null;
+        public static int DecodeBx(uint raw) => throw null;
+        public static int DecodeAx(uint raw) => throw null;
+        public static int DecodeSignedBx(uint raw) => throw null;
+        public static int DecodeSignedJump(uint raw) => throw null;
+        public static uint EncodeAbc(Lunil.IR.Lua55.Lua55Opcode opcode, int a, int b, int c, bool k = false) => throw null;
+        public static uint EncodeVAbc(Lunil.IR.Lua55.Lua55Opcode opcode, int a, int vb, int vc, bool k = false) => throw null;
+        public static uint EncodeABx(Lunil.IR.Lua55.Lua55Opcode opcode, int a, int bx) => throw null;
+        public static uint EncodeAx(Lunil.IR.Lua55.Lua55Opcode opcode, int ax) => throw null;
+    }
+
+    public readonly struct Lua55Instruction : System.IEquatable<Lunil.IR.Lua55.Lua55Instruction>
+    {
+        public const int MaximumA = 255;
+        public const int MaximumB = 255;
+        public const int MaximumC = 255;
+        public const int MaximumBx = 131071;
+        public const int MaximumAx = 33554431;
+        public const int SignedBxOffset = 65535;
+        public const int SignedJumpOffset = 16777215;
+        public uint RawValue { get => throw null; init { } }
+        public Lunil.IR.Lua55.Lua55Opcode Opcode { get => throw null; }
+        public int A { get => throw null; }
+        public int B { get => throw null; }
+        public int C { get => throw null; }
+        public int VB { get => throw null; }
+        public int VC { get => throw null; }
+        public bool K { get => throw null; }
+        public int Bx { get => throw null; }
+        public int Ax { get => throw null; }
+        public int SignedBx { get => throw null; }
+        public int SignedJump { get => throw null; }
+        public Lua55Instruction(uint RawValue) { }
+        public static Lunil.IR.Lua55.Lua55Instruction CreateAbc(Lunil.IR.Lua55.Lua55Opcode opcode, int a, int b, int c, bool k = false) => throw null;
+        public static Lunil.IR.Lua55.Lua55Instruction CreateABx(Lunil.IR.Lua55.Lua55Opcode opcode, int a, int bx) => throw null;
+        public static Lunil.IR.Lua55.Lua55Instruction CreateAx(Lunil.IR.Lua55.Lua55Opcode opcode, int ax) => throw null;
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua55.Lua55Instruction left, Lunil.IR.Lua55.Lua55Instruction right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua55.Lua55Instruction left, Lunil.IR.Lua55.Lua55Instruction right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua55.Lua55Instruction other) => throw null;
+        public void Deconstruct(out uint RawValue) => throw null;
+    }
+
+    public enum Lua55Opcode
+    {
+        Move = 0,
+        LoadInteger = 1,
+        LoadFloat = 2,
+        LoadConstant = 3,
+        LoadConstantExtra = 4,
+        LoadFalse = 5,
+        LoadFalseAndSkip = 6,
+        LoadTrue = 7,
+        LoadNil = 8,
+        GetUpvalue = 9,
+        SetUpvalue = 10,
+        GetTableUpvalue = 11,
+        GetTable = 12,
+        GetInteger = 13,
+        GetField = 14,
+        SetTableUpvalue = 15,
+        SetTable = 16,
+        SetInteger = 17,
+        SetField = 18,
+        NewTable = 19,
+        Self = 20,
+        AddImmediate = 21,
+        AddConstant = 22,
+        SubtractConstant = 23,
+        MultiplyConstant = 24,
+        ModuloConstant = 25,
+        PowerConstant = 26,
+        DivideConstant = 27,
+        FloorDivideConstant = 28,
+        BitwiseAndConstant = 29,
+        BitwiseOrConstant = 30,
+        BitwiseXorConstant = 31,
+        ShiftLeftImmediate = 32,
+        ShiftRightImmediate = 33,
+        Add = 34,
+        Subtract = 35,
+        Multiply = 36,
+        Modulo = 37,
+        Power = 38,
+        Divide = 39,
+        FloorDivide = 40,
+        BitwiseAnd = 41,
+        BitwiseOr = 42,
+        BitwiseXor = 43,
+        ShiftLeft = 44,
+        ShiftRight = 45,
+        MetamethodBinary = 46,
+        MetamethodBinaryImmediate = 47,
+        MetamethodBinaryConstant = 48,
+        UnaryMinus = 49,
+        BitwiseNot = 50,
+        LogicalNot = 51,
+        Length = 52,
+        Concatenate = 53,
+        Close = 54,
+        ToBeClosed = 55,
+        Jump = 56,
+        Equal = 57,
+        LessThan = 58,
+        LessOrEqual = 59,
+        EqualConstant = 60,
+        EqualImmediate = 61,
+        LessThanImmediate = 62,
+        LessOrEqualImmediate = 63,
+        GreaterThanImmediate = 64,
+        GreaterOrEqualImmediate = 65,
+        Test = 66,
+        TestSet = 67,
+        Call = 68,
+        TailCall = 69,
+        Return = 70,
+        ReturnZero = 71,
+        ReturnOne = 72,
+        NumericForLoop = 73,
+        NumericForPrepare = 74,
+        GenericForPrepare = 75,
+        GenericForCall = 76,
+        GenericForLoop = 77,
+        SetList = 78,
+        Closure = 79,
+        VarArg = 80,
+        GetVarArg = 81,
+        ErrorIfNotNil = 82,
+        VarArgPrepare = 83,
+        ExtraArgument = 84
+    }
+
     public static class Lua55PrototypeConverter
     {
         public static Lunil.IR.Canonical.LuaIrModule Convert(System.ReadOnlySpan<byte> bytes, Lunil.IR.Lua54.Lua54ChunkReaderOptions? options = null) => throw null;

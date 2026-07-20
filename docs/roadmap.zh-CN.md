@@ -21,9 +21,10 @@
 
 ## 0.10.0：Lua 版本兼容与运行时对比
 
-Lunil 0.10.0 计划完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.5。Lua 5.2 已在
-`0.10.0-alpha.2` 作为显式 adapter 可用，其余版本继续沿用同一生成 profile/adapter 边界交付。每个版本都拥有
-独立的语言和运行时契约：
+Lunil 0.10.0 计划完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.5。
+`0.10.0-alpha.2` 已包含五个版本的显式 adapter，以及 Lua 5.1、5.2、5.3、5.4、5.5 各自
+独立的官方 binary chunk codec。发布前剩余工作是扩充五版本 conformance、标准库/error
+matrix 与发布证据。每个版本都拥有独立的语言和运行时契约：
 
 - 对应版本的语法、词法规则、运算符和多返回值行为；
 - 对应版本的 VM 指令和 binary chunk 格式，并进行显式版本校验；

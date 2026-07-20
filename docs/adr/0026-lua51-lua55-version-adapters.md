@@ -13,8 +13,10 @@ the canonical IR as the execution interchange format.
 
 Lua 5.1 has a dedicated legacy chunk reader/writer: its header, native `size_t` strings, number-only
 constants, legacy opcode ordering, and closure upvalue binding pseudo-instructions are translated at
-the boundary. Lua 5.5 source execution uses the versioned boundary and marker validation while the
-5.5 varint chunk representation is isolated behind `Lunil.IR.Lua55` for follow-up codec expansion.
+the boundary. Lua 5.5 has a dedicated reader/writer for the official 5.5 varint chunk format, a
+generated instruction codec (including the `ivABC` value bits), string-reference deduplication, and
+native debug-line layout. Numeric and generic `for` register-layout differences are translated at
+the chunk boundary so the shared canonical execution pipeline remains version-neutral.
 
 ## Compatibility constraints
 
@@ -24,3 +26,5 @@ the boundary. Lua 5.5 source execution uses the versioned boundary and marker va
   `utf8`, `string.pack`, or `table.move` surfaces.
 - The generated opcode profile is selected at build time with `LUNIL_LUA51_ADAPTER` and
   `LUNIL_LUA55_ADAPTER`; disabling either symbol makes the corresponding capability fail closed.
+- Lua 5.5 chunks are validated against the official 5.5 header and field widths; they are never
+  accepted by disguising a Lua 5.4 chunk or silently rewriting the version marker.

@@ -295,7 +295,8 @@ public static class Lua54CanonicalPrototypeWriter
                         instruction.A,
                         instruction.B < 0 ? 0 : instruction.B + 1,
                         VarArgReturnAdjustment,
-                        line);
+                        line,
+                        k: _capturedRegisters.Count != 0);
                     break;
                 case LuaIrOpcode.Return:
                     EmitAbc(
@@ -303,7 +304,8 @@ public static class Lua54CanonicalPrototypeWriter
                         instruction.A,
                         instruction.B < 0 ? 0 : instruction.B + 1,
                         VarArgReturnAdjustment,
-                        line);
+                        line,
+                        k: _capturedRegisters.Count != 0);
                     break;
                 case LuaIrOpcode.Close:
                     EmitAbc(Lua54Opcode.Close, instruction.A, 0, 0, line);
@@ -431,7 +433,8 @@ public static class Lua54CanonicalPrototypeWriter
                     first.B,
                     2,
                     VarArgReturnAdjustment,
-                    second.SourceLine);
+                    second.SourceLine,
+                    k: _capturedRegisters.Count != 0);
                 finalProgramCounter = programCounter + 1;
                 return true;
             }
