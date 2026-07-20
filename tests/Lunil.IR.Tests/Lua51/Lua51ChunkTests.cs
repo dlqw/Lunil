@@ -47,6 +47,34 @@ public sealed class Lua51ChunkTests
         Assert.Throws<Lua51ChunkFormatException>(() => Lua51ChunkReader.Read(bytes));
     }
 
+    [Fact]
+    public void WriterUsesLua51VarArgFlagsInsteadOfLua53BitIdentity()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.VarArg, 0, 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 1));
+        var module = new LuaIrModule
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+            MainFunctionId = 0,
+            Functions = [new LuaIrFunction
+            {
+                Id = 0,
+                ParentFunctionId = -1,
+                Span = default,
+                IsVarArg = true,
+                RegisterCount = 1,
+                Instructions = instructions,
+                BasicBlocks = LuaIrControlFlow.Build(instructions),
+            }],
+        };
+
+        var chunk = Lua51ChunkReader.Read(Lua51CanonicalPrototypeWriter.Write(module, 0));
+
+        Assert.Equal(2, chunk.MainPrototype.VarArgFlags);
+        Assert.Equal(Lua51Opcode.VarArg, chunk.MainPrototype.Code[0].Opcode);
+    }
+
     private static LuaIrModule CreateEmptyModule()
     {
         var instructions = ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0));

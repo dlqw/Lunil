@@ -262,12 +262,32 @@ public static class Lua51PrototypeConverter
             nestedUpvalues[instruction.Bx] = descriptors.MoveToImmutable();
         }
 
+        for (var pc = 0; pc < p.Code.Length; pc++)
+        {
+            if (skipped[pc] || p.Code[pc].Opcode != Lua51Opcode.GenericForLoop)
+            {
+                continue;
+            }
+
+            var jumpPc = pc + 1;
+            if (jumpPc >= p.Code.Length || p.Code[jumpPc].Opcode != Lua51Opcode.Jump)
+            {
+                throw new InvalidDataException(
+                    "Lua 5.1 TFORLOOP must be followed by its control-flow jump.");
+            }
+
+            skipped[jumpPc] = true;
+        }
+
         var pcMap = new int[p.Code.Length + 1];
         var translatedPc = 0;
         for (var pc = 0; pc < p.Code.Length; pc++)
         {
             pcMap[pc] = translatedPc;
-            if (!skipped[pc]) translatedPc++;
+            if (!skipped[pc])
+            {
+                translatedPc += p.Code[pc].Opcode == Lua51Opcode.GenericForLoop ? 2 : 1;
+            }
         }
         pcMap[^1] = translatedPc;
         var code = ImmutableArray.CreateBuilder<Lua53Instruction>(translatedPc);
@@ -275,7 +295,26 @@ public static class Lua51PrototypeConverter
         {
             if (skipped[pc]) continue;
             var instruction = p.Code[pc];
-            if (instruction.Opcode is Lua51Opcode.Jump or Lua51Opcode.NumericForLoop or Lua51Opcode.NumericForPrepare)
+            if (instruction.Opcode == Lua51Opcode.GenericForLoop)
+            {
+                var jump = p.Code[pc + 1];
+                var target = pc + 2 + jump.SignedBx;
+                if ((uint)target > (uint)p.Code.Length)
+                {
+                    throw new InvalidDataException("Lua 5.1 generic-for target is outside the prototype.");
+                }
+
+                code.Add(Lua53Instruction.CreateAbc(
+                    Lua53Opcode.GenericForCall,
+                    instruction.A,
+                    0,
+                    instruction.C));
+                code.Add(Lua53Instruction.CreateASignedBx(
+                    Lua53Opcode.GenericForLoop,
+                    checked(instruction.A + 2),
+                    pcMap[target] - (pcMap[pc] + 2)));
+            }
+            else if (instruction.Opcode is Lua51Opcode.Jump or Lua51Opcode.NumericForLoop or Lua51Opcode.NumericForPrepare)
             {
                 var target = pc + 1 + instruction.SignedBx;
                 if ((uint)target > (uint)p.Code.Length)
@@ -295,19 +334,56 @@ public static class Lua51PrototypeConverter
             LineDefined = p.LineDefined,
             LastLineDefined = p.LastLineDefined,
             ParameterCount = p.ParameterCount,
-            VarArgFlags = p.VarArgFlags,
+            VarArgFlags = (byte)((p.VarArgFlags & 2) != 0 ? 1 : 0),
             MaximumStackSize = p.MaximumStackSize,
             Code = code.MoveToImmutable(),
             Constants = p.Constants.Select(Translate).ToImmutableArray(),
             NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(nested, nestedUpvalues[index])).ToImmutableArray(),
-            LineInfo = p.LineInfo.IsEmpty ? [] : p.LineInfo.Where((_, index) => !skipped[index]).ToImmutableArray(),
-            LocalVariables = p.LocalVariables.Select(x => new Lua53LocalVariable(x.Name is { } n ? new Lua53String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
+            LineInfo = TranslateLineInfo(p, skipped),
+            LocalVariables = p.LocalVariables.Select(x => new Lua53LocalVariable(
+                x.Name is { } n ? new Lua53String(n.ToArray()) : null,
+                pcMap[x.StartProgramCounter],
+                pcMap[x.EndProgramCounter])).ToImmutableArray(),
             UpvalueNames = p.UpvalueNames.Select(x => x is { } n ? (Lua53String?)new Lua53String(n.ToArray()) : null).ToImmutableArray(),
             Upvalues = upvalues,
         };
     }
+
+    private static ImmutableArray<int> TranslateLineInfo(Lua51Prototype prototype, bool[] skipped)
+    {
+        if (prototype.LineInfo.IsEmpty)
+        {
+            return [];
+        }
+
+        var lines = ImmutableArray.CreateBuilder<int>();
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            if (skipped[pc])
+            {
+                continue;
+            }
+
+            lines.Add(prototype.LineInfo[pc]);
+            if (prototype.Code[pc].Opcode == Lua51Opcode.GenericForLoop)
+            {
+                lines.Add(prototype.LineInfo[pc]);
+            }
+        }
+
+        return lines.ToImmutable();
+    }
+
     private static Lua53Instruction Translate(Lua51Instruction i)
     {
+        if (i.Opcode == Lua51Opcode.Close)
+        {
+            return Lua53Instruction.CreateASignedBx(
+                Lua53Opcode.Jump,
+                checked(i.A + 1),
+                0);
+        }
+
         var op = i.Opcode switch
         {
             Lua51Opcode.Move => Lua53Opcode.Move,
@@ -347,7 +423,6 @@ public static class Lua51PrototypeConverter
             Lua51Opcode.SetList => Lua53Opcode.SetList,
             Lua51Opcode.Closure => Lua53Opcode.Closure,
             Lua51Opcode.VarArg => Lua53Opcode.VarArg,
-            Lua51Opcode.Close => Lua53Opcode.Jump,
             _ => throw new InvalidDataException($"Unsupported Lua 5.1 opcode {i.Opcode}"),
         };
         if (i.Opcode is Lua51Opcode.GetGlobal) return Lua53Instruction.CreateAbc(op, i.A, 0, i.Bx | (1 << 8));
@@ -388,7 +463,7 @@ public static class Lua51CanonicalPrototypeWriter
         LastLineDefined = p.LastLineDefined,
         UpvalueCount = checked((byte)p.Upvalues.Length),
         ParameterCount = p.ParameterCount,
-        VarArgFlags = p.VarArgFlags,
+        VarArgFlags = p.VarArgFlags == 0 ? (byte)0 : (byte)2,
         MaximumStackSize = p.MaximumStackSize,
         Code = TranslateCode(p),
         Constants = p.Constants.Select(Translate).ToImmutableArray(),
@@ -406,6 +481,10 @@ public static class Lua51CanonicalPrototypeWriter
             var line = prototype.LineInfo[pc];
             lines.Add(line);
             var instruction = prototype.Code[pc];
+            if (instruction.Opcode == Lua53Opcode.Jump && instruction.A > 0)
+            {
+                lines.Add(line);
+            }
             if (instruction.Opcode != Lua53Opcode.Closure) continue;
             for (var index = 0; index < prototype.NestedPrototypes[instruction.Bx].Upvalues.Length; index++)
                 lines.Add(line);
@@ -414,25 +493,50 @@ public static class Lua51CanonicalPrototypeWriter
     }
     private static ImmutableArray<Lua51Instruction> TranslateCode(Lua53Prototype prototype)
     {
-        var pcMap = new int[prototype.Code.Length + 1];
-        var count = 0;
-        for (var pc = 0; pc < prototype.Code.Length; pc++)
-        {
-            pcMap[pc] = count++;
-            var instruction = prototype.Code[pc];
-            if (instruction.Opcode == Lua53Opcode.Closure)
-                count += prototype.NestedPrototypes[instruction.Bx].Upvalues.Length;
-        }
-        pcMap[^1] = count;
+        var pcMap = BuildPcMap(prototype);
+        var count = pcMap[^1];
         var code = ImmutableArray.CreateBuilder<Lua51Instruction>(count);
         for (var pc = 0; pc < prototype.Code.Length; pc++)
         {
             var instruction = prototype.Code[pc];
-            if (instruction.Opcode is Lua53Opcode.Jump or Lua53Opcode.NumericForLoop or Lua53Opcode.NumericForPrepare)
+            if (instruction.Opcode == Lua53Opcode.Jump && instruction.A > 0)
+            {
+                var target = pc + 1 + instruction.SignedBx;
+                code.Add(Lua51Instruction.CreateAbc(
+                    Lua51Opcode.Close,
+                    instruction.A - 1,
+                    0,
+                    0));
+                code.Add(Lua51Instruction.CreateASignedBx(
+                    Lua51Opcode.Jump,
+                    0,
+                    pcMap[target] - (pcMap[pc] + 2)));
+            }
+            else if (instruction.Opcode == Lua53Opcode.GenericForLoop)
+            {
+                var target = pc + 1 + instruction.SignedBx;
+                code.Add(Lua51Instruction.CreateASignedBx(
+                    Lua51Opcode.Jump,
+                    0,
+                    pcMap[target] - (pcMap[pc] + 1)));
+            }
+            else if (instruction.Opcode is Lua53Opcode.Jump or Lua53Opcode.NumericForLoop or Lua53Opcode.NumericForPrepare)
             {
                 var target = pc + 1 + instruction.SignedBx;
                 var mapped = pcMap[target] - (pcMap[pc] + 1);
                 code.Add(Lua51Instruction.CreateASignedBx(Map(instruction.Opcode), instruction.A, mapped));
+            }
+            else if (instruction.Opcode == Lua53Opcode.Return &&
+                pc > 0 &&
+                prototype.Code[pc - 1].Opcode == Lua53Opcode.TailCall)
+            {
+                // Lua 5.1's verifier treats TAILCALL as an open call and requires the
+                // following (unreachable) RETURN to consume the open result range.
+                code.Add(Lua51Instruction.CreateAbc(
+                    Lua51Opcode.Return,
+                    instruction.A,
+                    0,
+                    0));
             }
             else code.Add(Translate(instruction));
             if (instruction.Opcode != Lua53Opcode.Closure) continue;
@@ -444,6 +548,28 @@ public static class Lua51CanonicalPrototypeWriter
             }
         }
         return code.MoveToImmutable();
+    }
+
+    private static int[] BuildPcMap(Lua53Prototype prototype)
+    {
+        var pcMap = new int[prototype.Code.Length + 1];
+        var count = 0;
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            pcMap[pc] = count++;
+            var instruction = prototype.Code[pc];
+            if (instruction.Opcode == Lua53Opcode.Closure)
+            {
+                count += prototype.NestedPrototypes[instruction.Bx].Upvalues.Length;
+            }
+            else if (instruction.Opcode == Lua53Opcode.Jump && instruction.A > 0)
+            {
+                count++;
+            }
+        }
+
+        pcMap[^1] = count;
+        return pcMap;
     }
     private static Lua51Instruction Translate(Lua53Instruction i) => i.Opcode switch
     {
@@ -487,7 +613,7 @@ public static class Lua51CanonicalPrototypeWriter
         Lua53Opcode.NumericForLoop => Lua51Opcode.NumericForLoop,
         Lua53Opcode.NumericForPrepare => Lua51Opcode.NumericForPrepare,
         Lua53Opcode.GenericForCall => Lua51Opcode.GenericForLoop,
-        Lua53Opcode.GenericForLoop => Lua51Opcode.GenericForLoop,
+        Lua53Opcode.GenericForLoop => Lua51Opcode.Jump,
         Lua53Opcode.SetList => Lua51Opcode.SetList,
         Lua53Opcode.Closure => Lua51Opcode.Closure,
         Lua53Opcode.VarArg => Lua51Opcode.VarArg,
