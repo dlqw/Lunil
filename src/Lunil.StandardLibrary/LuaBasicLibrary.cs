@@ -37,7 +37,22 @@ internal static class LuaBasicLibrary
         state.SetGlobal("next", LuaValue.FromFunction(NextDescriptor));
         SetStepFunction(state, "pairs", Pairs);
         state.InstallProtectedCallFunctions();
-        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasWarnLibrary)
+        var features = LuaVersionFeatureTable.Get(state.LanguageVersion);
+        if (features.HasGlobalUnpack)
+        {
+            state.SetGlobal(
+                "unpack",
+                LuaValue.FromFunction(new LuaNativeFunction("unpack", LuaTableLibrary.Unpack)));
+        }
+        if (features.HasLoadString)
+        {
+            SetStepFunction(state, "loadstring", Load);
+        }
+        if (features.HasModuleLibrary)
+        {
+            SetFunction(state, "module", Module);
+        }
+        if (features.HasWarnLibrary)
         {
             SetFunction(state, "warn", Warn);
         }
@@ -45,7 +60,10 @@ internal static class LuaBasicLibrary
         SetStepFunction(state, "print", Print);
         SetFunction(state, "rawequal", RawEqual);
         SetFunction(state, "rawget", RawGet);
-        SetFunction(state, "rawlen", RawLength);
+        if (features.HasRawLength)
+        {
+            SetFunction(state, "rawlen", RawLength);
+        }
         SetFunction(state, "rawset", RawSet);
         SetFunction(state, "select", Select);
         SetFunction(state, "setmetatable", SetMetatable);
@@ -283,7 +301,7 @@ internal static class LuaBasicLibrary
         return arguments[checked((int)index)..].ToArray();
     }
 
-    private static LuaValue[] ToNumber(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue[] ToNumber(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "tonumber");
         if (arguments.Length < 2 || arguments[1].IsNil)
@@ -295,7 +313,7 @@ internal static class LuaBasicLibrary
 
             return value.Kind == LuaValueKind.String &&
                 LuaNumberParser.TryParseString(value.AsString().AsSpan(), out var number)
-                    ? [FromNumber(number)]
+                    ? [FromNumber(state, number)]
                     : [LuaValue.Nil];
         }
 
@@ -311,7 +329,9 @@ internal static class LuaBasicLibrary
         }
 
         return TryParseInteger(value.AsString().AsSpan(), (int)@base, out var integer)
-            ? [LuaValue.FromInteger(integer)]
+            ? [state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52
+                ? LuaValue.FromFloat(integer)
+                : LuaValue.FromInteger(integer)]
             : [LuaValue.Nil];
     }
 
@@ -319,6 +339,38 @@ internal static class LuaBasicLibrary
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "type");
         return [LuaLibraryHelpers.String(state, LuaValueOperations.BasicTypeName(value))];
+    }
+
+    private static LuaValue[] Module(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var name = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "module");
+        var moduleName = Encoding.UTF8.GetString(name);
+        var existing = state.GetGlobal(moduleName);
+        var module = existing.Kind == LuaValueKind.Table
+            ? existing.AsTable()
+            : state.CreateTable(hashCapacity: 8);
+        LuaLibraryHelpers.Set(state, module, "_NAME", LuaLibraryHelpers.String(state, moduleName));
+        LuaLibraryHelpers.Set(state, module, "_M", LuaValue.FromTable(module));
+        var dot = moduleName.LastIndexOf('.');
+        LuaLibraryHelpers.Set(
+            state,
+            module,
+            "_PACKAGE",
+            LuaLibraryHelpers.String(state, dot >= 0 ? moduleName[..(dot + 1)] : string.Empty));
+        state.SetGlobal(moduleName, LuaValue.FromTable(module));
+        var package = state.GetGlobal("package");
+        if (package.Kind == LuaValueKind.Table)
+        {
+            var loaded = package.AsTable().Get(LuaLibraryHelpers.String(state, "loaded"));
+            if (loaded.Kind == LuaValueKind.Table)
+            {
+                loaded.AsTable().Set(
+                    LuaLibraryHelpers.String(state, moduleName),
+                    LuaValue.FromTable(module));
+            }
+        }
+
+        return [LuaValue.FromTable(module)];
     }
 
     private static LuaNativeStep ToStringStep(
@@ -1086,7 +1138,10 @@ internal static class LuaBasicLibrary
         return $"{typeName}: 0x{identity:x}";
     }
 
-    private static LuaValue FromNumber(LuaNumber number) => number.Kind == LuaNumberKind.Integer
+    private static LuaValue FromNumber(LuaState state, LuaNumber number) =>
+        state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52
+        ? LuaValue.FromFloat(number.Kind == LuaNumberKind.Integer ? number.Integer : number.Float)
+        : number.Kind == LuaNumberKind.Integer
         ? LuaValue.FromInteger(number.Integer)
         : LuaValue.FromFloat(number.Float);
 

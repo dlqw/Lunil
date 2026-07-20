@@ -1,0 +1,344 @@
+using System.Buffers.Binary;
+using System.Collections.Immutable;
+using System.Diagnostics;
+
+namespace Lunil.IR.Lua52;
+
+public sealed class Lua52ChunkFormatException : FormatException
+{
+    public Lua52ChunkFormatException(string reason, int offset = 0)
+        : base($"Bad Lua 5.2 binary chunk at byte {offset}: {reason}")
+    {
+        Reason = reason;
+        Offset = offset;
+    }
+
+    public string Reason { get; }
+    public int Offset { get; }
+}
+
+/// <summary>Bounded reader for the official Lua 5.2 binary chunk format.</summary>
+public static class Lua52ChunkReader
+{
+    private static ReadOnlySpan<byte> Signature => [0x1b, (byte)'L', (byte)'u', (byte)'a'];
+    private static ReadOnlySpan<byte> Tail => [0x19, 0x93, (byte)'\r', (byte)'\n', 0x1a, (byte)'\n'];
+
+    public static Lua52Chunk Read(ReadOnlySpan<byte> data, Lua52ChunkReaderOptions? options = null)
+    {
+        options ??= Lua52ChunkReaderOptions.Default;
+        if (data.Length > options.MaximumChunkBytes)
+        {
+            throw new Lua52ChunkFormatException(
+                $"chunk exceeds the configured {options.MaximumChunkBytes} byte limit");
+        }
+
+        return new Reader(data, options).ReadChunk();
+    }
+
+    private ref struct Reader
+    {
+        private readonly ReadOnlySpan<byte> _data;
+        private readonly Lua52ChunkReaderOptions _options;
+        private int _offset;
+        private int _prototypeCount;
+        private int _instructionCount;
+        private int _constantCount;
+        private int _stringBytes;
+        private int _debugEntryCount;
+        private Lua52ChunkTarget _target;
+
+        public Reader(ReadOnlySpan<byte> data, Lua52ChunkReaderOptions options)
+        {
+            _data = data;
+            _options = options;
+        }
+
+        public Lua52Chunk ReadChunk()
+        {
+            Expect(Signature, "not a binary chunk");
+            ExpectByte(0x52, "version mismatch; expected Lua 5.2");
+            ExpectByte(0, "unsupported binary chunk format");
+            var endian = ReadByte();
+            if (endian is not (0 or 1))
+            {
+                Fail("invalid endianness marker");
+            }
+
+            var sizeOfInt = ReadByte();
+            var sizeOfSizeT = ReadByte();
+            var instructionSize = ReadByte();
+            var numberSize = ReadByte();
+            var integral = ReadByte();
+            if (sizeOfInt != 4 || sizeOfSizeT is not (4 or 8) || instructionSize != 4 ||
+                numberSize is not (4 or 8) || integral != 0)
+            {
+                Fail("unsupported Lua 5.2 scalar layout");
+            }
+
+            Expect(Tail, "corrupted LUAC_TAIL marker");
+            _target = new Lua52ChunkTarget(
+                endian == 1 ? Lua52ByteOrder.LittleEndian : Lua52ByteOrder.BigEndian,
+                sizeOfInt,
+                sizeOfSizeT,
+                instructionSize,
+                numberSize);
+            var main = ReadPrototype(null, 1);
+            if (!_options.AllowTrailingData && _offset != _data.Length)
+            {
+                Fail("trailing data after main prototype");
+            }
+
+            return new Lua52Chunk(_target, main);
+        }
+
+        private Lua52Prototype ReadPrototype(Lua52String? parentSource, int depth)
+        {
+            if (depth > _options.MaximumPrototypeDepth)
+            {
+                Fail("prototype nesting exceeds the configured limit");
+            }
+
+            AddBudget(ref _prototypeCount, 1, _options.MaximumPrototypeCount, "prototype count");
+            // Lua 5.2 stores the source name in the debug tail, after code/constants/upvalues;
+            // unlike Lua 5.3 it is not the first field of a prototype.
+            Lua52String? source = parentSource;
+            var lineDefined = ReadInt("line number");
+            var lastLineDefined = ReadInt("line number");
+            var parameterCount = ReadByte();
+            var varArgFlags = ReadByte();
+            var maximumStackSize = ReadByte();
+
+            var codeCount = ReadInt("instruction count");
+            AddBudget(ref _instructionCount, codeCount, _options.MaximumInstructionCount,
+                "instruction count");
+            EnsureCount(codeCount, 4, "instruction count");
+            var code = ImmutableArray.CreateBuilder<Lua52Instruction>(codeCount);
+            for (var index = 0; index < codeCount; index++)
+            {
+                var bytes = ReadBytes(4);
+                var raw = _target.ByteOrder == Lua52ByteOrder.LittleEndian
+                    ? BinaryPrimitives.ReadUInt32LittleEndian(bytes)
+                    : BinaryPrimitives.ReadUInt32BigEndian(bytes);
+                code.Add(new Lua52Instruction(raw));
+            }
+
+            var constantCount = ReadInt("constant count");
+            AddBudget(ref _constantCount, constantCount, _options.MaximumConstantCount,
+                "constant count");
+            EnsureCount(constantCount, 1, "constant count");
+            var constants = ImmutableArray.CreateBuilder<Lua52Constant>(constantCount);
+            for (var index = 0; index < constantCount; index++)
+            {
+                constants.Add(ReadConstant());
+            }
+
+            var nestedCount = ReadInt("nested prototype count");
+            EnsureCount(nestedCount, 2, "nested prototype count");
+            var nested = ImmutableArray.CreateBuilder<Lua52Prototype>(nestedCount);
+            for (var index = 0; index < nestedCount; index++)
+            {
+                nested.Add(ReadPrototype(source, depth + 1));
+            }
+
+            var upvalueCount = ReadInt("upvalue count");
+            AddBudget(ref _debugEntryCount, upvalueCount, _options.MaximumUpvalueCount,
+                "upvalue count");
+            EnsureCount(upvalueCount, 2, "upvalue count");
+            var upvalues = ImmutableArray.CreateBuilder<Lua52UpvalueDescriptor>(upvalueCount);
+            for (var index = 0; index < upvalueCount; index++)
+            {
+                upvalues.Add(new Lua52UpvalueDescriptor(ReadByte(), ReadByte()));
+            }
+
+            source = ReadNullableString() ?? source;
+            var lineInfoCount = ReadInt("line info count");
+            AddBudget(ref _debugEntryCount, lineInfoCount, _options.MaximumDebugEntryCount,
+                "debug entry count");
+            EnsureCount(lineInfoCount, 4, "line info count");
+            var lineInfo = ImmutableArray.CreateBuilder<int>(lineInfoCount);
+            for (var index = 0; index < lineInfoCount; index++)
+            {
+                lineInfo.Add(ReadSignedInt());
+            }
+
+            var localCount = ReadInt("local variable count");
+            AddBudget(ref _debugEntryCount, localCount, _options.MaximumDebugEntryCount,
+                "debug entry count");
+            EnsureCount(localCount, 1, "local variable count");
+            var locals = ImmutableArray.CreateBuilder<Lua52LocalVariable>(localCount);
+            for (var index = 0; index < localCount; index++)
+            {
+                locals.Add(new Lua52LocalVariable(
+                    ReadNullableString(),
+                    ReadInt("local start program counter"),
+                    ReadInt("local end program counter")));
+            }
+
+            var upvalueNameCount = ReadInt("upvalue name count");
+            AddBudget(ref _debugEntryCount, upvalueNameCount, _options.MaximumDebugEntryCount,
+                "debug entry count");
+            EnsureCount(upvalueNameCount, 1, "upvalue name count");
+            var upvalueNames = ImmutableArray.CreateBuilder<Lua52String?>(upvalueNameCount);
+            for (var index = 0; index < upvalueNameCount; index++)
+            {
+                upvalueNames.Add(ReadNullableString());
+            }
+
+            if (upvalueNameCount != 0 && upvalueNameCount != upvalueCount)
+            {
+                Fail("upvalue name count must be zero or match the upvalue count");
+            }
+
+            return new Lua52Prototype
+            {
+                Source = source,
+                LineDefined = lineDefined,
+                LastLineDefined = lastLineDefined,
+                ParameterCount = parameterCount,
+                VarArgFlags = varArgFlags,
+                MaximumStackSize = maximumStackSize,
+                Code = code.MoveToImmutable(),
+                Constants = constants.MoveToImmutable(),
+                Upvalues = upvalues.MoveToImmutable(),
+                NestedPrototypes = nested.MoveToImmutable(),
+                LineInfo = lineInfo.MoveToImmutable(),
+                LocalVariables = locals.MoveToImmutable(),
+                UpvalueNames = upvalueNames.MoveToImmutable(),
+            };
+        }
+
+        private Lua52Constant ReadConstant()
+        {
+            var tagOffset = _offset;
+            return ReadByte() switch
+            {
+                0 => Lua52Constant.Nil,
+                1 => Lua52Constant.FromBoolean(ReadByte() != 0),
+                3 => Lua52Constant.FromNumber(ReadNumber(ReadBytes(_target.NumberSize))),
+                4 => Lua52Constant.FromString(ReadRequiredString()),
+                var unknown => throw new Lua52ChunkFormatException(
+                    $"unknown constant tag {unknown}", tagOffset),
+            };
+        }
+
+        private Lua52String ReadRequiredString() =>
+            ReadNullableString() ?? Fail<Lua52String>("constant string cannot be null");
+
+        private Lua52String? ReadNullableString()
+        {
+            // Lua 5.2 writes the complete size_t for every string (unlike the compact
+            // one-byte/extended encoding introduced by later chunk formats).
+            var encodedSize = ReadSizeT();
+            if (encodedSize == 0)
+            {
+                return null;
+            }
+
+            if (encodedSize > int.MaxValue)
+            {
+                Fail("string is too large for this runtime");
+            }
+
+            var encoded = ReadBytes((int)encodedSize);
+            var byteCount = checked((int)encodedSize - 1);
+            AddBudget(ref _stringBytes, (int)byteCount, _options.MaximumStringBytes, "string bytes");
+            return new Lua52String(encoded[..byteCount].ToArray());
+        }
+
+        private int ReadInt(string description)
+        {
+            var value = ReadSignedInt();
+            if (value < 0)
+            {
+                Fail($"{description} cannot be negative");
+            }
+
+            return value;
+        }
+
+        private int ReadSignedInt() => _target.ByteOrder == Lua52ByteOrder.LittleEndian
+            ? BinaryPrimitives.ReadInt32LittleEndian(ReadBytes(4))
+            : BinaryPrimitives.ReadInt32BigEndian(ReadBytes(4));
+
+        private ulong ReadSizeT() => _target.SizeOfSizeT switch
+        {
+            4 => _target.ByteOrder == Lua52ByteOrder.LittleEndian
+                ? BinaryPrimitives.ReadUInt32LittleEndian(ReadBytes(4))
+                : BinaryPrimitives.ReadUInt32BigEndian(ReadBytes(4)),
+            8 => _target.ByteOrder == Lua52ByteOrder.LittleEndian
+                ? BinaryPrimitives.ReadUInt64LittleEndian(ReadBytes(8))
+                : BinaryPrimitives.ReadUInt64BigEndian(ReadBytes(8)),
+            _ => throw new UnreachableException(),
+        };
+
+        private double ReadNumber(ReadOnlySpan<byte> bytes) => bytes.Length switch
+        {
+            4 when _target.ByteOrder == Lua52ByteOrder.LittleEndian =>
+                BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(bytes)),
+            4 => BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32BigEndian(bytes)),
+            8 when _target.ByteOrder == Lua52ByteOrder.LittleEndian =>
+                BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(bytes)),
+            8 => BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(bytes)),
+            _ => throw new UnreachableException(),
+        };
+
+        private byte ReadByte()
+        {
+            if ((uint)_offset >= (uint)_data.Length)
+            {
+                Fail("unexpected end of chunk");
+            }
+
+            return _data[_offset++];
+        }
+
+        private ReadOnlySpan<byte> ReadBytes(int count)
+        {
+            if (count < 0 || count > _data.Length - _offset)
+            {
+                Fail("truncated chunk");
+            }
+
+            var result = _data.Slice(_offset, count);
+            _offset += count;
+            return result;
+        }
+
+        private void Expect(ReadOnlySpan<byte> expected, string reason)
+        {
+            if (!ReadBytes(expected.Length).SequenceEqual(expected))
+            {
+                Fail(reason);
+            }
+        }
+
+        private void ExpectByte(byte expected, string reason)
+        {
+            if (ReadByte() != expected)
+            {
+                Fail(reason);
+            }
+        }
+
+        private void EnsureCount(int count, int minimumBytes, string description)
+        {
+            if (count < 0 || count > (_data.Length - _offset) / minimumBytes)
+            {
+                Fail($"invalid {description}");
+            }
+        }
+
+        private static void AddBudget(ref int current, int amount, int maximum, string description)
+        {
+            if (amount < 0 || current > maximum - amount)
+            {
+                throw new Lua52ChunkFormatException($"{description} exceeds the configured limit");
+            }
+
+            current += amount;
+        }
+
+        private void Fail(string reason) => throw new Lua52ChunkFormatException(reason, _offset);
+        private T Fail<T>(string reason) => throw new Lua52ChunkFormatException(reason, _offset);
+    }
+}

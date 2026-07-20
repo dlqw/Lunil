@@ -153,6 +153,7 @@ public static class LuaLowerer
             private int _nextRegister;
             private int _localTop;
             private int _maximumRegister;
+            private int _varArgTableRegister = -1;
 
             public FunctionBuilder(Implementation owner, LuaFunctionInfo info, FunctionBuilder? parent)
             {
@@ -268,6 +269,20 @@ public static class LuaLowerer
                 {
                     DeclareSymbol(parameter, markToBeClosed: false, parameter.DeclaringSpan);
                 }
+
+                var namedVarArg = _info.Symbols.SingleOrDefault(static symbol =>
+                    symbol.Attribute == LuaLocalAttributeKind.VarArg);
+                if (namedVarArg is not null)
+                {
+                    _varArgTableRegister = DeclareSymbol(
+                        namedVarArg,
+                        markToBeClosed: false,
+                        namedVarArg.DeclaringSpan);
+                    Emit(new LuaIrInstruction(
+                        LuaIrOpcode.CreateVarArgTable,
+                        _varArgTableRegister,
+                        span: namedVarArg.DeclaringSpan));
+                }
             }
 
             private void LowerBlock(
@@ -355,6 +370,9 @@ public static class LuaLowerer
                         return;
                     case LuaSyntaxKind.FunctionDeclarationStatement:
                         LowerFunctionDeclaration(statement);
+                        return;
+                    case LuaSyntaxKind.GlobalDeclarationStatement:
+                        LowerGlobalDeclaration(statement);
                         return;
                     case LuaSyntaxKind.LocalFunctionDeclarationStatement:
                         LowerLocalFunction(statement);
@@ -513,6 +531,73 @@ public static class LuaLowerer
                         symbol.Attribute == LuaLocalAttributeKind.ToBeClosed,
                         declaration.Span);
                 }
+            }
+
+            private void LowerGlobalDeclaration(LuaSyntaxNode statement)
+            {
+                var directTokens = statement.ChildTokens().ToArray();
+                if (directTokens.Any(static token => token.Kind == LuaTokenKind.FunctionKeyword))
+                {
+                    var token = directTokens.First(static candidate =>
+                        candidate.Kind == LuaTokenKind.Identifier);
+                    var target = PrepareNameTarget(_owner.GetReference(token), token);
+                    var closure = Reserve(1);
+                    LowerClosure(statement, GetChild(statement, LuaSyntaxKind.FunctionBody), closure);
+                    CheckAndStoreGlobal(target, token, closure, statement.Span);
+                    return;
+                }
+
+                var initializer = statement.ChildNodes().FirstOrDefault(static node =>
+                    node.Kind == LuaSyntaxKind.ExpressionList);
+                if (initializer is null)
+                {
+                    return;
+                }
+
+                var declarations = statement.ChildNodes()
+                    .Where(static node => node.Kind == LuaSyntaxKind.AttributedName)
+                    .Select(IdentifierToken)
+                    .ToArray();
+                var targets = declarations.Select(token =>
+                    PrepareNameTarget(_owner.GetReference(token), token)).ToArray();
+                var values = Reserve(declarations.Length);
+                LowerExpressionList(initializer, values, declarations.Length);
+                for (var index = declarations.Length - 1; index >= 0; index--)
+                {
+                    CheckAndStoreGlobal(
+                        targets[index],
+                        declarations[index],
+                        values + index,
+                        statement.Span);
+                }
+            }
+
+            private void CheckAndStoreGlobal(
+                AssignmentTarget target,
+                LuaSyntaxToken name,
+                int source,
+                TextSpan span)
+            {
+                if (target.Kind != AssignmentTargetKind.Table)
+                {
+                    throw new InvalidOperationException("A global declaration must target _ENV.");
+                }
+
+                var current = Reserve(1);
+                Emit(new LuaIrInstruction(
+                    LuaIrOpcode.GetTable,
+                    current,
+                    target.First,
+                    target.Second,
+                    span: span));
+                var nameConstant = GetOrAddConstant(LuaIrConstant.FromString(
+                    _owner._model.Syntax.Source.GetSpan(name.Span)));
+                Emit(new LuaIrInstruction(
+                    LuaIrOpcode.ErrorIfNotNil,
+                    current,
+                    nameConstant,
+                    span: name.Span));
+                StoreTarget(target, source, span, SourceLineAt(name.Span.Start));
             }
 
             private void LowerLocalFunction(LuaSyntaxNode statement)
@@ -991,7 +1076,12 @@ public static class LuaLowerer
                         FillExtraNil(destination, resultCount, expression.Span);
                         return;
                     case LuaSyntaxKind.VarArgExpression:
-                        Emit(new LuaIrInstruction(LuaIrOpcode.VarArg, destination, resultCount, span: expression.Span));
+                        Emit(new LuaIrInstruction(
+                            LuaIrOpcode.VarArg,
+                            destination,
+                            resultCount,
+                            _varArgTableRegister + 1,
+                            span: expression.Span));
                         return;
                     case LuaSyntaxKind.UnaryExpression:
                         LowerUnary(expression, destination);
@@ -1031,6 +1121,9 @@ public static class LuaLowerer
                 var value = expression.ChildTokens().Single().Value;
                 var constant = value switch
                 {
+                    LuaIntegerTokenValue integer when _owner._model.LanguageVersion is
+                        LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 =>
+                        LuaIrConstant.FromFloat(integer.Integer),
                     LuaIntegerTokenValue integer => LuaIrConstant.FromInteger(integer.Integer),
                     LuaFloatTokenValue floatingPoint => LuaIrConstant.FromFloat(floatingPoint.Float),
                     _ => throw new InvalidOperationException("A numeric token has no decoded value."),
@@ -1315,14 +1408,21 @@ public static class LuaLowerer
 
             private void LoadConstant(int destination, LuaIrConstant value, TextSpan span)
             {
+                var index = GetOrAddConstant(value);
+                Emit(new LuaIrInstruction(LuaIrOpcode.LoadConstant, destination, index, span: span));
+            }
+
+            private int GetOrAddConstant(LuaIrConstant value)
+            {
                 var index = FindConstant(value);
-                if (index < 0)
+                if (index >= 0)
                 {
-                    index = _constants.Count;
-                    _constants.Add(value);
+                    return index;
                 }
 
-                Emit(new LuaIrInstruction(LuaIrOpcode.LoadConstant, destination, index, span: span));
+                index = _constants.Count;
+                _constants.Add(value);
+                return index;
             }
 
             private int FindConstant(LuaIrConstant value)

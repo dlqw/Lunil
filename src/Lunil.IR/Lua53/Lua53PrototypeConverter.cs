@@ -15,6 +15,9 @@ public static class Lua53PrototypeConverter
         Convert(Lua53ChunkReader.Read(binaryChunk, options));
 
     public static LuaIrModule Convert(Lua53Chunk chunk)
+        => Convert(chunk, LuaLanguageVersion.Lua53);
+
+    internal static LuaIrModule Convert(Lua53Chunk chunk, LuaLanguageVersion languageVersion)
     {
         ArgumentNullException.ThrowIfNull(chunk);
         var prototypes = new List<PrototypeEntry>();
@@ -29,7 +32,7 @@ public static class Lua53PrototypeConverter
 
         var module = new LuaIrModule
         {
-            LanguageVersion = LuaLanguageVersion.Lua53,
+            LanguageVersion = languageVersion,
             MainFunctionId = 0,
             Functions = functions.MoveToImmutable(),
         };
@@ -38,7 +41,8 @@ public static class Lua53PrototypeConverter
         {
             var first = errors[0];
             throw new InvalidDataException(
-                $"Converted Lua 5.3 canonical IR is invalid in function {first.FunctionId} " +
+                $"Converted {LuaLanguageVersions.GetDisplayName(languageVersion)} canonical IR is invalid " +
+                $"in function {first.FunctionId} " +
                 $"at instruction {first.ProgramCounter}: {first.Message}");
         }
 

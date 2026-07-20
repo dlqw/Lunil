@@ -1,0 +1,308 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using Lunil.Compiler;
+using Lunil.Core;
+using Lunil.Runtime.Execution;
+using Lunil.Runtime.Values;
+
+namespace Lunil.Runtime.Tests.Differential;
+
+public sealed class PucLua55DifferentialTests
+{
+    private static readonly string[] Scripts =
+    [
+        "return 5 & 3, 8 >> 1, 5 // 2, -3 % 2",
+        "return '12' + 3, 12 | 3, 1 << 64",
+        "local sum = 0; for i = 1, 5 do sum = sum + i end; return sum",
+        "local function iterator(limit, control) control = control + 1; if control <= limit then return control, control * 2 end end; local sum = 0; for k, v in iterator, 4, 0 do sum = sum + k + v end; return sum",
+        "local function collect(prefix, ...) local values = {...}; return prefix .. values[1] .. values[2], #values end; return collect('x', 'a', 'b')",
+        "local function outer(value) return function(delta) value = value + delta; return value end end; local next = outer(40); return next(1), next(1)",
+        "local values = {10, 20, 30, key = 7}; return values[2], values.key, #values",
+        "local x = 3; if x < 4 and x ~= 2 then x = x + 10 end; goto done; x = 0; ::done:: return x",
+        "local function values(...) return ... end; local function forward(...) return values(...) end; return forward(7, 8, 9)",
+        "local function named(... values) values[2] = 40; values.n = 3; return values[1], ... end; return named(10, 20)",
+        "local function capture(... values) return function() return values.n, values[1], values[2] end end; local read = capture('a', 'b'); return read()",
+        "local function indexed(keys, ... values) return values[keys[1]], values[keys[2]], values.n end; return indexed({1, 'n'}, 11, 22)",
+        "local _ENV = {}; global value = 10; return value",
+        "local _ENV = {}; global function fact(n) if n == 0 then return 1 end return n * fact(n - 1) end; return fact(5)",
+        BuildLongStringScript(),
+        BuildSetListScript(),
+        BuildLargeConstantScript(),
+    ];
+
+    [Fact]
+    public void Lua55SourceCorpusMatchesConfiguredPucOracle()
+    {
+        var executable = FindLua55Executable();
+        if (executable is null)
+        {
+            return;
+        }
+
+        foreach (var source in Scripts)
+        {
+            Assert.Equal(RunOracle(executable, source), RunLunilSource(source));
+        }
+    }
+
+    [Fact]
+    public void ImportedPucLua55ChunksMatchSourceOracleWhenCompilerIsConfigured()
+    {
+        var executable = FindLua55Executable();
+        var compiler = FindLuac55Executable(executable);
+        if (executable is null || compiler is null)
+        {
+            return;
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), $"lunil-lua55-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            for (var index = 0; index < Scripts.Length; index++)
+            {
+                var sourcePath = Path.Combine(directory, $"case-{index}.lua");
+                var chunkPath = Path.Combine(directory, $"case-{index}.luac");
+                File.WriteAllText(sourcePath, Scripts[index]);
+                CompileChunk(compiler, sourcePath, chunkPath);
+                Assert.Equal(
+                    RunOracle(executable, Scripts[index]),
+                    RunLunilChunk(File.ReadAllBytes(chunkPath)));
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LunilProducedLua55ChunksExecuteInPucLua55WhenOracleIsConfigured()
+    {
+        var executable = FindLua55Executable();
+        if (executable is null)
+        {
+            return;
+        }
+
+        var directory = Path.Combine(Path.GetTempPath(), $"lunil-lua55-writer-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            for (var index = 0; index < Scripts.Length; index++)
+            {
+                var compiler = new LuaCompiler(new LuaCompilerOptions
+                {
+                    LanguageVersion = LuaLanguageVersion.Lua55,
+                });
+                var compilation = compiler.CompileUtf8(Scripts[index], $"@writer-case-{index}.lua");
+                Assert.True(
+                    compilation.Succeeded,
+                    string.Join(Environment.NewLine, compilation.Diagnostics));
+                var chunkPath = Path.Combine(directory, $"case-{index}.luac");
+                File.WriteAllBytes(
+                    chunkPath,
+                    Lunil.IR.Lua55.Lua55CanonicalPrototypeWriter.Write(
+                        compilation.Module!,
+                        compilation.Module!.MainFunctionId));
+                Assert.Equal(
+                    RunOracle(executable, Scripts[index]),
+                    RunOracleChunk(executable, chunkPath));
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static string? FindLua55Executable()
+    {
+        var configured = Environment.GetEnvironmentVariable("LUNIL_PUC_LUA55");
+        return FindExecutable([configured, "lua5.5", "lua55"], "Lua 5.5");
+    }
+
+    private static string? FindLuac55Executable(string? luaExecutable)
+    {
+        var configured = Environment.GetEnvironmentVariable("LUNIL_PUC_LUAC55");
+        var sibling = string.IsNullOrWhiteSpace(luaExecutable)
+            ? null
+            : Path.Combine(
+                Path.GetDirectoryName(Path.GetFullPath(luaExecutable))!,
+                OperatingSystem.IsWindows() ? "luac.exe" : "luac");
+        return FindExecutable([configured, sibling, "luac5.5", "luac55"], "Lua 5.5");
+    }
+
+    private static string? FindExecutable(IEnumerable<string?> candidates, string versionMarker)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = candidate,
+                    Arguments = "-v",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                process?.WaitForExit(5_000);
+                if (process is { ExitCode: 0 } &&
+                    (process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd())
+                    .Contains(versionMarker, StringComparison.Ordinal))
+                {
+                    return candidate;
+                }
+            }
+            catch (Exception exception) when (
+                exception is Win32Exception or InvalidOperationException)
+            {
+                // Try the next configured executable.
+            }
+        }
+
+        return null;
+    }
+
+    private static string RunOracle(string executable, string source) =>
+        RunOracleProgram(executable, BuildEncodingProgram($"(function() {source} end)()"));
+
+    private static string RunOracleChunk(string executable, string chunkPath)
+    {
+        var startInfo = CreateOracleStartInfo(
+            executable,
+            BuildEncodingProgram("assert(loadfile(os.getenv('LUNIL_DIFFERENTIAL_CHUNK')))()"));
+        startInfo.Environment["LUNIL_DIFFERENTIAL_CHUNK"] = chunkPath;
+        return RunOracleProcess(startInfo);
+    }
+
+    private static string BuildEncodingProgram(string invocation)
+    {
+        const string encode = "local function encode(v) local kind = type(v); " +
+            "if kind == 'number' then return math.type(v) .. ':' .. string.format('%.17g', v) " +
+            "elseif kind == 'string' then return 'string:' .. #v .. ':' .. v " +
+            "else return kind .. ':' .. tostring(v) end end; ";
+        return encode + $"local results = table.pack({invocation}); " +
+            "for i = 1, results.n do if i > 1 then io.write('\\t') end; io.write(encode(results[i])) end";
+    }
+
+    private static string RunOracleProgram(string executable, string program) =>
+        RunOracleProcess(CreateOracleStartInfo(executable, program));
+
+    private static ProcessStartInfo CreateOracleStartInfo(string executable, string program)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add(program);
+        return startInfo;
+    }
+
+    private static string RunOracleProcess(ProcessStartInfo startInfo)
+    {
+        using var process = Process.Start(startInfo) ??
+            throw new InvalidOperationException("Could not start the Lua 5.5 oracle.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        var input = startInfo.Environment.TryGetValue("LUNIL_DIFFERENTIAL_CHUNK", out var chunk)
+            ? chunk
+            : "source";
+        Assert.True(
+            process.ExitCode == 0,
+            $"Lua 5.5 oracle exited with code {process.ExitCode} while executing {input}." +
+            $"{Environment.NewLine}{output}{error}");
+        return output;
+    }
+
+    private static void CompileChunk(string compiler, string sourcePath, string chunkPath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = compiler,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-o");
+        startInfo.ArgumentList.Add(chunkPath);
+        startInfo.ArgumentList.Add(sourcePath);
+        using var process = Process.Start(startInfo) ??
+            throw new InvalidOperationException("Could not start the Lua 5.5 compiler.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, output + error);
+    }
+
+    private static string BuildLongStringScript()
+    {
+        var value = new string('x', 300);
+        return $"local value = [=[{value}]=]; return #value, value == [=[{value}]=]";
+    }
+
+    private static string BuildSetListScript() =>
+        "local values = {" + string.Join(',', Enumerable.Range(1, 75)) + "}; " +
+        "return values[1], values[51], values[75], #values";
+
+    private static string BuildLargeConstantScript() =>
+        "local values = {" + string.Join(',', Enumerable.Range(0, 320).Select(index =>
+            $"k{index}='value-{index}'")) + "}; " +
+        "return values.k0, values.k255, values.k319";
+
+    private static string RunLunilSource(string source)
+    {
+        var compiler = new LuaCompiler(new LuaCompilerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua55,
+        });
+        var compilation = compiler.CompileUtf8(source, "@lua55-differential.lua");
+        Assert.True(compilation.Succeeded, string.Join(Environment.NewLine, compilation.Diagnostics));
+
+        var state = CreateState();
+        return Execute(state, state.CreateMainClosure(compilation.Module!));
+    }
+
+    private static string RunLunilChunk(byte[] chunk)
+    {
+        var state = CreateState();
+        return Execute(state, state.LoadBinaryChunk(chunk));
+    }
+
+    private static LuaState CreateState() => new(new LuaStateOptions
+    {
+        LanguageVersion = LuaLanguageVersion.Lua55,
+    });
+
+    private static string Execute(LuaState state, LuaClosure closure)
+    {
+        var execution = new LuaInterpreter().Execute(state, closure);
+        Assert.Equal(LuaVmSignal.Completed, execution.Signal);
+        return string.Join('\t', execution.Values.ToArray().Select(Encode));
+    }
+
+    private static string Encode(LuaValue value) => value.Kind switch
+    {
+        LuaValueKind.Nil => "nil:nil",
+        LuaValueKind.Boolean => $"boolean:{(value.IsTruthy ? "true" : "false")}",
+        LuaValueKind.Integer => $"integer:{value.AsInteger().ToString(CultureInfo.InvariantCulture)}",
+        LuaValueKind.Float => $"float:{value.AsFloat().ToString("G17", CultureInfo.InvariantCulture)}",
+        LuaValueKind.String => $"string:{value.AsString().Length}:{value.AsString()}",
+        _ => $"{value.Kind.ToString().ToLowerInvariant()}:{value}",
+    };
+}

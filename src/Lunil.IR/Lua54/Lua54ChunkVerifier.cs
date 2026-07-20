@@ -22,7 +22,12 @@ public static class Lua54ChunkVerifier
                 $"{chunk.MainPrototype.Upvalues.Length}."));
         }
 
-        VerifyPrototype(chunk.MainPrototype, parent: null, "main", errors);
+        VerifyPrototype(
+            chunk.MainPrototype,
+            parent: null,
+            "main",
+            chunk.SourceFormat == Lunil.Core.LuaChunkFormat.Lua55,
+            errors);
         return errors.ToImmutable();
     }
 
@@ -42,6 +47,7 @@ public static class Lua54ChunkVerifier
         Lua54Prototype prototype,
         Lua54Prototype? parent,
         string path,
+        bool allowLua55Extensions,
         ImmutableArray<Lua54VerificationError>.Builder errors)
     {
         if (prototype.LineDefined < 0 || prototype.LastLineDefined < prototype.LineDefined)
@@ -87,7 +93,7 @@ public static class Lua54ChunkVerifier
         VerifyConstants(prototype, path, errors);
         VerifyUpvalues(prototype, parent, path, errors);
         VerifyDebugInformation(prototype, path, errors);
-        VerifyInstructions(prototype, path, errors);
+        VerifyInstructions(prototype, path, allowLua55Extensions, errors);
 
         for (var index = 0; index < prototype.NestedPrototypes.Length; index++)
         {
@@ -98,7 +104,12 @@ public static class Lua54ChunkVerifier
                 continue;
             }
 
-            VerifyPrototype(nested, prototype, $"{path}.p[{index}]", errors);
+            VerifyPrototype(
+                nested,
+                prototype,
+                $"{path}.p[{index}]",
+                allowLua55Extensions,
+                errors);
         }
     }
 
@@ -240,6 +251,7 @@ public static class Lua54ChunkVerifier
     private static void VerifyInstructions(
         Lua54Prototype prototype,
         string path,
+        bool allowLua55Extensions,
         ImmutableArray<Lua54VerificationError>.Builder errors)
     {
         bool Register(int register) => (uint)register < prototype.MaximumStackSize;
@@ -266,6 +278,13 @@ public static class Lua54ChunkVerifier
             var opcode = instruction.Opcode;
             Lua54Instruction? next =
                 pc + 1 < prototype.Code.Length ? prototype.Code[pc + 1] : null;
+
+            if (opcode is Lua54Opcode.Lua55GetVarArg or Lua54Opcode.Lua55ErrorIfNotNil &&
+                !allowLua55Extensions)
+            {
+                Add(errors, path, $"{opcode} is not legal in a PUC Lua 5.4 chunk.", pc);
+                continue;
+            }
 
             if (Lua54OpcodeInfo.Get(opcode).SetsRegisterA &&
                 instruction.A >= prototype.MaximumStackSize)
@@ -443,21 +462,21 @@ public static class Lua54ChunkVerifier
                     Require(Register(instruction.A) && Register(instruction.B) &&
                         IsRegisterArithmetic(PreviousOpcode(prototype, pc)),
                         "MMBIN is not associated with register arithmetic.", pc);
-                    Require(MetamethodOperandsMatch(prototype, pc),
+                    Require(MetamethodOperandsMatch(prototype, pc, allowLua55Extensions),
                         "MMBIN operands or event do not match the preceding arithmetic.", pc);
                     break;
                 case Lua54Opcode.MetamethodBinaryImmediate:
                     Require(Register(instruction.A) &&
                         IsImmediateArithmetic(PreviousOpcode(prototype, pc)),
                         "MMBINI is not associated with immediate arithmetic.", pc);
-                    Require(MetamethodOperandsMatch(prototype, pc),
+                    Require(MetamethodOperandsMatch(prototype, pc, allowLua55Extensions),
                         "MMBINI operands or event do not match the preceding arithmetic.", pc);
                     break;
                 case Lua54Opcode.MetamethodBinaryConstant:
                     Require(Register(instruction.A) && Constant(instruction.B) &&
                         IsConstantArithmetic(PreviousOpcode(prototype, pc)),
                         "MMBINK is not associated with constant arithmetic.", pc);
-                    Require(MetamethodOperandsMatch(prototype, pc),
+                    Require(MetamethodOperandsMatch(prototype, pc, allowLua55Extensions),
                         "MMBINK operands or event do not match the preceding arithmetic.", pc);
                     break;
                 case Lua54Opcode.UnaryMinus:
@@ -580,6 +599,24 @@ public static class Lua54ChunkVerifier
                     Require(prototype.VarArgFlags != 0 && instruction.A == prototype.ParameterCount,
                         "VARARGPREP does not match the function parameters.", pc);
                     break;
+                case Lua54Opcode.Lua55GetVarArg:
+                    Require(
+                        prototype.VarArgFlags == 1 &&
+                        instruction.B == prototype.ParameterCount &&
+                        Register(instruction.A) && Register(instruction.C),
+                        "Lua 5.5 GETVARG operands do not match the hidden vararg layout.",
+                        pc);
+                    break;
+                case Lua54Opcode.Lua55ErrorIfNotNil:
+                    Require(Register(instruction.A),
+                        "Lua 5.5 ERRNNIL register is out of range.", pc);
+                    Require(
+                        instruction.Bx == 0 ||
+                        instruction.Bx - 1 < prototype.Constants.Length &&
+                        IsStringConstant(prototype, instruction.Bx - 1),
+                        "Lua 5.5 ERRNNIL name must be a string constant.",
+                        pc);
+                    break;
                 case Lua54Opcode.ExtraArgument when !IsExpectedExtraArgument(prototype.Code, pc):
                     Add(errors, path, "EXTRAARG is not associated with a preceding instruction.", pc);
                     break;
@@ -644,7 +681,10 @@ public static class Lua54ChunkVerifier
         (uint)index < (uint)prototype.Constants.Length &&
         prototype.Constants[index].Kind is Lua54ConstantKind.Integer or Lua54ConstantKind.Float;
 
-    private static bool MetamethodOperandsMatch(Lua54Prototype prototype, int programCounter)
+    private static bool MetamethodOperandsMatch(
+        Lua54Prototype prototype,
+        int programCounter,
+        bool allowLua55Extensions)
     {
         if (programCounter == 0)
         {
@@ -670,7 +710,11 @@ public static class Lua54ChunkVerifier
             Lua54Opcode.ShiftRightImmediate or Lua54Opcode.ShiftRight => 17,
             _ => -1,
         };
-        if (metamethod.C != expectedEvent)
+        var lua55Subtraction = allowLua55Extensions &&
+            arithmetic.Opcode == Lua54Opcode.AddImmediate &&
+            arithmetic.SignedC < 0 &&
+            metamethod.C == 7;
+        if (metamethod.C != expectedEvent && !lua55Subtraction)
         {
             return false;
         }
@@ -680,7 +724,10 @@ public static class Lua54ChunkVerifier
             Lua54Opcode.MetamethodBinary =>
                 metamethod.A == arithmetic.B && metamethod.B == arithmetic.C,
             Lua54Opcode.MetamethodBinaryImmediate =>
-                metamethod.A == arithmetic.B && ImmediateMetamethodMatches(arithmetic, metamethod),
+                metamethod.A == arithmetic.B &&
+                (lua55Subtraction
+                    ? !metamethod.K && metamethod.SignedB == -arithmetic.SignedC
+                    : ImmediateMetamethodMatches(arithmetic, metamethod)),
             Lua54Opcode.MetamethodBinaryConstant =>
                 metamethod.A == arithmetic.B && metamethod.B == arithmetic.C,
             _ => false,

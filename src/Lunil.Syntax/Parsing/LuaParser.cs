@@ -177,6 +177,7 @@ public static class LuaParser
             LuaTokenKind.IfKeyword => ParseIfStatement(),
             LuaTokenKind.ForKeyword => ParseForStatement(),
             LuaTokenKind.FunctionKeyword => ParseFunctionDeclarationStatement(),
+            LuaTokenKind.GlobalKeyword => ParseGlobalDeclarationStatement(),
             LuaTokenKind.LocalKeyword => ParseLocalStatement(),
             LuaTokenKind.ReturnKeyword => ParseReturnStatement(),
             LuaTokenKind.Identifier or LuaTokenKind.OpenParenthesis =>
@@ -188,8 +189,73 @@ public static class LuaParser
             _ => ParseUnexpectedStatement(),
         };
 
+        private LuaSyntaxNode ParseGlobalDeclarationStatement()
+        {
+            var start = Current.Span.Start;
+            var children = new List<LuaSyntaxElement> { Consume() };
+            if (_options.LanguageVersion != LuaLanguageVersion.Lua55)
+            {
+                AddDiagnostic("LUA2013", children[0].Token!.Span,
+                    "Global declarations are only available in Lua 5.5.");
+            }
+
+            if (Current.Kind == LuaTokenKind.FunctionKeyword)
+            {
+                children.Add(Consume());
+                children.Add(Match(LuaTokenKind.Identifier));
+                children.Add(ParseFunctionBody(children[^2].Token!.Span.Start));
+                return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+            }
+
+            if (Current.Kind == LuaTokenKind.LessThan)
+            {
+                children.Add(Consume());
+                children.Add(Match(LuaTokenKind.Identifier));
+                children.Add(Match(LuaTokenKind.GreaterThan));
+            }
+
+            if (Current.Kind == LuaTokenKind.Star)
+            {
+                children.Add(Consume());
+                return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+            }
+
+            children.Add(ParseGlobalAttributedName());
+            while (Current.Kind == LuaTokenKind.Comma)
+            {
+                children.Add(Consume());
+                children.Add(ParseGlobalAttributedName());
+            }
+
+            if (Current.Kind == LuaTokenKind.Assign)
+            {
+                children.Add(Consume());
+                children.Add(ParseExpressionList());
+            }
+
+            return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+        }
+
+        private LuaSyntaxNode ParseGlobalAttributedName()
+        {
+            var children = new List<LuaSyntaxElement> { Match(LuaTokenKind.Identifier) };
+            if (Current.Kind == LuaTokenKind.LessThan)
+            {
+                children.Add(Consume());
+                children.Add(Match(LuaTokenKind.Identifier));
+                children.Add(Match(LuaTokenKind.GreaterThan));
+            }
+
+            return CreateNode(LuaSyntaxKind.AttributedName, children);
+        }
+
         private LuaSyntaxNode ParseLabelStatement()
         {
+            if (_options.LanguageVersion == LuaLanguageVersion.Lua51)
+            {
+                AddDiagnostic("LUA2011", Current.Span, "Labels are not available in Lua 5.1.");
+            }
+
             var children = new List<LuaSyntaxElement>
             {
                 Consume(),
@@ -201,6 +267,11 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseGotoStatement()
         {
+            if (_options.LanguageVersion == LuaLanguageVersion.Lua51)
+            {
+                AddDiagnostic("LUA2011", Current.Span, "goto is not available in Lua 5.1.");
+            }
+
             var children = new List<LuaSyntaxElement>
             {
                 Consume(),
@@ -438,7 +509,8 @@ public static class LuaParser
                 children.Add(Consume());
                 children.Add(Match(LuaTokenKind.Identifier));
                 children.Add(Match(LuaTokenKind.GreaterThan));
-                if (_options.LanguageVersion != LuaLanguageVersion.Lua54)
+                if (_options.LanguageVersion is not (
+                        LuaLanguageVersion.Lua54 or LuaLanguageVersion.Lua55))
                 {
                     AddDiagnostic(
                         "LUA2010",
@@ -546,11 +618,21 @@ public static class LuaParser
                 LuaSyntaxNode left;
                 if (IsUnaryOperator(Current.Kind))
                 {
+                    var unaryToken = Current;
                     var unaryChildren = new List<LuaSyntaxElement>
                     {
                         Consume(),
                         ParseExpression(12),
                     };
+                    if (_options.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 &&
+                        unaryToken.Kind == LuaTokenKind.Tilde)
+                    {
+                        AddDiagnostic(
+                            "LUA2012",
+                            unaryToken.Span,
+                            "The bitwise-not operator is not available in the selected Lua version.");
+                    }
+
                     left = CreateNode(LuaSyntaxKind.UnaryExpression, unaryChildren);
                 }
                 else
@@ -561,12 +643,24 @@ public static class LuaParser
                 while (TryGetBinaryPrecedence(Current.Kind, out var leftPrecedence, out var rightPrecedence) &&
                        leftPrecedence > minimumPrecedence)
                 {
+                    var operatorToken = Current;
                     var binaryChildren = new List<LuaSyntaxElement>
                     {
                         left,
                         Consume(),
                         ParseExpression(rightPrecedence),
                     };
+                    if (_options.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 &&
+                        operatorToken.Kind is LuaTokenKind.FloorDivide or LuaTokenKind.Ampersand or
+                        LuaTokenKind.Pipe or LuaTokenKind.ShiftLeft or LuaTokenKind.ShiftRight or
+                        LuaTokenKind.Tilde)
+                    {
+                        AddDiagnostic(
+                            "LUA2012",
+                            operatorToken.Span,
+                            "This operator is not available in the selected Lua version.");
+                    }
+
                     left = CreateNode(LuaSyntaxKind.BinaryExpression, binaryChildren);
                 }
 
@@ -809,6 +903,11 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.VarArg)
             {
                 children.Add(Consume());
+                if (_options.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                    Current.Kind == LuaTokenKind.Identifier)
+                {
+                    children.Add(Consume());
+                }
             }
             else if (Current.Kind == LuaTokenKind.Identifier)
             {
@@ -819,6 +918,12 @@ public static class LuaParser
                     if (Current.Kind == LuaTokenKind.VarArg)
                     {
                         children.Add(Consume());
+                        if (_options.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                            Current.Kind == LuaTokenKind.Identifier)
+                        {
+                            children.Add(Consume());
+                        }
+
                         break;
                     }
 

@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -35,14 +36,28 @@ internal static class LuaPackageLibrary
         LuaLibraryHelpers.Set(state, package, "config", LuaLibraryHelpers.String(state, Config));
         LuaLibraryHelpers.Set(state, package, "loaded", LuaValue.FromTable(loaded));
         LuaLibraryHelpers.Set(state, package, "preload", LuaValue.FromTable(preload));
+        var versionSuffix = state.LanguageVersion switch
+        {
+            LuaLanguageVersion.Lua51 => "5_1",
+            LuaLanguageVersion.Lua52 => "5_2",
+            LuaLanguageVersion.Lua53 => "5_3",
+            LuaLanguageVersion.Lua54 => "5_4",
+            LuaLanguageVersion.Lua55 => "5_5",
+            _ => "5_4",
+        };
         LuaLibraryHelpers.Set(state, package, "path", LuaLibraryHelpers.String(
             state,
-            GetPath(state, "LUA_PATH_5_4", "LUA_PATH", DefaultLuaPath)));
+            GetPath(state, $"LUA_PATH_{versionSuffix}", "LUA_PATH", DefaultLuaPath)));
         LuaLibraryHelpers.Set(state, package, "cpath", LuaLibraryHelpers.String(
             state,
-            GetPath(state, "LUA_CPATH_5_4", "LUA_CPATH", DefaultNativePath)));
+            GetPath(state, $"LUA_CPATH_{versionSuffix}", "LUA_CPATH", DefaultNativePath)));
         LuaLibraryHelpers.SetFunction(state, package, "loadlib", LoadLibrary);
         LuaLibraryHelpers.SetFunction(state, package, "searchpath", SearchPath);
+        var features = LuaVersionFeatureTable.Get(state.LanguageVersion);
+        if (features.HasPackageSeeAll)
+        {
+            LuaLibraryHelpers.SetFunction(state, package, "seeall", SeeAll);
+        }
 
         var packageValue = LuaValue.FromTable(package);
         state.Registry.Set(LuaLibraryHelpers.String(state, PackageRegistryKey), packageValue);
@@ -58,7 +73,14 @@ internal static class LuaPackageLibrary
         searchers.Set(
             LuaValue.FromInteger(4),
             LuaValue.FromFunction(NativeRootSearcherDescriptor));
-        LuaLibraryHelpers.Set(state, package, "searchers", LuaValue.FromTable(searchers));
+        if (features.HasPackageSearchers)
+        {
+            LuaLibraryHelpers.Set(state, package, "searchers", LuaValue.FromTable(searchers));
+        }
+        if (features.HasPackageLoaders)
+        {
+            LuaLibraryHelpers.Set(state, package, "loaders", LuaValue.FromTable(searchers));
+        }
 
         var require = LuaValue.FromFunction(state.CreateNativeClosure(
             RequireDescriptor,
@@ -322,6 +344,20 @@ internal static class LuaPackageLibrary
             LuaLibraryHelpers.String(state, NativeLibraryError),
             LuaLibraryHelpers.String(state, "absent"),
         ];
+    }
+
+    private static LuaValue[] SeeAll(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var module = LuaLibraryHelpers.Required(arguments, 0, "package.seeall");
+        if (module.Kind != LuaValueKind.Table)
+        {
+            throw LuaLibraryHelpers.BadArgument("package.seeall", 0, "table expected");
+        }
+
+        var metatable = state.CreateTable(hashCapacity: 1);
+        LuaLibraryHelpers.Set(state, metatable, "__index", LuaValue.FromTable(state.Globals));
+        module.AsTable().SetMetatable(metatable);
+        return [module];
     }
 
     private static SearchResult FindPath(

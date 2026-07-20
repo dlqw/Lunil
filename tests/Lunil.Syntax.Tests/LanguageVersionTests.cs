@@ -43,4 +43,58 @@ public sealed class LanguageVersionTests
             lexing,
             LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 }));
     }
+
+    [Fact]
+    public void Lua55AcceptsGlobalDeclarationsWhileEarlierVersionsRejectThem()
+    {
+        var lua55 = LuaParser.Parse(
+            SourceText.FromUtf8("global<const> print\nreturn print"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+        Assert.Empty(lua55.Diagnostics);
+        Assert.Contains(lua55.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
+
+        var lua54 = LuaParser.Parse(
+            SourceText.FromUtf8("global print"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 });
+        Assert.NotEmpty(lua54.Diagnostics);
+        Assert.DoesNotContain(lua54.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51)]
+    [InlineData(LuaLanguageVersion.Lua52)]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    public void EarlierVersionsTreatGlobalAsAnIdentifier(LuaLanguageVersion version)
+    {
+        var result = LuaParser.Parse(
+            SourceText.FromUtf8("local global = 1\nreturn global"),
+            LuaLexerOptions.Default with { LanguageVersion = version },
+            LuaParserOptions.Default with { LanguageVersion = version });
+
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(result.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
+    }
+
+    [Fact]
+    public void Lua55AcceptsNamedVarArgParameters()
+    {
+        var lua55 = LuaParser.Parse(
+            SourceText.FromUtf8("return function(a, ... values) return values.n end"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.Empty(lua55.Diagnostics);
+        var parameters = Assert.Single(
+            lua55.Root.DescendantNodes(),
+            static node => node.Kind == LuaSyntaxKind.ParameterList);
+        Assert.Equal(
+            [LuaTokenKind.Identifier, LuaTokenKind.Comma, LuaTokenKind.VarArg, LuaTokenKind.Identifier],
+            parameters.ChildTokens().Select(static token => token.Kind));
+    }
 }

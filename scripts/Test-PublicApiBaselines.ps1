@@ -42,8 +42,9 @@ function Write-NormalizedText([string] $Path, [string] $Text) {
 
 function Get-TextSha256([string] $Text) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-NormalizedText $Text))
-    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    return [Convert]::ToHexString($hash)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha256.ComputeHash($bytes) } finally { $sha256.Dispose() }
+    return ([BitConverter]::ToString($hash) -replace '-', '')
 }
 
 function Assert-TextMatches([string] $ExpectedPath, [string] $ActualText) {
@@ -149,7 +150,11 @@ try {
         AssemblyCount = $assemblies.Count
         Assemblies = $assemblies.ToArray()
     }
-    $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 6)
+    # Use compact JSON for the generated manifest.  PowerShell 5.1 and
+    # PowerShell 7 use different indentation and colon spacing for
+    # ConvertTo-Json's pretty-printed form; compact output is identical on
+    # every supported runner while retaining the full machine-readable data.
+    $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 6 -Compress)
     $manifestPath = Join-Path $baselineDirectory 'manifest.json'
     if ($Update) {
         $expectedNames = @($assemblies | ForEach-Object { [System.IO.Path]::GetFileName($_.Baseline) })

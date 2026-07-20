@@ -19,6 +19,7 @@ public enum LuaSyntaxKind : byte
     NumericForStatement,
     GenericForStatement,
     FunctionDeclarationStatement,
+    GlobalDeclarationStatement,
     LocalFunctionDeclarationStatement,
     LocalDeclarationStatement,
     AttributedName,

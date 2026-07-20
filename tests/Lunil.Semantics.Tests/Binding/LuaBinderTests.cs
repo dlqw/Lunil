@@ -246,6 +246,33 @@ public sealed class LuaBinderTests
         Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3009");
     }
 
+    [Fact]
+    public void BindsLua55NamedVarargsAsReadOnlyTables()
+    {
+        var model = Bind(
+            "local function f(... values) return values.n end",
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        var values = Assert.Single(model.Symbols, symbol => symbol.Name == "values");
+        Assert.Equal(LuaSymbolKind.Local, values.Kind);
+        Assert.Equal(LuaLocalAttributeKind.VarArg, values.Attribute);
+        Assert.True(values.IsReadOnly);
+        Assert.Empty(model.Diagnostics);
+    }
+
+    [Fact]
+    public void BindsLua55GlobalDeclarationAndRejectsConstWrites()
+    {
+        var model = Bind(
+            "global<const> answer; answer = 42",
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.Single(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3002");
+        Assert.Equal(
+            LuaLocalAttributeKind.Constant,
+            Assert.Single(model.Symbols, symbol => symbol.Name == "answer").Attribute);
+    }
+
     private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null)
     {
         var syntax = LuaParser.Parse(

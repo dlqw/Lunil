@@ -34,6 +34,7 @@ internal static class ControlFlowGraphBuilder
         var owners = root.DescendantNodes()
             .Where(static node => node.Kind is
                 LuaSyntaxKind.FunctionDeclarationStatement or
+                LuaSyntaxKind.GlobalDeclarationStatement or
                 LuaSyntaxKind.LocalFunctionDeclarationStatement or
                 LuaSyntaxKind.FunctionExpression)
             .ToLookup(static node => node.Span);

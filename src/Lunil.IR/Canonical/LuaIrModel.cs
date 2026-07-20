@@ -208,7 +208,8 @@ public static class LuaIrInstructionFacts
     /// </summary>
     public static LuaIrInstructionEffects GetEffects(LuaIrOpcode opcode) => opcode switch
     {
-        LuaIrOpcode.LoadConstant or LuaIrOpcode.NewTable or LuaIrOpcode.Closure =>
+        LuaIrOpcode.LoadConstant or LuaIrOpcode.NewTable or LuaIrOpcode.Closure or
+        LuaIrOpcode.CreateVarArgTable =>
             AllocationSafePoint,
         LuaIrOpcode.GetTable or LuaIrOpcode.Close or LuaIrOpcode.Jump or LuaIrOpcode.Return =>
             ResumableCallSafePoint,
@@ -217,7 +218,8 @@ public static class LuaIrInstructionFacts
             ResumableCallSafePoint,
         LuaIrOpcode.SetList => AllocationSafePoint,
         LuaIrOpcode.MarkToBeClosed or
-        LuaIrOpcode.NumericForPrepare or LuaIrOpcode.NumericForLoop =>
+        LuaIrOpcode.NumericForPrepare or LuaIrOpcode.NumericForLoop or
+        LuaIrOpcode.ErrorIfNotNil =>
             LuaIrInstructionEffects.MayThrow,
         _ => LuaIrInstructionEffects.None,
     };

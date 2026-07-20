@@ -1,6 +1,7 @@
 using Lunil.Core;
 using Lunil.Hosting;
 using Lunil.IR.Lua53;
+using Lunil.IR.Lua51;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 
@@ -8,6 +9,48 @@ namespace Lunil.Hosting.Tests;
 
 public sealed class LanguageVersionTests
 {
+    [Fact]
+    public void Lua52Bit32PreservesShiftDirectionAndOptionalFieldWidth()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua52,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "return bit32.lshift(8, -1), bit32.rshift(1, -3), " +
+            "bit32.extract(10, 1), bit32.replace(0, 3, 4, 2)");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(4, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(8, result.Execution.Values[1].AsInteger());
+        Assert.Equal(1, result.Execution.Values[2].AsInteger());
+        Assert.Equal(48, result.Execution.Values[3].AsInteger());
+    }
+
+    [Fact]
+    public void Lua51ChunkRoundTripsCapturedClosureBindings()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+        var compilation = host.CompileUtf8(
+            "local function make(value) return function(add) return value + add end end; " +
+            "return make(40)(2)");
+        Assert.True(compilation.Succeeded);
+
+        var bytes = Lua51CanonicalPrototypeWriter.Write(
+            compilation.Module!, compilation.Module!.MainFunctionId);
+        var closure = host.State.LoadBinaryChunk(bytes);
+        var result = new LuaInterpreter().Execute(host.State, closure);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(42, result.Values[0].AsFloat());
+    }
+
     [Fact]
     public void HostAlignsNestedCompilerWorkspaceAndStateOptions()
     {

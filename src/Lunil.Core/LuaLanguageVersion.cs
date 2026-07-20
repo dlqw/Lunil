@@ -6,25 +6,81 @@ public enum LuaChunkFormat : byte
     None = 0,
     Lua53 = 1,
     Lua54 = 2,
+    Lua52 = 3,
+    Lua51 = 4,
+    Lua55 = 5,
 }
 
 /// <summary>Identifies the Lua language and runtime contract selected for a compilation or state.</summary>
 public enum LuaLanguageVersion : byte
 {
+    [LuaVersionProfile(
+        ChunkFormat = LuaChunkFormat.Lua51,
+        HasGlobalUnpack = true,
+        HasLoadString = true,
+        HasModuleLibrary = true,
+        HasLegacyTable = true,
+        HasStringGFind = true,
+        HasLegacyMath = true,
+        HasPackageLoaders = true,
+        HasPackageSeeAll = true)]
     Lua51 = 0x51,
+    [LuaVersionProfile(
+        ChunkFormat = LuaChunkFormat.Lua52,
+        CachesClosuresByUpvalues = true,
+        HasBit32Library = true,
+        HasRawLength = true,
+        HasGlobalUnpack = true,
+        HasLoadString = true,
+        HasModuleLibrary = true,
+        HasLegacyTable = true,
+        HasTableMove = false,
+        HasTablePack = true,
+        HasStringPack = false,
+        HasLegacyMath = true,
+        HasPackageSearchers = true,
+        HasPackageLoaders = true,
+        HasPackageSeeAll = true)]
     Lua52 = 0x52,
     [LuaVersionProfile(
         ChunkFormat = LuaChunkFormat.Lua53,
         SynchronousFinalizerErrors = true,
         PreservesDeadThreadOpenUpvalues = true,
-        CachesClosuresByUpvalues = true)]
+        CachesClosuresByUpvalues = true,
+        HasUtf8Library = true,
+        HasRawLength = true,
+        HasTableMove = true,
+        HasTablePack = true,
+        HasStringPack = true,
+        HasLegacyMath = true,
+        HasPackageSearchers = true)]
     Lua53 = 0x53,
     [LuaVersionProfile(
         ChunkFormat = LuaChunkFormat.Lua54,
         SupportsGenerationalCollection = true,
         HasWarnLibrary = true,
-        HasCoroutineClose = true)]
+        HasCoroutineClose = true,
+        HasUtf8Library = true,
+        HasRawLength = true,
+        HasTableMove = true,
+        HasTablePack = true,
+        HasStringPack = true,
+        HasLegacyMath = true,
+        HasDebugSetCStackLimit = true,
+        HasPackageSearchers = true)]
     Lua54 = 0x54,
+    [LuaVersionProfile(
+        ChunkFormat = LuaChunkFormat.Lua55,
+        SupportsGenerationalCollection = true,
+        HasWarnLibrary = true,
+        HasCoroutineClose = true,
+        HasUtf8Library = true,
+        HasRawLength = true,
+        HasTableMove = true,
+        HasTablePack = true,
+        HasTableCreate = true,
+        HasStringPack = true,
+        HasPackageSearchers = true)]
     Lua55 = 0x55,
 }
 

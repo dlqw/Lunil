@@ -30,7 +30,10 @@ internal static class LuaDebugLibrary
         LuaLibraryHelpers.SetFunction(state, module, "getregistry", GetRegistry);
         LuaLibraryHelpers.SetFunction(state, module, "getupvalue", GetUpvalue);
         LuaLibraryHelpers.SetFunction(state, module, "getuservalue", GetUserValue);
-        LuaLibraryHelpers.SetFunction(state, module, "setcstacklimit", SetCStackLimit);
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasDebugSetCStackLimit)
+        {
+            LuaLibraryHelpers.SetFunction(state, module, "setcstacklimit", SetCStackLimit);
+        }
         LuaLibraryHelpers.SetFunction(state, module, "sethook", SetHook);
         LuaLibraryHelpers.SetFunction(state, module, "setlocal", SetLocal);
         LuaLibraryHelpers.SetFunction(state, module, "setmetatable", SetMetatable);

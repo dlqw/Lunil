@@ -5,4 +5,5 @@ public enum LuaLocalAttributeKind : byte
     None,
     Constant,
     ToBeClosed,
+    VarArg,
 }

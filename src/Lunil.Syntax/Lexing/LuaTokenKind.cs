@@ -18,6 +18,7 @@ public enum LuaTokenKind : byte
     FalseKeyword,
     ForKeyword,
     FunctionKeyword,
+    GlobalKeyword,
     GotoKeyword,
     IfKeyword,
     InKeyword,

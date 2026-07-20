@@ -228,7 +228,19 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.VarArg:
-                LuaExecutionEngine.ExecuteVarArg(thread, frame, instruction);
+                LuaExecutionEngine.ExecuteVarArg(state, thread, frame, instruction);
+                frame.ProgramCounter++;
+                break;
+            case LuaIrOpcode.CreateVarArgTable:
+                LuaExecutionEngine.ExecuteCreateVarArgTable(state, thread, frame, instruction);
+                frame.ProgramCounter++;
+                break;
+            case LuaIrOpcode.GetVarArg:
+                LuaExecutionEngine.ExecuteGetVarArg(thread, frame, instruction);
+                frame.ProgramCounter++;
+                break;
+            case LuaIrOpcode.ErrorIfNotNil:
+                LuaExecutionEngine.ExecuteErrorIfNotNil(thread, frame, instruction);
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.Unary:

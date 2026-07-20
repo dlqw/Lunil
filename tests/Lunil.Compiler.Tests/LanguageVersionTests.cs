@@ -17,9 +17,8 @@ public sealed class LanguageVersionTests
 
     [Theory]
     [InlineData(LuaLanguageVersion.Lua51)]
-    [InlineData(LuaLanguageVersion.Lua52)]
     [InlineData(LuaLanguageVersion.Lua55)]
-    public void UnimplementedVersionsFailExplicitlyInsteadOfUsingLua54Semantics(
+    public void NewlyImplementedVersionsPublishTheirOwnIdentity(
         LuaLanguageVersion version)
     {
         var result = new LuaCompiler(new LuaCompilerOptions
@@ -27,12 +26,9 @@ public sealed class LanguageVersionTests
             LanguageVersion = version,
         }).CompileUtf8("return 1");
 
-        Assert.False(result.Succeeded);
-        Assert.Null(result.Module);
-        Assert.Contains(result.Diagnostics, diagnostic =>
-            diagnostic.Phase == LuaCompilationPhase.Configuration &&
-            diagnostic.Code == "LUA0001" &&
-            diagnostic.Message.Contains("not implemented yet", StringComparison.Ordinal));
+        Assert.True(result.Succeeded);
+        Assert.Equal(version, result.LanguageVersion);
+        Assert.Equal(version, result.Module!.LanguageVersion);
     }
 
     [Fact]
@@ -46,5 +42,33 @@ public sealed class LanguageVersionTests
         Assert.True(result.Succeeded);
         Assert.Equal(LuaLanguageVersion.Lua53, result.LanguageVersion);
         Assert.Equal(LuaLanguageVersion.Lua53, result.Module!.LanguageVersion);
+    }
+
+    [Fact]
+    public void Lua52CompilationPublishesLua52CanonicalIdentityAndNumberSemantics()
+    {
+        var result = new LuaCompiler(new LuaCompilerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua52,
+        }).CompileUtf8("return 1 / 2");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(LuaLanguageVersion.Lua52, result.LanguageVersion);
+        Assert.Equal(LuaLanguageVersion.Lua52, result.Module!.LanguageVersion);
+    }
+
+    [Theory]
+    [InlineData("return 1 // 2")]
+    [InlineData("return 1 & 2")]
+    [InlineData("return ~1")]
+    public void Lua52RejectsLua53OnlyOperators(string source)
+    {
+        var result = new LuaCompiler(new LuaCompilerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua52,
+        }).CompileUtf8(source);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "LUA2012");
     }
 }

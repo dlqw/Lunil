@@ -2,6 +2,7 @@
 bin/
 obj/
 artifacts/
+luac.out
 TestResults/
 
 # IDE and user state

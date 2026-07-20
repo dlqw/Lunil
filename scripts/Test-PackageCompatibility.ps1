@@ -213,7 +213,9 @@ return result.Succeeded ? 0 : 1;
     & dotnet tool install Lunil.Cli --tool-path $toolPath --version $Version `
         --add-source $packageRoot --ignore-failed-sources
     if ($LASTEXITCODE -ne 0) { throw 'Installing the frozen Lunil.Cli package failed.' }
-    $toolExecutable = if ($IsWindows) {
+    $runningOnWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+        [Runtime.InteropServices.OSPlatform]::Windows)
+    $toolExecutable = if ($runningOnWindows) {
         Join-Path $toolPath 'lunil.exe'
     }
     else {
@@ -273,7 +275,9 @@ $manifest = [ordered]@{
     VersionToken = '{version}'
     Packages = $packages.ToArray()
 }
-$manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10)
+# Keep the reviewed package manifest byte-for-byte stable across Windows
+# PowerShell 5.1 and PowerShell 7, whose pretty-printer spacing differs.
+$manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10 -Compress)
 if ($Update) {
     Write-NormalizedText $baselinePath $manifestText
     Write-Host "Updated the reviewed 13-package baseline at $baselinePath."

@@ -24,11 +24,11 @@ public sealed class LuaLanguageVersionTests
     [Fact]
     public void ReportsOnlyCompileTimeEnabledAdaptersAsImplemented()
     {
-        Assert.False(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua51));
-        Assert.False(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua52));
+        Assert.True(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua51));
+        Assert.True(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua52));
         Assert.True(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua53));
         Assert.True(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua54));
-        Assert.False(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua55));
+        Assert.True(LuaLanguageVersions.IsImplemented(LuaLanguageVersion.Lua55));
     }
 
     [Fact]
@@ -39,12 +39,24 @@ public sealed class LuaLanguageVersionTests
         Assert.True(lua53.SynchronousFinalizerErrors);
         Assert.False(lua53.HasWarnLibrary);
         Assert.False(lua53.HasCoroutineClose);
+        Assert.True(lua53.HasUtf8Library);
+
+        var lua52 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua52);
+        Assert.Equal(LuaChunkFormat.Lua52, lua52.ChunkFormat);
+        Assert.True(lua52.HasBit32Library);
+        Assert.False(lua52.HasUtf8Library);
 
         var lua54 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua54);
         Assert.Equal(LuaChunkFormat.Lua54, lua54.ChunkFormat);
         Assert.False(lua54.SynchronousFinalizerErrors);
         Assert.True(lua54.HasWarnLibrary);
         Assert.True(lua54.HasCoroutineClose);
+
+        var lua55 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua55);
+        Assert.Equal(LuaChunkFormat.Lua55, lua55.ChunkFormat);
+        Assert.True(lua55.HasWarnLibrary);
+        Assert.True(lua55.HasCoroutineClose);
+        Assert.True(lua55.HasUtf8Library);
     }
 
     [Theory]

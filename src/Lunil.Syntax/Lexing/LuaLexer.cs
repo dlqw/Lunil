@@ -296,8 +296,12 @@ public static class LuaLexer
                 _position++;
             }
 
-            return LuaSyntaxFacts.GetIdentifierOrKeywordKind(
+            var kind = LuaSyntaxFacts.GetIdentifierOrKeywordKind(
                 _source.GetSpan(TextSpan.FromBounds(start, _position)));
+            return kind == LuaTokenKind.GlobalKeyword &&
+                _options.LanguageVersion != LuaLanguageVersion.Lua55
+                    ? LuaTokenKind.Identifier
+                    : kind;
         }
 
         private LuaTokenKind ReadNumericLiteral()

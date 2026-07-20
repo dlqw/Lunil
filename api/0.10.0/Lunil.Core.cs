@@ -7,7 +7,10 @@ namespace Lunil.Core
     {
         None = 0,
         Lua53 = 1,
-        Lua54 = 2
+        Lua54 = 2,
+        Lua52 = 3,
+        Lua51 = 4,
+        Lua55 = 5
     }
 
     public enum LuaLanguageVersion
@@ -43,7 +46,24 @@ namespace Lunil.Core
         public bool CachesClosuresByUpvalues { get => throw null; init { } }
         public bool HasWarnLibrary { get => throw null; init { } }
         public bool HasCoroutineClose { get => throw null; init { } }
-        public LuaVersionFeatures(bool IsImplemented, Lunil.Core.LuaChunkFormat ChunkFormat, bool SynchronousFinalizerErrors, bool SupportsGenerationalCollection, bool PreservesDeadThreadOpenUpvalues, bool CachesClosuresByUpvalues, bool HasWarnLibrary, bool HasCoroutineClose) { }
+        public bool HasUtf8Library { get => throw null; init { } }
+        public bool HasBit32Library { get => throw null; init { } }
+        public bool HasRawLength { get => throw null; init { } }
+        public bool HasGlobalUnpack { get => throw null; init { } }
+        public bool HasLoadString { get => throw null; init { } }
+        public bool HasModuleLibrary { get => throw null; init { } }
+        public bool HasTableMove { get => throw null; init { } }
+        public bool HasTablePack { get => throw null; init { } }
+        public bool HasTableCreate { get => throw null; init { } }
+        public bool HasStringPack { get => throw null; init { } }
+        public bool HasStringGFind { get => throw null; init { } }
+        public bool HasLegacyMath { get => throw null; init { } }
+        public bool HasDebugSetCStackLimit { get => throw null; init { } }
+        public bool HasPackageSearchers { get => throw null; init { } }
+        public bool HasPackageLoaders { get => throw null; init { } }
+        public bool HasPackageSeeAll { get => throw null; init { } }
+        public bool HasLegacyTable { get => throw null; init { } }
+        public LuaVersionFeatures(bool IsImplemented, Lunil.Core.LuaChunkFormat ChunkFormat, bool SynchronousFinalizerErrors, bool SupportsGenerationalCollection, bool PreservesDeadThreadOpenUpvalues, bool CachesClosuresByUpvalues, bool HasWarnLibrary, bool HasCoroutineClose, bool HasUtf8Library, bool HasBit32Library, bool HasRawLength, bool HasGlobalUnpack, bool HasLoadString, bool HasModuleLibrary, bool HasTableMove, bool HasTablePack, bool HasTableCreate, bool HasStringPack, bool HasStringGFind, bool HasLegacyMath, bool HasDebugSetCStackLimit, bool HasPackageSearchers, bool HasPackageLoaders, bool HasPackageSeeAll, bool HasLegacyTable) { }
         #nullable disable
         public override string ToString() => throw null;
         #nullable restore
@@ -54,7 +74,7 @@ namespace Lunil.Core
         public override bool Equals(object obj) => throw null;
         #nullable restore
         public bool Equals(Lunil.Core.LuaVersionFeatures other) => throw null;
-        public void Deconstruct(out bool IsImplemented, out Lunil.Core.LuaChunkFormat ChunkFormat, out bool SynchronousFinalizerErrors, out bool SupportsGenerationalCollection, out bool PreservesDeadThreadOpenUpvalues, out bool CachesClosuresByUpvalues, out bool HasWarnLibrary, out bool HasCoroutineClose) => throw null;
+        public void Deconstruct(out bool IsImplemented, out Lunil.Core.LuaChunkFormat ChunkFormat, out bool SynchronousFinalizerErrors, out bool SupportsGenerationalCollection, out bool PreservesDeadThreadOpenUpvalues, out bool CachesClosuresByUpvalues, out bool HasWarnLibrary, out bool HasCoroutineClose, out bool HasUtf8Library, out bool HasBit32Library, out bool HasRawLength, out bool HasGlobalUnpack, out bool HasLoadString, out bool HasModuleLibrary, out bool HasTableMove, out bool HasTablePack, out bool HasTableCreate, out bool HasStringPack, out bool HasStringGFind, out bool HasLegacyMath, out bool HasDebugSetCStackLimit, out bool HasPackageSearchers, out bool HasPackageLoaders, out bool HasPackageSeeAll, out bool HasLegacyTable) => throw null;
     }
 
     [System.AttributeUsage(System.AttributeTargets.Field, AllowMultiple = false)]
@@ -67,6 +87,23 @@ namespace Lunil.Core
         public bool CachesClosuresByUpvalues { get => throw null; init { } }
         public bool HasWarnLibrary { get => throw null; init { } }
         public bool HasCoroutineClose { get => throw null; init { } }
+        public bool HasUtf8Library { get => throw null; init { } }
+        public bool HasBit32Library { get => throw null; init { } }
+        public bool HasRawLength { get => throw null; init { } }
+        public bool HasGlobalUnpack { get => throw null; init { } }
+        public bool HasLoadString { get => throw null; init { } }
+        public bool HasModuleLibrary { get => throw null; init { } }
+        public bool HasTableMove { get => throw null; init { } }
+        public bool HasTablePack { get => throw null; init { } }
+        public bool HasTableCreate { get => throw null; init { } }
+        public bool HasStringPack { get => throw null; init { } }
+        public bool HasStringGFind { get => throw null; init { } }
+        public bool HasLegacyMath { get => throw null; init { } }
+        public bool HasDebugSetCStackLimit { get => throw null; init { } }
+        public bool HasPackageSearchers { get => throw null; init { } }
+        public bool HasPackageLoaders { get => throw null; init { } }
+        public bool HasPackageSeeAll { get => throw null; init { } }
+        public bool HasLegacyTable { get => throw null; init { } }
     }
 }
 namespace Lunil.Core.Diagnostics

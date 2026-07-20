@@ -20,13 +20,87 @@ public static class LuaStandardLibrary
         var loaded = package.Get(LuaLibraryHelpers.String(state, "loaded")).AsTable();
         RegisterLoaded(state, loaded, "_G", globals);
         RegisterLoaded(state, loaded, "coroutine", coroutine);
-        RegisterLoaded(state, loaded, "string", InstallString(state));
-        RegisterLoaded(state, loaded, "utf8", InstallUtf8(state));
-        RegisterLoaded(state, loaded, "table", InstallTable(state));
-        RegisterLoaded(state, loaded, "math", InstallMath(state));
+        var stringModule = InstallString(state);
+        var features = LuaVersionFeatureTable.Get(state.LanguageVersion);
+        if (!features.HasStringPack)
+        {
+            Remove(state, stringModule, "pack");
+            Remove(state, stringModule, "packsize");
+            Remove(state, stringModule, "unpack");
+        }
+        if (features.HasStringGFind)
+        {
+            LuaLibraryHelpers.SetFunction(state, stringModule, "gfind", LuaStringLibrary.GMatch);
+        }
+
+        var table = InstallTable(state);
+        if (!features.HasTableMove)
+        {
+            Remove(state, table, "move");
+        }
+        if (!features.HasTablePack)
+        {
+            Remove(state, table, "pack");
+        }
+        if (features.HasLegacyTable)
+        {
+            LuaLibraryHelpers.SetFunction(state, table, "maxn", LuaTableLibrary.MaxN);
+            LuaLibraryHelpers.SetFunction(state, table, "getn", LuaTableLibrary.MaxN);
+            if (state.LanguageVersion == LuaLanguageVersion.Lua51)
+            {
+                LuaLibraryHelpers.SetFunction(state, table, "foreach", LuaTableLibrary.Foreach);
+                LuaLibraryHelpers.SetFunction(state, table, "foreachi", LuaTableLibrary.ForeachI);
+                LuaLibraryHelpers.SetFunction(state, table, "setn", LuaTableLibrary.SetN);
+            }
+        }
+        else
+        {
+            Remove(state, table, "maxn");
+            Remove(state, table, "getn");
+        }
+        if (features.HasTableCreate)
+        {
+            LuaLibraryHelpers.SetFunction(state, table, "create", LuaTableLibrary.Create);
+        }
+
+        var math = InstallMath(state);
+        if (!features.HasRawLength)
+        {
+            // rawlen was introduced in Lua 5.2; the function is installed by the
+            // basic library only when the generated profile advertises it.
+        }
+        if (!features.HasLegacyMath)
+        {
+            Remove(state, math, "log10");
+            Remove(state, math, "atan2");
+            Remove(state, math, "pow");
+            Remove(state, math, "sinh");
+            Remove(state, math, "cosh");
+            Remove(state, math, "tanh");
+        }
+        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        {
+            Remove(state, math, "tointeger");
+            Remove(state, math, "type");
+            Remove(state, math, "ult");
+            Remove(state, math, "maxinteger");
+            Remove(state, math, "mininteger");
+        }
+
+        RegisterLoaded(state, loaded, "string", stringModule);
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasUtf8Library)
+        {
+            RegisterLoaded(state, loaded, "utf8", InstallUtf8(state));
+        }
+        RegisterLoaded(state, loaded, "table", table);
+        RegisterLoaded(state, loaded, "math", math);
         RegisterLoaded(state, loaded, "io", InstallIo(state));
         RegisterLoaded(state, loaded, "os", InstallOs(state));
         RegisterLoaded(state, loaded, "debug", InstallDebug(state));
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasBit32Library)
+        {
+            RegisterLoaded(state, loaded, "bit32", LuaBit32Library.Install(state));
+        }
         return globals;
     }
 
@@ -132,4 +206,7 @@ public static class LuaStandardLibrary
                 "is not implemented yet.");
         }
     }
+
+    private static void Remove(LuaState state, LuaTable table, string name) =>
+        table.Set(LuaLibraryHelpers.String(state, name), LuaValue.Nil);
 }

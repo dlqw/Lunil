@@ -3,8 +3,11 @@ using System.Numerics;
 using System.Text;
 using System.Buffers;
 using Lunil.Core;
+using Lunil.IR.Lua52;
+using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
+using Lunil.IR.Lua55;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Operations;
@@ -212,7 +215,7 @@ internal static class LuaStringLibrary
             : captures;
     }
 
-    private static LuaValue[] GMatch(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    internal static LuaValue[] GMatch(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var source = LuaValue.FromString(state.Strings.GetOrCreate(CheckBytes(arguments, 0, "gmatch")));
         var pattern = LuaValue.FromString(state.Strings.GetOrCreate(CheckBytes(arguments, 1, "gmatch")));
@@ -475,15 +478,27 @@ internal static class LuaStringLibrary
         var strip = arguments.Length > 1 && arguments[1].IsTruthy;
         try
         {
-            var bytes = closure.Module.LanguageVersion == LuaLanguageVersion.Lua53
-                ? Lua53CanonicalPrototypeWriter.Write(
+            var bytes = closure.Module.LanguageVersion == LuaLanguageVersion.Lua51
+                ? Lua51CanonicalPrototypeWriter.Write(closure.Module, closure.Function.Id, strip)
+                : closure.Module.LanguageVersion == LuaLanguageVersion.Lua52
+                ? Lua52CanonicalPrototypeWriter.Write(
                     closure.Module,
                     closure.Function.Id,
                     strip)
-                : Lua54CanonicalPrototypeWriter.Write(
-                    closure.Module,
-                    closure.Function.Id,
-                    strip);
+                : closure.Module.LanguageVersion == LuaLanguageVersion.Lua53
+                    ? Lua53CanonicalPrototypeWriter.Write(
+                        closure.Module,
+                        closure.Function.Id,
+                        strip)
+                    : closure.Module.LanguageVersion == LuaLanguageVersion.Lua54
+                        ? Lua54CanonicalPrototypeWriter.Write(
+                            closure.Module,
+                            closure.Function.Id,
+                            strip)
+                        : Lua55CanonicalPrototypeWriter.Write(
+                        closure.Module,
+                        closure.Function.Id,
+                        strip);
             return [String(state, bytes)];
         }
         catch (Exception exception) when (
