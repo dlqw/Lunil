@@ -150,7 +150,11 @@ try {
         AssemblyCount = $assemblies.Count
         Assemblies = $assemblies.ToArray()
     }
-    $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 6)
+    # Use compact JSON for the generated manifest.  PowerShell 5.1 and
+    # PowerShell 7 use different indentation and colon spacing for
+    # ConvertTo-Json's pretty-printed form; compact output is identical on
+    # every supported runner while retaining the full machine-readable data.
+    $manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 6 -Compress)
     $manifestPath = Join-Path $baselineDirectory 'manifest.json'
     if ($Update) {
         $expectedNames = @($assemblies | ForEach-Object { [System.IO.Path]::GetFileName($_.Baseline) })
