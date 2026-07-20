@@ -275,7 +275,9 @@ $manifest = [ordered]@{
     VersionToken = '{version}'
     Packages = $packages.ToArray()
 }
-$manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10)
+# Keep the reviewed package manifest byte-for-byte stable across Windows
+# PowerShell 5.1 and PowerShell 7, whose pretty-printer spacing differs.
+$manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10 -Compress)
 if ($Update) {
     Write-NormalizedText $baselinePath $manifestText
     Write-Host "Updated the reviewed 13-package baseline at $baselinePath."
