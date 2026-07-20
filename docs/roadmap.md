@@ -23,8 +23,8 @@ primary scope; later releases do not change the compatibility contract of earlie
 
 Lunil 0.10.0 targets complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5.
 `0.10.0-alpha.2` contains explicit adapters for all five versions, including independent official
-binary-chunk codecs for Lua 5.1, 5.2, 5.3, 5.4, and 5.5. The remaining release work expands the
-five-version conformance, standard-library/error, and release evidence. Each version has its own
+binary-chunk codecs for Lua 5.1, 5.2, 5.3, 5.4, and 5.5. The release evidence includes a
+five-version conformance, standard-library/error, and semantic cross-runtime matrix. Each version has its own
 language and runtime contract:
 
 - version-specific syntax, lexical rules, operators, and multiple-result behavior;

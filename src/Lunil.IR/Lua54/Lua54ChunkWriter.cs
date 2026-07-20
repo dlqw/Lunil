@@ -13,6 +13,12 @@ public static class Lua54ChunkWriter
     public static byte[] Write(Lua54Chunk chunk, bool stripDebugInformation = false)
     {
         ArgumentNullException.ThrowIfNull(chunk);
+        if (chunk.SourceFormat != Lunil.Core.LuaChunkFormat.Lua54)
+        {
+            throw new InvalidDataException(
+                "Lua54ChunkWriter cannot serialize a version-adapter carrier as PUC Lua 5.4.");
+        }
+
         Lua54ChunkVerifier.ThrowIfInvalid(chunk);
 
         var buffer = new ArrayBufferWriter<byte>();

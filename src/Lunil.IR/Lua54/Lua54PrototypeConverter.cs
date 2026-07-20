@@ -31,7 +31,9 @@ public static class Lua54PrototypeConverter
 
         var module = new LuaIrModule
         {
-            LanguageVersion = LuaLanguageVersion.Lua54,
+            LanguageVersion = chunk.SourceFormat == LuaChunkFormat.Lua55
+                ? LuaLanguageVersion.Lua55
+                : LuaLanguageVersion.Lua54,
             MainFunctionId = 0,
             Functions = functions.MoveToImmutable(),
         };
@@ -457,9 +459,25 @@ public static class Lua54PrototypeConverter
                     Emit(
                         LuaIrOpcode.VarArg,
                         instruction.A,
-                        instruction.C == 0 ? -1 : instruction.C - 1);
+                        instruction.C == 0 ? -1 : instruction.C - 1,
+                        instruction.K ? instruction.B + 1 : 0);
                     break;
                 case Lua54Opcode.VarArgPrepare:
+                    if (Prototype.VarArgFlags == 2)
+                    {
+                        Emit(LuaIrOpcode.CreateVarArgTable, Prototype.ParameterCount);
+                    }
+
+                    break;
+                case Lua54Opcode.Lua55GetVarArg:
+                    Emit(LuaIrOpcode.GetVarArg, instruction.A, instruction.C);
+                    break;
+                case Lua54Opcode.Lua55ErrorIfNotNil:
+                    Emit(
+                        LuaIrOpcode.ErrorIfNotNil,
+                        instruction.A,
+                        instruction.Bx == 0 ? -1 : instruction.Bx - 1);
+                    break;
                 case Lua54Opcode.ExtraArgument:
                     // The canonical frame ABI already separates fixed arguments and varargs.
                     break;
@@ -474,6 +492,7 @@ public static class Lua54PrototypeConverter
             var op = metamethod.C switch
             {
                 6 => LuaIrBinaryOperator.Add,
+                7 => LuaIrBinaryOperator.Subtract,
                 16 => LuaIrBinaryOperator.ShiftLeft,
                 17 => LuaIrBinaryOperator.ShiftRight,
                 _ => throw new InvalidDataException(

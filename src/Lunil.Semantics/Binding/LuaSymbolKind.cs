@@ -7,4 +7,6 @@ public enum LuaSymbolKind : byte
     Local,
     NumericForVariable,
     GenericForVariable,
+    Global,
+    GlobalWildcard,
 }

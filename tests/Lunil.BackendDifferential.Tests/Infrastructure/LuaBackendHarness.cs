@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -327,10 +328,17 @@ internal sealed class LuaBackendSession
         return Observe(() => Backend.Resume(State, thread, copiedArguments));
     }
 
-    internal static LuaIrModule Compile(string source)
+    internal static LuaIrModule Compile(string source) =>
+        Compile(source, LuaLanguageVersions.Default);
+
+    internal static LuaIrModule Compile(string source, LuaLanguageVersion languageVersion)
     {
-        var parsing = LuaParser.Parse(SourceText.FromUtf8(source));
-        var binding = LuaBinder.Bind(parsing);
+        var parsing = LuaParser.Parse(
+            SourceText.FromUtf8(source),
+            parserOptions: new LuaParserOptions { LanguageVersion = languageVersion });
+        var binding = LuaBinder.Bind(
+            parsing,
+            LuaBinderOptions.Default with { LanguageVersion = languageVersion });
         var lowering = LuaLowerer.Lower(binding);
         if (!lowering.Succeeded || lowering.Module is null)
         {

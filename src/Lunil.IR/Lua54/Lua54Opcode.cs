@@ -86,4 +86,9 @@ public enum Lua54Opcode : byte
     VarArg,
     VarArgPrepare,
     ExtraArgument,
+
+    // Canonical carrier opcodes used only by the Lua 5.5 boundary adapter. They are never
+    // legal in a PUC Lua 5.4 chunk and Lua54ChunkWriter rejects their source format.
+    Lua55GetVarArg,
+    Lua55ErrorIfNotNil,
 }

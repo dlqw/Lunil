@@ -29,4 +29,36 @@ public sealed class LuaVersionProfileAttribute : Attribute
     public bool HasUtf8Library { get; init; }
 
     public bool HasBit32Library { get; init; }
+
+    // Standard-library surface capabilities.  These flags are generated alongside the
+    // VM/GC profile so version adapters do not duplicate version switches in installers.
+    public bool HasRawLength { get; init; }
+
+    public bool HasGlobalUnpack { get; init; }
+
+    public bool HasLoadString { get; init; }
+
+    public bool HasModuleLibrary { get; init; }
+
+    public bool HasTableMove { get; init; }
+
+    public bool HasTablePack { get; init; }
+
+    public bool HasTableCreate { get; init; }
+
+    public bool HasStringPack { get; init; }
+
+    public bool HasStringGFind { get; init; }
+
+    public bool HasLegacyMath { get; init; }
+
+    public bool HasDebugSetCStackLimit { get; init; }
+
+    public bool HasPackageSearchers { get; init; }
+
+    public bool HasPackageLoaders { get; init; }
+
+    public bool HasPackageSeeAll { get; init; }
+
+    public bool HasLegacyTable { get; init; }
 }

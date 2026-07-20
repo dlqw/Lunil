@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -317,6 +318,25 @@ public sealed class LuaBasicLibraryTests
     }
 
     [Fact]
+    public void Lua53CollectGarbagePropagatesFinalizerErrorAfterDrainingQueue()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+        });
+        LuaStandardLibrary.InstallAll(state);
+
+        var values = Execute(
+            state,
+            "local ok,err=pcall(function() " +
+            "setmetatable({}, {__gc=function() error({kind='boom'}) end}); " +
+            "collectgarbage('collect') end); return ok,err");
+
+        Assert.False(values[0].AsBoolean());
+        Assert.Equal("error in __gc", values[1].AsString().ToString());
+    }
+
+    [Fact]
     public void ZeroSizedGenerationalStepCompletesAYoungCollection()
     {
         var values = Execute(
@@ -356,8 +376,13 @@ public sealed class LuaBasicLibraryTests
 
     private static LuaValue[] Execute(LuaState state, string source)
     {
+        var syntax = LuaParser.Parse(
+            SourceText.FromUtf8(source),
+            parserOptions: new LuaParserOptions { LanguageVersion = state.LanguageVersion });
         var lowering = LuaLowerer.Lower(
-            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+            LuaBinder.Bind(
+                syntax,
+                LuaBinderOptions.Default with { LanguageVersion = state.LanguageVersion }));
         Assert.Empty(lowering.Diagnostics);
         return new LuaInterpreter()
             .Execute(state, state.CreateMainClosure(lowering.Module!))

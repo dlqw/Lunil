@@ -230,6 +230,21 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                 var hasCoroutineClose = false;
                 var hasUtf8Library = false;
                 var hasBit32Library = false;
+                var hasRawLength = false;
+                var hasGlobalUnpack = false;
+                var hasLoadString = false;
+                var hasModuleLibrary = false;
+                var hasTableMove = false;
+                var hasTablePack = false;
+                var hasTableCreate = false;
+                var hasStringPack = false;
+                var hasStringGFind = false;
+                var hasLegacyMath = false;
+                var hasDebugSetCStackLimit = false;
+                var hasPackageSearchers = false;
+                var hasPackageLoaders = false;
+                var hasPackageSeeAll = false;
+                var hasLegacyTable = false;
                 var chunkFormat = "LuaChunkFormat.None";
                 if (attribute is not null)
                 {
@@ -287,6 +302,66 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                         {
                             hasBit32Library = hasBit32;
                         }
+                        else if (named.Key == "HasRawLength" && named.Value.Value is bool rawLength)
+                        {
+                            hasRawLength = rawLength;
+                        }
+                        else if (named.Key == "HasGlobalUnpack" && named.Value.Value is bool globalUnpack)
+                        {
+                            hasGlobalUnpack = globalUnpack;
+                        }
+                        else if (named.Key == "HasLoadString" && named.Value.Value is bool loadString)
+                        {
+                            hasLoadString = loadString;
+                        }
+                        else if (named.Key == "HasModuleLibrary" && named.Value.Value is bool moduleLibrary)
+                        {
+                            hasModuleLibrary = moduleLibrary;
+                        }
+                        else if (named.Key == "HasTableMove" && named.Value.Value is bool tableMove)
+                        {
+                            hasTableMove = tableMove;
+                        }
+                        else if (named.Key == "HasTablePack" && named.Value.Value is bool tablePack)
+                        {
+                            hasTablePack = tablePack;
+                        }
+                        else if (named.Key == "HasTableCreate" && named.Value.Value is bool tableCreate)
+                        {
+                            hasTableCreate = tableCreate;
+                        }
+                        else if (named.Key == "HasStringPack" && named.Value.Value is bool stringPack)
+                        {
+                            hasStringPack = stringPack;
+                        }
+                        else if (named.Key == "HasStringGFind" && named.Value.Value is bool stringGFind)
+                        {
+                            hasStringGFind = stringGFind;
+                        }
+                        else if (named.Key == "HasLegacyMath" && named.Value.Value is bool legacyMath)
+                        {
+                            hasLegacyMath = legacyMath;
+                        }
+                        else if (named.Key == "HasDebugSetCStackLimit" && named.Value.Value is bool debugSetCStackLimit)
+                        {
+                            hasDebugSetCStackLimit = debugSetCStackLimit;
+                        }
+                        else if (named.Key == "HasPackageSearchers" && named.Value.Value is bool packageSearchers)
+                        {
+                            hasPackageSearchers = packageSearchers;
+                        }
+                        else if (named.Key == "HasPackageLoaders" && named.Value.Value is bool packageLoaders)
+                        {
+                            hasPackageLoaders = packageLoaders;
+                        }
+                        else if (named.Key == "HasPackageSeeAll" && named.Value.Value is bool packageSeeAll)
+                        {
+                            hasPackageSeeAll = packageSeeAll;
+                        }
+                        else if (named.Key == "HasLegacyTable" && named.Value.Value is bool legacyTable)
+                        {
+                            hasLegacyTable = legacyTable;
+                        }
                     }
                 }
 
@@ -302,7 +377,22 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                     HasWarnLibrary: hasWarnLibrary,
                     HasCoroutineClose: hasCoroutineClose,
                     HasUtf8Library: hasUtf8Library,
-                    HasBit32Library: hasBit32Library);
+                    HasBit32Library: hasBit32Library,
+                    HasRawLength: hasRawLength,
+                    HasGlobalUnpack: hasGlobalUnpack,
+                    HasLoadString: hasLoadString,
+                    HasModuleLibrary: hasModuleLibrary,
+                    HasTableMove: hasTableMove,
+                    HasTablePack: hasTablePack,
+                    HasTableCreate: hasTableCreate,
+                    HasStringPack: hasStringPack,
+                    HasStringGFind: hasStringGFind,
+                    HasLegacyMath: hasLegacyMath,
+                    HasDebugSetCStackLimit: hasDebugSetCStackLimit,
+                    HasPackageSearchers: hasPackageSearchers,
+                    HasPackageLoaders: hasPackageLoaders,
+                    HasPackageSeeAll: hasPackageSeeAll,
+                    HasLegacyTable: hasLegacyTable);
             })
             .ToArray();
         if (values.Length == 0)
@@ -335,7 +425,22 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                         $"{value.HasWarnLibrary.ToString().ToLowerInvariant()}, " +
                         $"{value.HasCoroutineClose.ToString().ToLowerInvariant()}, " +
                         $"{value.HasUtf8Library.ToString().ToLowerInvariant()}, " +
-                        $"{value.HasBit32Library.ToString().ToLowerInvariant()})"));
+                        $"{value.HasBit32Library.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasRawLength.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasGlobalUnpack.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasLoadString.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasModuleLibrary.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasTableMove.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasTablePack.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasTableCreate.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasStringPack.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasStringGFind.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasLegacyMath.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasDebugSetCStackLimit.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasPackageSearchers.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasPackageLoaders.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasPackageSeeAll.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasLegacyTable.ToString().ToLowerInvariant()})"));
         var source = $$"""
             // <auto-generated />
             namespace Lunil.Core;
@@ -351,7 +456,22 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                 bool HasWarnLibrary,
                 bool HasCoroutineClose,
                 bool HasUtf8Library,
-                bool HasBit32Library);
+                bool HasBit32Library,
+                bool HasRawLength,
+                bool HasGlobalUnpack,
+                bool HasLoadString,
+                bool HasModuleLibrary,
+                bool HasTableMove,
+                bool HasTablePack,
+                bool HasTableCreate,
+                bool HasStringPack,
+                bool HasStringGFind,
+                bool HasLegacyMath,
+                bool HasDebugSetCStackLimit,
+                bool HasPackageSearchers,
+                bool HasPackageLoaders,
+                bool HasPackageSeeAll,
+                bool HasLegacyTable);
 
             public static class LuaVersionFeatureTable
             {

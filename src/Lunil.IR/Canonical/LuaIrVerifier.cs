@@ -235,7 +235,19 @@ public static class LuaIrVerifier
                 module.Functions[instruction.B] is { } nested &&
                 nested.ParentFunctionId == function.Id,
             LuaIrOpcode.VarArg => Register(instruction.A) &&
-                (instruction.B == -1 || RegisterRange(instruction.A, instruction.B)),
+                (instruction.B == -1 || RegisterRange(instruction.A, instruction.B)) &&
+                (instruction.C == 0 || module.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                    Register(instruction.C - 1)),
+            LuaIrOpcode.CreateVarArgTable =>
+                module.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                Register(instruction.A) && function.IsVarArg,
+            LuaIrOpcode.GetVarArg => Register(instruction.A) && Register(instruction.B) &&
+                module.LanguageVersion == LuaLanguageVersion.Lua55 && function.IsVarArg,
+            LuaIrOpcode.ErrorIfNotNil => Register(instruction.A) &&
+                module.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                (instruction.B == -1 ||
+                    (uint)instruction.B < (uint)function.Constants.Length &&
+                    function.Constants[instruction.B].Kind == LuaIrConstantKind.String),
             LuaIrOpcode.Unary => Register(instruction.A) && Register(instruction.B) &&
                 Enum.IsDefined((LuaIrUnaryOperator)instruction.C),
             LuaIrOpcode.Binary => Register(instruction.A) && Register(instruction.B) &&

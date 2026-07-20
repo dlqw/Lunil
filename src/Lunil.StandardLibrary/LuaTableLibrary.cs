@@ -255,7 +255,7 @@ internal static class LuaTableLibrary
             : LuaNativeStep.Completed();
     }
 
-    private static LuaValue[] Pack(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    internal static LuaValue[] Pack(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var result = state.CreateTable(arguments.Length, 1);
         for (var index = 0; index < arguments.Length; index++)
@@ -557,7 +557,7 @@ internal static class LuaTableLibrary
             $"table expected, got {LuaLibraryHelpers.TypeName(value)}");
     }
 
-    private static LuaNativeStep Unpack(
+    internal static LuaNativeStep Unpack(
         LuaNativeCallContext context,
         int continuationId,
         ReadOnlySpan<LuaValue> values)
@@ -646,6 +646,155 @@ internal static class LuaTableLibrary
         }
 
         return CompleteUnpack(state, resultCount);
+    }
+
+    internal static LuaValue[] MaxN(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var table = LuaLibraryHelpers.Required(arguments, 0, "maxn");
+        if (table.Kind != LuaValueKind.Table)
+        {
+            throw LuaLibraryHelpers.BadArgument("maxn", 0, "table expected");
+        }
+
+        var target = table.AsTable();
+        long maximum = target.ArrayLength;
+        var key = LuaValue.Nil;
+        while (target.Next(key, out var nextKey, out var ignoredValue))
+        {
+            if (nextKey.Kind == LuaValueKind.Integer && nextKey.AsInteger() > maximum)
+            {
+                maximum = nextKey.AsInteger();
+            }
+
+            key = nextKey;
+        }
+
+        return [LuaValue.FromInteger(maximum)];
+    }
+
+    internal static LuaValue[] Create(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var size = LuaLibraryHelpers.OptionalInteger(arguments, 0, 0, "create");
+        var hash = LuaLibraryHelpers.OptionalInteger(arguments, 1, 0, "create");
+        if (size < 0 || hash < 0 || size > int.MaxValue || hash > int.MaxValue)
+        {
+            throw LuaLibraryHelpers.BadArgument("create", 0, "size out of range");
+        }
+
+        return [LuaValue.FromTable(state.CreateTable((int)size, (int)hash))];
+    }
+
+    internal static LuaNativeStep Foreach(
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> values)
+    {
+        LuaTable table;
+        LuaValue callback;
+        LuaValue key;
+        if (continuationId == 0)
+        {
+            var target = LuaLibraryHelpers.Required(values, 0, "table.foreach");
+            if (target.Kind != LuaValueKind.Table)
+            {
+                throw LuaLibraryHelpers.BadArgument("table.foreach", 0, "table expected");
+            }
+
+            table = target.AsTable();
+            callback = LuaLibraryHelpers.Required(values, 1, "table.foreach");
+            if (callback.Kind != LuaValueKind.Function)
+            {
+                throw LuaLibraryHelpers.BadArgument("table.foreach", 1, "function expected");
+            }
+
+            key = LuaValue.Nil;
+        }
+        else
+        {
+            var state = context.InvocationState;
+            table = state[0].AsTable();
+            callback = state[1];
+            key = state[2];
+            if (values.Length > 0 && !values[0].IsNil)
+            {
+                return LuaNativeStep.Completed(values[0]);
+            }
+        }
+
+        if (!table.Next(key, out var nextKey, out var nextValue))
+        {
+            return LuaNativeStep.Completed(LuaValue.Nil);
+        }
+
+        return LuaNativeStep.CallLua(
+            callback,
+            [nextKey, nextValue],
+            continuationId: 1,
+            stateValues: [LuaValue.FromTable(table), callback, nextKey],
+            callIsYieldable: false);
+    }
+
+    internal static LuaNativeStep ForeachI(
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> values)
+    {
+        LuaTable table;
+        LuaValue callback;
+        long index;
+        if (continuationId == 0)
+        {
+            var target = LuaLibraryHelpers.Required(values, 0, "table.foreachi");
+            if (target.Kind != LuaValueKind.Table)
+            {
+                throw LuaLibraryHelpers.BadArgument("table.foreachi", 0, "table expected");
+            }
+
+            table = target.AsTable();
+            callback = LuaLibraryHelpers.Required(values, 1, "table.foreachi");
+            if (callback.Kind != LuaValueKind.Function)
+            {
+                throw LuaLibraryHelpers.BadArgument("table.foreachi", 1, "function expected");
+            }
+
+            index = 1;
+        }
+        else
+        {
+            var state = context.InvocationState;
+            table = state[0].AsTable();
+            callback = state[1];
+            index = state[2].AsInteger() + 1;
+            if (values.Length > 0 && !values[0].IsNil)
+            {
+                return LuaNativeStep.Completed(values[0]);
+            }
+        }
+
+        if (index > table.ArrayLength)
+        {
+            return LuaNativeStep.Completed(LuaValue.Nil);
+        }
+
+        var value = table.Get(LuaValue.FromInteger(index));
+        return LuaNativeStep.CallLua(
+            callback,
+            [LuaValue.FromInteger(index), value],
+            continuationId: 1,
+            stateValues: [LuaValue.FromTable(table), callback, LuaValue.FromInteger(index)],
+            callIsYieldable: false);
+    }
+
+    internal static LuaValue[] SetN(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var table = LuaLibraryHelpers.Required(arguments, 0, "table.setn");
+        if (table.Kind != LuaValueKind.Table)
+        {
+            throw LuaLibraryHelpers.BadArgument("table.setn", 0, "table expected");
+        }
+
+        var _ = LuaLibraryHelpers.OptionalInteger(arguments, 1, table.AsTable().ArrayLength, "table.setn");
+        return [table];
     }
 
     private static LuaValue[] CreateUnpackState(LuaValue target, long first, long last)

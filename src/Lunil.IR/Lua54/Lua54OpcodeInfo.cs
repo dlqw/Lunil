@@ -93,8 +93,14 @@ public readonly record struct Lua54OpcodeInfo(
         Abc(a: true, setsTop: true),        // VARARG
         Abc(usesTop: true),                 // VARARGPREP
         Ax(),                               // EXTRAARG
+        Abc(a: true),                       // Lua 5.5 GETVARG carrier
+        ABx(),                              // Lua 5.5 ERRNNIL carrier
     ];
 
+    /// <summary>Number of opcodes in the PUC Lua 5.4 instruction set.</summary>
+    public const int PucOpcodeCount = 83;
+
+    /// <summary>Number of opcodes including private Lua 5.5 carrier extensions.</summary>
     public static int OpcodeCount => Infos.Length;
 
     public static bool IsDefined(Lua54Opcode opcode) => (uint)opcode < (uint)Infos.Length;

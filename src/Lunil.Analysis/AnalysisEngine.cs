@@ -252,6 +252,10 @@ internal sealed partial class AnalysisEngine
             LuaSyntaxKind.GenericForStatement => AnalyzeGenericFor(statement, state),
             LuaSyntaxKind.FunctionDeclarationStatement =>
                 AnalyzeFunctionDeclaration(statement, state, local: false),
+            LuaSyntaxKind.GlobalDeclarationStatement when
+                statement.ChildNodes().Any(static node => node.Kind == LuaSyntaxKind.FunctionBody) =>
+                AnalyzeFunctionDeclaration(statement, state, local: false),
+            LuaSyntaxKind.GlobalDeclarationStatement => BlockResult.Next(state),
             LuaSyntaxKind.LocalFunctionDeclarationStatement =>
                 AnalyzeFunctionDeclaration(statement, state, local: true),
             LuaSyntaxKind.LocalDeclarationStatement => AnalyzeLocalDeclaration(statement, state),
@@ -301,6 +305,7 @@ internal sealed partial class AnalysisEngine
         var owners = _semantics.Syntax.Root.DescendantNodes()
             .Where(static node => node.Kind is
                 LuaSyntaxKind.FunctionDeclarationStatement or
+                LuaSyntaxKind.GlobalDeclarationStatement or
                 LuaSyntaxKind.LocalFunctionDeclarationStatement or
                 LuaSyntaxKind.FunctionExpression)
             .ToLookup(static node => node.Span);
@@ -376,6 +381,7 @@ internal sealed partial class AnalysisEngine
         LuaSyntaxKind.NumericForStatement or
         LuaSyntaxKind.GenericForStatement or
         LuaSyntaxKind.FunctionDeclarationStatement or
+        LuaSyntaxKind.GlobalDeclarationStatement or
         LuaSyntaxKind.LocalFunctionDeclarationStatement or
         LuaSyntaxKind.LocalDeclarationStatement or
         LuaSyntaxKind.ReturnStatement;

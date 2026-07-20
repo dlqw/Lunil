@@ -23,6 +23,30 @@ public static class Lua54CanonicalPrototypeWriter
                 "semantics as a PUC Lua 5.4 chunk.");
         }
 
+        return CreateChunkCore(module, functionId, target, LuaChunkFormat.Lua54);
+    }
+
+    internal static Lua54Chunk CreateLua55AdapterChunk(
+        LuaIrModule module,
+        int functionId,
+        Lua54ChunkTarget? target = null)
+    {
+        ArgumentNullException.ThrowIfNull(module);
+        if (module.LanguageVersion != LuaLanguageVersion.Lua55)
+        {
+            throw new InvalidDataException("Lua 5.5 adapter carrier requires Lua 5.5 canonical IR.");
+        }
+
+        return CreateChunkCore(module, functionId, target, LuaChunkFormat.Lua55);
+    }
+
+    private static Lua54Chunk CreateChunkCore(
+        LuaIrModule module,
+        int functionId,
+        Lua54ChunkTarget? target,
+        LuaChunkFormat sourceFormat)
+    {
+
         var errors = LuaIrVerifier.Verify(module);
         if (!errors.IsEmpty)
         {
@@ -41,7 +65,10 @@ public static class Lua54CanonicalPrototypeWriter
         return new Lua54Chunk(
             target ?? Lua54ChunkTarget.Host,
             checked((byte)prototype.Upvalues.Length),
-            prototype);
+            prototype)
+        {
+            SourceFormat = sourceFormat,
+        };
     }
 
     public static byte[] Write(
@@ -94,6 +121,7 @@ public static class Lua54CanonicalPrototypeWriter
         private readonly bool[][] _liveAfter;
         private readonly int _temporary0;
         private readonly int _temporary1;
+        private readonly bool _hasVarArgTable;
 
         public FunctionConverter(ModuleConverter owner, LuaIrFunction function)
         {
@@ -109,6 +137,8 @@ public static class Lua54CanonicalPrototypeWriter
             _liveAfter = AnalyzeRegisterLiveness(owner, function, _capturedRegisters);
             _temporary0 = function.RegisterCount;
             _temporary1 = checked(function.RegisterCount + 1);
+            _hasVarArgTable = function.Instructions.Any(static instruction =>
+                instruction.Opcode == LuaIrOpcode.CreateVarArgTable);
         }
 
         public Lua54Prototype Convert()
@@ -173,7 +203,9 @@ public static class Lua54CanonicalPrototypeWriter
                 LineDefined = _function.LineDefined,
                 LastLineDefined = _function.LastLineDefined,
                 ParameterCount = checked((byte)_function.ParameterCount),
-                VarArgFlags = _function.IsVarArg ? (byte)1 : (byte)0,
+                VarArgFlags = _function.IsVarArg
+                    ? _hasVarArgTable ? (byte)2 : (byte)1
+                    : (byte)0,
                 MaximumStackSize = checked((byte)maximumStackSize),
                 Code = _code.Select(static item => item.Instruction).ToImmutableArray(),
                 Constants = _constants.ToImmutableArray(),
@@ -257,8 +289,33 @@ public static class Lua54CanonicalPrototypeWriter
                     EmitAbc(
                         Lua54Opcode.VarArg,
                         instruction.A,
-                        0,
+                        instruction.C > 0 ? instruction.C - 1 : 0,
                         instruction.B < 0 ? 0 : instruction.B + 1,
+                        line,
+                        k: instruction.C > 0);
+                    break;
+                case LuaIrOpcode.CreateVarArgTable:
+                    if (instruction.A != _function.ParameterCount || !_function.IsVarArg)
+                    {
+                        throw new InvalidDataException(
+                            "A Lua 5.5 vararg table must occupy the register after fixed parameters.");
+                    }
+
+                    break;
+                case LuaIrOpcode.GetVarArg:
+                    EmitAbc(
+                        Lua54Opcode.Lua55GetVarArg,
+                        instruction.A,
+                        _function.ParameterCount,
+                        instruction.B,
+                        line);
+                    break;
+                case LuaIrOpcode.ErrorIfNotNil:
+                    Emit(
+                        Lua54Instruction.CreateABx(
+                            Lua54Opcode.Lua55ErrorIfNotNil,
+                            instruction.A,
+                            instruction.B < 0 ? 0 : checked(instruction.B + 1)),
                         line);
                     break;
                 case LuaIrOpcode.Unary:
@@ -326,7 +383,9 @@ public static class Lua54CanonicalPrototypeWriter
         }
 
         private int VarArgReturnAdjustment =>
-            _function.IsVarArg ? checked(_function.ParameterCount + 1) : 0;
+            _function.IsVarArg && !_hasVarArgTable
+                ? checked(_function.ParameterCount + 1)
+                : 0;
 
         private void EmitLoadConstant(int register, int constant, int line)
         {
@@ -836,10 +895,14 @@ public static class Lua54CanonicalPrototypeWriter
                 Lua54Opcode.SetList => instruction.B == 0
                     ? _function.RegisterCount - 1
                     : checked(a + instruction.B),
-                Lua54Opcode.VarArg => instruction.C == 0
-                    ? _function.RegisterCount - 1
-                    : checked(a + Math.Max(0, instruction.C - 2)),
+                Lua54Opcode.VarArg => Math.Max(
+                    instruction.K ? instruction.B : -1,
+                    instruction.C == 0
+                        ? _function.RegisterCount - 1
+                        : checked(a + Math.Max(0, instruction.C - 2))),
                 Lua54Opcode.VarArgPrepare => Math.Max(-1, a - 1),
+                Lua54Opcode.Lua55GetVarArg => Math.Max(a, Math.Max(instruction.B, instruction.C)),
+                Lua54Opcode.Lua55ErrorIfNotNil => a,
                 Lua54Opcode.GetTableUpvalue or Lua54Opcode.SetTableUpvalue or Lua54Opcode.Self =>
                     Math.Max(a, instruction.B),
                 Lua54Opcode.Jump or Lua54Opcode.ReturnZero or Lua54Opcode.ExtraArgument => -1,
@@ -1097,6 +1160,8 @@ public static class Lua54CanonicalPrototypeWriter
                 case LuaIrOpcode.NewTable:
                 case LuaIrOpcode.GetTable:
                 case LuaIrOpcode.Closure:
+                case LuaIrOpcode.CreateVarArgTable:
+                case LuaIrOpcode.GetVarArg:
                 case LuaIrOpcode.Unary:
                 case LuaIrOpcode.Binary:
                     KillLiveness(live, instruction.A, 1);
@@ -1149,6 +1214,9 @@ public static class Lua54CanonicalPrototypeWriter
                 case LuaIrOpcode.GetTable:
                     UseLiveness(live, instruction.B, 1);
                     UseLiveness(live, instruction.C, 1);
+                    break;
+                case LuaIrOpcode.GetVarArg:
+                    UseLiveness(live, instruction.B, 1);
                     break;
                 case LuaIrOpcode.SetTable:
                     UseLiveness(live, instruction.A, 1);
@@ -1209,6 +1277,12 @@ public static class Lua54CanonicalPrototypeWriter
                         instruction.B < 0
                             ? function.RegisterCount - instruction.A
                             : instruction.B);
+                    break;
+                case LuaIrOpcode.VarArg when instruction.C > 0:
+                    UseLiveness(live, instruction.C - 1, 1);
+                    break;
+                case LuaIrOpcode.ErrorIfNotNil:
+                    UseLiveness(live, instruction.A, 1);
                     break;
                 case LuaIrOpcode.Close:
                     UseLiveness(live, instruction.A, function.RegisterCount - instruction.A);

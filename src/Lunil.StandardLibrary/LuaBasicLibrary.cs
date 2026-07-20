@@ -37,7 +37,22 @@ internal static class LuaBasicLibrary
         state.SetGlobal("next", LuaValue.FromFunction(NextDescriptor));
         SetStepFunction(state, "pairs", Pairs);
         state.InstallProtectedCallFunctions();
-        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasWarnLibrary)
+        var features = LuaVersionFeatureTable.Get(state.LanguageVersion);
+        if (features.HasGlobalUnpack)
+        {
+            state.SetGlobal(
+                "unpack",
+                LuaValue.FromFunction(new LuaNativeFunction("unpack", LuaTableLibrary.Unpack)));
+        }
+        if (features.HasLoadString)
+        {
+            SetStepFunction(state, "loadstring", Load);
+        }
+        if (features.HasModuleLibrary)
+        {
+            SetFunction(state, "module", Module);
+        }
+        if (features.HasWarnLibrary)
         {
             SetFunction(state, "warn", Warn);
         }
@@ -45,7 +60,10 @@ internal static class LuaBasicLibrary
         SetStepFunction(state, "print", Print);
         SetFunction(state, "rawequal", RawEqual);
         SetFunction(state, "rawget", RawGet);
-        SetFunction(state, "rawlen", RawLength);
+        if (features.HasRawLength)
+        {
+            SetFunction(state, "rawlen", RawLength);
+        }
         SetFunction(state, "rawset", RawSet);
         SetFunction(state, "select", Select);
         SetFunction(state, "setmetatable", SetMetatable);
@@ -321,6 +339,38 @@ internal static class LuaBasicLibrary
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "type");
         return [LuaLibraryHelpers.String(state, LuaValueOperations.BasicTypeName(value))];
+    }
+
+    private static LuaValue[] Module(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var name = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "module");
+        var moduleName = Encoding.UTF8.GetString(name);
+        var existing = state.GetGlobal(moduleName);
+        var module = existing.Kind == LuaValueKind.Table
+            ? existing.AsTable()
+            : state.CreateTable(hashCapacity: 8);
+        LuaLibraryHelpers.Set(state, module, "_NAME", LuaLibraryHelpers.String(state, moduleName));
+        LuaLibraryHelpers.Set(state, module, "_M", LuaValue.FromTable(module));
+        var dot = moduleName.LastIndexOf('.');
+        LuaLibraryHelpers.Set(
+            state,
+            module,
+            "_PACKAGE",
+            LuaLibraryHelpers.String(state, dot >= 0 ? moduleName[..(dot + 1)] : string.Empty));
+        state.SetGlobal(moduleName, LuaValue.FromTable(module));
+        var package = state.GetGlobal("package");
+        if (package.Kind == LuaValueKind.Table)
+        {
+            var loaded = package.AsTable().Get(LuaLibraryHelpers.String(state, "loaded"));
+            if (loaded.Kind == LuaValueKind.Table)
+            {
+                loaded.AsTable().Set(
+                    LuaLibraryHelpers.String(state, moduleName),
+                    LuaValue.FromTable(module));
+            }
+        }
+
+        return [LuaValue.FromTable(module)];
     }
 
     private static LuaNativeStep ToStringStep(

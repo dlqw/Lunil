@@ -44,7 +44,8 @@ namespace Lunil.Semantics.Binding
     {
         None = 0,
         Constant = 1,
-        ToBeClosed = 2
+        ToBeClosed = 2,
+        VarArg = 3
     }
 
     public sealed class LuaNameReference : System.IEquatable<Lunil.Semantics.Binding.LuaNameReference>
@@ -108,7 +109,9 @@ namespace Lunil.Semantics.Binding
         Parameter = 1,
         Local = 2,
         NumericForVariable = 3,
-        GenericForVariable = 4
+        GenericForVariable = 4,
+        Global = 5,
+        GlobalWildcard = 6
     }
 }
 namespace Lunil.Semantics.Lowering

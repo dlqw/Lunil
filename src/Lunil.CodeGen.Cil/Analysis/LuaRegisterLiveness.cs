@@ -169,6 +169,8 @@ public static class LuaRegisterLiveness
             case LuaIrOpcode.NewTable:
             case LuaIrOpcode.GetTable:
             case LuaIrOpcode.Closure:
+            case LuaIrOpcode.CreateVarArgTable:
+            case LuaIrOpcode.GetVarArg:
             case LuaIrOpcode.Unary:
             case LuaIrOpcode.Binary:
                 Kill(live, instruction.A, 1);
@@ -221,6 +223,9 @@ public static class LuaRegisterLiveness
             case LuaIrOpcode.GetTable:
                 Use(live, instruction.B, 1);
                 Use(live, instruction.C, 1);
+                break;
+            case LuaIrOpcode.GetVarArg:
+                Use(live, instruction.B, 1);
                 break;
             case LuaIrOpcode.SetTable:
                 Use(live, instruction.A, 1);
@@ -281,6 +286,12 @@ public static class LuaRegisterLiveness
                     instruction.B < 0
                         ? function.RegisterCount - instruction.A
                         : instruction.B);
+                break;
+            case LuaIrOpcode.VarArg when instruction.C > 0:
+                Use(live, instruction.C - 1, 1);
+                break;
+            case LuaIrOpcode.ErrorIfNotNil:
+                Use(live, instruction.A, 1);
                 break;
             case LuaIrOpcode.Close:
                 Use(live, instruction.A, function.RegisterCount - instruction.A);

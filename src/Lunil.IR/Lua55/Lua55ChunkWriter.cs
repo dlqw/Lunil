@@ -412,6 +412,8 @@ public static class Lua55ChunkWriter
                 Lua54Opcode.VarArg => Lua55Opcode.VarArg,
                 Lua54Opcode.VarArgPrepare => Lua55Opcode.VarArgPrepare,
                 Lua54Opcode.ExtraArgument => Lua55Opcode.ExtraArgument,
+                Lua54Opcode.Lua55GetVarArg => Lua55Opcode.GetVarArg,
+                Lua54Opcode.Lua55ErrorIfNotNil => Lua55Opcode.ErrorIfNotNil,
                 _ => throw new InvalidDataException(
                     $"Opcode {instruction.Opcode} is not representable in Lua 5.5"),
             };

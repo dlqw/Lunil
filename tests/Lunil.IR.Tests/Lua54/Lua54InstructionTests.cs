@@ -7,7 +7,7 @@ public sealed class Lua54InstructionTests
     [Fact]
     public void OpcodeValuesMatchPucLua54Order()
     {
-        Assert.Equal(83, Lua54OpcodeInfo.OpcodeCount);
+        Assert.Equal(83, Lua54OpcodeInfo.PucOpcodeCount);
         Assert.Equal(0, (int)Lua54Opcode.Move);
         Assert.Equal(56, (int)Lua54Opcode.Jump);
         Assert.Equal(82, (int)Lua54Opcode.ExtraArgument);

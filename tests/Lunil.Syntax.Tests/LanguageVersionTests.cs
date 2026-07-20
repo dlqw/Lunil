@@ -80,4 +80,21 @@ public sealed class LanguageVersionTests
         Assert.DoesNotContain(result.Root.DescendantNodes(),
             node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
     }
+
+    [Fact]
+    public void Lua55AcceptsNamedVarArgParameters()
+    {
+        var lua55 = LuaParser.Parse(
+            SourceText.FromUtf8("return function(a, ... values) return values.n end"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.Empty(lua55.Diagnostics);
+        var parameters = Assert.Single(
+            lua55.Root.DescendantNodes(),
+            static node => node.Kind == LuaSyntaxKind.ParameterList);
+        Assert.Equal(
+            [LuaTokenKind.Identifier, LuaTokenKind.Comma, LuaTokenKind.VarArg, LuaTokenKind.Identifier],
+            parameters.ChildTokens().Select(static token => token.Kind));
+    }
 }

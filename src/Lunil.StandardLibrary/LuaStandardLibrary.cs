@@ -21,20 +21,63 @@ public static class LuaStandardLibrary
         RegisterLoaded(state, loaded, "_G", globals);
         RegisterLoaded(state, loaded, "coroutine", coroutine);
         var stringModule = InstallString(state);
-        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        var features = LuaVersionFeatureTable.Get(state.LanguageVersion);
+        if (!features.HasStringPack)
         {
             Remove(state, stringModule, "pack");
             Remove(state, stringModule, "packsize");
             Remove(state, stringModule, "unpack");
         }
+        if (features.HasStringGFind)
+        {
+            LuaLibraryHelpers.SetFunction(state, stringModule, "gfind", LuaStringLibrary.GMatch);
+        }
 
         var table = InstallTable(state);
-        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        if (!features.HasTableMove)
         {
             Remove(state, table, "move");
         }
+        if (!features.HasTablePack)
+        {
+            Remove(state, table, "pack");
+        }
+        if (features.HasLegacyTable)
+        {
+            LuaLibraryHelpers.SetFunction(state, table, "maxn", LuaTableLibrary.MaxN);
+            LuaLibraryHelpers.SetFunction(state, table, "getn", LuaTableLibrary.MaxN);
+            if (state.LanguageVersion == LuaLanguageVersion.Lua51)
+            {
+                LuaLibraryHelpers.SetFunction(state, table, "foreach", LuaTableLibrary.Foreach);
+                LuaLibraryHelpers.SetFunction(state, table, "foreachi", LuaTableLibrary.ForeachI);
+                LuaLibraryHelpers.SetFunction(state, table, "setn", LuaTableLibrary.SetN);
+            }
+        }
+        else
+        {
+            Remove(state, table, "maxn");
+            Remove(state, table, "getn");
+        }
+        if (features.HasTableCreate)
+        {
+            LuaLibraryHelpers.SetFunction(state, table, "create", LuaTableLibrary.Create);
+        }
 
         var math = InstallMath(state);
+        if (!features.HasRawLength)
+        {
+            // rawlen was introduced in Lua 5.2; the function is installed by the
+            // basic library only when the generated profile advertises it.
+        }
+        if (!features.HasLegacyMath)
+        {
+            Remove(state, math, "log10");
+            Remove(state, math, "atan2");
+            Remove(state, math, "pow");
+            Remove(state, math, "sinh");
+            Remove(state, math, "cosh");
+            Remove(state, math, "tanh");
+        }
         if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
         {
             Remove(state, math, "tointeger");

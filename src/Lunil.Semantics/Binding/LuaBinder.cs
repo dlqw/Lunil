@@ -190,6 +190,7 @@ public static class LuaBinder
                     BindFunctionDeclaration(statement);
                     break;
                 case LuaSyntaxKind.GlobalDeclarationStatement:
+                    BindGlobalDeclaration(statement);
                     break;
                 case LuaSyntaxKind.LocalFunctionDeclarationStatement:
                     BindLocalFunctionDeclaration(statement);
@@ -449,6 +450,108 @@ public static class LuaBinder
             }
         }
 
+        private void BindGlobalDeclaration(LuaSyntaxNode statement)
+        {
+            var directTokens = statement.ChildTokens().ToArray();
+            var prefixAttribute = ReadGlobalPrefixAttribute(directTokens);
+            if (directTokens.Any(static token => token.Kind == LuaTokenKind.FunctionKeyword))
+            {
+                var name = directTokens.FirstOrDefault(static token =>
+                    token.Kind == LuaTokenKind.Identifier);
+                if (name is not null && !name.IsMissing)
+                {
+                    DeclareGlobalToken(name, LuaLocalAttributeKind.None);
+                }
+
+                BindNestedFunction(
+                    GetDirectChild(statement, LuaSyntaxKind.FunctionBody),
+                    statement.Span,
+                    hasImplicitSelf: false);
+                return;
+            }
+
+            var initializer = statement.ChildNodes().FirstOrDefault(static node =>
+                node.Kind == LuaSyntaxKind.ExpressionList);
+            if (initializer is not null)
+            {
+                BindExpression(initializer);
+            }
+
+            if (directTokens.Any(static token => token.Kind == LuaTokenKind.Star))
+            {
+                var star = directTokens.First(static token => token.Kind == LuaTokenKind.Star);
+                var wildcard = CreateSymbol(
+                    "*",
+                    LuaSymbolKind.GlobalWildcard,
+                    prefixAttribute,
+                    star.Span);
+                ActivateSymbol(wildcard);
+                return;
+            }
+
+            foreach (var declaration in statement.ChildNodes()
+                         .Where(static node => node.Kind == LuaSyntaxKind.AttributedName)
+                         .Select(ReadAttributedName))
+            {
+                var attribute = declaration.Attribute == LuaLocalAttributeKind.None
+                    ? prefixAttribute
+                    : declaration.Attribute;
+                if (attribute == LuaLocalAttributeKind.ToBeClosed)
+                {
+                    AddDiagnostic(
+                        "LUA3013",
+                        declaration.NameToken.Span,
+                        "global variables cannot be to-be-closed");
+                    attribute = LuaLocalAttributeKind.None;
+                }
+
+                DeclareGlobalToken(declaration.NameToken, attribute);
+            }
+        }
+
+        private LuaLocalAttributeKind ReadGlobalPrefixAttribute(LuaSyntaxToken[] tokens)
+        {
+            var lessThan = Array.FindIndex(tokens, static token =>
+                token.Kind == LuaTokenKind.LessThan);
+            if (lessThan < 0 || lessThan + 1 >= tokens.Length ||
+                tokens[lessThan + 1].Kind != LuaTokenKind.Identifier)
+            {
+                return LuaLocalAttributeKind.None;
+            }
+
+            var token = tokens[lessThan + 1];
+            return GetName(token) switch
+            {
+                "const" => LuaLocalAttributeKind.Constant,
+                "close" => LuaLocalAttributeKind.ToBeClosed,
+                var unknown => ReportUnknownAttribute(token, unknown),
+            };
+        }
+
+        private void DeclareGlobalToken(LuaSyntaxToken token, LuaLocalAttributeKind attribute)
+        {
+            if (GetName(token) == "_ENV")
+            {
+                AddDiagnostic("LUA3014", token.Span, "'_ENV' cannot be declared as a global variable");
+                return;
+            }
+
+            var symbol = DeclareToken(token, LuaSymbolKind.Global, attribute);
+            if (symbol is null)
+            {
+                return;
+            }
+
+            var environment = FindActiveEnvironment()
+                ?? throw new InvalidOperationException("The implicit _ENV symbol is missing.");
+            _references.Add(new LuaNameReference(
+                token.Span,
+                GetName(token),
+                LuaNameResolutionKind.Global,
+                environment,
+                IsWrite: true));
+        }
+
         private AttributedName ReadAttributedName(LuaSyntaxNode node)
         {
             var tokens = node.ChildTokens().ToArray();
@@ -536,7 +639,25 @@ public static class LuaBinder
             var symbol = FindActiveSymbol(name);
             LuaNameResolutionKind resolutionKind;
 
-            if (symbol is not null)
+            if (symbol is { Kind: LuaSymbolKind.Global })
+            {
+                if (isWrite && symbol.IsReadOnly)
+                {
+                    AddDiagnostic(
+                        "LUA3002",
+                        token.Span,
+                        $"attempt to assign to const variable '{name}'");
+                }
+
+                symbol = FindActiveEnvironment()
+                    ?? throw new InvalidOperationException("The implicit _ENV symbol is missing.");
+                resolutionKind = LuaNameResolutionKind.Global;
+                if (symbol.FunctionId != _currentFunction.Id)
+                {
+                    Capture(symbol);
+                }
+            }
+            else if (symbol is not null)
             {
                 resolutionKind = symbol.Kind == LuaSymbolKind.Environment ||
                     symbol.FunctionId != _currentFunction.Id
@@ -558,7 +679,27 @@ public static class LuaBinder
             }
             else
             {
-                symbol = FindActiveSymbol("_ENV")
+                var wildcard = _activeSymbols.LastOrDefault(static candidate =>
+                    candidate.Kind == LuaSymbolKind.GlobalWildcard);
+                var hasExplicitGlobalContext = _activeSymbols.Any(static candidate =>
+                    candidate.Kind is LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard);
+                if (wildcard is not null && isWrite && wildcard.IsReadOnly)
+                {
+                    AddDiagnostic(
+                        "LUA3002",
+                        token.Span,
+                        $"attempt to assign to const variable '{name}'");
+                }
+                else if (wildcard is null && hasExplicitGlobalContext &&
+                         _options.LanguageVersion == LuaLanguageVersion.Lua55)
+                {
+                    AddDiagnostic(
+                        "LUA3015",
+                        token.Span,
+                        $"no variable '{name}' declared");
+                }
+
+                symbol = FindActiveEnvironment()
                     ?? throw new InvalidOperationException("The implicit _ENV symbol is missing.");
                 resolutionKind = LuaNameResolutionKind.Global;
                 if (symbol.FunctionId != _currentFunction.Id)
@@ -615,10 +756,22 @@ public static class LuaBinder
                     ActivateSymbol(self);
                 }
 
-                foreach (var parameter in parameters.ChildTokens().Where(static token =>
-                             token.Kind == LuaTokenKind.Identifier && !token.IsMissing))
+                var parameterTokens = parameters.ChildTokens().ToArray();
+                var varArgIndex = Array.FindIndex(parameterTokens, static token =>
+                    token.Kind == LuaTokenKind.VarArg);
+                for (var index = 0; index < parameterTokens.Length; index++)
                 {
-                    DeclareToken(parameter, LuaSymbolKind.Parameter, LuaLocalAttributeKind.None);
+                    var parameter = parameterTokens[index];
+                    if (parameter.Kind != LuaTokenKind.Identifier || parameter.IsMissing)
+                    {
+                        continue;
+                    }
+
+                    var isNamedVarArg = varArgIndex >= 0 && index > varArgIndex;
+                    DeclareToken(
+                        parameter,
+                        isNamedVarArg ? LuaSymbolKind.Local : LuaSymbolKind.Parameter,
+                        isNamedVarArg ? LuaLocalAttributeKind.VarArg : LuaLocalAttributeKind.None);
                 }
 
                 BindBlock(
@@ -805,7 +958,8 @@ public static class LuaBinder
         private void ActivateSymbol(LuaSymbol symbol)
         {
             _activeSymbols.Add(symbol);
-            if (symbol.Kind == LuaSymbolKind.Environment)
+            if (symbol.Kind is LuaSymbolKind.Environment or
+                LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard)
             {
                 return;
             }
@@ -827,6 +981,23 @@ public static class LuaBinder
             for (var index = _activeSymbols.Count - 1; index >= 0; index--)
             {
                 if (string.Equals(_activeSymbols[index].Name, name, StringComparison.Ordinal))
+                {
+                    return _activeSymbols[index];
+                }
+            }
+
+            return null;
+        }
+
+        private LuaSymbol? FindActiveEnvironment()
+        {
+            for (var index = _activeSymbols.Count - 1; index >= 0; index--)
+            {
+                // A lexical local named _ENV shadows the implicit environment upvalue.
+                // Keep the lookup here (rather than in every global reference branch) so
+                // nested functions and explicit global declarations share one boundary.
+                if (_activeSymbols[index].Kind == LuaSymbolKind.Environment ||
+                    string.Equals(_activeSymbols[index].Name, "_ENV", StringComparison.Ordinal))
                 {
                     return _activeSymbols[index];
                 }

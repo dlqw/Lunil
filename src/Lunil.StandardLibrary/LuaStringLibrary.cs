@@ -215,7 +215,7 @@ internal static class LuaStringLibrary
             : captures;
     }
 
-    private static LuaValue[] GMatch(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    internal static LuaValue[] GMatch(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var source = LuaValue.FromString(state.Strings.GetOrCreate(CheckBytes(arguments, 0, "gmatch")));
         var pattern = LuaValue.FromString(state.Strings.GetOrCreate(CheckBytes(arguments, 1, "gmatch")));

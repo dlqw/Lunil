@@ -36,7 +36,8 @@ public sealed class LuaSymbol
 
     public int ScopeDepth { get; }
 
-    public bool IsReadOnly => Attribute is LuaLocalAttributeKind.Constant or LuaLocalAttributeKind.ToBeClosed;
+    public bool IsReadOnly => Attribute is LuaLocalAttributeKind.Constant or
+        LuaLocalAttributeKind.ToBeClosed or LuaLocalAttributeKind.VarArg;
 
     public bool IsCaptured { get; internal set; }
 }

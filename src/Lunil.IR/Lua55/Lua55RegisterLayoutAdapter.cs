@@ -220,11 +220,13 @@ internal static class Lua55RegisterLayoutAdapter
         Lua54Opcode.MetamethodBinaryImmediate or Lua54Opcode.MetamethodBinaryConstant or
         Lua54Opcode.UnaryMinus or Lua54Opcode.BitwiseNot or Lua54Opcode.LogicalNot or
         Lua54Opcode.Length or Lua54Opcode.Concatenate or Lua54Opcode.Equal or
-        Lua54Opcode.LessThan or Lua54Opcode.LessOrEqual or Lua54Opcode.TestSet;
+        Lua54Opcode.LessThan or Lua54Opcode.LessOrEqual or Lua54Opcode.TestSet or
+        Lua54Opcode.VarArg or Lua54Opcode.Lua55GetVarArg;
 
     private static bool UsesRegisterC(Lua54Instruction instruction) => instruction.Opcode switch
     {
         Lua54Opcode.GetTable or
+        Lua54Opcode.Lua55GetVarArg or
         Lua54Opcode.Add or Lua54Opcode.Subtract or Lua54Opcode.Multiply or
         Lua54Opcode.Modulo or Lua54Opcode.Power or Lua54Opcode.Divide or
         Lua54Opcode.FloorDivide or Lua54Opcode.BitwiseAnd or Lua54Opcode.BitwiseOr or

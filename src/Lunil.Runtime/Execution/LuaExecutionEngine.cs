@@ -4368,20 +4368,123 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         LuaIrInstruction instruction)
     {
-        var count = instruction.B < 0 ? frame.VarArgStorage.Count : instruction.B;
+        if (instruction.C != 0)
+        {
+            throw new InvalidOperationException(
+                "A vararg-table instruction requires the active Lua state.");
+        }
+
+        ExecuteVarArgCore(null, thread, frame, instruction);
+    }
+
+    internal static void ExecuteVarArg(
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction) =>
+        ExecuteVarArgCore(state, thread, frame, instruction);
+
+    private static void ExecuteVarArgCore(
+        LuaState? state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        LuaTable? varArgTable = null;
+        var available = frame.VarArgStorage.Count;
+        if (instruction.C > 0)
+        {
+            varArgTable = Read(thread, frame, instruction.C - 1).AsTable();
+            var countKey = LuaValue.FromString(
+                (state ?? throw new InvalidOperationException(
+                    "A vararg table requires the active Lua state."))
+                .Strings.GetOrCreate("n"u8));
+            var countValue = varArgTable.Get(countKey);
+            if (countValue.Kind != LuaValueKind.Integer ||
+                countValue.AsIntegerUnchecked() < 0 ||
+                countValue.AsIntegerUnchecked() > int.MaxValue / 2)
+            {
+                throw new LuaRuntimeException("vararg table has no proper 'n'");
+            }
+
+            available = checked((int)countValue.AsIntegerUnchecked());
+        }
+
+        var count = instruction.B < 0 ? available : instruction.B;
         for (var index = 0; index < count; index++)
         {
+            var value = varArgTable is null
+                ? index < available ? frame.VarArgStorage[index] : LuaValue.Nil
+                : varArgTable.Get(LuaValue.FromInteger(index + 1));
             Write(
                 thread,
                 frame,
                 instruction.A + index,
-                index < frame.VarArgStorage.Count ? frame.VarArgStorage[index] : LuaValue.Nil);
+                value);
         }
 
         if (instruction.B < 0)
         {
             SetFrameTop(thread, frame, frame.Base + instruction.A + count);
         }
+    }
+
+    internal static void ExecuteCreateVarArgTable(
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        var count = frame.VarArgStorage.Count;
+        var table = state.CreateTable(count, 1);
+        for (var index = 0; index < count; index++)
+        {
+            table.Set(LuaValue.FromInteger(index + 1), frame.VarArgStorage[index]);
+        }
+
+        table.Set(
+            LuaValue.FromString(state.Strings.GetOrCreate("n"u8)),
+            LuaValue.FromInteger(count));
+        Write(thread, frame, instruction.A, LuaValue.FromTable(table));
+    }
+
+    internal static void ExecuteGetVarArg(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        var key = Read(thread, frame, instruction.B);
+        LuaValue value;
+        if (key.TryGetInteger(out var index) && index >= 1 && index <= frame.VarArgStorage.Count)
+        {
+            value = frame.VarArgStorage[checked((int)index - 1)];
+        }
+        else if (key.TryGetString() is { } text && text.AsSpan().SequenceEqual("n"u8))
+        {
+            value = LuaValue.FromInteger(frame.VarArgStorage.Count);
+        }
+        else
+        {
+            value = LuaValue.Nil;
+        }
+
+        Write(thread, frame, instruction.A, value);
+    }
+
+    internal static void ExecuteErrorIfNotNil(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaIrInstruction instruction)
+    {
+        if (Read(thread, frame, instruction.A).IsNil)
+        {
+            return;
+        }
+
+        var name = instruction.B < 0
+            ? "?"
+            : Encoding.UTF8.GetString(frame.Function.Constants[instruction.B].Bytes.AsSpan());
+        throw new LuaRuntimeException($"global '{name}' already defined");
     }
 
     internal static void SetFrameTop(LuaThread thread, LuaFrame frame, int newTop)
@@ -5118,6 +5221,7 @@ internal sealed class LuaExecutionEngine
                 register < instruction.A + instruction.C,
             LuaIrOpcode.LoadConstant or LuaIrOpcode.Move or LuaIrOpcode.GetUpvalue or
                 LuaIrOpcode.NewTable or LuaIrOpcode.GetTable or LuaIrOpcode.Closure or
+                LuaIrOpcode.CreateVarArgTable or LuaIrOpcode.GetVarArg or
                 LuaIrOpcode.Unary or LuaIrOpcode.Binary => register == instruction.A,
             _ => false,
         };

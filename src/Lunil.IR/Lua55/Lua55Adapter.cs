@@ -42,9 +42,9 @@ public static class Lua55CanonicalPrototypeWriter
     {
         if (module.LanguageVersion != LuaLanguageVersion.Lua55)
             throw new InvalidDataException("Lua 5.5 writer requires a Lua 5.5 canonical module.");
-        var lua54Bytes = Lua54CanonicalPrototypeWriter.Write(
-            module with { LanguageVersion = LuaLanguageVersion.Lua54 }, functionId, stripDebug);
-        var lua54Chunk = Lua54ChunkReader.Read(lua54Bytes);
-        return Lua55ChunkWriter.Write(lua54Chunk, stripDebug);
+        var carrier = Lua54CanonicalPrototypeWriter.CreateLua55AdapterChunk(
+            module,
+            functionId);
+        return Lua55ChunkWriter.Write(carrier, stripDebug);
     }
 }

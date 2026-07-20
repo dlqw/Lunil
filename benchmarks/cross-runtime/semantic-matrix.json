@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Version-aware semantic comparison corpus for the 0.10.0 release gate.",
+  "workloads": [
+    "language-version-surface",
+    "error-propagation",
+    "coroutine-and-close",
+    "gc-finalizer",
+    "table-string-boundary"
+  ],
+  "engines": [
+    {
+      "name": "puc-lua-5.1",
+      "version": "5.1.5",
+      "semantics": "lua51",
+      "source": "https://www.lua.org/ftp/lua-5.1.5.tar.gz",
+      "oracleExecutable": "artifacts/codex/lua51/lua.exe"
+    },
+    {
+      "name": "puc-lua-5.2",
+      "version": "5.2.4",
+      "semantics": "lua52",
+      "source": "https://www.lua.org/ftp/lua-5.2.4.tar.gz",
+      "oracleExecutable": "artifacts/lua-5.2.4/src/lua.exe"
+    },
+    {
+      "name": "puc-lua-5.3",
+      "version": "5.3.6",
+      "semantics": "lua53",
+      "source": "https://www.lua.org/ftp/lua-5.3.6.tar.gz",
+      "oracleExecutable": "artifacts/puc-lua53/lua-5.3.6/src/lua.exe"
+    },
+    {
+      "name": "puc-lua-5.4",
+      "version": "5.4.8",
+      "semantics": "lua54",
+      "source": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+      "oracleExecutable": "artifacts/cross-runtime-tools/win-x64/src/lua-5.4.8/src/lua.exe"
+    },
+    {
+      "name": "puc-lua-5.5",
+      "version": "5.5.0",
+      "semantics": "lua55",
+      "source": "https://www.lua.org/ftp/lua-5.5.0.tar.gz",
+      "oracleExecutable": "artifacts/codex/lua55/lua.exe"
+    },
+    {
+      "name": "neolua",
+      "version": "1.7.8",
+      "semantics": "lua53-style",
+      "source": "https://github.com/neolithos/NeoLua/releases/tag/v1.7.8"
+    },
+    {
+      "name": "unilua",
+      "version": "master@2024-01-15",
+      "semantics": "lua52",
+      "source": "https://github.com/xebecnan/UniLua"
+    },
+    {
+      "name": "luau",
+      "version": "0.623",
+      "semantics": "lua51-compatible-dialect",
+      "source": "https://github.com/luau-lang/luau/releases/tag/0.623"
+    },
+    {
+      "name": "wasmoon",
+      "version": "1.16.0",
+      "semantics": "lua54",
+      "source": "https://github.com/ceifa/wasmoon/releases/tag/v1.16.0"
+    },
+    {
+      "name": "gopherlua",
+      "version": "1.1.1",
+      "semantics": "lua51",
+      "source": "https://github.com/yuin/gopher-lua/releases/tag/v1.1.1"
+    }
+  ],
+  "comparisonPolicy": {
+    "compareOnlyWithinSemanticGroup": true,
+    "requireSourceIdentity": true,
+    "excludeTimingFromSemanticVerdict": true,
+    "record": "artifacts/cross-runtime-performance/semantic-matrix-report.json"
+  }
+}

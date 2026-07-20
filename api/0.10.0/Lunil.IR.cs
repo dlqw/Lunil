@@ -199,18 +199,21 @@ namespace Lunil.IR.Canonical
         SetList = 9,
         Closure = 10,
         VarArg = 11,
-        Unary = 12,
-        Binary = 13,
-        Jump = 14,
-        JumpIfFalse = 15,
-        JumpIfTrue = 16,
-        Call = 17,
-        TailCall = 18,
-        Return = 19,
-        Close = 20,
-        MarkToBeClosed = 21,
-        NumericForPrepare = 22,
-        NumericForLoop = 23
+        CreateVarArgTable = 12,
+        GetVarArg = 13,
+        ErrorIfNotNil = 14,
+        Unary = 15,
+        Binary = 16,
+        Jump = 17,
+        JumpIfFalse = 18,
+        JumpIfTrue = 19,
+        Call = 20,
+        TailCall = 21,
+        Return = 22,
+        Close = 23,
+        MarkToBeClosed = 24,
+        NumericForPrepare = 25,
+        NumericForLoop = 26
     }
 
     public enum LuaIrUnaryOperator
@@ -1118,6 +1121,7 @@ namespace Lunil.IR.Lua54
         public Lunil.IR.Lua54.Lua54ChunkTarget Target { get => throw null; init { } }
         public byte MainUpvalueCount { get => throw null; init { } }
         public Lunil.IR.Lua54.Lua54Prototype MainPrototype { get => throw null; init { } }
+        public Lunil.Core.LuaChunkFormat SourceFormat { get => throw null; init { } }
         public Lua54Chunk(Lunil.IR.Lua54.Lua54ChunkTarget Target, byte MainUpvalueCount, Lunil.IR.Lua54.Lua54Prototype MainPrototype) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.IR.Lua54.Lua54Chunk? left, Lunil.IR.Lua54.Lua54Chunk? right) => throw null;
@@ -1377,11 +1381,14 @@ namespace Lunil.IR.Lua54
         Closure = 79,
         VarArg = 80,
         VarArgPrepare = 81,
-        ExtraArgument = 82
+        ExtraArgument = 82,
+        Lua55GetVarArg = 83,
+        Lua55ErrorIfNotNil = 84
     }
 
     public readonly struct Lua54OpcodeInfo : System.IEquatable<Lunil.IR.Lua54.Lua54OpcodeInfo>
     {
+        public const int PucOpcodeCount = 83;
         public Lunil.IR.Lua54.Lua54InstructionMode Mode { get => throw null; init { } }
         public bool SetsRegisterA { get => throw null; init { } }
         public bool IsTest { get => throw null; init { } }

@@ -21,6 +21,11 @@ public sealed class PucLua55DifferentialTests
         "local values = {10, 20, 30, key = 7}; return values[2], values.key, #values",
         "local x = 3; if x < 4 and x ~= 2 then x = x + 10 end; goto done; x = 0; ::done:: return x",
         "local function values(...) return ... end; local function forward(...) return values(...) end; return forward(7, 8, 9)",
+        "local function named(... values) values[2] = 40; values.n = 3; return values[1], ... end; return named(10, 20)",
+        "local function capture(... values) return function() return values.n, values[1], values[2] end end; local read = capture('a', 'b'); return read()",
+        "local function indexed(keys, ... values) return values[keys[1]], values[keys[2]], values.n end; return indexed({1, 'n'}, 11, 22)",
+        "local _ENV = {}; global value = 10; return value",
+        "local _ENV = {}; global function fact(n) if n == 0 then return 1 end return n * fact(n - 1) end; return fact(5)",
         BuildLongStringScript(),
         BuildSetListScript(),
         BuildLargeConstantScript(),
@@ -101,9 +106,6 @@ public sealed class PucLua55DifferentialTests
                     Lunil.IR.Lua55.Lua55CanonicalPrototypeWriter.Write(
                         compilation.Module!,
                         compilation.Module!.MainFunctionId));
-                Directory.CreateDirectory(Path.Combine("artifacts", "codex", "debug55"));
-                File.Copy(chunkPath, Path.Combine("artifacts", "codex", "debug55", $"case-{index}.luac"), true);
-
                 Assert.Equal(
                     RunOracle(executable, Scripts[index]),
                     RunOracleChunk(executable, chunkPath));

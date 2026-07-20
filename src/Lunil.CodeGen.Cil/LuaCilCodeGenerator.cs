@@ -447,11 +447,12 @@ internal static class LuaCilMethodPlanner
         LuaIrOpcode.SetTop or LuaIrOpcode.GetUpvalue or LuaIrOpcode.SetUpvalue or
         LuaIrOpcode.NewTable or LuaIrOpcode.GetTable or LuaIrOpcode.SetTable or
         LuaIrOpcode.SetList or
-        LuaIrOpcode.Closure or LuaIrOpcode.VarArg or
+        LuaIrOpcode.Closure or
         LuaIrOpcode.Call or LuaIrOpcode.TailCall or
         LuaIrOpcode.Unary or LuaIrOpcode.Binary or LuaIrOpcode.JumpIfFalse or
         LuaIrOpcode.JumpIfTrue or LuaIrOpcode.Return or LuaIrOpcode.NumericForPrepare or
         LuaIrOpcode.NumericForLoop or LuaIrOpcode.Close => true,
+        LuaIrOpcode.VarArg => instruction.C == 0,
         LuaIrOpcode.Jump => instruction.C < 0,
         _ => false,
     };

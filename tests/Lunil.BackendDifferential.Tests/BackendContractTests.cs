@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.BackendDifferential.Tests.Infrastructure;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -59,6 +60,35 @@ public sealed class BackendContractTests
         var modules = sources
             .Select(LuaBackendSession.Compile)
             .ToList();
+        modules.Add(LuaBackendSession.Compile(
+            "global initialized = 1; " +
+            "local function named(... values) return values.n, values[1], ... end; " +
+            "return named(2, 3)",
+            LuaLanguageVersion.Lua55));
+        // GETVARG is emitted by the official Lua 5.5 chunk adapter for direct vararg
+        // reads; source lowering intentionally keeps named varargs table-based.  Keep a
+        // verifier-valid carrier in this corpus so every canonical backend opcode remains
+        // represented without changing the source-language lowering contract.
+        modules.Add(new LuaIrModule
+        {
+            LanguageVersion = LuaLanguageVersion.Lua55,
+            MainFunctionId = 0,
+            Functions =
+            [
+                new LuaIrFunction
+                {
+                    Id = 0,
+                    Span = default,
+                    IsVarArg = true,
+                    RegisterCount = 3,
+                    Instructions =
+                    [
+                        new LuaIrInstruction(LuaIrOpcode.GetVarArg, a: 0, b: 1),
+                        new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 2),
+                    ],
+                },
+            ],
+        });
         var jumpIfTrue = RewriteFirstOpcode(
             LuaBackendSession.Compile(
                 "local value = true; if value then return 1 else return 2 end"),

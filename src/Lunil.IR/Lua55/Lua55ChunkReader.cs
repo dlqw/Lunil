@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Lunil.Core;
 using Lunil.IR.Lua54;
 
 namespace Lunil.IR.Lua55;
@@ -106,7 +107,10 @@ public static class Lua55ChunkReader
             }
 
             return Lua55RegisterLayoutAdapter.NormalizeToCanonical(
-                new Lua54Chunk(_target, mainUpvalueCount, main));
+                new Lua54Chunk(_target, mainUpvalueCount, main)
+                {
+                    SourceFormat = LuaChunkFormat.Lua55,
+                });
         }
 
         private Lua54Prototype ReadPrototype(Lua54String? parentSource, int depth)
@@ -500,9 +504,8 @@ public static class Lua55ChunkReader
                 Lua55Opcode.VarArg => Lua54Opcode.VarArg,
                 Lua55Opcode.VarArgPrepare => Lua54Opcode.VarArgPrepare,
                 Lua55Opcode.ExtraArgument => Lua54Opcode.ExtraArgument,
-                Lua55Opcode.GetVarArg => Lua54Opcode.GetTable,
-                Lua55Opcode.ErrorIfNotNil => throw new Lua55ChunkFormatException(
-                    "OP_ERRNNIL is not representable by the canonical runtime"),
+                Lua55Opcode.GetVarArg => Lua54Opcode.Lua55GetVarArg,
+                Lua55Opcode.ErrorIfNotNil => Lua54Opcode.Lua55ErrorIfNotNil,
                 _ => throw new Lua55ChunkFormatException(
                     $"unknown opcode {(int)instruction.Opcode}"),
             };
