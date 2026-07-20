@@ -3,6 +3,13 @@
 
 namespace Lunil.Core
 {
+    public enum LuaChunkFormat
+    {
+        None = 0,
+        Lua53 = 1,
+        Lua54 = 2
+    }
+
     public enum LuaLanguageVersion
     {
         Lua51 = 81,
@@ -16,8 +23,50 @@ namespace Lunil.Core
     {
         public const Lunil.Core.LuaLanguageVersion Default = 84;
         public static bool IsKnown(Lunil.Core.LuaLanguageVersion version) => throw null;
+        public static bool IsImplemented(Lunil.Core.LuaLanguageVersion version) => throw null;
         public static string GetDisplayName(Lunil.Core.LuaLanguageVersion version) => throw null;
         public static bool TryParse(string? value, out Lunil.Core.LuaLanguageVersion version) => throw null;
+    }
+
+    public static class LuaVersionFeatureTable
+    {
+        public static Lunil.Core.LuaVersionFeatures Get(Lunil.Core.LuaLanguageVersion version) => throw null;
+    }
+
+    public readonly struct LuaVersionFeatures : System.IEquatable<Lunil.Core.LuaVersionFeatures>
+    {
+        public bool IsImplemented { get => throw null; init { } }
+        public Lunil.Core.LuaChunkFormat ChunkFormat { get => throw null; init { } }
+        public bool SynchronousFinalizerErrors { get => throw null; init { } }
+        public bool SupportsGenerationalCollection { get => throw null; init { } }
+        public bool PreservesDeadThreadOpenUpvalues { get => throw null; init { } }
+        public bool CachesClosuresByUpvalues { get => throw null; init { } }
+        public bool HasWarnLibrary { get => throw null; init { } }
+        public bool HasCoroutineClose { get => throw null; init { } }
+        public LuaVersionFeatures(bool IsImplemented, Lunil.Core.LuaChunkFormat ChunkFormat, bool SynchronousFinalizerErrors, bool SupportsGenerationalCollection, bool PreservesDeadThreadOpenUpvalues, bool CachesClosuresByUpvalues, bool HasWarnLibrary, bool HasCoroutineClose) { }
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.Core.LuaVersionFeatures left, Lunil.Core.LuaVersionFeatures right) => throw null;
+        public static bool operator ==(Lunil.Core.LuaVersionFeatures left, Lunil.Core.LuaVersionFeatures right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.Core.LuaVersionFeatures other) => throw null;
+        public void Deconstruct(out bool IsImplemented, out Lunil.Core.LuaChunkFormat ChunkFormat, out bool SynchronousFinalizerErrors, out bool SupportsGenerationalCollection, out bool PreservesDeadThreadOpenUpvalues, out bool CachesClosuresByUpvalues, out bool HasWarnLibrary, out bool HasCoroutineClose) => throw null;
+    }
+
+    [System.AttributeUsage(System.AttributeTargets.Field, AllowMultiple = false)]
+    public sealed class LuaVersionProfileAttribute : System.Attribute
+    {
+        public Lunil.Core.LuaChunkFormat ChunkFormat { get => throw null; init { } }
+        public bool SynchronousFinalizerErrors { get => throw null; init { } }
+        public bool SupportsGenerationalCollection { get => throw null; init { } }
+        public bool PreservesDeadThreadOpenUpvalues { get => throw null; init { } }
+        public bool CachesClosuresByUpvalues { get => throw null; init { } }
+        public bool HasWarnLibrary { get => throw null; init { } }
+        public bool HasCoroutineClose { get => throw null; init { } }
     }
 }
 namespace Lunil.Core.Diagnostics

@@ -36,7 +36,7 @@
       "Assembly": "Lunil.Core",
       "Project": "src/Lunil.Core/Lunil.Core.csproj",
       "Baseline": "api/0.10.0/Lunil.Core.cs",
-      "Sha256": "7C00AB4923AB6C4A53F1BE90B0134C3B84F2834433D8A6ACF9D3BA1F6C0FE2C2"
+      "Sha256": "F0C0C5EAA70BC50AE5EFF7AF4368FCBFB2F18AEAB606E388C911F5AB35A8F5E5"
     },
     {
       "Assembly": "Lunil.EmmyLua",
