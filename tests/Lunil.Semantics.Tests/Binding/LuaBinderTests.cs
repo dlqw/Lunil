@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.Semantics.Binding;
 using Lunil.Syntax.Parsing;
@@ -161,6 +162,16 @@ public sealed class LuaBinderTests
     }
 
     [Fact]
+    public void Lua53AllowsSameLabelInNestedBlock()
+    {
+        var model = Bind(
+            "::L:: do ::L:: end",
+            new LuaBinderOptions { LanguageVersion = LuaLanguageVersion.Lua53 });
+
+        Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3006");
+    }
+
+    [Fact]
     public void ColonFunctionDeclaresImplicitSelfParameter()
     {
         var model = Bind("function object:method(a) return self, a end");
@@ -235,6 +246,15 @@ public sealed class LuaBinderTests
         Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3009");
     }
 
-    private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null) =>
-        LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source)), options);
+    private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null)
+    {
+        var syntax = LuaParser.Parse(
+            SourceText.FromUtf8(source),
+            lexerOptions: null,
+            parserOptions: new LuaParserOptions
+            {
+                LanguageVersion = options?.LanguageVersion ?? LuaLanguageVersions.Default,
+            });
+        return LuaBinder.Bind(syntax, options);
+    }
 }

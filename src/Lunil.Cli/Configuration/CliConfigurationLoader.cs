@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using Lunil.Cli.CommandLine;
+using Lunil.Core;
 
 namespace Lunil.Cli.Configuration;
 
@@ -9,6 +10,7 @@ internal static class CliConfigurationLoader
     private static readonly HashSet<string> KnownProperties = new(StringComparer.Ordinal)
     {
         "profile",
+        "luaVersion",
         "execution",
         "diagnosticFormat",
         "buildTarget",
@@ -157,6 +159,10 @@ internal static class CliConfigurationLoader
             return new CliConfiguration
             {
                 Profile = ReadString(document.RootElement, "profile", CliParser.ParseProfile),
+                LanguageVersion = ReadString(
+                    document.RootElement,
+                    "luaVersion",
+                    CliParser.ParseLanguageVersion),
                 ExecutionBackend = ReadString(
                     document.RootElement,
                     "execution",
@@ -200,6 +206,7 @@ internal static class CliConfigurationLoader
         Func<string, string?> getEnvironmentVariable)
     {
         var profile = Get("LUNIL_PROFILE");
+        var languageVersion = Get("LUNIL_LUA_VERSION");
         var execution = Get("LUNIL_EXECUTION");
         var diagnostics = Get("LUNIL_DIAGNOSTIC_FORMAT");
         var buildTarget = Get("LUNIL_BUILD_TARGET");
@@ -217,6 +224,9 @@ internal static class CliConfigurationLoader
         return configuration with
         {
             Profile = profile is null ? configuration.Profile : CliParser.ParseProfile(profile),
+            LanguageVersion = languageVersion is null
+                ? configuration.LanguageVersion
+                : CliParser.ParseLanguageVersion(languageVersion),
             ExecutionBackend = execution is null
                 ? configuration.ExecutionBackend
                 : CliParser.ParseExecutionBackend(execution),

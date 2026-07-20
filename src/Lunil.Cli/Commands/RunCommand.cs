@@ -1,5 +1,6 @@
 using Lunil.Cli.Diagnostics;
 using Lunil.Core.Diagnostics;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -26,8 +27,8 @@ internal static class RunCommand
                 return await FinishExecutionAsync(context, input.DisplayPath, result)
                     .ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is Lua54ChunkFormatException or
-                InvalidDataException or ArgumentException)
+            catch (Exception exception) when (exception is Lua53ChunkFormatException or
+                Lua54ChunkFormatException or InvalidDataException or ArgumentException)
             {
                 await WriteProblemAsync(
                     context,

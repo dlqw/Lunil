@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 using Lunil.Runtime;
@@ -25,12 +26,35 @@ public sealed partial class LuaHost : IDisposable
 
     public LuaHost(LuaHostOptions? options = null)
     {
-        Options = options ?? LuaHostOptions.Default;
-        ArgumentNullException.ThrowIfNull(Options.Compiler);
-        ArgumentNullException.ThrowIfNull(Options.State);
-        ArgumentNullException.ThrowIfNull(Options.Execution);
-        ArgumentNullException.ThrowIfNull(Options.Jit);
-        ArgumentNullException.ThrowIfNull(Options.Workspace);
+        var configured = options ?? LuaHostOptions.Default;
+        ArgumentNullException.ThrowIfNull(configured.Compiler);
+        ArgumentNullException.ThrowIfNull(configured.State);
+        ArgumentNullException.ThrowIfNull(configured.Execution);
+        ArgumentNullException.ThrowIfNull(configured.Jit);
+        ArgumentNullException.ThrowIfNull(configured.Workspace);
+        if (!LuaLanguageVersions.IsKnown(configured.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                configured.LanguageVersion,
+                "The host language version is invalid.");
+        }
+
+        Options = configured with
+        {
+            Compiler = configured.Compiler with
+            {
+                LanguageVersion = configured.LanguageVersion,
+            },
+            State = configured.State with
+            {
+                LanguageVersion = configured.LanguageVersion,
+            },
+            Workspace = configured.Workspace with
+            {
+                LanguageVersion = configured.LanguageVersion,
+            },
+        };
         if (!Enum.IsDefined(Options.Profile))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The host profile is invalid.");

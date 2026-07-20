@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.Syntax.Lexing;
@@ -11,21 +12,49 @@ public static class LuaParser
     public static LuaParseResult Parse(
         SourceText source,
         LuaLexerOptions? lexerOptions = null,
-        LuaParserOptions? parserOptions = null) =>
-        Parse(LuaLexer.Lex(source, lexerOptions), parserOptions);
+        LuaParserOptions? parserOptions = null)
+    {
+        parserOptions ??= LuaParserOptions.Default with
+        {
+            LanguageVersion = lexerOptions?.LanguageVersion ?? LuaLanguageVersions.Default,
+        };
+        lexerOptions ??= LuaLexerOptions.Default with
+        {
+            LanguageVersion = parserOptions.LanguageVersion,
+        };
+        return Parse(LuaLexer.Lex(source, lexerOptions), parserOptions);
+    }
 
     public static LuaParseResult Parse(
         LuaLexResult lexResult,
         LuaParserOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(lexResult);
-        options ??= LuaParserOptions.Default;
+        options ??= LuaParserOptions.Default with
+        {
+            LanguageVersion = lexResult.LanguageVersion,
+        };
         ValidateOptions(options);
+        if (options.LanguageVersion != lexResult.LanguageVersion)
+        {
+            throw new ArgumentException(
+                "The lexer and parser language versions must match.",
+                nameof(options));
+        }
+
         return new Implementation(lexResult, options).Parse();
     }
 
     private static void ValidateOptions(LuaParserOptions options)
     {
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The parser language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumRecursionDepth);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumNodeCount);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
@@ -60,7 +89,10 @@ public static class LuaParser
                 Match(LuaTokenKind.EndOfFile),
             };
             var root = CreateNode(LuaSyntaxKind.CompilationUnit, children, 0);
-            return new LuaParseResult(_lexResult.Source, root, _diagnostics.ToImmutable());
+            return new LuaParseResult(_lexResult.Source, root, _diagnostics.ToImmutable())
+            {
+                LanguageVersion = _options.LanguageVersion,
+            };
         }
 
         private LuaSyntaxNode ParseBlock(LuaTokenKind terminator) =>
@@ -402,9 +434,17 @@ public static class LuaParser
 
             if (Current.Kind == LuaTokenKind.LessThan)
             {
+                var attributeStart = Current.Span.Start;
                 children.Add(Consume());
                 children.Add(Match(LuaTokenKind.Identifier));
                 children.Add(Match(LuaTokenKind.GreaterThan));
+                if (_options.LanguageVersion != LuaLanguageVersion.Lua54)
+                {
+                    AddDiagnostic(
+                        "LUA2010",
+                        TextSpan.FromBounds(attributeStart, Current.Span.Start),
+                        "Local attributes are only available in Lua 5.4.");
+                }
             }
 
             return CreateNode(LuaSyntaxKind.AttributedName, children);

@@ -1,4 +1,5 @@
 using Lunil.Analysis;
+using Lunil.Core;
 using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
 using Lunil.Semantics.Binding;
@@ -11,6 +12,12 @@ namespace Lunil.Compiler;
 public sealed record LuaCompilerOptions
 {
     public static LuaCompilerOptions Default { get; } = new();
+
+    /// <summary>
+    /// Gets the authoritative language contract for the complete compiler pipeline. Nested lexer,
+    /// parser, and binder limits are preserved while their version is aligned to this value.
+    /// </summary>
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public LuaLexerOptions Lexer { get; init; } = LuaLexerOptions.Default;
 

@@ -21,6 +21,7 @@ public sealed class LuaThread : LuaGcObject
     private readonly List<LuaFrame> _retiredFrames = [];
     private readonly Stack<LuaFrame> _framePool = [];
     private readonly SortedList<int, LuaUpvalue> _openUpvalues = [];
+    private bool _deadOpenUpvaluesRemarked;
     private LuaValue _debugHook;
     private LuaDebugHookMask _debugHookMask;
     private bool _isRunningDebugHook;
@@ -120,6 +121,23 @@ public sealed class LuaThread : LuaGcObject
     internal int RetiredFrameCount => _retiredFrames.Count;
 
     internal int PooledFrameCount => _framePool.Count;
+
+    internal void RemarkDeadOpenUpvalueValues(LuaGcVisitor visitor)
+    {
+        if (_deadOpenUpvaluesRemarked)
+        {
+            return;
+        }
+
+        _deadOpenUpvaluesRemarked = true;
+        foreach (var upvalue in _openUpvalues.Values)
+        {
+            if (upvalue.IsOpen)
+            {
+                visitor.Visit(upvalue.Value);
+            }
+        }
+    }
 
     internal LuaUnwindState? UnwindState { get; set; }
 

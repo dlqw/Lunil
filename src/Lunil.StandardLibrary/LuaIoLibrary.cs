@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -583,7 +584,7 @@ internal static class LuaIoLibrary
         captures[1] = LuaValue.FromBoolean(autoClose);
         formats.CopyTo(captures.AsSpan(2));
         var iterator = state.CreateNativeClosure(LinesIteratorDescriptor, captures);
-        return autoClose
+        return autoClose && state.LanguageVersion == LuaLanguageVersion.Lua54
             ? [LuaValue.FromFunction(iterator), LuaValue.Nil, LuaValue.Nil, file]
             : [LuaValue.FromFunction(iterator)];
     }

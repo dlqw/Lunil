@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 
 namespace Lunil.IR.Canonical;
 
@@ -35,6 +36,14 @@ public static class LuaIrVerifier
         if (module.FormatVersion != LuaIrModule.CurrentFormatVersion)
         {
             errors.Add(new(-1, -1, $"Unsupported canonical IR version {module.FormatVersion}."));
+        }
+
+        if (!LuaLanguageVersions.IsKnown(module.LanguageVersion))
+        {
+            errors.Add(new(
+                -1,
+                -1,
+                $"Unsupported Lua language version identity 0x{(byte)module.LanguageVersion:X2}."));
         }
 
         if (module.Functions.Length > options.MaximumFunctions)

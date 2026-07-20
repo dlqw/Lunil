@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Values;
 
@@ -111,7 +112,22 @@ public static class LuaRuntimeOperations
             LuaValueOperations.TryToNumber(operand, out var numericOperand))
         {
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Unary(operation, numericOperand));
+                LuaValueOperations.Unary(
+                    operation,
+                    NormalizeArithmeticOperand(state, operand, numericOperand)));
+        }
+
+        if (operation == LuaIrUnaryOperator.BitwiseNot &&
+            state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+            LuaValueOperations.TryToNumber(operand, out var numericBitwiseOperand))
+        {
+            if (!numericBitwiseOperand.TryGetInteger(out var integerOperand))
+            {
+                throw new LuaRuntimeException("number has no integer representation");
+            }
+
+            return LuaOperationResolution.Immediate(
+                LuaValueOperations.Unary(operation, LuaValue.FromInteger(integerOperand)));
         }
 
         if (operation == LuaIrUnaryOperator.BitwiseNot && IsNumber(operand) &&
@@ -178,19 +194,40 @@ public static class LuaRuntimeOperations
             LuaValueOperations.TryToNumber(right, out var numericRight))
         {
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Binary(state, operation, numericLeft, numericRight));
+                LuaValueOperations.Binary(
+                    state,
+                    operation,
+                    NormalizeArithmeticOperand(state, left, numericLeft),
+                    NormalizeArithmeticOperand(state, right, numericRight)));
         }
 
-        if (IsBitwise(operation) && IsNumber(left) && IsNumber(right))
+        if (IsBitwise(operation) && state.LanguageVersion == LuaLanguageVersion.Lua53)
+        {
+            var leftNumber = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise);
+            var rightNumber = LuaValueOperations.TryToNumber(right, out var numericRightBitwise);
+            if (leftNumber && rightNumber)
+            {
+                if (!numericLeftBitwise.TryGetInteger(out var leftValue) ||
+                    !numericRightBitwise.TryGetInteger(out var rightValue))
+                {
+                    throw new LuaRuntimeException("number has no integer representation");
+                }
+
+                return LuaOperationResolution.Immediate(
+                    LuaValueOperations.Binary(
+                        state,
+                        operation,
+                        LuaValue.FromInteger(leftValue),
+                        LuaValue.FromInteger(rightValue)));
+            }
+        }
+
+        if (IsBitwise(operation) && state.LanguageVersion != LuaLanguageVersion.Lua53 &&
+            IsNumber(left) && IsNumber(right))
         {
             if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
             {
-                var positiveInfinity =
-                    left.Kind == LuaValueKind.Float && double.IsPositiveInfinity(left.AsFloat()) ||
-                    right.Kind == LuaValueKind.Float && double.IsPositiveInfinity(right.AsFloat());
-                throw new LuaRuntimeException(positiveInfinity
-                    ? "number (field 'huge') has no integer representation"
-                    : "number has no integer representation");
+                throw new LuaRuntimeException("number has no integer representation");
             }
 
             return LuaOperationResolution.Immediate(
@@ -404,6 +441,16 @@ public static class LuaRuntimeOperations
                 left.Kind == LuaValueKind.String && right.Kind == LuaValueKind.String,
             _ => false,
         };
+
+    private static LuaValue NormalizeArithmeticOperand(
+        LuaState state,
+        LuaValue original,
+        LuaValue numeric) =>
+        state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+        original.Kind == LuaValueKind.String &&
+        numeric.Kind == LuaValueKind.Integer
+            ? LuaValue.FromFloat(numeric.AsInteger())
+            : numeric;
 
     private static bool IsNumber(LuaValue value) =>
         value.Kind is LuaValueKind.Integer or LuaValueKind.Float;

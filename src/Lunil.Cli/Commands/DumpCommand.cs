@@ -5,9 +5,11 @@ using Lunil.Cli.CommandLine;
 using Lunil.Cli.Diagnostics;
 using Lunil.Cli.IO;
 using Lunil.Compiler;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 using Lunil.Syntax.Lexing;
 using Lunil.Syntax.Parsing;
@@ -26,17 +28,38 @@ internal static class DumpCommand
             context.CancellationToken).ConfigureAwait(false);
         LuaCompilationResult? compilation = null;
         LuaIrModule? module;
-        Lua54Chunk? chunk = null;
+        object? chunk = null;
         var hasDiagnosticsErrors = false;
         if (input.IsBinaryChunk)
         {
             try
             {
-                chunk = Lua54ChunkReader.Read(input.Bytes);
-                module = Lua54PrototypeConverter.Convert(chunk);
+                var features = LuaVersionFeatureTable.Get(context.Options.LanguageVersion);
+                if (!features.IsImplemented)
+                {
+                    throw new NotSupportedException(
+                        $"The {LuaLanguageVersions.GetDisplayName(context.Options.LanguageVersion)} " +
+                        "binary adapter is not compiled into this build.");
+                }
+
+                switch (features.ChunkFormat)
+                {
+                    case LuaChunkFormat.Lua53:
+                        chunk = Lua53ChunkReader.Read(input.Bytes);
+                        module = Lua53PrototypeConverter.Convert((Lua53Chunk)chunk);
+                        break;
+                    case LuaChunkFormat.Lua54:
+                        chunk = Lua54ChunkReader.Read(input.Bytes);
+                        module = Lua54PrototypeConverter.Convert((Lua54Chunk)chunk);
+                        break;
+                    default:
+                        throw new NotSupportedException(
+                            "The selected binary adapter does not declare a chunk format.");
+                }
             }
-            catch (Exception exception) when (exception is Lua54ChunkFormatException or
-                InvalidDataException or ArgumentException)
+            catch (Exception exception) when (exception is Lua53ChunkFormatException or
+                Lua54ChunkFormatException or NotSupportedException or InvalidDataException or
+                ArgumentException)
             {
                 await WriteProblemAsync(context, input.DisplayPath, "LUA8001", exception.Message)
                     .ConfigureAwait(false);
@@ -91,7 +114,17 @@ internal static class DumpCommand
 
         if (context.Options.DumpKind == CliDumpKind.Chunk && chunk is null)
         {
-            chunk = Lua54CanonicalPrototypeWriter.CreateChunk(module!, module!.MainFunctionId);
+            chunk = LuaVersionFeatureTable.Get(context.Options.LanguageVersion).ChunkFormat switch
+            {
+                LuaChunkFormat.Lua53 => Lua53CanonicalPrototypeWriter.CreateChunk(
+                    module!,
+                    module!.MainFunctionId),
+                LuaChunkFormat.Lua54 => Lua54CanonicalPrototypeWriter.CreateChunk(
+                    module!,
+                    module!.MainFunctionId),
+                _ => throw new CliInputException(
+                    "The selected language adapter does not declare a chunk format."),
+            };
         }
 
         var payload = context.Options.DumpFormat == CliDumpFormat.Json
@@ -105,7 +138,7 @@ internal static class DumpCommand
         CliInputDocument input,
         LuaCompilationResult? compilation,
         LuaIrModule? module,
-        Lua54Chunk? chunk,
+        object? chunk,
         CliDumpKind kind)
     {
         var output = new StringBuilder();
@@ -163,7 +196,15 @@ internal static class DumpCommand
                 WriteIrText(module!, output);
                 break;
             case CliDumpKind.Chunk:
-                WriteChunkText(chunk!.MainPrototype, output, 0, "main");
+                if (chunk is Lua53Chunk lua53Chunk)
+                {
+                    WriteChunkText(lua53Chunk.MainPrototype, output, 0, "main");
+                }
+                else
+                {
+                    WriteChunkText(((Lua54Chunk)chunk!).MainPrototype, output, 0, "main");
+                }
+
                 break;
             default:
                 throw new InvalidOperationException("Unknown dump kind.");
@@ -176,7 +217,7 @@ internal static class DumpCommand
         CliInputDocument input,
         LuaCompilationResult? compilation,
         LuaIrModule? module,
-        Lua54Chunk? chunk,
+        object? chunk,
         CliDumpKind kind)
     {
         using var output = new MemoryStream();
@@ -221,7 +262,15 @@ internal static class DumpCommand
                     break;
                 case CliDumpKind.Chunk:
                     writer.WritePropertyName("prototype");
-                    WriteChunkJson(writer, chunk!.MainPrototype);
+                    if (chunk is Lua53Chunk lua53Chunk)
+                    {
+                        WriteChunkJson(writer, lua53Chunk.MainPrototype);
+                    }
+                    else
+                    {
+                        WriteChunkJson(writer, ((Lua54Chunk)chunk!).MainPrototype);
+                    }
+
                     break;
                 default:
                     throw new InvalidOperationException("Unknown dump kind.");
@@ -413,6 +462,61 @@ internal static class DumpCommand
         {
             WriteChunkText(prototype.NestedPrototypes[index], output, depth + 1, name + "." + index);
         }
+    }
+
+    private static void WriteChunkText(
+        Lua53Prototype prototype,
+        StringBuilder output,
+        int depth,
+        string name)
+    {
+        output.Append(' ', depth * 2).Append("prototype ").Append(name)
+            .Append(" params=").Append(prototype.ParameterCount)
+            .Append(" stack=").Append(prototype.MaximumStackSize)
+            .Append(" code=").AppendLine(prototype.Code.Length.ToString(CultureInfo.InvariantCulture));
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            var instruction = prototype.Code[pc];
+            output.Append(' ', depth * 2 + 2).Append(pc.ToString("D4", CultureInfo.InvariantCulture)).Append(' ')
+                .Append(instruction.Opcode).Append(" raw=0x")
+                .AppendLine(instruction.RawValue.ToString("x8", CultureInfo.InvariantCulture));
+        }
+
+        for (var index = 0; index < prototype.NestedPrototypes.Length; index++)
+        {
+            WriteChunkText(prototype.NestedPrototypes[index], output, depth + 1, name + "." + index);
+        }
+    }
+
+    private static void WriteChunkJson(Utf8JsonWriter writer, Lua53Prototype prototype)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("parameterCount", prototype.ParameterCount);
+        writer.WriteNumber("varargFlags", prototype.VarArgFlags);
+        writer.WriteNumber("maximumStackSize", prototype.MaximumStackSize);
+        writer.WriteStartArray("code");
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            var instruction = prototype.Code[pc];
+            writer.WriteStartObject();
+            writer.WriteNumber("pc", pc);
+            writer.WriteString("opcode", instruction.Opcode.ToString());
+            writer.WriteString("raw", $"0x{instruction.RawValue:x8}");
+            writer.WriteNumber("a", instruction.A);
+            writer.WriteNumber("b", instruction.B);
+            writer.WriteNumber("c", instruction.C);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteStartArray("prototypes");
+        foreach (var nested in prototype.NestedPrototypes)
+        {
+            WriteChunkJson(writer, nested);
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 
     private static void WriteChunkJson(Utf8JsonWriter writer, Lua54Prototype prototype)

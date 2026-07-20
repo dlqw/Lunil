@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text;
 using Lunil.Analysis;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.EmmyLua;
@@ -27,6 +28,13 @@ public sealed class LuaCompiler
         ArgumentNullException.ThrowIfNull(Options.Parser);
         ArgumentNullException.ThrowIfNull(Options.Binder);
         ArgumentNullException.ThrowIfNull(Options.Verifier);
+        if (!LuaLanguageVersions.IsKnown(Options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                Options.LanguageVersion,
+                "The compiler language version is invalid.");
+        }
     }
 
     public LuaCompilerOptions Options { get; }
@@ -63,16 +71,25 @@ public sealed class LuaCompiler
         ArgumentNullException.ThrowIfNull(analysisEnvironment);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var lexing = LuaLexer.Lex(source.Text, Options.Lexer);
+        var lexing = LuaLexer.Lex(source.Text, Options.Lexer with
+        {
+            LanguageVersion = Options.LanguageVersion,
+        });
         cancellationToken.ThrowIfCancellationRequested();
 
         var annotations = LuaAnnotationParser.Parse(lexing, Options.Annotations);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var syntax = LuaParser.Parse(lexing, Options.Parser);
+        var syntax = LuaParser.Parse(lexing, Options.Parser with
+        {
+            LanguageVersion = Options.LanguageVersion,
+        });
         cancellationToken.ThrowIfCancellationRequested();
 
-        var semantics = LuaBinder.Bind(syntax, Options.Binder);
+        var semantics = LuaBinder.Bind(syntax, Options.Binder with
+        {
+            LanguageVersion = Options.LanguageVersion,
+        });
         cancellationToken.ThrowIfCancellationRequested();
 
         var analysis = LuaTypeAnalyzer.Analyze(
@@ -87,6 +104,19 @@ public sealed class LuaCompiler
         cancellationToken.ThrowIfCancellationRequested();
 
         var diagnostics = ImmutableArray.CreateBuilder<LuaCompilationDiagnostic>();
+        if (!LuaVersionFeatureTable.Get(Options.LanguageVersion).IsImplemented)
+        {
+            diagnostics.Add(new LuaCompilationDiagnostic(
+                LuaCompilationPhase.Configuration,
+                new Diagnostic(
+                    "LUA0001",
+                    DiagnosticSeverity.Error,
+                    default,
+                    $"{LuaLanguageVersions.GetDisplayName(Options.LanguageVersion)} source " +
+                    "semantics are not implemented yet; Lunil will not apply Lua 5.4 semantics " +
+                    "silently.")));
+        }
+
         var observedDiagnostics = new HashSet<Diagnostic>();
         AddDiagnostics(
             lexing.Diagnostics,

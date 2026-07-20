@@ -1,5 +1,7 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
@@ -23,8 +25,19 @@ public sealed class LuaState
     public LuaState(LuaStateOptions? options = null)
     {
         options ??= LuaStateOptions.Default;
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The state language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
+        LanguageVersion = options.LanguageVersion;
         Heap = new LuaHeap(options.Heap);
+        Heap.PreservesDeadThreadOpenUpvalues =
+            LuaVersionFeatureTable.Get(LanguageVersion).PreservesDeadThreadOpenUpvalues;
         Strings = new LuaStringPool(Heap);
         MemoryErrorString = Strings.GetOrCreate("not enough memory"u8);
         Globals = new LuaTable(Heap);
@@ -35,6 +48,8 @@ public sealed class LuaState
         Heap.AddPermanentRoot(Registry);
         Heap.AddPermanentRoot(MainThread);
     }
+
+    public LuaLanguageVersion LanguageVersion { get; }
 
     public LuaHeap Heap { get; }
 
@@ -232,6 +247,18 @@ public sealed class LuaState
     public LuaClosure CreateMainClosure(LuaIrModule module)
     {
         ArgumentNullException.ThrowIfNull(module);
+        if (!LuaLanguageVersions.IsKnown(module.LanguageVersion))
+        {
+            throw new LuaRuntimeException("Cannot load a module with an invalid Lua language version.");
+        }
+
+        if (module.LanguageVersion != LanguageVersion)
+        {
+            throw new LuaRuntimeException(
+                $"A {LuaLanguageVersions.GetDisplayName(LanguageVersion)} state cannot load a " +
+                $"{LuaLanguageVersions.GetDisplayName(module.LanguageVersion)} module.");
+        }
+
         var function = module.Functions[module.MainFunctionId];
         var upvalues = new LuaUpvalue[function.Upvalues.Length];
         for (var index = 0; index < upvalues.Length; index++)
@@ -250,11 +277,46 @@ public sealed class LuaState
 
     public LuaClosure LoadBinaryChunk(
         ReadOnlySpan<byte> binaryChunk,
-        Lua54ChunkReaderOptions? options = null) =>
-        CreateMainClosure(Lua54PrototypeConverter.Convert(binaryChunk, options));
+        Lua54ChunkReaderOptions? options = null)
+    {
+        var features = LuaVersionFeatureTable.Get(LanguageVersion);
+        if (!features.IsImplemented)
+        {
+            throw new NotSupportedException(
+                $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
+                "is not compiled into this build.");
+        }
+
+        return CreateMainClosure(features.ChunkFormat switch
+        {
+            LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(
+                binaryChunk,
+                TranslateReaderOptions(options)),
+            LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(binaryChunk, options),
+            _ => throw new NotSupportedException(
+                $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
+                "does not declare a chunk format."),
+        });
+    }
 
     public LuaClosure LoadBinaryChunk(Lua54Chunk chunk) =>
         CreateMainClosure(Lua54PrototypeConverter.Convert(chunk));
+
+    private static Lua53ChunkReaderOptions? TranslateReaderOptions(
+        Lua54ChunkReaderOptions? options) => options is null
+            ? null
+            : new Lua53ChunkReaderOptions
+            {
+                MaximumChunkBytes = options.MaximumChunkBytes,
+                MaximumPrototypeDepth = options.MaximumPrototypeDepth,
+                MaximumPrototypeCount = options.MaximumPrototypeCount,
+                MaximumInstructionCount = options.MaximumInstructionCount,
+                MaximumConstantCount = options.MaximumConstantCount,
+                MaximumUpvalueCount = options.MaximumUpvalueCount,
+                MaximumStringBytes = options.MaximumStringBytes,
+                MaximumDebugEntryCount = options.MaximumDebugEntryCount,
+                AllowTrailingData = options.AllowTrailingData,
+            };
 
     internal void AttachLoadedModuleCache(LuaTable loaded)
     {

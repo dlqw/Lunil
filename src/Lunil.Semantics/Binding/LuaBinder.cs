@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.Syntax.Lexing;
@@ -18,13 +19,31 @@ public static class LuaBinder
         LuaBinderOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(syntax);
-        options ??= LuaBinderOptions.Default;
+        options ??= LuaBinderOptions.Default with
+        {
+            LanguageVersion = syntax.LanguageVersion,
+        };
         ValidateOptions(options);
+        if (options.LanguageVersion != syntax.LanguageVersion)
+        {
+            throw new ArgumentException(
+                "The parser and binder language versions must match.",
+                nameof(options));
+        }
+
         return new Implementation(syntax, options).Bind();
     }
 
     private static void ValidateOptions(LuaBinderOptions options)
     {
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.LanguageVersion,
+                "The binder language version is invalid.");
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumActiveLocalsPerFunction);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumUpvaluesPerFunction);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
@@ -629,17 +648,15 @@ public static class LuaBinder
             }
 
             var name = GetName(token);
-            for (var scope = _currentScope; scope is not null; scope = scope.Parent)
+            var existing = FindDuplicateLabel(name);
+            if (existing is not null)
             {
-                if (scope.Labels.TryGetValue(name, out var existing))
-                {
-                    var originalLine = _syntax.Source.GetLocation(existing.Span.Start).Line + 1;
-                    AddDiagnostic(
-                        "LUA3006",
-                        token.Span,
-                        $"label '{name}' already defined on line {originalLine}");
-                    return;
-                }
+                var originalLine = _syntax.Source.GetLocation(existing.Span.Start).Line + 1;
+                AddDiagnostic(
+                    "LUA3006",
+                    token.Span,
+                    $"label '{name}' already defined on line {originalLine}");
+                return;
             }
 
             var active = terminalLabel
@@ -647,6 +664,29 @@ public static class LuaBinder
                 : _activeSymbols.ToImmutableArray();
             var label = new LabelRecord(name, token.Span, _currentScope, active);
             _currentScope.Labels.Add(name, label);
+        }
+
+        private LabelRecord? FindDuplicateLabel(string name)
+        {
+            if (_currentScope.Labels.TryGetValue(name, out var current))
+            {
+                return current;
+            }
+
+            if (_options.LanguageVersion != LuaLanguageVersion.Lua54)
+            {
+                return null;
+            }
+
+            for (var scope = _currentScope.Parent; scope is not null; scope = scope.Parent)
+            {
+                if (scope.Labels.TryGetValue(name, out var inherited))
+                {
+                    return inherited;
+                }
+            }
+
+            return null;
         }
 
         private void BindGoto(LuaSyntaxNode statement)

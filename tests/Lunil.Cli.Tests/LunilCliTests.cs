@@ -17,6 +17,7 @@ public sealed class LunilCliTests
         Assert.Equal(0, help.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--execution <backend>", help.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("--lua-version <version>", help.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
         var informationalVersion = typeof(LunilCli).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
@@ -113,6 +114,18 @@ public sealed class LunilCliTests
         Assert.Contains("auto", result.StandardError, StringComparison.Ordinal);
         Assert.Contains("interpreter", result.StandardError, StringComparison.Ordinal);
         Assert.Contains("jit", result.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Lua53VersionRunsWithoutLua54Fallback()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("version.lua", "print(_VERSION, 5 // 2)");
+
+        var result = await fixture.RunAsync("run", script, "--lua-version", "5.3");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("Lua 5.3\t2\n", result.StandardOutput);
     }
 
     [Fact]
@@ -404,6 +417,24 @@ public sealed class LunilCliTests
     }
 
     [Fact]
+    public async Task LuaVersionConfigurationUsesEnvironmentAndCliPrecedence()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("version.lua", "return 1");
+        File.WriteAllText(
+            Path.Combine(fixture.Root, "lunil.json"),
+            "{ \"luaVersion\": \"5.3\" }");
+        fixture.Environment["LUNIL_LUA_VERSION"] = "5.4";
+
+        var fromEnvironment = await fixture.RunAsync("run", script);
+        var fromCli = await fixture.RunAsync("run", script, "--lua-version", "5.1");
+
+        Assert.Equal(0, fromEnvironment.ExitCode);
+        Assert.Equal(1, fromCli.ExitCode);
+        Assert.Contains("LUA0001", fromCli.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InvalidConfigurationIsAUsageError()
     {
         using var fixture = new CliFixture();
@@ -429,6 +460,49 @@ public sealed class LunilCliTests
         Assert.True(File.Exists(output));
         Assert.Equal(0, run.ExitCode);
         Assert.Equal("chunk-ok\n", run.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Lua53BuildProducesLua53ChunkThatRunsWithLua53Selection()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("app53.lua", "print(_VERSION, 6 * 7)");
+        var output = Path.Combine(fixture.Root, "app53.luac");
+
+        var build = await fixture.RunAsync(
+            "build",
+            script,
+            "-o",
+            output,
+            "--lua-version",
+            "5.3");
+        var run = await fixture.RunAsync(
+            "run",
+            output,
+            "--lua-version",
+            "5.3");
+
+        Assert.Equal(0, build.ExitCode);
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal("Lua 5.3\t42\n", run.StandardOutput);
+    }
+
+    [Fact]
+    public async Task Lua53DumpChunkUsesLua53OpcodeAdapter()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("dump53.lua", "return 42");
+
+        var result = await fixture.RunAsync(
+            "dump",
+            script,
+            "--kind",
+            "chunk",
+            "--lua-version",
+            "5.3");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("LoadConstant", result.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]

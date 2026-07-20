@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.Syntax.Lexing;
 
@@ -32,6 +33,24 @@ public sealed class LuaStringLiteralDecoderTests
         Assert.Empty(result.Lex.Diagnostics);
         byte[] expected = [0xfd, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf];
         Assert.Equal(expected, result.Value.Bytes.ToArray());
+    }
+
+    [Fact]
+    public void Lua53RejectsCodePointsAboveUnicodeRangeWhileLua54RetainsExtendedRange()
+    {
+        var source = SourceText.FromUtf8("'\\u{110000}'");
+
+        var lua53 = LuaLexer.Lex(source, new LuaLexerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+        });
+        var lua54 = LuaLexer.Lex(source, new LuaLexerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua54,
+        });
+
+        Assert.Contains(lua53.Diagnostics, diagnostic => diagnostic.Code == "LUA1014");
+        Assert.DoesNotContain(lua54.Diagnostics, diagnostic => diagnostic.Code == "LUA1014");
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Syntax.Parsing;
 
@@ -9,4 +10,7 @@ public sealed record LuaSemanticModel(
     ImmutableArray<Diagnostic> Diagnostics,
     ImmutableArray<LuaSymbol> Symbols,
     ImmutableArray<LuaNameReference> References,
-    ImmutableArray<LuaFunctionInfo> Functions);
+    ImmutableArray<LuaFunctionInfo> Functions)
+{
+    public LuaLanguageVersion LanguageVersion => Syntax.LanguageVersion;
+}

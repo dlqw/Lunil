@@ -12,6 +12,7 @@ public enum LuaCompilationPhase : byte
     Analysis,
     Lowering,
     Verification,
+    Configuration,
 }
 
 /// <summary>A compiler diagnostic attributed to the public pipeline phase that produced it.</summary>

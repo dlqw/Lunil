@@ -1,9 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <ProjectReference Include="..\Lunil.Build\LuaVersionGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!--
+      Version adapters are compile-time capabilities. The generated profile table still
+      dispatches at runtime, so one Lunil binary can host both adapters; adding a future
+      adapter only requires enabling its symbol and adding its profile metadata.
+    -->
+    <LunilLua53AdapterEnabled Condition="'$(LunilLua53AdapterEnabled)' == ''">true</LunilLua53AdapterEnabled>
+    <LunilLua54AdapterEnabled Condition="'$(LunilLua54AdapterEnabled)' == ''">true</LunilLua54AdapterEnabled>
+    <DefineConstants Condition="'$(LunilLua53AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA53_ADAPTER</DefineConstants>
+    <DefineConstants Condition="'$(LunilLua54AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA54_ADAPTER</DefineConstants>
   </PropertyGroup>
 
 </Project>

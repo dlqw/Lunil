@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 
 namespace Lunil.Cli.CommandLine;
 
@@ -18,6 +19,7 @@ internal static class CliParser
         var command = CliCommand.None;
         var diagnosticFormat = configuration.DiagnosticFormat ?? CliDiagnosticFormat.Text;
         var profile = configuration.Profile ?? CliProfile.Trusted;
+        var languageVersion = configuration.LanguageVersion ?? LuaLanguageVersions.Default;
         var executionBackend = configuration.ExecutionBackend ?? CliExecutionBackend.Auto;
         var buildTarget = configuration.BuildTarget ?? CliBuildTarget.Chunk;
         var dumpKind = configuration.DumpKind ?? CliDumpKind.Summary;
@@ -111,6 +113,10 @@ internal static class CliParser
                     break;
                 case "--profile":
                     profile = ParseProfile(ReadValue(arguments, ref index, name, inlineValue));
+                    break;
+                case "--lua-version":
+                    languageVersion = ParseLanguageVersion(
+                        ReadValue(arguments, ref index, name, inlineValue));
                     break;
                 case "--execution":
                     executionBackend = ParseExecutionBackend(
@@ -223,6 +229,7 @@ internal static class CliParser
             PathPatterns = pathPatterns.ToImmutable(),
             DiagnosticFormat = diagnosticFormat,
             Profile = profile,
+            LanguageVersion = languageVersion,
             ExecutionBackend = executionBackend,
             BuildTarget = buildTarget,
             DumpKind = dumpKind,
@@ -369,6 +376,16 @@ internal static class CliParser
         "deterministic" => CliProfile.Deterministic,
         _ => throw new CliUsageException("Profile must be 'trusted', 'sandbox', or 'deterministic'."),
     };
+
+    internal static LuaLanguageVersion ParseLanguageVersion(string value)
+    {
+        if (LuaLanguageVersions.TryParse(value, out var version))
+        {
+            return version;
+        }
+
+        throw new CliUsageException("Lua version must be 5.1, 5.2, 5.3, 5.4, or 5.5.");
+    }
 
     internal static CliExecutionBackend ParseExecutionBackend(string value) => value switch
     {

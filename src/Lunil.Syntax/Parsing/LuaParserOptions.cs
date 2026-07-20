@@ -1,8 +1,12 @@
+using Lunil.Core;
+
 namespace Lunil.Syntax.Parsing;
 
 public sealed record LuaParserOptions
 {
     public static LuaParserOptions Default { get; } = new();
+
+    public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
 
     public int MaximumRecursionDepth { get; init; } = 200;
 

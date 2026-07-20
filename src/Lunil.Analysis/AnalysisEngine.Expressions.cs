@@ -152,8 +152,8 @@ internal sealed partial class AnalysisEngine
 
     private static LuaType InferNumericLiteral(LuaSyntaxNode expression)
     {
-        var token = expression.ChildTokens().Single();
-        return token.Value switch
+        var token = expression.ChildTokens().FirstOrDefault();
+        return token?.Value switch
         {
             LuaIntegerTokenValue integer => new LuaIntegerLiteralType(integer.Integer),
             LuaFloatTokenValue number => new LuaFloatLiteralType(number.Float),
@@ -163,8 +163,8 @@ internal sealed partial class AnalysisEngine
 
     private static LuaType InferStringLiteral(LuaSyntaxNode expression)
     {
-        var token = expression.ChildTokens().Single();
-        return token.Value is LuaStringTokenValue text
+        var token = expression.ChildTokens().FirstOrDefault();
+        return token?.Value is LuaStringTokenValue text
             ? new LuaStringLiteralType(text.Bytes)
             : LuaTypes.String;
     }
