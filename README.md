@@ -21,13 +21,13 @@
 </p>
 
 Lunil is a pure C# versioned Lua compiler, analysis toolchain, and runtime for .NET 10. Lua 5.4.8
-remains the default; the `0.10.0-alpha.2` prerelease additionally enables explicit Lua 5.1,
+remains the default; the `0.10.0-rc.1` release candidate additionally enables explicit Lua 5.1,
 Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and versioned binary chunks converge on one verified canonical IR, then execute through a reference
 interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter remain available in
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.9.0` remains the supported release. The `0.10.0-alpha.2` prerelease preserves Lua
+> Stable `0.9.0` remains the supported release. The accepted `0.10.0-rc.1` candidate preserves Lua
 > 5.4.8 as the default while exposing explicit Lua 5.1–5.5 version identities and independent PUC
 > chunk adapters.
 
@@ -189,12 +189,12 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 ## Compatibility
 
 - Language target: Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets are available in the
-  `0.10.0-alpha.2` prerelease.
+  `0.10.0-rc.1` release candidate.
 - Runtime target: .NET 10.
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
-- Stable line: `0.9.x`; the next development line will be documented when it opens.
+- Stable line: `0.9.x`; accepted release-candidate line: `0.10.0-rc.1`.
 
 Compatibility changes and deployment notes are documented in the [0.8.0 migration guide](docs/migration-0.8.0.md).
 .NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
