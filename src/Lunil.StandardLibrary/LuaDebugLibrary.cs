@@ -1,5 +1,6 @@
 using System.Text;
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -78,7 +79,15 @@ internal static class LuaDebugLibrary
             }
 
             var source = SourceText.FromUtf8($"return pcall(function() {line} end)");
-            var lowering = LuaLowerer.Lower(LuaBinder.Bind(LuaParser.Parse(source)));
+            var syntax = LuaParser.Parse(source, parserOptions: LuaParserOptions.Default with
+            {
+                LanguageVersion = context.State.LanguageVersion,
+            });
+            var semantics = LuaBinder.Bind(syntax, LuaBinderOptions.Default with
+            {
+                LanguageVersion = context.State.LanguageVersion,
+            });
+            var lowering = LuaLowerer.Lower(semantics);
             if (lowering.Module is null || !lowering.Diagnostics.IsEmpty)
             {
                 var message = lowering.Diagnostics.IsEmpty
@@ -212,7 +221,9 @@ internal static class LuaDebugLibrary
         }
         else
         {
-            return [LuaValue.Nil];
+            return state.LanguageVersion == LuaLanguageVersion.Lua53
+                ? throw LuaLibraryHelpers.BadArgument("upvalueid", 1, "invalid upvalue index")
+                : [LuaValue.Nil];
         }
 
         return [LuaValue.FromLightUserdata(new LuaLightUserdata(identity))];

@@ -49,6 +49,10 @@ public sealed class LuaUserdata : LuaGcObject
         {
             Owner.ValidateValue(LuaValue.FromTable(metatable));
             Owner.WriteBarrierBack(this, LuaValue.FromTable(metatable));
+            if (!metatable.GetMetamethodField(LuaMetamethod.GarbageCollect).IsNil)
+            {
+                Owner.RegisterFinalizer(this);
+            }
         }
 
         _metatable = metatable;
@@ -77,7 +81,12 @@ public sealed class LuaUserdata : LuaGcObject
     internal override bool TryGetFinalizer(out LuaValue finalizer)
     {
         finalizer = _metatable?.GetMetamethodField(LuaMetamethod.GarbageCollect) ?? LuaValue.Nil;
-        return !finalizer.IsNil;
+        if (finalizer.Kind == LuaValueKind.Function)
+        {
+            Owner.RegisterFinalizer(this);
+        }
+
+        return finalizer.Kind == LuaValueKind.Function;
     }
 
     internal override void OnCollected() => DisposePayload();

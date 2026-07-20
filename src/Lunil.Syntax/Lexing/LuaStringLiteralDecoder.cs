@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 
@@ -8,7 +9,13 @@ namespace Lunil.Syntax.Lexing;
 /// <summary>Decodes Lua 5.4 quoted and long string literals into their byte value.</summary>
 public static class LuaStringLiteralDecoder
 {
-    public static LuaStringLiteralDecodeResult Decode(SourceText source, LuaSyntaxToken token)
+    public static LuaStringLiteralDecodeResult Decode(SourceText source, LuaSyntaxToken token) =>
+        Decode(source, token, LuaLanguageVersions.Default);
+
+    internal static LuaStringLiteralDecodeResult Decode(
+        SourceText source,
+        LuaSyntaxToken token,
+        LuaLanguageVersion languageVersion)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(token);
@@ -33,7 +40,7 @@ public static class LuaStringLiteralDecoder
         }
         else
         {
-            DecodeQuotedString(raw, token.Span.Start, output, diagnostics);
+            DecodeQuotedString(raw, token.Span.Start, output, diagnostics, languageVersion);
         }
 
         return new LuaStringLiteralDecodeResult(
@@ -91,7 +98,8 @@ public static class LuaStringLiteralDecoder
         ReadOnlySpan<byte> raw,
         int absoluteStart,
         ArrayBufferWriter<byte> output,
-        ImmutableArray<Diagnostic>.Builder diagnostics)
+        ImmutableArray<Diagnostic>.Builder diagnostics,
+        LuaLanguageVersion languageVersion)
     {
         if (raw.IsEmpty || raw[0] is not ((byte)'\'' or (byte)'"'))
         {
@@ -171,7 +179,8 @@ public static class LuaStringLiteralDecoder
                         absoluteStart,
                         escapeStart,
                         output,
-                        diagnostics);
+                        diagnostics,
+                        languageVersion);
                     break;
 
                 default:
@@ -270,7 +279,8 @@ public static class LuaStringLiteralDecoder
         int absoluteStart,
         int escapeStart,
         ArrayBufferWriter<byte> output,
-        ImmutableArray<Diagnostic>.Builder diagnostics)
+        ImmutableArray<Diagnostic>.Builder diagnostics,
+        LuaLanguageVersion languageVersion)
     {
         if (position >= end || raw[position] != (byte)'{')
         {
@@ -287,15 +297,19 @@ public static class LuaStringLiteralDecoder
         var digitStart = position;
         uint value = 0;
         var valueTooLarge = false;
+        var maximumValue = languageVersion == LuaLanguageVersion.Lua53
+            ? 0x10_ffffu
+            : 0x7fff_ffffu;
         while (position < end && IsHexadecimalDigit(raw[position]))
         {
-            if (value > (0x7fff_ffffu >> 4))
+            var digit = (uint)HexadecimalValue(raw[position]);
+            if (value > maximumValue >> 4 || (value << 4 | digit) > maximumValue)
             {
                 valueTooLarge = true;
             }
             else if (!valueTooLarge)
             {
-                value = (value << 4) | (uint)HexadecimalValue(raw[position]);
+                value = value << 4 | digit;
             }
 
             position++;

@@ -53,7 +53,7 @@ internal static class LuaCoroutineModule
         Set(state, module, "status", LuaValue.FromFunction(StatusDescriptor));
         Set(state, module, "isyieldable", LuaValue.FromFunction(IsYieldableDescriptor));
         Set(state, module, "wrap", LuaValue.FromFunction(WrapFactoryDescriptor));
-        if (state.LanguageVersion == LuaLanguageVersion.Lua54)
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasCoroutineClose)
         {
             Set(state, module, "close", LuaValue.FromFunction(CloseDescriptor));
         }

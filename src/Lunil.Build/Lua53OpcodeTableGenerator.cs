@@ -6,6 +6,15 @@ namespace Lunil.IR.Generators;
 [Generator]
 public sealed class Lua53OpcodeTableGenerator : ISourceGenerator
 {
+    private static readonly DiagnosticDescriptor InvalidOpcodeLayout = new(
+        "LUNILGEN001",
+        "Invalid Lua 5.3 opcode layout",
+        "Lua53Opcode values must be contiguous from zero and fit the six-bit opcode field; " +
+        "expected {0}, found {1} on '{2}'",
+        "Lunil.Build",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public void Initialize(GeneratorInitializationContext context)
     {
     }
@@ -28,6 +37,22 @@ public sealed class Lua53OpcodeTableGenerator : ISourceGenerator
             .ToArray();
         if (values.Length == 0)
         {
+            return;
+        }
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            if (values[index].Value == index && values[index].Value <= 0x3f)
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                InvalidOpcodeLayout,
+                Location.None,
+                index,
+                values[index].Value,
+                values[index].Name));
             return;
         }
 
@@ -54,7 +79,209 @@ public sealed class Lua53OpcodeTableGenerator : ISourceGenerator
                     _ => $"Unknown ({(int)opcode})",
                 };
             }
+
+            internal static class Lua53GeneratedInstructionCodec
+            {
+                internal const int MaximumA = 0xff;
+                internal const int MaximumB = 0x1ff;
+                internal const int MaximumC = 0x1ff;
+                internal const int MaximumBx = 0x3ffff;
+                internal const int MaximumAx = 0x3ffffff;
+                internal const int SignedBxOffset = MaximumBx >> 1;
+
+                internal static Lua53Opcode DecodeOpcode(uint raw) =>
+                    (Lua53Opcode)(raw & 0x3f);
+
+                internal static int DecodeA(uint raw) => (int)((raw >> 6) & MaximumA);
+
+                internal static int DecodeC(uint raw) => (int)((raw >> 14) & MaximumC);
+
+                internal static int DecodeB(uint raw) => (int)((raw >> 23) & MaximumB);
+
+                internal static int DecodeBx(uint raw) => (int)((raw >> 14) & MaximumBx);
+
+                internal static int DecodeAx(uint raw) => (int)((raw >> 6) & MaximumAx);
+
+                internal static uint EncodeAbc(Lua53Opcode opcode, int a, int b, int c) =>
+                    (uint)opcode | ((uint)a << 6) | ((uint)c << 14) | ((uint)b << 23);
+
+                internal static uint EncodeABx(Lua53Opcode opcode, int a, int bx) =>
+                    (uint)opcode | ((uint)a << 6) | ((uint)bx << 14);
+
+                internal static uint EncodeAx(Lua53Opcode opcode, int ax) =>
+                    (uint)opcode | ((uint)ax << 6);
+            }
             """;
         context.AddSource("Lua53GeneratedOpcodeTable.g.cs", source);
+    }
+}
+
+[Generator]
+public sealed class LuaVersionProfileGenerator : ISourceGenerator
+{
+    private static readonly DiagnosticDescriptor MissingChunkFormat = new(
+        "LUNILGEN002",
+        "Version adapter has no chunk format",
+        "The enabled adapter symbol for '{0}' requires a LuaVersionProfile ChunkFormat declaration",
+        "Lunil.Build",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    public void Initialize(GeneratorInitializationContext context)
+    {
+    }
+
+    public void Execute(GeneratorExecutionContext context)
+    {
+        if (!string.Equals(context.Compilation.AssemblyName, "Lunil.Core", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var version = context.Compilation.GetTypeByMetadataName("Lunil.Core.LuaLanguageVersion");
+        if (version is null || version.TypeKind != TypeKind.Enum)
+        {
+            return;
+        }
+
+        var profileAttribute = context.Compilation.GetTypeByMetadataName(
+            "Lunil.Core.LuaVersionProfileAttribute");
+        if (profileAttribute is null)
+        {
+            return;
+        }
+
+        var adapterSymbols = context.ParseOptions.PreprocessorSymbolNames;
+        var values = version.GetMembers()
+            .OfType<IFieldSymbol>()
+            .Where(static field => field.HasConstantValue)
+            .OrderBy(static field => Convert.ToInt32(field.ConstantValue, CultureInfo.InvariantCulture))
+            .Select(field =>
+            {
+                var attribute = field.GetAttributes().FirstOrDefault(candidate =>
+                    SymbolEqualityComparer.Default.Equals(candidate.AttributeClass, profileAttribute));
+                var synchronousFinalizerErrors = false;
+                var supportsGenerationalCollection = false;
+                var preservesDeadThreadOpenUpvalues = false;
+                var cachesClosuresByUpvalues = false;
+                var hasWarnLibrary = false;
+                var hasCoroutineClose = false;
+                var chunkFormat = "LuaChunkFormat.None";
+                if (attribute is not null)
+                {
+                    foreach (var named in attribute.NamedArguments)
+                    {
+                        if (named.Key == "ChunkFormat" && named.Value.Value is not null)
+                        {
+                            chunkFormat = Convert.ToInt32(
+                                named.Value.Value,
+                                CultureInfo.InvariantCulture) switch
+                            {
+                                1 => "LuaChunkFormat.Lua53",
+                                2 => "LuaChunkFormat.Lua54",
+                                _ => "LuaChunkFormat.None",
+                            };
+                        }
+                        else if (named.Key == "SynchronousFinalizerErrors" &&
+                            named.Value.Value is bool synchronous)
+                        {
+                            synchronousFinalizerErrors = synchronous;
+                        }
+                        else if (named.Key == "SupportsGenerationalCollection" &&
+                            named.Value.Value is bool generational)
+                        {
+                            supportsGenerationalCollection = generational;
+                        }
+                        else if (named.Key == "PreservesDeadThreadOpenUpvalues" &&
+                            named.Value.Value is bool preserves)
+                        {
+                            preservesDeadThreadOpenUpvalues = preserves;
+                        }
+                        else if (named.Key == "CachesClosuresByUpvalues" &&
+                            named.Value.Value is bool caches)
+                        {
+                            cachesClosuresByUpvalues = caches;
+                        }
+                        else if (named.Key == "HasWarnLibrary" &&
+                            named.Value.Value is bool hasWarn)
+                        {
+                            hasWarnLibrary = hasWarn;
+                        }
+                        else if (named.Key == "HasCoroutineClose" &&
+                            named.Value.Value is bool hasClose)
+                        {
+                            hasCoroutineClose = hasClose;
+                        }
+                    }
+                }
+
+                return (
+                    field.Name,
+                    IsImplemented: adapterSymbols.Contains(
+                        $"LUNIL_{field.Name.ToUpperInvariant()}_ADAPTER"),
+                    ChunkFormat: chunkFormat,
+                    SynchronousFinalizerErrors: synchronousFinalizerErrors,
+                    SupportsGenerationalCollection: supportsGenerationalCollection,
+                    PreservesDeadThreadOpenUpvalues: preservesDeadThreadOpenUpvalues,
+                    CachesClosuresByUpvalues: cachesClosuresByUpvalues,
+                    HasWarnLibrary: hasWarnLibrary,
+                    HasCoroutineClose: hasCoroutineClose);
+            })
+            .ToArray();
+        if (values.Length == 0)
+        {
+            return;
+        }
+
+        foreach (var value in values)
+        {
+            if (value.IsImplemented && value.ChunkFormat == "LuaChunkFormat.None")
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    MissingChunkFormat,
+                    Location.None,
+                    value.Name));
+                return;
+            }
+        }
+
+        var cases = string.Join(
+            ",\n            ",
+            values.Select(static value =>
+                $"LuaLanguageVersion.{value.Name} => new LuaVersionFeatures(" +
+                $"{value.IsImplemented.ToString().ToLowerInvariant()}, " +
+                $"{value.ChunkFormat}, " +
+                $"{value.SynchronousFinalizerErrors.ToString().ToLowerInvariant()}, " +
+                $"{value.SupportsGenerationalCollection.ToString().ToLowerInvariant()}, " +
+                $"{value.PreservesDeadThreadOpenUpvalues.ToString().ToLowerInvariant()}, " +
+                $"{value.CachesClosuresByUpvalues.ToString().ToLowerInvariant()}, " +
+                $"{value.HasWarnLibrary.ToString().ToLowerInvariant()}, " +
+                $"{value.HasCoroutineClose.ToString().ToLowerInvariant()})"));
+        var source = $$"""
+            // <auto-generated />
+            namespace Lunil.Core;
+
+            /// <summary>Generated feature contract for each supported Lua version.</summary>
+            public readonly record struct LuaVersionFeatures(
+                bool IsImplemented,
+                LuaChunkFormat ChunkFormat,
+                bool SynchronousFinalizerErrors,
+                bool SupportsGenerationalCollection,
+                bool PreservesDeadThreadOpenUpvalues,
+                bool CachesClosuresByUpvalues,
+                bool HasWarnLibrary,
+                bool HasCoroutineClose);
+
+            public static class LuaVersionFeatureTable
+            {
+                public static LuaVersionFeatures Get(LuaLanguageVersion version) => version switch
+                {
+                    {{cases}},
+                    _ => throw new System.ArgumentOutOfRangeException(nameof(version), version,
+                        "Unknown Lua language version."),
+                };
+            }
+            """;
+        context.AddSource("LuaVersionFeatures.g.cs", source);
     }
 }

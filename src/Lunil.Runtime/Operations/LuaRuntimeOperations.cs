@@ -203,26 +203,22 @@ public static class LuaRuntimeOperations
 
         if (IsBitwise(operation) && state.LanguageVersion == LuaLanguageVersion.Lua53)
         {
-            long leftValue = 0;
-            long rightValue = 0;
-            var leftInteger = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise) &&
-                numericLeftBitwise.TryGetInteger(out leftValue);
-            var rightInteger = LuaValueOperations.TryToNumber(right, out var numericRightBitwise) &&
-                numericRightBitwise.TryGetInteger(out rightValue);
-            if (leftInteger && rightInteger)
+            var leftNumber = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise);
+            var rightNumber = LuaValueOperations.TryToNumber(right, out var numericRightBitwise);
+            if (leftNumber && rightNumber)
             {
+                if (!numericLeftBitwise.TryGetInteger(out var leftValue) ||
+                    !numericRightBitwise.TryGetInteger(out var rightValue))
+                {
+                    throw new LuaRuntimeException("number has no integer representation");
+                }
+
                 return LuaOperationResolution.Immediate(
                     LuaValueOperations.Binary(
                         state,
                         operation,
                         LuaValue.FromInteger(leftValue),
                         LuaValue.FromInteger(rightValue)));
-            }
-
-            if (LuaValueOperations.TryToNumber(left, out _) ||
-                LuaValueOperations.TryToNumber(right, out _))
-            {
-                throw new LuaRuntimeException("number has no integer representation");
             }
         }
 

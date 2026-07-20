@@ -144,6 +144,7 @@ internal sealed class LuaFunctionSlot(LuaFunctionVersion initial)
 
 internal sealed class LuaModuleRuntimeData
 {
+    private readonly WeakReference<LuaClosure>?[] _closureCache;
     private readonly LuaFunctionVersion?[] _versions;
 
     public LuaModuleRuntimeData(LuaIrModule module)
@@ -151,11 +152,37 @@ internal sealed class LuaModuleRuntimeData
         Module = module;
         StringConstants = new LuaModuleStringConstants();
         _versions = new LuaFunctionVersion?[module.Functions.Length];
+        _closureCache = new WeakReference<LuaClosure>?[module.Functions.Length];
     }
 
     public LuaIrModule Module { get; }
 
     public LuaModuleStringConstants StringConstants { get; }
+
+    public LuaClosure? GetCachedClosure(
+        int functionId,
+        ReadOnlySpan<LuaUpvalue> upvalues)
+    {
+        var weakReference = _closureCache[functionId];
+        if (weakReference is null || !weakReference.TryGetTarget(out var closure) ||
+            !closure.IsAlive || closure.Upvalues.Count != upvalues.Length)
+        {
+            return null;
+        }
+
+        for (var index = 0; index < upvalues.Length; index++)
+        {
+            if (!ReferenceEquals(closure.Upvalues[index], upvalues[index]))
+            {
+                return null;
+            }
+        }
+
+        return closure;
+    }
+
+    public void CacheClosure(int functionId, LuaClosure closure) =>
+        _closureCache[functionId] = new WeakReference<LuaClosure>(closure);
 
     public LuaFunctionVersion GetVersion(int functionId)
     {

@@ -25,13 +25,26 @@ internal static class BuildCommand
         {
             try
             {
+                var features = LuaVersionFeatureTable.Get(context.Options.LanguageVersion);
+                if (!features.IsImplemented)
+                {
+                    throw new NotSupportedException(
+                        $"The {LuaLanguageVersions.GetDisplayName(context.Options.LanguageVersion)} " +
+                        "binary adapter is not compiled into this build.");
+                }
+
                 modules.Add(new BuildModule(
                     input.ModuleName,
-                    context.Options.LanguageVersion == LuaLanguageVersion.Lua53
-                        ? Lua53PrototypeConverter.Convert(input.Bytes)
-                        : Lua54PrototypeConverter.Convert(input.Bytes)));
+                    features.ChunkFormat switch
+                    {
+                        LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(input.Bytes),
+                        LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(input.Bytes),
+                        _ => throw new NotSupportedException(
+                            "The selected binary adapter does not declare a chunk format."),
+                    }));
             }
-            catch (Exception exception) when (exception is Lua54ChunkFormatException or
+            catch (Exception exception) when (exception is Lua53ChunkFormatException or
+                Lua54ChunkFormatException or NotSupportedException or
                 InvalidDataException or ArgumentException)
             {
                 await WriteDiagnosticsAsync(context, [CliDiagnosticWriter.CreateProblem(
@@ -100,15 +113,19 @@ internal static class BuildCommand
         foreach (var module in modules.OrderBy(static module => module.Name, StringComparer.Ordinal))
         {
             context.CancellationToken.ThrowIfCancellationRequested();
-            var bytes = module.Module.LanguageVersion == LuaLanguageVersion.Lua53
-                ? Lua53CanonicalPrototypeWriter.Write(
+            var bytes = LuaVersionFeatureTable.Get(module.Module.LanguageVersion).ChunkFormat switch
+            {
+                LuaChunkFormat.Lua53 => Lua53CanonicalPrototypeWriter.Write(
                     module.Module,
                     functionId: 0,
-                    context.Options.StripDebug)
-                : Lua54CanonicalPrototypeWriter.Write(
+                    context.Options.StripDebug),
+                LuaChunkFormat.Lua54 => Lua54CanonicalPrototypeWriter.Write(
                     module.Module,
                     functionId: 0,
-                    context.Options.StripDebug);
+                    context.Options.StripDebug),
+                _ => throw new CliBuildException(
+                    "The selected language adapter does not declare a chunk format."),
+            };
             var path = outputIsDirectory
                 ? Path.Combine(output, GetArtifactRelativePath(module.Name) + ".luac")
                 : output;

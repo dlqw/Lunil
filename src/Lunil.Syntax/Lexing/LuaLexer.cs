@@ -92,7 +92,10 @@ public static class LuaLexer
 
                 if (kind is LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral)
                 {
-                    var decoded = LuaStringLiteralDecoder.Decode(_source, token);
+                    var decoded = LuaStringLiteralDecoder.Decode(
+                        _source,
+                        token,
+                        _options.LanguageVersion);
                     token = token with { Value = decoded.Value };
                     foreach (var diagnostic in decoded.Diagnostics)
                     {

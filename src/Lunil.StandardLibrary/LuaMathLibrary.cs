@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Numerics;
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -286,7 +287,7 @@ internal static class LuaMathLibrary
                 BitConverter.ToUInt64(seed[8..]));
         }
 
-        public LuaValue[] Random(LuaState _, ReadOnlySpan<LuaValue> arguments)
+        public LuaValue[] Random(LuaState state, ReadOnlySpan<LuaValue> arguments)
         {
             var random = Next();
             if (arguments.Length == 0)
@@ -306,7 +307,8 @@ internal static class LuaMathLibrary
                 arguments,
                 arguments.Length == 1 ? 0 : 1,
                 "random");
-            if (arguments.Length == 1 && high == 0)
+            if (arguments.Length == 1 && high == 0 &&
+                state.LanguageVersion == LuaLanguageVersion.Lua54)
             {
                 return [LuaValue.FromInteger(unchecked((long)random))];
             }
@@ -316,11 +318,18 @@ internal static class LuaMathLibrary
                 throw LuaLibraryHelpers.BadArgument("random", 0, "interval is empty");
             }
 
-            var projected = Project(random, unchecked((ulong)high - (ulong)low));
+            var interval = unchecked((ulong)high - (ulong)low);
+            if (state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+                interval > long.MaxValue)
+            {
+                throw LuaLibraryHelpers.BadArgument("random", 1, "interval is too large");
+            }
+
+            var projected = Project(random, interval);
             return [LuaValue.FromInteger(unchecked((long)(projected + (ulong)low)))];
         }
 
-        public LuaValue[] RandomSeed(LuaState _, ReadOnlySpan<LuaValue> arguments)
+        public LuaValue[] RandomSeed(LuaState state, ReadOnlySpan<LuaValue> arguments)
         {
             ulong first;
             ulong second;
@@ -342,11 +351,13 @@ internal static class LuaMathLibrary
             }
 
             SetSeed(first, second);
-            return
-            [
-                LuaValue.FromInteger(unchecked((long)first)),
-                LuaValue.FromInteger(unchecked((long)second)),
-            ];
+            return state.LanguageVersion == LuaLanguageVersion.Lua53
+                ? []
+                :
+                [
+                    LuaValue.FromInteger(unchecked((long)first)),
+                    LuaValue.FromInteger(unchecked((long)second)),
+                ];
         }
 
         private void SetSeed(ulong first, ulong second)

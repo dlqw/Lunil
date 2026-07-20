@@ -1,11 +1,29 @@
 namespace Lunil.Core;
 
+/// <summary>Binary chunk family used by a compiled language-version adapter.</summary>
+public enum LuaChunkFormat : byte
+{
+    None = 0,
+    Lua53 = 1,
+    Lua54 = 2,
+}
+
 /// <summary>Identifies the Lua language and runtime contract selected for a compilation or state.</summary>
 public enum LuaLanguageVersion : byte
 {
     Lua51 = 0x51,
     Lua52 = 0x52,
+    [LuaVersionProfile(
+        ChunkFormat = LuaChunkFormat.Lua53,
+        SynchronousFinalizerErrors = true,
+        PreservesDeadThreadOpenUpvalues = true,
+        CachesClosuresByUpvalues = true)]
     Lua53 = 0x53,
+    [LuaVersionProfile(
+        ChunkFormat = LuaChunkFormat.Lua54,
+        SupportsGenerationalCollection = true,
+        HasWarnLibrary = true,
+        HasCoroutineClose = true)]
     Lua54 = 0x54,
     Lua55 = 0x55,
 }
@@ -22,6 +40,14 @@ public static class LuaLanguageVersions
         LuaLanguageVersion.Lua53 or
         LuaLanguageVersion.Lua54 or
         LuaLanguageVersion.Lua55;
+
+    /// <summary>
+    /// Returns whether the current build contains an adapter for <paramref name="version"/>.
+    /// This is generated from compile-time adapter symbols and version metadata; callers must
+    /// not infer support from enum membership alone.
+    /// </summary>
+    public static bool IsImplemented(LuaLanguageVersion version) =>
+        IsKnown(version) && LuaVersionFeatureTable.Get(version).IsImplemented;
 
     public static string GetDisplayName(LuaLanguageVersion version) => version switch
     {

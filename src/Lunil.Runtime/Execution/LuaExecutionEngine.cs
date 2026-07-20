@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.CodeGen;
@@ -3280,7 +3281,24 @@ internal sealed class LuaExecutionEngine
                 var continuationId = continuation.State;
                 var invocationState = continuation.Values;
                 var byteBuffer = continuation.NativeByteBuffer;
+                var nativeProtectedBoundary = continuation.IsNativeProtectedBoundary;
+                var nativeProtectedKind = continuation.ProtectionKind;
+                var nativeProtectedFunction = continuation.ProtectionFunction;
+                var nativeProtectedHandler = continuation.ErrorHandler;
+                var nativeProtectedReturnBase = continuation.NativeProtectedReturnBase;
+                var nativeProtectedExpectedResults = continuation.NativeProtectedExpectedResults;
+                var nativeProtectedTailCall = continuation.NativeProtectedTailCall;
                 continuation.Reset();
+                if (nativeProtectedBoundary)
+                {
+                    continuation.ProtectionKind = nativeProtectedKind;
+                    continuation.ProtectionFunction = nativeProtectedFunction;
+                    continuation.ErrorHandler = nativeProtectedHandler;
+                    continuation.IsNativeProtectedBoundary = true;
+                    continuation.NativeProtectedReturnBase = nativeProtectedReturnBase;
+                    continuation.NativeProtectedExpectedResults = nativeProtectedExpectedResults;
+                    continuation.NativeProtectedTailCall = nativeProtectedTailCall;
+                }
                 thread.UnwindState = null;
                 var descriptor = nativeFunction.TryGetNativeFunction() ??
                     throw new InvalidOperationException(
@@ -3291,25 +3309,36 @@ internal sealed class LuaExecutionEngine
                     nativeFunction.TryGetNativeClosure(),
                     invocationState,
                     byteBuffer);
-                var completed = ContinueNative(
-                    state,
-                    scheduler,
-                    thread,
-                    frame,
-                    nativeFunction,
-                    returnBase,
-                    expectedResults,
-                    tailCall,
-                    programCounterAdvanced: !tailCall,
-                    descriptor.StepBody!(
-                        context,
-                        continuationId,
-                        [LuaValue.FromBoolean(false), unwind.Error]),
-                    operationTop,
-                    operationTransform);
-                if (completed is { } values)
+                try
                 {
-                    scheduler.Current.ForcedResult = values;
+                    var completed = ContinueNative(
+                        state,
+                        scheduler,
+                        thread,
+                        frame,
+                        nativeFunction,
+                        returnBase,
+                        expectedResults,
+                        tailCall,
+                        programCounterAdvanced: !tailCall,
+                        descriptor.StepBody!(
+                            context,
+                            continuationId,
+                            [LuaValue.FromBoolean(false), unwind.Error]),
+                        operationTop,
+                        operationTransform);
+                    if (completed is { } values)
+                    {
+                        scheduler.Current.ForcedResult = values;
+                    }
+                }
+                catch (LuaRuntimeException)
+                {
+                    // A resumable native descriptor may reject the protected callback error
+                    // itself. Restore the unwind so the native protected boundary (for example
+                    // pcall(collectgarbage)) can still convert it to a protected result.
+                    thread.UnwindState = unwind;
+                    throw;
                 }
 
                 unprotectedError = LuaValue.Nil;
@@ -3460,6 +3489,11 @@ internal sealed class LuaExecutionEngine
 
     internal void RunPendingFinalizer(LuaState state, LuaThread thread)
     {
+        if (state.IsRunningFinalizer)
+        {
+            return;
+        }
+
         for (var index = 0; index < thread.FrameCount; index++)
         {
             if (thread.Frames[index].Continuation.ProtectionKind ==
@@ -3717,7 +3751,24 @@ internal sealed class LuaExecutionEngine
             var invocationState = continuation.Values;
             var byteBuffer = continuation.NativeByteBuffer;
             var callbackWasProtected = continuation.NativeCallbackIsProtected;
+            var nativeProtectedBoundary = continuation.IsNativeProtectedBoundary;
+            var nativeProtectedKind = continuation.ProtectionKind;
+            var nativeProtectedFunction = continuation.ProtectionFunction;
+            var nativeProtectedHandler = continuation.ErrorHandler;
+            var nativeProtectedReturnBase = continuation.NativeProtectedReturnBase;
+            var nativeProtectedExpectedResults = continuation.NativeProtectedExpectedResults;
+            var nativeProtectedTailCall = continuation.NativeProtectedTailCall;
             continuation.Reset();
+            if (nativeProtectedBoundary)
+            {
+                continuation.ProtectionKind = nativeProtectedKind;
+                continuation.ProtectionFunction = nativeProtectedFunction;
+                continuation.ErrorHandler = nativeProtectedHandler;
+                continuation.IsNativeProtectedBoundary = true;
+                continuation.NativeProtectedReturnBase = nativeProtectedReturnBase;
+                continuation.NativeProtectedExpectedResults = nativeProtectedExpectedResults;
+                continuation.NativeProtectedTailCall = nativeProtectedTailCall;
+            }
             var descriptor = nativeFunction.TryGetNativeFunction() ??
                 throw new InvalidOperationException("A native continuation lost its descriptor.");
             var context = new LuaNativeCallContext(
@@ -4275,11 +4326,25 @@ internal sealed class LuaExecutionEngine
             };
         }
 
-        return new LuaClosure(
+        var runtimeData = parent.FunctionVersion.RuntimeData;
+        var features = LuaVersionFeatureTable.Get(parent.Module.LanguageVersion);
+        if (features.CachesClosuresByUpvalues &&
+            runtimeData.GetCachedClosure(functionId, upvalues) is { } cached)
+        {
+            return cached;
+        }
+
+        var closure = new LuaClosure(
             parent.Closure.Owner,
-            parent.FunctionVersion.RuntimeData,
+            runtimeData,
             function,
             upvalues);
+        if (features.CachesClosuresByUpvalues)
+        {
+            runtimeData.CacheClosure(functionId, closure);
+        }
+
+        return closure;
     }
 
     internal static void ExecuteSetList(

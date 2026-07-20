@@ -21,6 +21,11 @@ public sealed class PucLua53DifferentialTests
         "local function outer(value) return function(delta) value = value + delta; return value end end; local next = outer(40); return next(1), next(1)",
         "local values = {10, 20, 30, key = 7}; return values[2], values.key, #values",
         "local x = 3; if x < 4 and x ~= 2 then x = x + 10 end; goto done; x = 0; ::done:: return x",
+        "local function values(...) return ... end; local function forward(...) return values(...) end; return forward(7, 8, 9)",
+        "local captured; do local value = 40; captured = function() return value end; goto done; value = 0; ::done:: end; return captured()",
+        BuildLongStringScript(),
+        BuildSetListScript(),
+        BuildLargeConstantScript(),
     ];
 
     [Fact]
@@ -243,6 +248,21 @@ public sealed class PucLua53DifferentialTests
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, output + error);
     }
+
+    private static string BuildLongStringScript()
+    {
+        var value = new string('x', 300);
+        return $"local value = [=[{value}]=]; return #value, value == [=[{value}]=]";
+    }
+
+    private static string BuildSetListScript() =>
+        "local values = {" + string.Join(',', Enumerable.Range(1, 75)) + "}; " +
+        "return values[1], values[51], values[75], #values";
+
+    private static string BuildLargeConstantScript() =>
+        "local values = {" + string.Join(',', Enumerable.Range(0, 320).Select(index =>
+            $"k{index}='value-{index}'")) + "}; " +
+        "return values.k0, values.k255, values.k319";
 
     private static string RunLunilSource(string source)
     {

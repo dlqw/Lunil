@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -112,11 +113,6 @@ internal static class LuaStringFormat
                 index++;
             }
 
-            if (index - start >= 21)
-            {
-                throw new LuaRuntimeException("invalid format (too long)");
-            }
-
             if (index >= format.Length)
             {
                 throw new LuaRuntimeException("invalid conversion '%' to 'format'");
@@ -125,7 +121,11 @@ internal static class LuaStringFormat
             var conversion = (char)format[index];
             var modifiers = format.Slice(start, index - start);
             var specifier = Encoding.ASCII.GetString(format.Slice(start, index - start + 1));
-            var parsed = ParseFormat(modifiers, conversion, specifier);
+            var parsed = ParseFormat(
+                modifiers,
+                conversion,
+                specifier,
+                context.State.LanguageVersion);
             var flags = parsed.Flags;
             var width = parsed.Width;
             var precision = parsed.Precision;
@@ -191,7 +191,10 @@ internal static class LuaStringFormat
                 'e' or 'E' or 'f' or 'g' or 'G' or 'a' or 'A' =>
                     FormatFloat(value, conversion, precision, flags),
                 'p' => Encoding.ASCII.GetBytes(FormatPointer(value)),
-                _ => throw new LuaRuntimeException($"invalid conversion '%{specifier}' to 'format'"),
+                _ => throw new LuaRuntimeException(
+                    context.State.LanguageVersion == LuaLanguageVersion.Lua53
+                        ? $"invalid option '%{specifier}' to 'format'"
+                        : $"invalid conversion '%{specifier}' to 'format'"),
             };
 
             rendered = ApplyNumericFlags(rendered, conversion, flags);
@@ -212,8 +215,14 @@ internal static class LuaStringFormat
     private static ParsedFormat ParseFormat(
         ReadOnlySpan<byte> modifiers,
         char conversion,
-        string specifier)
+        string specifier,
+        LuaLanguageVersion languageVersion)
     {
+        if (languageVersion == LuaLanguageVersion.Lua54 && modifiers.Length >= 21)
+        {
+            throw new LuaRuntimeException("invalid format (too long)");
+        }
+
         if (conversion == 'q')
         {
             return new ParsedFormat(string.Empty, 0, null);
@@ -238,6 +247,13 @@ internal static class LuaStringFormat
         var index = 0;
         while (index < modifiers.Length && acceptedFlags.Contains((char)modifiers[index]))
         {
+            if (modifiers[..index].Contains(modifiers[index]))
+            {
+                throw new LuaRuntimeException(languageVersion == LuaLanguageVersion.Lua53
+                    ? "invalid format (repeated flags)"
+                    : $"invalid conversion specification: '%{specifier}'");
+            }
+
             index++;
         }
 
@@ -266,6 +282,12 @@ internal static class LuaStringFormat
 
         if (index != modifiers.Length || !char.IsAsciiLetter(conversion))
         {
+            if (languageVersion == LuaLanguageVersion.Lua53 &&
+                index < modifiers.Length && IsDigit(modifiers[index]))
+            {
+                throw new LuaRuntimeException("invalid format (width or precision too long)");
+            }
+
             throw new LuaRuntimeException(
                 $"invalid conversion specification: '%{specifier}'");
         }

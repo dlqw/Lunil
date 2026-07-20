@@ -48,6 +48,25 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua53BitwiseOperatorsUseMetamethodWhenOnlyOneOperandIsNumeric()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "local value = setmetatable({x=10}, {__band=function(a,b) " +
+            "return type(a)=='table' and a.x or b.x end})\n" +
+            "return value & 12, 12 & value");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(10, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(10, result.Execution.Values[1].AsInteger());
+    }
+
+    [Fact]
     public void Lua53CanonicalWriterRoundTripsThroughLua53State()
     {
         using var host = new LuaHost(new LuaHostOptions
@@ -97,6 +116,47 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua53DynamicLoadRetainsLanguageVersionAndRejectsLua54OnlySyntax()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "local valid = assert(load('return 6 * 7'))\n" +
+            "local invalid, message = load('local value <const> = 1')\n" +
+            "return valid(), invalid, type(message)");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(42, result.Execution!.Values[0].AsInteger());
+        Assert.True(result.Execution.Values[1].IsNil);
+        Assert.Equal("string", result.Execution.Values[2].AsString().ToString());
+    }
+
+    [Fact]
+    public void Lua53CachesClosuresWithIdenticalUpvalueBindings()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "local shared = {}; local closures = {}\n" +
+            "for i = 1, 2 do closures[i] = function() return shared end end\n" +
+            "local distinct = {}\n" +
+            "for i = 1, 2 do distinct[i] = function() return i end end\n" +
+            "return closures[1] == closures[2], distinct[1] ~= distinct[2]");
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Execution!.Values[0].AsBoolean());
+        Assert.True(result.Execution.Values[1].AsBoolean());
+    }
+
+    [Fact]
     public void Lua53StringDumpRoundTripsAClosure()
     {
         using var host = new LuaHost(new LuaHostOptions
@@ -139,6 +199,33 @@ public sealed class LanguageVersionTests
         Assert.Equal("function", values[7].AsString().ToString());
         Assert.Equal("number", values[8].AsString().ToString());
         Assert.Equal(15, values[9].AsInteger());
+    }
+
+    [Fact]
+    public void Lua53StandardLibraryRetainsVersionSpecificRandomAndUtf8Limits()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "local seedResults = select('#', math.randomseed(123))\n" +
+            "local randomZero = pcall(math.random, 0)\n" +
+            "local utf8Extended = pcall(utf8.char, 0x110000)\n" +
+            "local generational = pcall(collectgarbage, 'generational')\n" +
+            "return seedResults, randomZero, utf8Extended, " +
+            "string.find(utf8.charpattern, string.char(0xF4), 1, true) ~= nil, " +
+            "string.find(utf8.charpattern, string.char(0xF5), 1, true) == nil, generational");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(0, result.Execution!.Values[0].AsInteger());
+        Assert.False(result.Execution.Values[1].AsBoolean());
+        Assert.False(result.Execution.Values[2].AsBoolean());
+        Assert.True(result.Execution.Values[3].AsBoolean());
+        Assert.True(result.Execution.Values[4].AsBoolean());
+        Assert.False(result.Execution.Values[5].AsBoolean());
     }
 
     [Fact]

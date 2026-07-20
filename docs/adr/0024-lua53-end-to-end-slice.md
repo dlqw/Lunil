@@ -26,9 +26,12 @@ binary chunk format are not identical to Lua 5.4.
    reader.
 5. Binary loading dispatches from the runtime state's language version. Reader resource budgets
    remain enforced when the existing host/runtime reader options are supplied.
-6. The first zero-runtime-cost generation boundary is `Lunil.IR.Generators`, which generates the
-   Lua 5.3 opcode validity/name table from `Lua53Opcode`. Future generated codecs will extend this
-   boundary without moving version selection into the VM hot loop.
+6. The zero-runtime-cost generation boundary is `Lunil.IR.Generators`. It generates both the Lua
+   5.3 opcode/instruction codec and the `LuaVersionFeatures` table from version metadata. Adapter
+   symbols (`LUNIL_LUA53_ADAPTER`, `LUNIL_LUA54_ADAPTER`, controlled by the matching MSBuild
+   `LunilLua*AdapterEnabled` properties) are selected by conditional compilation; runtime dispatch
+   consumes the generated table, so shared VM/library code is not copied per version and an
+   uncompiled version cannot inherit Lua 5.4 behavior accidentally.
 
 ## Scope of this slice
 
@@ -45,5 +48,7 @@ unsupported-library cases. An opt-in PUC Lua 5.3 differential corpus is availabl
 - Lua 5.1, 5.2, and 5.5 still return `LUA0001`; they are not mapped to Lua 5.3 or Lua 5.4.
 - The Lua 5.3 adapter can evolve its header, prototype, and opcode verification independently from
   `Lunil.IR.Lua54`.
+- Future Lua 5.1, 5.2, and 5.5 adapters can be enabled by adding their profile metadata and
+  compile-time capability without changing the shared runtime dispatch shape.
 - The remaining work is explicit: complete opcode edge cases and grow the selected official
   conformance set as the Lua 5.3 standard-library and runtime matrix expands.

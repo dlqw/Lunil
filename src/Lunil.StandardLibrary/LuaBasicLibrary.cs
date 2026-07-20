@@ -27,7 +27,7 @@ internal static class LuaBasicLibrary
     {
         LuaStandardLibraryContext.Configure(state, options);
         SetFunction(state, "assert", Assert);
-        SetFunction(state, "collectgarbage", CollectGarbage);
+        SetStepFunction(state, "collectgarbage", CollectGarbageStep);
         SetStepFunction(state, "dofile", DoFile);
         SetFunction(state, "error", Error);
         SetFunction(state, "getmetatable", GetMetatable);
@@ -37,7 +37,7 @@ internal static class LuaBasicLibrary
         state.SetGlobal("next", LuaValue.FromFunction(NextDescriptor));
         SetStepFunction(state, "pairs", Pairs);
         state.InstallProtectedCallFunctions();
-        if (state.LanguageVersion == LuaLanguageVersion.Lua54)
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasWarnLibrary)
         {
             SetFunction(state, "warn", Warn);
         }
@@ -352,58 +352,40 @@ internal static class LuaBasicLibrary
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
-        LuaValue[]? state = null;
-        ReadOnlySpan<LuaValue> arguments;
+        LuaValue[] state;
         var index = 0;
         if (continuationId == 0)
         {
-            arguments = values;
+            state = new LuaValue[values.Length + 1];
+            values.CopyTo(state);
         }
         else
         {
             state = context.InvocationState as LuaValue[] ??
                 throw new InvalidOperationException("print lost its reusable state.");
             index = checked((int)state[^1].AsInteger());
-            arguments = state.AsSpan(0, state.Length - 1);
             if (values.Length == 0 || values[0].Kind != LuaValueKind.String)
             {
-                throw new LuaRuntimeException("'__tostring' must return a string");
+                throw new LuaRuntimeException("'tostring' must return a string to 'print'");
             }
 
             WritePrintValue(context.State, index, values[0].AsString().AsMemory());
             index++;
         }
 
-        while (index < arguments.Length)
+        if (index == state.Length - 1)
         {
-            var metamethod = GetMetafield(context.State, arguments[index], "__tostring");
-            if (!metamethod.IsNil)
-            {
-                if (state is null)
-                {
-                    state = new LuaValue[arguments.Length + 1];
-                    arguments.CopyTo(state);
-                    arguments = state.AsSpan(0, arguments.Length);
-                }
-
-                state[^1] = LuaValue.FromInteger(index);
-                return LuaNativeStep.CallLuaWithReusableState(
-                    metamethod,
-                    [arguments[index]],
-                    continuationId: 1,
-                    stateValues: state,
-                    callIsYieldable: false);
-            }
-
-            WritePrintValue(
-                context.State,
-                index,
-                DefaultToString(context.State, arguments[index]).AsString().AsMemory());
-            index++;
+            LuaStandardLibraryContext.Get(context.State).Options.Console.WriteLine();
+            return LuaNativeStep.Completed();
         }
 
-        LuaStandardLibraryContext.Get(context.State).Options.Console.WriteLine();
-        return LuaNativeStep.Completed();
+        state[^1] = LuaValue.FromInteger(index);
+        return LuaNativeStep.CallLuaWithReusableState(
+            context.State.GetGlobal("tostring"),
+            [state[index]],
+            continuationId: 1,
+            stateValues: state,
+            callIsYieldable: false);
     }
 
     private static void WritePrintValue(LuaState state, int index, ReadOnlyMemory<byte> bytes)
@@ -457,14 +439,121 @@ internal static class LuaBasicLibrary
         return [];
     }
 
-    private static LuaValue[] CollectGarbage(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private static LuaNativeStep CollectGarbageStep(
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> values)
     {
-        var option = arguments.Length == 0 || arguments[0].IsNil
+        if (continuationId == 0)
+        {
+            var option = GetCollectGarbageOption(values);
+            var features = LuaVersionFeatureTable.Get(context.State.LanguageVersion);
+            if (option == "collect" && features.SynchronousFinalizerErrors)
+            {
+                if (context.State.IsRunningFinalizer)
+                {
+                    return LuaNativeStep.Completed(LuaValue.FromBoolean(false));
+                }
+
+                context.State.Heap.CollectFull();
+                return ContinueSynchronousFinalizers(
+                    context,
+                    [LuaValue.FromBoolean(false), LuaValue.Nil, LuaValue.Nil]);
+            }
+
+            return LuaNativeStep.Completed(CollectGarbage(context.State, values));
+        }
+
+        var state = context.InvocationState as LuaValue[] ??
+            throw new InvalidOperationException("collectgarbage lost its reusable state.");
+        if (continuationId != 1)
+        {
+            throw new InvalidOperationException(
+                $"Unknown collectgarbage continuation id {continuationId}.");
+        }
+
+        context.State.IsRunningFinalizer = false;
+        if (state[2].TryGetGcObject() is { } target)
+        {
+            LuaHeap.CompleteFinalizer(target);
+        }
+
+        state[2] = LuaValue.Nil;
+        if (values.Length == 0 || !values[0].IsTruthy)
+        {
+            if (!state[0].AsBoolean())
+            {
+                state[0] = LuaValue.FromBoolean(true);
+                // Lua 5.3 reports a finalizer failure only after the complete finalizer
+                // queue has drained, using the canonical protected-call message.  In
+                // particular, a non-string value passed to error() must not escape the
+                // __gc boundary as a table/userdata value.
+                state[1] = LuaLibraryHelpers.String(context.State, "error in __gc");
+            }
+        }
+
+        return ContinueSynchronousFinalizers(context, state);
+    }
+
+    private static LuaNativeStep ContinueSynchronousFinalizers(
+        LuaNativeCallContext context,
+        LuaValue[] state)
+    {
+        while (context.State.Heap.TryTakePendingFinalizer(out var target, out var finalizer))
+        {
+            var targetValue = target switch
+            {
+                LuaTable table => LuaValue.FromTable(table),
+                LuaUserdata userdata => LuaValue.FromUserdata(userdata),
+                _ => LuaValue.Nil,
+            };
+            if (targetValue.IsNil)
+            {
+                LuaHeap.CompleteFinalizer(target);
+                continue;
+            }
+
+            state[2] = targetValue;
+            context.State.IsRunningFinalizer = true;
+            return LuaNativeStep.CallLuaWithReusableState(
+                finalizer,
+                [targetValue],
+                continuationId: 1,
+                stateValues: state,
+                callIsYieldable: false,
+                callIsProtected: true);
+        }
+
+        if (state[0].AsBoolean())
+        {
+            throw new LuaRuntimeException(state[1]);
+        }
+
+        return LuaNativeStep.Completed(LuaValue.FromInteger(0));
+    }
+
+    private static string GetCollectGarbageOption(ReadOnlySpan<LuaValue> arguments)
+    {
+        return arguments.Length == 0 || arguments[0].IsNil
             ? "collect"
             : Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 0, "collectgarbage"));
+    }
+
+    private static LuaValue[] CollectGarbage(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var option = GetCollectGarbageOption(arguments);
         if (state.IsRunningFinalizer && option == "collect")
         {
             return [LuaValue.FromBoolean(false)];
+        }
+
+        if (!LuaVersionFeatureTable.Get(state.LanguageVersion).SupportsGenerationalCollection &&
+            option is ("generational" or "incremental"))
+        {
+            throw LuaLibraryHelpers.BadArgument(
+                "collectgarbage",
+                0,
+                $"invalid option '{option}'");
         }
 
         return option switch
@@ -748,7 +837,15 @@ internal static class LuaBasicLibrary
             else
             {
                 var source = new SourceText(bytes);
-                var lowering = LuaLowerer.Lower(LuaBinder.Bind(LuaParser.Parse(source)));
+                var syntax = LuaParser.Parse(source, parserOptions: LuaParserOptions.Default with
+                {
+                    LanguageVersion = state.LanguageVersion,
+                });
+                var semantics = LuaBinder.Bind(syntax, LuaBinderOptions.Default with
+                {
+                    LanguageVersion = state.LanguageVersion,
+                });
+                var lowering = LuaLowerer.Lower(semantics);
                 if (lowering.Module is null || lowering.Diagnostics.Any(static diagnostic =>
                     diagnostic.Severity == Lunil.Core.Diagnostics.DiagnosticSeverity.Error))
                 {
@@ -757,7 +854,8 @@ internal static class LuaBasicLibrary
                         : FormatLoadDiagnostic(
                             source,
                             chunkName,
-                            SelectLoadDiagnostic(lowering.Diagnostics));
+                            SelectLoadDiagnostic(lowering.Diagnostics),
+                            state.LanguageVersion);
                     return LuaNativeStep.Completed(
                         LuaValue.Nil,
                         LuaLibraryHelpers.String(state, message));
@@ -795,23 +893,28 @@ internal static class LuaBasicLibrary
     private static string FormatLoadDiagnostic(
         SourceText source,
         byte[] chunkName,
-        Lunil.Core.Diagnostics.Diagnostic diagnostic)
+        Lunil.Core.Diagnostics.Diagnostic diagnostic,
+        LuaLanguageVersion languageVersion)
     {
         var location = source.GetLocation(Math.Min(diagnostic.Span.Start, source.Length));
         var prefix = $"{LuaLibraryHelpers.ShortSource(chunkName)}:{location.Line + 1}: ";
         if (diagnostic.Code == "LUA2001" &&
             diagnostic.Span.Start >= source.Length &&
-            source.Length > 512)
+            source.Length > 256)
         {
             // PUC Lua's recursive production for an unfinished, very long list
             // exhausts its parser stack before it can report the missing token.
-            return $"{prefix}C stack overflow";
+            return $"{prefix}{(languageVersion == LuaLanguageVersion.Lua53
+                ? "too many C levels"
+                : "C stack overflow")}";
         }
 
         var message = diagnostic.Code switch
         {
             "LUA1006" => "malformed number",
-            "LUA2006" => "C stack overflow",
+            "LUA2006" => languageVersion == LuaLanguageVersion.Lua53
+                ? "too many C levels"
+                : "C stack overflow",
             "LUA2001" => "expected token",
             "LUA2002" => "unexpected symbol",
             "LUA2004" => "syntax error",

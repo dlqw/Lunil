@@ -1,4 +1,5 @@
 using Lunil.Runtime.Values;
+using Lunil.Runtime.Execution;
 using System.Security.Cryptography;
 
 namespace Lunil.Runtime.Memory;
@@ -32,6 +33,7 @@ public sealed class LuaHeap
     private LuaGcObject[] _sweepCandidates = [];
     private int _sweepIndex;
     private long _nextObjectId;
+    private long _nextFinalizerRegistrationOrder;
     private long _nextHandleId;
     private long _allocationDebt;
     private bool _allocatedSinceSafePoint;
@@ -96,6 +98,13 @@ public sealed class LuaHeap
         (Phase != LuaGcPhase.Paused ||
             _allocationDebt >= _options.StepSizeBytes ||
             _options.StressEveryAllocation && _allocatedSinceSafePoint);
+
+    /// <summary>
+    /// Lua 5.3 keeps values in open upvalues of an unreachable coroutine alive for one
+    /// atomic cycle. The version profile enables this compatibility rule without changing
+    /// the generic heap API used by other Lua versions.
+    /// </summary>
+    internal bool PreservesDeadThreadOpenUpvalues { get; set; }
 
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
 
@@ -497,6 +506,15 @@ public sealed class LuaHeap
 
     internal void RemoveHandle(long id) => _handles.Remove(id);
 
+    internal void RegisterFinalizer(LuaGcObject value)
+    {
+        ValidateObject(value);
+        if (value.FinalizerRegistrationOrder == 0)
+        {
+            value.FinalizerRegistrationOrder = checked(++_nextFinalizerRegistrationOrder);
+        }
+    }
+
     internal bool TryTakePendingFinalizer(
         out LuaGcObject target,
         out LuaValue finalizer)
@@ -685,6 +703,22 @@ public sealed class LuaHeap
                 return 1;
             }
 
+            if (PreservesDeadThreadOpenUpvalues)
+            {
+                foreach (var thread in _objects.OfType<LuaThread>())
+                {
+                    if (thread.IsAlive && thread.Color == LuaGcColor.White)
+                    {
+                        thread.RemarkDeadOpenUpvalueValues(_visitor);
+                    }
+                }
+
+                while (_gray.Count > 0)
+                {
+                    PropagateOne();
+                }
+            }
+
             // Lua clears weak values before resurrecting objects that are waiting for
             // finalization. References reachable only through a finalizable object must
             // therefore disappear from weak-value tables, while weak keys can still be
@@ -697,16 +731,15 @@ public sealed class LuaHeap
             }
 
             _finalizersSeparated = true;
-            foreach (var value in GetCycleObjects())
+            var finalizable = GetCycleObjects()
+                .Where(static value => value.IsAlive &&
+                    value.FinalizationState == LuaGcFinalizationState.None &&
+                    value.Color == LuaGcColor.White)
+                .Where(value => (_cycleKind != LuaGcCycleKind.Minor || !IsOld(value)) &&
+                    value.TryGetFinalizer(out _))
+                .OrderByDescending(GetFinalizerOrder);
+            foreach (var value in finalizable)
             {
-                if (!value.IsAlive || value.FinalizationState != LuaGcFinalizationState.None ||
-                    value.Color != LuaGcColor.White ||
-                    (_cycleKind == LuaGcCycleKind.Minor && IsOld(value)) ||
-                    !value.TryGetFinalizer(out _))
-                {
-                    continue;
-                }
-
                 value.FinalizationState = LuaGcFinalizationState.Pending;
                 MarkObject(value);
                 _pendingFinalizers.Enqueue(new PendingFinalizer(value));
@@ -947,6 +980,11 @@ public sealed class LuaHeap
 
     private IEnumerable<LuaGcObject> GetCycleObjects() =>
         _cycleKind == LuaGcCycleKind.Minor ? _youngObjects : _objects;
+
+    private static long GetFinalizerOrder(LuaGcObject value) =>
+        value.FinalizerRegistrationOrder != 0
+            ? value.FinalizerRegistrationOrder
+            : value.ObjectId;
 
     private readonly record struct PendingFinalizer(LuaGcObject Target);
 

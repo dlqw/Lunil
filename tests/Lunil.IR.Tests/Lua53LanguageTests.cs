@@ -8,6 +8,37 @@ namespace Lunil.IR.Tests;
 public sealed class Lua53LanguageTests
 {
     [Fact]
+    public void GeneratedLua53InstructionCodecRoundTripsEveryLayoutBoundary()
+    {
+        var abc = Lua53Instruction.CreateAbc(
+            Lua53Opcode.SetTable,
+            Lua53Instruction.MaximumA,
+            Lua53Instruction.MaximumB,
+            Lua53Instruction.MaximumC);
+        var abx = Lua53Instruction.CreateABx(
+            Lua53Opcode.LoadConstant,
+            Lua53Instruction.MaximumA,
+            Lua53Instruction.MaximumBx);
+        var signed = Lua53Instruction.CreateASignedBx(
+            Lua53Opcode.Jump,
+            Lua53Instruction.MaximumA,
+            -Lua53Instruction.SignedBxOffset);
+        var ax = Lua53Instruction.CreateAx(
+            Lua53Opcode.ExtraArgument,
+            Lua53Instruction.MaximumAx);
+
+        Assert.Equal(Lua53Opcode.SetTable, abc.Opcode);
+        Assert.Equal(Lua53Instruction.MaximumA, abc.A);
+        Assert.Equal(Lua53Instruction.MaximumB, abc.B);
+        Assert.Equal(Lua53Instruction.MaximumC, abc.C);
+        Assert.Equal(Lua53Instruction.MaximumBx, abx.Bx);
+        Assert.Equal(-Lua53Instruction.SignedBxOffset, signed.SignedBx);
+        Assert.Equal(Lua53Instruction.MaximumAx, ax.Ax);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            Lua53Instruction.CreateAbc(Lua53Opcode.Move, Lua53Instruction.MaximumA + 1, 0, 0));
+    }
+
+    [Fact]
     public void Lua53ChunkWriterRoundTripsReaderModel()
     {
         var original = Lua53ChunkReader.Read(CreateSimpleReturnChunk());

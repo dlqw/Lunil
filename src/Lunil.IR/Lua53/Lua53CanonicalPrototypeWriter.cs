@@ -381,13 +381,14 @@ public static class Lua53CanonicalPrototypeWriter
             var jumpIndex = _code.Count;
             Emit(Lua53Instruction.CreateASignedBx(Lua53Opcode.Jump, 0, 0), line);
             EmitAbc(Lua53Opcode.LoadBoolean, destination, 0, 1, line);
+            var trueProgramCounter = _code.Count;
             EmitAbc(Lua53Opcode.LoadBoolean, destination, 1, 0, line);
             _code[jumpIndex] = _code[jumpIndex] with
             {
                 Instruction = Lua53Instruction.CreateASignedBx(
                     Lua53Opcode.Jump,
                     0,
-                    _code.Count - jumpIndex - 1),
+                    trueProgramCounter - jumpIndex - 1),
             };
         }
 

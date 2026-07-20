@@ -181,8 +181,8 @@ public static class Lua53PrototypeConverter
                     Emit(LuaIrOpcode.GetUpvalue, instruction.A, instruction.B);
                     break;
                 case Lua53Opcode.GetGlobal:
-                    Emit(LuaIrOpcode.GetUpvalue, Scratch0, 0);
-                    Emit(LuaIrOpcode.LoadConstant, Scratch1, instruction.Bx);
+                    Emit(LuaIrOpcode.GetUpvalue, Scratch0, instruction.B);
+                    EmitRk(Scratch1, instruction.C, instruction.IsConstantC);
                     Emit(LuaIrOpcode.GetTable, instruction.A, Scratch0, Scratch1);
                     break;
                 case Lua53Opcode.GetTable:

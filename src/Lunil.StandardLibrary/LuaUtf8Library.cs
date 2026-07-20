@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -24,13 +25,16 @@ internal static class LuaUtf8Library
         LuaLibraryHelpers.SetFunction(state, module, "codes", Codes);
         LuaLibraryHelpers.SetFunction(state, module, "len", Length);
         LuaLibraryHelpers.SetFunction(state, module, "offset", Offset);
+        var maximumLeadingByte = state.LanguageVersion == LuaLanguageVersion.Lua53
+            ? (byte)0xf4
+            : (byte)0xfd;
         LuaLibraryHelpers.Set(
             state,
             module,
             "charpattern",
             LuaValue.FromString(state.Strings.GetOrCreate(
                 [
-                    (byte)'[', 0, (byte)'-', 0x7f, 0xc2, (byte)'-', 0xfd, (byte)']',
+                    (byte)'[', 0, (byte)'-', 0x7f, 0xc2, (byte)'-', maximumLeadingByte, (byte)']',
                     (byte)'[', 0x80, (byte)'-', 0xbf, (byte)']', (byte)'*',
                 ])));
         state.SetGlobal("utf8", LuaValue.FromTable(module));
@@ -44,7 +48,9 @@ internal static class LuaUtf8Library
         {
             var integer = LuaLibraryHelpers.CheckInteger(arguments, index, "char");
             var code = unchecked((ulong)integer);
-            if (code > MaximumUtf8)
+            if (code > (state.LanguageVersion == LuaLanguageVersion.Lua53
+                ? 0x10_ffffu
+                : MaximumUtf8))
             {
                 throw LuaLibraryHelpers.BadArgument("char", index, "value out of range");
             }
@@ -90,7 +96,7 @@ internal static class LuaUtf8Library
         return [LuaValue.FromInteger(count)];
     }
 
-    private static LuaValue[] CodePoint(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue[] CodePoint(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var bytes = CheckString(arguments, 0, "codepoint");
         var start = RelativePosition(
@@ -100,14 +106,17 @@ internal static class LuaUtf8Library
             LuaLibraryHelpers.OptionalInteger(arguments, 2, start, "codepoint"),
             bytes.Length);
         var lax = arguments.Length > 3 && arguments[3].IsTruthy;
+        var boundsMessage = state.LanguageVersion == LuaLanguageVersion.Lua53
+            ? "out of range"
+            : "out of bounds";
         if (start < 1)
         {
-            throw LuaLibraryHelpers.BadArgument("codepoint", 1, "out of bounds");
+            throw LuaLibraryHelpers.BadArgument("codepoint", 1, boundsMessage);
         }
 
         if (end > bytes.Length)
         {
-            throw LuaLibraryHelpers.BadArgument("codepoint", 2, "out of bounds");
+            throw LuaLibraryHelpers.BadArgument("codepoint", 2, boundsMessage);
         }
 
         if (start > end)
@@ -171,7 +180,7 @@ internal static class LuaUtf8Library
         return [LuaValue.FromInteger((long)control + 1), LuaValue.FromInteger(code)];
     }
 
-    private static LuaValue[] Offset(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue[] Offset(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var bytes = CheckString(arguments, 0, "offset");
         var count = LuaLibraryHelpers.CheckInteger(arguments, 1, "offset");
@@ -181,7 +190,12 @@ internal static class LuaUtf8Library
             bytes.Length);
         if (position < 1 || --position > bytes.Length)
         {
-            throw LuaLibraryHelpers.BadArgument("offset", 2, "position out of bounds");
+            throw LuaLibraryHelpers.BadArgument(
+                "offset",
+                2,
+                state.LanguageVersion == LuaLanguageVersion.Lua53
+                    ? "position out of range"
+                    : "position out of bounds");
         }
 
         if (count == 0)

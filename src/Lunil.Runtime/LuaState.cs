@@ -36,6 +36,8 @@ public sealed class LuaState
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
         LanguageVersion = options.LanguageVersion;
         Heap = new LuaHeap(options.Heap);
+        Heap.PreservesDeadThreadOpenUpvalues =
+            LuaVersionFeatureTable.Get(LanguageVersion).PreservesDeadThreadOpenUpvalues;
         Strings = new LuaStringPool(Heap);
         MemoryErrorString = Strings.GetOrCreate("not enough memory"u8);
         Globals = new LuaTable(Heap);
@@ -275,10 +277,27 @@ public sealed class LuaState
 
     public LuaClosure LoadBinaryChunk(
         ReadOnlySpan<byte> binaryChunk,
-        Lua54ChunkReaderOptions? options = null) =>
-        CreateMainClosure(LanguageVersion == LuaLanguageVersion.Lua53
-            ? Lua53PrototypeConverter.Convert(binaryChunk, TranslateReaderOptions(options))
-            : Lua54PrototypeConverter.Convert(binaryChunk, options));
+        Lua54ChunkReaderOptions? options = null)
+    {
+        var features = LuaVersionFeatureTable.Get(LanguageVersion);
+        if (!features.IsImplemented)
+        {
+            throw new NotSupportedException(
+                $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
+                "is not compiled into this build.");
+        }
+
+        return CreateMainClosure(features.ChunkFormat switch
+        {
+            LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(
+                binaryChunk,
+                TranslateReaderOptions(options)),
+            LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(binaryChunk, options),
+            _ => throw new NotSupportedException(
+                $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
+                "does not declare a chunk format."),
+        });
+    }
 
     public LuaClosure LoadBinaryChunk(Lua54Chunk chunk) =>
         CreateMainClosure(Lua54PrototypeConverter.Convert(chunk));

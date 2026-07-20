@@ -34,19 +34,32 @@ internal static class DumpCommand
         {
             try
             {
-                if (context.Options.LanguageVersion == LuaLanguageVersion.Lua53)
+                var features = LuaVersionFeatureTable.Get(context.Options.LanguageVersion);
+                if (!features.IsImplemented)
                 {
-                    chunk = Lua53ChunkReader.Read(input.Bytes);
-                    module = Lua53PrototypeConverter.Convert((Lua53Chunk)chunk);
+                    throw new NotSupportedException(
+                        $"The {LuaLanguageVersions.GetDisplayName(context.Options.LanguageVersion)} " +
+                        "binary adapter is not compiled into this build.");
                 }
-                else
+
+                switch (features.ChunkFormat)
                 {
-                    chunk = Lua54ChunkReader.Read(input.Bytes);
-                    module = Lua54PrototypeConverter.Convert((Lua54Chunk)chunk);
+                    case LuaChunkFormat.Lua53:
+                        chunk = Lua53ChunkReader.Read(input.Bytes);
+                        module = Lua53PrototypeConverter.Convert((Lua53Chunk)chunk);
+                        break;
+                    case LuaChunkFormat.Lua54:
+                        chunk = Lua54ChunkReader.Read(input.Bytes);
+                        module = Lua54PrototypeConverter.Convert((Lua54Chunk)chunk);
+                        break;
+                    default:
+                        throw new NotSupportedException(
+                            "The selected binary adapter does not declare a chunk format.");
                 }
             }
             catch (Exception exception) when (exception is Lua53ChunkFormatException or
-                Lua54ChunkFormatException or InvalidDataException or ArgumentException)
+                Lua54ChunkFormatException or NotSupportedException or InvalidDataException or
+                ArgumentException)
             {
                 await WriteProblemAsync(context, input.DisplayPath, "LUA8001", exception.Message)
                     .ConfigureAwait(false);
@@ -101,9 +114,17 @@ internal static class DumpCommand
 
         if (context.Options.DumpKind == CliDumpKind.Chunk && chunk is null)
         {
-            chunk = context.Options.LanguageVersion == LuaLanguageVersion.Lua53
-                ? Lua53CanonicalPrototypeWriter.CreateChunk(module!, module!.MainFunctionId)
-                : Lua54CanonicalPrototypeWriter.CreateChunk(module!, module!.MainFunctionId);
+            chunk = LuaVersionFeatureTable.Get(context.Options.LanguageVersion).ChunkFormat switch
+            {
+                LuaChunkFormat.Lua53 => Lua53CanonicalPrototypeWriter.CreateChunk(
+                    module!,
+                    module!.MainFunctionId),
+                LuaChunkFormat.Lua54 => Lua54CanonicalPrototypeWriter.CreateChunk(
+                    module!,
+                    module!.MainFunctionId),
+                _ => throw new CliInputException(
+                    "The selected language adapter does not declare a chunk format."),
+            };
         }
 
         var payload = context.Options.DumpFormat == CliDumpFormat.Json

@@ -47,7 +47,7 @@ public static class LuaStandardLibrary
         return LuaBasicLibrary.Install(state, options);
     }
 
-    /// <summary>Installs the complete Lua 5.4 math module into the global environment.</summary>
+    /// <summary>Installs the version-selected math module into the global environment.</summary>
     public static LuaTable InstallMath(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -55,7 +55,7 @@ public static class LuaStandardLibrary
         return LuaMathLibrary.Install(state);
     }
 
-    /// <summary>Installs the complete Lua 5.4 UTF-8 module into the global environment.</summary>
+    /// <summary>Installs the version-selected UTF-8 module into the global environment.</summary>
     public static LuaTable InstallUtf8(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -63,7 +63,7 @@ public static class LuaStandardLibrary
         return LuaUtf8Library.Install(state);
     }
 
-    /// <summary>Installs the complete Lua 5.4 table module into the global environment.</summary>
+    /// <summary>Installs the version-selected table module into the global environment.</summary>
     public static LuaTable InstallTable(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -71,7 +71,7 @@ public static class LuaStandardLibrary
         return LuaTableLibrary.Install(state);
     }
 
-    /// <summary>Installs the Lua 5.4 string module and string metatable.</summary>
+    /// <summary>Installs the version-selected string module and string metatable.</summary>
     public static LuaTable InstallString(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -79,7 +79,7 @@ public static class LuaStandardLibrary
         return LuaStringLibrary.Install(state);
     }
 
-    /// <summary>Installs the Lua 5.4 package module and global require function.</summary>
+    /// <summary>Installs the version-selected package module and global require function.</summary>
     public static LuaTable InstallPackage(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -87,7 +87,7 @@ public static class LuaStandardLibrary
         return LuaPackageLibrary.Install(state);
     }
 
-    /// <summary>Installs the Lua 5.4 I/O module and FILE* userdata metatable.</summary>
+    /// <summary>Installs the version-selected I/O module and FILE* userdata metatable.</summary>
     public static LuaTable InstallIo(
         LuaState state,
         LuaStandardLibraryOptions? options = null)
@@ -97,7 +97,7 @@ public static class LuaStandardLibrary
         return LuaIoLibrary.Install(state, options);
     }
 
-    /// <summary>Installs the Lua 5.4 operating-system module.</summary>
+    /// <summary>Installs the version-selected operating-system module.</summary>
     public static LuaTable InstallOs(
         LuaState state,
         LuaStandardLibraryOptions? options = null)
@@ -107,7 +107,7 @@ public static class LuaStandardLibrary
         return LuaOsLibrary.Install(state, options);
     }
 
-    /// <summary>Installs the Lua 5.4 debug module and runtime hook bridge.</summary>
+    /// <summary>Installs the version-selected debug module and runtime hook bridge.</summary>
     public static LuaTable InstallDebug(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -115,7 +115,7 @@ public static class LuaStandardLibrary
         return LuaDebugLibrary.Install(state);
     }
 
-    /// <summary>Installs the complete Lua 5.4 coroutine module into the global environment.</summary>
+    /// <summary>Installs the version-selected coroutine module into the global environment.</summary>
     public static LuaTable InstallCoroutine(LuaState state)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -125,7 +125,7 @@ public static class LuaStandardLibrary
 
     private static void EnsureImplemented(LuaState state)
     {
-        if (state.LanguageVersion is not (LuaLanguageVersion.Lua53 or LuaLanguageVersion.Lua54))
+        if (!LuaVersionFeatureTable.Get(state.LanguageVersion).IsImplemented)
         {
             throw new NotSupportedException(
                 $"The {LuaLanguageVersions.GetDisplayName(state.LanguageVersion)} standard library " +
