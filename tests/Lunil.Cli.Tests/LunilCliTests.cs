@@ -430,8 +430,8 @@ public sealed class LunilCliTests
         var fromCli = await fixture.RunAsync("run", script, "--lua-version", "5.1");
 
         Assert.Equal(0, fromEnvironment.ExitCode);
-        Assert.Equal(1, fromCli.ExitCode);
-        Assert.Contains("LUA0001", fromCli.StandardError, StringComparison.Ordinal);
+        Assert.Equal(0, fromCli.ExitCode);
+        Assert.DoesNotContain("LUA0001", fromCli.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]

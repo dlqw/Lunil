@@ -1031,6 +1031,9 @@ public static class LuaLowerer
                 var value = expression.ChildTokens().Single().Value;
                 var constant = value switch
                 {
+                    LuaIntegerTokenValue integer when _owner._model.LanguageVersion is
+                        LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 =>
+                        LuaIrConstant.FromFloat(integer.Integer),
                     LuaIntegerTokenValue integer => LuaIrConstant.FromInteger(integer.Integer),
                     LuaFloatTokenValue floatingPoint => LuaIrConstant.FromFloat(floatingPoint.Float),
                     _ => throw new InvalidOperationException("A numeric token has no decoded value."),

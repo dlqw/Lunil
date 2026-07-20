@@ -42,8 +42,9 @@ function Write-NormalizedText([string] $Path, [string] $Text) {
 
 function Get-TextSha256([string] $Text) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-NormalizedText $Text))
-    $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    return [Convert]::ToHexString($hash)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha256.ComputeHash($bytes) } finally { $sha256.Dispose() }
+    return ([BitConverter]::ToString($hash) -replace '-', '')
 }
 
 function Assert-TextMatches([string] $ExpectedPath, [string] $ActualText) {

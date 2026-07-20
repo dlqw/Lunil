@@ -283,7 +283,7 @@ internal static class LuaBasicLibrary
         return arguments[checked((int)index)..].ToArray();
     }
 
-    private static LuaValue[] ToNumber(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue[] ToNumber(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "tonumber");
         if (arguments.Length < 2 || arguments[1].IsNil)
@@ -295,7 +295,7 @@ internal static class LuaBasicLibrary
 
             return value.Kind == LuaValueKind.String &&
                 LuaNumberParser.TryParseString(value.AsString().AsSpan(), out var number)
-                    ? [FromNumber(number)]
+                    ? [FromNumber(state, number)]
                     : [LuaValue.Nil];
         }
 
@@ -311,7 +311,9 @@ internal static class LuaBasicLibrary
         }
 
         return TryParseInteger(value.AsString().AsSpan(), (int)@base, out var integer)
-            ? [LuaValue.FromInteger(integer)]
+            ? [state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52
+                ? LuaValue.FromFloat(integer)
+                : LuaValue.FromInteger(integer)]
             : [LuaValue.Nil];
     }
 
@@ -1086,7 +1088,10 @@ internal static class LuaBasicLibrary
         return $"{typeName}: 0x{identity:x}";
     }
 
-    private static LuaValue FromNumber(LuaNumber number) => number.Kind == LuaNumberKind.Integer
+    private static LuaValue FromNumber(LuaState state, LuaNumber number) =>
+        state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52
+        ? LuaValue.FromFloat(number.Kind == LuaNumberKind.Integer ? number.Integer : number.Float)
+        : number.Kind == LuaNumberKind.Integer
         ? LuaValue.FromInteger(number.Integer)
         : LuaValue.FromFloat(number.Float);
 

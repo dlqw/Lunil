@@ -189,6 +189,8 @@ public static class LuaBinder
                 case LuaSyntaxKind.FunctionDeclarationStatement:
                     BindFunctionDeclaration(statement);
                     break;
+                case LuaSyntaxKind.GlobalDeclarationStatement:
+                    break;
                 case LuaSyntaxKind.LocalFunctionDeclarationStatement:
                     BindLocalFunctionDeclaration(statement);
                     break;

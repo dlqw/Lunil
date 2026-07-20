@@ -20,12 +20,14 @@
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil 是使用纯 C# 实现的 Lua 5.4.8 编译器、分析工具链与 .NET 10 运行时。源码和 PUC Lua
-二进制 chunk 会汇入同一个经过验证的 canonical IR，再通过参考解释器或基于 profile 的 CoreCLR
+Lunil 是使用纯 C# 实现的版本化 Lua 编译器、分析工具链与 .NET 10 运行时。Lua 5.4.8 仍是默认版本，
+`0.10.0-alpha.2` 开发线另外提供显式 Lua 5.1–5.5 契约。源码和版本化 PUC Lua 二进制 chunk
+会汇入同一个经过验证的 canonical IR，再通过参考解释器或基于 profile 的 CoreCLR
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
 > 稳定版 `0.9.0` 是当前支持版本与性能基线，在六个发布 RID 上保持 Lua 5.4.8 语义。
+> `0.10.0-alpha.2` 预发布版暴露 Lua 5.1–5.5 的显式版本身份，同时保持 Lua 5.4 为默认版本。
 
 ## 性能
 
@@ -174,7 +176,7 @@ flowchart LR
 
 ## 兼容性
 
-- 语言目标：Lua 5.4.8。
+- 语言目标：默认 Lua 5.4.8；`0.10.0-alpha.2` 开发线提供显式 Lua 5.2 和 Lua 5.3 目标。
 - 运行时目标：.NET 10。
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。

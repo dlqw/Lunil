@@ -280,6 +280,518 @@ namespace Lunil.IR.Canonical
         public bool Equals(Lunil.IR.Canonical.LuaIrVerifierOptions? other) => throw null;
     }
 }
+namespace Lunil.IR.Lua51
+{
+    public enum Lua51ByteOrder
+    {
+        LittleEndian = 0,
+        BigEndian = 1
+    }
+
+    public static class Lua51CanonicalPrototypeWriter
+    {
+        public static byte[] Write(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebug = false) => throw null;
+        public static Lunil.IR.Lua51.Lua51Chunk CreateChunk(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebug = false) => throw null;
+    }
+
+    public sealed class Lua51Chunk : System.IEquatable<Lunil.IR.Lua51.Lua51Chunk>
+    {
+        public Lunil.IR.Lua51.Lua51ChunkTarget Target { get => throw null; init { } }
+        public Lunil.IR.Lua51.Lua51Prototype MainPrototype { get => throw null; init { } }
+        public Lua51Chunk(Lunil.IR.Lua51.Lua51ChunkTarget Target, Lunil.IR.Lua51.Lua51Prototype MainPrototype) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51Chunk? left, Lunil.IR.Lua51.Lua51Chunk? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51Chunk? left, Lunil.IR.Lua51.Lua51Chunk? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51Chunk? other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua51.Lua51ChunkTarget Target, out Lunil.IR.Lua51.Lua51Prototype MainPrototype) => throw null;
+    }
+
+    public sealed class Lua51ChunkFormatException : System.FormatException
+    {
+        public string Reason { get => throw null; }
+        public int Offset { get => throw null; }
+        public Lua51ChunkFormatException(string reason, int offset = 0) { }
+    }
+
+    public static class Lua51ChunkReader
+    {
+        public static Lunil.IR.Lua51.Lua51Chunk Read(System.ReadOnlySpan<byte> data, Lunil.IR.Lua51.Lua51ChunkReaderOptions? options = null) => throw null;
+    }
+
+    public sealed class Lua51ChunkReaderOptions : System.IEquatable<Lunil.IR.Lua51.Lua51ChunkReaderOptions>
+    {
+        public static Lunil.IR.Lua51.Lua51ChunkReaderOptions Default { get => throw null; }
+        public int MaximumChunkBytes { get => throw null; init { } }
+        public int MaximumPrototypeDepth { get => throw null; init { } }
+        public int MaximumPrototypeCount { get => throw null; init { } }
+        public int MaximumInstructionCount { get => throw null; init { } }
+        public int MaximumConstantCount { get => throw null; init { } }
+        public int MaximumStringBytes { get => throw null; init { } }
+        public int MaximumDebugEntryCount { get => throw null; init { } }
+        public bool AllowTrailingData { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51ChunkReaderOptions? left, Lunil.IR.Lua51.Lua51ChunkReaderOptions? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51ChunkReaderOptions? left, Lunil.IR.Lua51.Lua51ChunkReaderOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51ChunkReaderOptions? other) => throw null;
+    }
+
+    public readonly struct Lua51ChunkTarget : System.IEquatable<Lunil.IR.Lua51.Lua51ChunkTarget>
+    {
+        public Lunil.IR.Lua51.Lua51ByteOrder ByteOrder { get => throw null; init { } }
+        public int SizeOfInt { get => throw null; init { } }
+        public int SizeOfSizeT { get => throw null; init { } }
+        public int InstructionSize { get => throw null; init { } }
+        public int NumberSize { get => throw null; init { } }
+        public static Lunil.IR.Lua51.Lua51ChunkTarget Host { get => throw null; }
+        public Lua51ChunkTarget(Lunil.IR.Lua51.Lua51ByteOrder ByteOrder, int SizeOfInt, int SizeOfSizeT, int InstructionSize, int NumberSize) { }
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua51.Lua51ChunkTarget left, Lunil.IR.Lua51.Lua51ChunkTarget right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51ChunkTarget left, Lunil.IR.Lua51.Lua51ChunkTarget right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua51.Lua51ChunkTarget other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua51.Lua51ByteOrder ByteOrder, out int SizeOfInt, out int SizeOfSizeT, out int InstructionSize, out int NumberSize) => throw null;
+    }
+
+    public sealed class Lua51Constant : System.IEquatable<Lunil.IR.Lua51.Lua51Constant>
+    {
+        public Lunil.IR.Lua51.Lua51ConstantKind Kind { get => throw null; init { } }
+        public double NumberValue { get => throw null; init { } }
+        public Lunil.IR.Lua51.Lua51String? StringValue { get => throw null; init { } }
+        public static Lunil.IR.Lua51.Lua51Constant Nil { get => throw null; }
+        public static Lunil.IR.Lua51.Lua51Constant False { get => throw null; }
+        public static Lunil.IR.Lua51.Lua51Constant True { get => throw null; }
+        public static Lunil.IR.Lua51.Lua51Constant FromBoolean(bool value) => throw null;
+        public static Lunil.IR.Lua51.Lua51Constant FromNumber(double value) => throw null;
+        public static Lunil.IR.Lua51.Lua51Constant FromString(Lunil.IR.Lua51.Lua51String value) => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51Constant? left, Lunil.IR.Lua51.Lua51Constant? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51Constant? left, Lunil.IR.Lua51.Lua51Constant? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51Constant? other) => throw null;
+    }
+
+    public enum Lua51ConstantKind
+    {
+        Nil = 0,
+        False = 1,
+        True = 2,
+        Number = 3,
+        String = 4
+    }
+
+    public readonly struct Lua51Instruction : System.IEquatable<Lunil.IR.Lua51.Lua51Instruction>
+    {
+        public const int MaximumA = 255;
+        public const int MaximumB = 511;
+        public const int MaximumC = 511;
+        public const int MaximumBx = 262143;
+        public const int SignedBxOffset = 131071;
+        public uint RawValue { get => throw null; init { } }
+        public Lunil.IR.Lua51.Lua51Opcode Opcode { get => throw null; }
+        public int A { get => throw null; }
+        public int C { get => throw null; }
+        public int B { get => throw null; }
+        public int Bx { get => throw null; }
+        public int SignedBx { get => throw null; }
+        public bool IsConstantB { get => throw null; }
+        public bool IsConstantC { get => throw null; }
+        public Lua51Instruction(uint RawValue) { }
+        public static Lunil.IR.Lua51.Lua51Instruction CreateAbc(Lunil.IR.Lua51.Lua51Opcode opcode, int a, int b, int c) => throw null;
+        public static Lunil.IR.Lua51.Lua51Instruction CreateABx(Lunil.IR.Lua51.Lua51Opcode opcode, int a, int bx) => throw null;
+        public static Lunil.IR.Lua51.Lua51Instruction CreateASignedBx(Lunil.IR.Lua51.Lua51Opcode opcode, int a, int sbx) => throw null;
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua51.Lua51Instruction left, Lunil.IR.Lua51.Lua51Instruction right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51Instruction left, Lunil.IR.Lua51.Lua51Instruction right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua51.Lua51Instruction other) => throw null;
+        public void Deconstruct(out uint RawValue) => throw null;
+    }
+
+    public sealed class Lua51LocalVariable : System.IEquatable<Lunil.IR.Lua51.Lua51LocalVariable>
+    {
+        public Lunil.IR.Lua51.Lua51String? Name { get => throw null; init { } }
+        public int StartProgramCounter { get => throw null; init { } }
+        public int EndProgramCounter { get => throw null; init { } }
+        public Lua51LocalVariable(Lunil.IR.Lua51.Lua51String? Name, int StartProgramCounter, int EndProgramCounter) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51LocalVariable? left, Lunil.IR.Lua51.Lua51LocalVariable? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51LocalVariable? left, Lunil.IR.Lua51.Lua51LocalVariable? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51LocalVariable? other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua51.Lua51String? Name, out int StartProgramCounter, out int EndProgramCounter) => throw null;
+    }
+
+    public enum Lua51Opcode
+    {
+        Move = 0,
+        LoadConstant = 1,
+        LoadBoolean = 2,
+        LoadNil = 3,
+        GetUpvalue = 4,
+        GetGlobal = 5,
+        GetTable = 6,
+        SetGlobal = 7,
+        SetUpvalue = 8,
+        SetTable = 9,
+        NewTable = 10,
+        Self = 11,
+        Add = 12,
+        Subtract = 13,
+        Multiply = 14,
+        Divide = 15,
+        Modulo = 16,
+        Power = 17,
+        UnaryMinus = 18,
+        LogicalNot = 19,
+        Length = 20,
+        Concatenate = 21,
+        Jump = 22,
+        Equal = 23,
+        LessThan = 24,
+        LessOrEqual = 25,
+        Test = 26,
+        TestSet = 27,
+        Call = 28,
+        TailCall = 29,
+        Return = 30,
+        NumericForLoop = 31,
+        NumericForPrepare = 32,
+        GenericForLoop = 33,
+        SetList = 34,
+        Close = 35,
+        Closure = 36,
+        VarArg = 37
+    }
+
+    public sealed class Lua51Prototype : System.IEquatable<Lunil.IR.Lua51.Lua51Prototype>
+    {
+        public Lunil.IR.Lua51.Lua51String? Source { get => throw null; init { } }
+        public int LineDefined { get => throw null; init { } }
+        public int LastLineDefined { get => throw null; init { } }
+        public byte UpvalueCount { get => throw null; init { } }
+        public byte ParameterCount { get => throw null; init { } }
+        public byte VarArgFlags { get => throw null; init { } }
+        public byte MaximumStackSize { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua51.Lua51Instruction> Code { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua51.Lua51Constant> Constants { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua51.Lua51Prototype> NestedPrototypes { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<int> LineInfo { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua51.Lua51LocalVariable> LocalVariables { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua51.Lua51String?> UpvalueNames { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51Prototype? left, Lunil.IR.Lua51.Lua51Prototype? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51Prototype? left, Lunil.IR.Lua51.Lua51Prototype? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51Prototype? other) => throw null;
+    }
+
+    public static class Lua51PrototypeConverter
+    {
+        public static Lunil.IR.Canonical.LuaIrModule Convert(System.ReadOnlySpan<byte> bytes, Lunil.IR.Lua51.Lua51ChunkReaderOptions? options = null) => throw null;
+        public static Lunil.IR.Canonical.LuaIrModule Convert(Lunil.IR.Lua51.Lua51Chunk chunk) => throw null;
+    }
+
+    public readonly struct Lua51String : System.IEquatable<Lunil.IR.Lua51.Lua51String>
+    {
+        public byte[] Bytes { get => throw null; init { } }
+        public int Length { get => throw null; }
+        public Lua51String(byte[] Bytes) { }
+        public byte[] ToArray() => throw null;
+        public System.ReadOnlySpan<byte> AsSpan() => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua51.Lua51String left, Lunil.IR.Lua51.Lua51String right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua51.Lua51String left, Lunil.IR.Lua51.Lua51String right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object obj) => throw null;
+        public bool Equals(Lunil.IR.Lua51.Lua51String other) => throw null;
+        public void Deconstruct(out byte[] Bytes) => throw null;
+    }
+}
+namespace Lunil.IR.Lua52
+{
+    public enum Lua52ByteOrder
+    {
+        LittleEndian = 0,
+        BigEndian = 1
+    }
+
+    public static class Lua52CanonicalPrototypeWriter
+    {
+        public static byte[] Write(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebug = false) => throw null;
+        public static Lunil.IR.Lua52.Lua52Chunk CreateChunk(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebug = false) => throw null;
+    }
+
+    public sealed class Lua52Chunk : System.IEquatable<Lunil.IR.Lua52.Lua52Chunk>
+    {
+        public Lunil.IR.Lua52.Lua52ChunkTarget Target { get => throw null; init { } }
+        public Lunil.IR.Lua52.Lua52Prototype MainPrototype { get => throw null; init { } }
+        public Lua52Chunk(Lunil.IR.Lua52.Lua52ChunkTarget Target, Lunil.IR.Lua52.Lua52Prototype MainPrototype) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52Chunk? left, Lunil.IR.Lua52.Lua52Chunk? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52Chunk? left, Lunil.IR.Lua52.Lua52Chunk? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52Chunk? other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua52.Lua52ChunkTarget Target, out Lunil.IR.Lua52.Lua52Prototype MainPrototype) => throw null;
+    }
+
+    public sealed class Lua52ChunkFormatException : System.FormatException
+    {
+        public string Reason { get => throw null; }
+        public int Offset { get => throw null; }
+        public Lua52ChunkFormatException(string reason, int offset = 0) { }
+    }
+
+    public static class Lua52ChunkReader
+    {
+        public static Lunil.IR.Lua52.Lua52Chunk Read(System.ReadOnlySpan<byte> data, Lunil.IR.Lua52.Lua52ChunkReaderOptions? options = null) => throw null;
+    }
+
+    public sealed class Lua52ChunkReaderOptions : System.IEquatable<Lunil.IR.Lua52.Lua52ChunkReaderOptions>
+    {
+        public static Lunil.IR.Lua52.Lua52ChunkReaderOptions Default { get => throw null; }
+        public int MaximumChunkBytes { get => throw null; init { } }
+        public int MaximumPrototypeDepth { get => throw null; init { } }
+        public int MaximumPrototypeCount { get => throw null; init { } }
+        public int MaximumInstructionCount { get => throw null; init { } }
+        public int MaximumConstantCount { get => throw null; init { } }
+        public int MaximumUpvalueCount { get => throw null; init { } }
+        public int MaximumStringBytes { get => throw null; init { } }
+        public int MaximumDebugEntryCount { get => throw null; init { } }
+        public bool AllowTrailingData { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52ChunkReaderOptions? left, Lunil.IR.Lua52.Lua52ChunkReaderOptions? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52ChunkReaderOptions? left, Lunil.IR.Lua52.Lua52ChunkReaderOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52ChunkReaderOptions? other) => throw null;
+    }
+
+    public readonly struct Lua52ChunkTarget : System.IEquatable<Lunil.IR.Lua52.Lua52ChunkTarget>
+    {
+        public Lunil.IR.Lua52.Lua52ByteOrder ByteOrder { get => throw null; init { } }
+        public int SizeOfInt { get => throw null; init { } }
+        public int SizeOfSizeT { get => throw null; init { } }
+        public int InstructionSize { get => throw null; init { } }
+        public int NumberSize { get => throw null; init { } }
+        public static Lunil.IR.Lua52.Lua52ChunkTarget Host { get => throw null; }
+        public Lua52ChunkTarget(Lunil.IR.Lua52.Lua52ByteOrder ByteOrder, int SizeOfInt, int SizeOfSizeT, int InstructionSize, int NumberSize) { }
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua52.Lua52ChunkTarget left, Lunil.IR.Lua52.Lua52ChunkTarget right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52ChunkTarget left, Lunil.IR.Lua52.Lua52ChunkTarget right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua52.Lua52ChunkTarget other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua52.Lua52ByteOrder ByteOrder, out int SizeOfInt, out int SizeOfSizeT, out int InstructionSize, out int NumberSize) => throw null;
+    }
+
+    public sealed class Lua52Constant : System.IEquatable<Lunil.IR.Lua52.Lua52Constant>
+    {
+        public Lunil.IR.Lua52.Lua52ConstantKind Kind { get => throw null; init { } }
+        public double NumberValue { get => throw null; init { } }
+        public Lunil.IR.Lua52.Lua52String? StringValue { get => throw null; init { } }
+        public static Lunil.IR.Lua52.Lua52Constant Nil { get => throw null; }
+        public static Lunil.IR.Lua52.Lua52Constant False { get => throw null; }
+        public static Lunil.IR.Lua52.Lua52Constant True { get => throw null; }
+        public static Lunil.IR.Lua52.Lua52Constant FromBoolean(bool value) => throw null;
+        public static Lunil.IR.Lua52.Lua52Constant FromNumber(double value) => throw null;
+        public static Lunil.IR.Lua52.Lua52Constant FromString(Lunil.IR.Lua52.Lua52String value) => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52Constant? left, Lunil.IR.Lua52.Lua52Constant? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52Constant? left, Lunil.IR.Lua52.Lua52Constant? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52Constant? other) => throw null;
+    }
+
+    public enum Lua52ConstantKind
+    {
+        Nil = 0,
+        False = 1,
+        True = 2,
+        Number = 3,
+        String = 4
+    }
+
+    public readonly struct Lua52Instruction : System.IEquatable<Lunil.IR.Lua52.Lua52Instruction>
+    {
+        public const int MaximumA = 255;
+        public const int MaximumB = 511;
+        public const int MaximumC = 511;
+        public const int MaximumBx = 262143;
+        public const int MaximumAx = 67108863;
+        public const int SignedBxOffset = 131071;
+        public uint RawValue { get => throw null; init { } }
+        public Lunil.IR.Lua52.Lua52Opcode Opcode { get => throw null; }
+        public int A { get => throw null; }
+        public int C { get => throw null; }
+        public int B { get => throw null; }
+        public int Bx { get => throw null; }
+        public int SignedBx { get => throw null; }
+        public int Ax { get => throw null; }
+        public bool IsConstantB { get => throw null; }
+        public bool IsConstantC { get => throw null; }
+        public Lua52Instruction(uint RawValue) { }
+        public static Lunil.IR.Lua52.Lua52Instruction CreateAbc(Lunil.IR.Lua52.Lua52Opcode opcode, int a, int b, int c) => throw null;
+        public static Lunil.IR.Lua52.Lua52Instruction CreateABx(Lunil.IR.Lua52.Lua52Opcode opcode, int a, int bx) => throw null;
+        public static Lunil.IR.Lua52.Lua52Instruction CreateASignedBx(Lunil.IR.Lua52.Lua52Opcode opcode, int a, int signedBx) => throw null;
+        public static Lunil.IR.Lua52.Lua52Instruction CreateAx(Lunil.IR.Lua52.Lua52Opcode opcode, int ax) => throw null;
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua52.Lua52Instruction left, Lunil.IR.Lua52.Lua52Instruction right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52Instruction left, Lunil.IR.Lua52.Lua52Instruction right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua52.Lua52Instruction other) => throw null;
+        public void Deconstruct(out uint RawValue) => throw null;
+    }
+
+    public sealed class Lua52LocalVariable : System.IEquatable<Lunil.IR.Lua52.Lua52LocalVariable>
+    {
+        public Lunil.IR.Lua52.Lua52String? Name { get => throw null; init { } }
+        public int StartProgramCounter { get => throw null; init { } }
+        public int EndProgramCounter { get => throw null; init { } }
+        public Lua52LocalVariable(Lunil.IR.Lua52.Lua52String? Name, int StartProgramCounter, int EndProgramCounter) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52LocalVariable? left, Lunil.IR.Lua52.Lua52LocalVariable? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52LocalVariable? left, Lunil.IR.Lua52.Lua52LocalVariable? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52LocalVariable? other) => throw null;
+        public void Deconstruct(out Lunil.IR.Lua52.Lua52String? Name, out int StartProgramCounter, out int EndProgramCounter) => throw null;
+    }
+
+    public enum Lua52Opcode
+    {
+        Move = 0,
+        LoadConstant = 1,
+        LoadConstantExtra = 2,
+        LoadBoolean = 3,
+        LoadNil = 4,
+        GetUpvalue = 5,
+        GetTableUpvalue = 6,
+        GetTable = 7,
+        SetTableUpvalue = 8,
+        SetUpvalue = 9,
+        SetTable = 10,
+        NewTable = 11,
+        Self = 12,
+        Add = 13,
+        Subtract = 14,
+        Multiply = 15,
+        Divide = 16,
+        Modulo = 17,
+        Power = 18,
+        UnaryMinus = 19,
+        LogicalNot = 20,
+        Length = 21,
+        Concatenate = 22,
+        Jump = 23,
+        Equal = 24,
+        LessThan = 25,
+        LessOrEqual = 26,
+        Test = 27,
+        TestSet = 28,
+        Call = 29,
+        TailCall = 30,
+        Return = 31,
+        NumericForLoop = 32,
+        NumericForPrepare = 33,
+        GenericForCall = 34,
+        GenericForLoop = 35,
+        SetList = 36,
+        Closure = 37,
+        VarArg = 38,
+        ExtraArgument = 39
+    }
+
+    public sealed class Lua52Prototype : System.IEquatable<Lunil.IR.Lua52.Lua52Prototype>
+    {
+        public Lunil.IR.Lua52.Lua52String? Source { get => throw null; init { } }
+        public int LineDefined { get => throw null; init { } }
+        public int LastLineDefined { get => throw null; init { } }
+        public byte ParameterCount { get => throw null; init { } }
+        public byte VarArgFlags { get => throw null; init { } }
+        public byte MaximumStackSize { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52Instruction> Code { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52Constant> Constants { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52UpvalueDescriptor> Upvalues { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52Prototype> NestedPrototypes { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<int> LineInfo { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52LocalVariable> LocalVariables { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.IR.Lua52.Lua52String?> UpvalueNames { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52Prototype? left, Lunil.IR.Lua52.Lua52Prototype? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52Prototype? left, Lunil.IR.Lua52.Lua52Prototype? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52Prototype? other) => throw null;
+    }
+
+    public static class Lua52PrototypeConverter
+    {
+        public static Lunil.IR.Canonical.LuaIrModule Convert(System.ReadOnlySpan<byte> binaryChunk, Lunil.IR.Lua52.Lua52ChunkReaderOptions? options = null) => throw null;
+        public static Lunil.IR.Canonical.LuaIrModule Convert(Lunil.IR.Lua52.Lua52Chunk chunk) => throw null;
+    }
+
+    public readonly struct Lua52String : System.IEquatable<Lunil.IR.Lua52.Lua52String>
+    {
+        public byte[] Bytes { get => throw null; init { } }
+        public int Length { get => throw null; }
+        public Lua52String(byte[] Bytes) { }
+        public System.ReadOnlySpan<byte> AsSpan() => throw null;
+        public byte[] ToArray() => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua52.Lua52String left, Lunil.IR.Lua52.Lua52String right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52String left, Lunil.IR.Lua52.Lua52String right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object obj) => throw null;
+        public bool Equals(Lunil.IR.Lua52.Lua52String other) => throw null;
+        public void Deconstruct(out byte[] Bytes) => throw null;
+    }
+
+    public readonly struct Lua52UpvalueDescriptor : System.IEquatable<Lunil.IR.Lua52.Lua52UpvalueDescriptor>
+    {
+        public byte InStack { get => throw null; init { } }
+        public byte Index { get => throw null; init { } }
+        public Lua52UpvalueDescriptor(byte InStack, byte Index) { }
+        #nullable disable
+        public override string ToString() => throw null;
+        #nullable restore
+        public static bool operator !=(Lunil.IR.Lua52.Lua52UpvalueDescriptor left, Lunil.IR.Lua52.Lua52UpvalueDescriptor right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua52.Lua52UpvalueDescriptor left, Lunil.IR.Lua52.Lua52UpvalueDescriptor right) => throw null;
+        public override int GetHashCode() => throw null;
+        #nullable disable
+        public override bool Equals(object obj) => throw null;
+        #nullable restore
+        public bool Equals(Lunil.IR.Lua52.Lua52UpvalueDescriptor other) => throw null;
+        public void Deconstruct(out byte InStack, out byte Index) => throw null;
+    }
+}
 namespace Lunil.IR.Lua53
 {
     public enum Lua53ByteOrder
@@ -968,5 +1480,38 @@ namespace Lunil.IR.Lua54
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.IR.Lua54.Lua54VerificationError? other) => throw null;
         public void Deconstruct(out string PrototypePath, out string Message, out int? ProgramCounter) => throw null;
+    }
+}
+namespace Lunil.IR.Lua55
+{
+    public static class Lua55CanonicalPrototypeWriter
+    {
+        public static byte[] Write(Lunil.IR.Canonical.LuaIrModule module, int functionId, bool stripDebug = false) => throw null;
+    }
+
+    public sealed class Lua55Chunk : System.IEquatable<Lunil.IR.Lua55.Lua55Chunk>
+    {
+        public byte[] Bytes { get => throw null; init { } }
+        public Lua55Chunk(byte[] Bytes) { }
+        public byte[] ToArray() => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.IR.Lua55.Lua55Chunk? left, Lunil.IR.Lua55.Lua55Chunk? right) => throw null;
+        public static bool operator ==(Lunil.IR.Lua55.Lua55Chunk? left, Lunil.IR.Lua55.Lua55Chunk? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.IR.Lua55.Lua55Chunk? other) => throw null;
+        public void Deconstruct(out byte[] Bytes) => throw null;
+    }
+
+    public sealed class Lua55ChunkFormatException : System.FormatException
+    {
+        public string Reason { get => throw null; }
+        public int Offset { get => throw null; }
+        public Lua55ChunkFormatException(string reason, int offset = 0) { }
+    }
+
+    public static class Lua55PrototypeConverter
+    {
+        public static Lunil.IR.Canonical.LuaIrModule Convert(System.ReadOnlySpan<byte> bytes, Lunil.IR.Lua54.Lua54ChunkReaderOptions? options = null) => throw null;
     }
 }

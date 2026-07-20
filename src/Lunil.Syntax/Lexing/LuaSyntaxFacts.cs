@@ -16,6 +16,7 @@ public static class LuaSyntaxFacts
             3 when text.SequenceEqual("not"u8) => LuaTokenKind.NotKeyword,
             4 when text.SequenceEqual("else"u8) => LuaTokenKind.ElseKeyword,
             4 when text.SequenceEqual("goto"u8) => LuaTokenKind.GotoKeyword,
+            6 when text.SequenceEqual("global"u8) => LuaTokenKind.GlobalKeyword,
             4 when text.SequenceEqual("then"u8) => LuaTokenKind.ThenKeyword,
             4 when text.SequenceEqual("true"u8) => LuaTokenKind.TrueKeyword,
             5 when text.SequenceEqual("break"u8) => LuaTokenKind.BreakKeyword,

@@ -43,4 +43,22 @@ public sealed class LanguageVersionTests
             lexing,
             LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 }));
     }
+
+    [Fact]
+    public void Lua55AcceptsGlobalDeclarationsWhileEarlierVersionsRejectThem()
+    {
+        var lua55 = LuaParser.Parse(
+            SourceText.FromUtf8("global<const> print\nreturn print"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+        Assert.Empty(lua55.Diagnostics);
+        Assert.Contains(lua55.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
+
+        var lua54 = LuaParser.Parse(
+            SourceText.FromUtf8("global print"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 });
+        Assert.Contains(lua54.Diagnostics, diagnostic => diagnostic.Code == "LUA2013");
+    }
 }

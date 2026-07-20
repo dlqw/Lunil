@@ -16,7 +16,13 @@
       adapter only requires enabling its symbol and adding its profile metadata.
     -->
     <LunilLua53AdapterEnabled Condition="'$(LunilLua53AdapterEnabled)' == ''">true</LunilLua53AdapterEnabled>
+    <LunilLua52AdapterEnabled Condition="'$(LunilLua52AdapterEnabled)' == ''">true</LunilLua52AdapterEnabled>
     <LunilLua54AdapterEnabled Condition="'$(LunilLua54AdapterEnabled)' == ''">true</LunilLua54AdapterEnabled>
+    <LunilLua51AdapterEnabled Condition="'$(LunilLua51AdapterEnabled)' == ''">true</LunilLua51AdapterEnabled>
+    <LunilLua55AdapterEnabled Condition="'$(LunilLua55AdapterEnabled)' == ''">true</LunilLua55AdapterEnabled>
+    <DefineConstants Condition="'$(LunilLua51AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA51_ADAPTER</DefineConstants>
+    <DefineConstants Condition="'$(LunilLua55AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA55_ADAPTER</DefineConstants>
+    <DefineConstants Condition="'$(LunilLua52AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA52_ADAPTER</DefineConstants>
     <DefineConstants Condition="'$(LunilLua53AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA53_ADAPTER</DefineConstants>
     <DefineConstants Condition="'$(LunilLua54AdapterEnabled)' == 'true'">$(DefineConstants);LUNIL_LUA54_ADAPTER</DefineConstants>
   </PropertyGroup>

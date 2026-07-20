@@ -20,13 +20,44 @@ public static class LuaStandardLibrary
         var loaded = package.Get(LuaLibraryHelpers.String(state, "loaded")).AsTable();
         RegisterLoaded(state, loaded, "_G", globals);
         RegisterLoaded(state, loaded, "coroutine", coroutine);
-        RegisterLoaded(state, loaded, "string", InstallString(state));
-        RegisterLoaded(state, loaded, "utf8", InstallUtf8(state));
-        RegisterLoaded(state, loaded, "table", InstallTable(state));
-        RegisterLoaded(state, loaded, "math", InstallMath(state));
+        var stringModule = InstallString(state);
+        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        {
+            Remove(state, stringModule, "pack");
+            Remove(state, stringModule, "packsize");
+            Remove(state, stringModule, "unpack");
+        }
+
+        var table = InstallTable(state);
+        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        {
+            Remove(state, table, "move");
+        }
+
+        var math = InstallMath(state);
+        if (state.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52)
+        {
+            Remove(state, math, "tointeger");
+            Remove(state, math, "type");
+            Remove(state, math, "ult");
+            Remove(state, math, "maxinteger");
+            Remove(state, math, "mininteger");
+        }
+
+        RegisterLoaded(state, loaded, "string", stringModule);
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasUtf8Library)
+        {
+            RegisterLoaded(state, loaded, "utf8", InstallUtf8(state));
+        }
+        RegisterLoaded(state, loaded, "table", table);
+        RegisterLoaded(state, loaded, "math", math);
         RegisterLoaded(state, loaded, "io", InstallIo(state));
         RegisterLoaded(state, loaded, "os", InstallOs(state));
         RegisterLoaded(state, loaded, "debug", InstallDebug(state));
+        if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasBit32Library)
+        {
+            RegisterLoaded(state, loaded, "bit32", LuaBit32Library.Install(state));
+        }
         return globals;
     }
 
@@ -132,4 +163,7 @@ public static class LuaStandardLibrary
                 "is not implemented yet.");
         }
     }
+
+    private static void Remove(LuaState state, LuaTable table, string name) =>
+        table.Set(LuaLibraryHelpers.String(state, name), LuaValue.Nil);
 }

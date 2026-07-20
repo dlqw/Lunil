@@ -21,8 +21,10 @@ primary scope; later releases do not change the compatibility contract of earlie
 
 ## 0.10.0 — Lua version compatibility and runtime comparisons
 
-Lunil 0.10.0 targets complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5. Each
-version has its own language and runtime contract:
+Lunil 0.10.0 targets complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5. Lua
+5.2 is available as an explicit `0.10.0-alpha.2` adapter; the remaining versions are delivered
+through the same generated profile/adapter boundary. Each version has its own language and runtime
+contract:
 
 - version-specific syntax, lexical rules, operators, and multiple-result behavior;
 - version-specific VM instructions and binary-chunk formats with explicit version validation;

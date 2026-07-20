@@ -213,7 +213,9 @@ return result.Succeeded ? 0 : 1;
     & dotnet tool install Lunil.Cli --tool-path $toolPath --version $Version `
         --add-source $packageRoot --ignore-failed-sources
     if ($LASTEXITCODE -ne 0) { throw 'Installing the frozen Lunil.Cli package failed.' }
-    $toolExecutable = if ($IsWindows) {
+    $runningOnWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+        [Runtime.InteropServices.OSPlatform]::Windows)
+    $toolExecutable = if ($runningOnWindows) {
         Join-Path $toolPath 'lunil.exe'
     }
     else {

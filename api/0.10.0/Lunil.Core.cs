@@ -7,7 +7,10 @@ namespace Lunil.Core
     {
         None = 0,
         Lua53 = 1,
-        Lua54 = 2
+        Lua54 = 2,
+        Lua52 = 3,
+        Lua51 = 4,
+        Lua55 = 5
     }
 
     public enum LuaLanguageVersion
@@ -43,7 +46,9 @@ namespace Lunil.Core
         public bool CachesClosuresByUpvalues { get => throw null; init { } }
         public bool HasWarnLibrary { get => throw null; init { } }
         public bool HasCoroutineClose { get => throw null; init { } }
-        public LuaVersionFeatures(bool IsImplemented, Lunil.Core.LuaChunkFormat ChunkFormat, bool SynchronousFinalizerErrors, bool SupportsGenerationalCollection, bool PreservesDeadThreadOpenUpvalues, bool CachesClosuresByUpvalues, bool HasWarnLibrary, bool HasCoroutineClose) { }
+        public bool HasUtf8Library { get => throw null; init { } }
+        public bool HasBit32Library { get => throw null; init { } }
+        public LuaVersionFeatures(bool IsImplemented, Lunil.Core.LuaChunkFormat ChunkFormat, bool SynchronousFinalizerErrors, bool SupportsGenerationalCollection, bool PreservesDeadThreadOpenUpvalues, bool CachesClosuresByUpvalues, bool HasWarnLibrary, bool HasCoroutineClose, bool HasUtf8Library, bool HasBit32Library) { }
         #nullable disable
         public override string ToString() => throw null;
         #nullable restore
@@ -54,7 +59,7 @@ namespace Lunil.Core
         public override bool Equals(object obj) => throw null;
         #nullable restore
         public bool Equals(Lunil.Core.LuaVersionFeatures other) => throw null;
-        public void Deconstruct(out bool IsImplemented, out Lunil.Core.LuaChunkFormat ChunkFormat, out bool SynchronousFinalizerErrors, out bool SupportsGenerationalCollection, out bool PreservesDeadThreadOpenUpvalues, out bool CachesClosuresByUpvalues, out bool HasWarnLibrary, out bool HasCoroutineClose) => throw null;
+        public void Deconstruct(out bool IsImplemented, out Lunil.Core.LuaChunkFormat ChunkFormat, out bool SynchronousFinalizerErrors, out bool SupportsGenerationalCollection, out bool PreservesDeadThreadOpenUpvalues, out bool CachesClosuresByUpvalues, out bool HasWarnLibrary, out bool HasCoroutineClose, out bool HasUtf8Library, out bool HasBit32Library) => throw null;
     }
 
     [System.AttributeUsage(System.AttributeTargets.Field, AllowMultiple = false)]
@@ -67,6 +72,8 @@ namespace Lunil.Core
         public bool CachesClosuresByUpvalues { get => throw null; init { } }
         public bool HasWarnLibrary { get => throw null; init { } }
         public bool HasCoroutineClose { get => throw null; init { } }
+        public bool HasUtf8Library { get => throw null; init { } }
+        public bool HasBit32Library { get => throw null; init { } }
     }
 }
 namespace Lunil.Core.Diagnostics

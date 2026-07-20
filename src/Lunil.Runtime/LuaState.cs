@@ -1,8 +1,11 @@
 using System.Text;
 using Lunil.Core;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua52;
+using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
 using Lunil.IR.Lua54;
+using Lunil.IR.Lua55;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -289,10 +292,15 @@ public sealed class LuaState
 
         return CreateMainClosure(features.ChunkFormat switch
         {
+            LuaChunkFormat.Lua51 => Lua51PrototypeConverter.Convert(binaryChunk),
+            LuaChunkFormat.Lua52 => Lua52PrototypeConverter.Convert(
+                binaryChunk,
+                TranslateReaderOptions52(options)),
             LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(
                 binaryChunk,
                 TranslateReaderOptions(options)),
             LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(binaryChunk, options),
+            LuaChunkFormat.Lua55 => Lua55PrototypeConverter.Convert(binaryChunk, options),
             _ => throw new NotSupportedException(
                 $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
                 "does not declare a chunk format."),
@@ -306,6 +314,22 @@ public sealed class LuaState
         Lua54ChunkReaderOptions? options) => options is null
             ? null
             : new Lua53ChunkReaderOptions
+            {
+                MaximumChunkBytes = options.MaximumChunkBytes,
+                MaximumPrototypeDepth = options.MaximumPrototypeDepth,
+                MaximumPrototypeCount = options.MaximumPrototypeCount,
+                MaximumInstructionCount = options.MaximumInstructionCount,
+                MaximumConstantCount = options.MaximumConstantCount,
+                MaximumUpvalueCount = options.MaximumUpvalueCount,
+                MaximumStringBytes = options.MaximumStringBytes,
+                MaximumDebugEntryCount = options.MaximumDebugEntryCount,
+                AllowTrailingData = options.AllowTrailingData,
+            };
+
+    private static Lua52ChunkReaderOptions? TranslateReaderOptions52(
+        Lua54ChunkReaderOptions? options) => options is null
+            ? null
+            : new Lua52ChunkReaderOptions
             {
                 MaximumChunkBytes = options.MaximumChunkBytes,
                 MaximumPrototypeDepth = options.MaximumPrototypeDepth,

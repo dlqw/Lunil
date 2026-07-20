@@ -1,14 +1,14 @@
 <Project>
   <PropertyGroup>
     <VersionPrefix>0.10.0</VersionPrefix>
-    <VersionSuffix>alpha.1</VersionSuffix>
+    <VersionSuffix>alpha.2</VersionSuffix>
     <Product>Lunil</Product>
     <Authors>rdququ</Authors>
-    <Description>Lunil Lua 5.4 compiler and runtime component.</Description>
+    <Description>Lunil versioned Lua compiler and runtime component.</Description>
     <RepositoryType>git</RepositoryType>
     <RepositoryUrl>https://github.com/dlqw/Lunil</RepositoryUrl>
     <PackageProjectUrl>https://github.com/dlqw/Lunil</PackageProjectUrl>
-    <PackageTags>lua;lua54;compiler;runtime;dotnet</PackageTags>
+    <PackageTags>lua;lua51;lua52;lua53;lua54;lua55;compiler;runtime;dotnet</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <LangVersion>14.0</LangVersion>

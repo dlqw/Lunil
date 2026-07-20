@@ -20,14 +20,16 @@
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil is a pure C# Lua 5.4.8 compiler, analysis toolchain, and runtime for .NET 10. Source and PUC
-Lua binary chunks converge on one verified canonical IR, then execute through a reference
+Lunil is a pure C# versioned Lua compiler, analysis toolchain, and runtime for .NET 10. Lua 5.4.8
+remains the default; the `0.10.0-alpha.2` development line additionally enables explicit Lua 5.1,
+Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and versioned binary chunks converge on one verified canonical IR, then execute through a reference
 interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter remain available in
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
 > Stable `0.9.0` is the supported release and current performance baseline. It preserves Lua 5.4.8
-> semantics across the six published release RIDs.
+> semantics across the six published release RIDs. The `0.10.0-alpha.2` prerelease exposes explicit
+> Lua 5.1–5.5 version identities while keeping Lua 5.4 as the default.
 
 ## Performance
 
@@ -64,6 +66,9 @@ methodology, pinned reference versions, and reproduction commands are in
 
 ## Highlights
 
+- **Versioned Lua fidelity** — Lua 5.4 remains the default, with explicit Lua 5.1–5.5 source and
+  binary-chunk adapters in the 0.10 prerelease; each version has its own syntax, numeric, library,
+  and chunk contract.
 - **Lua 5.4 fidelity** — complete syntax, binary strings, integer/float behavior, multiple results,
   varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
 - **Verified compiler pipeline** — byte-oriented source text, lossless syntax, binding, type and
@@ -183,7 +188,8 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 
 ## Compatibility
 
-- Language target: Lua 5.4.8.
+- Language target: Lua 5.4.8 by default; explicit Lua 5.2 and Lua 5.3 targets are available in the
+  `0.10.0-alpha.2` development line.
 - Runtime target: .NET 10.
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric

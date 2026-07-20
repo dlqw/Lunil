@@ -25,4 +25,8 @@ public sealed class LuaVersionProfileAttribute : Attribute
     public bool HasWarnLibrary { get; init; }
 
     public bool HasCoroutineClose { get; init; }
+
+    public bool HasUtf8Library { get; init; }
+
+    public bool HasBit32Library { get; init; }
 }
