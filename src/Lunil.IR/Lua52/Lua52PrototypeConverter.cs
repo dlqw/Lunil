@@ -107,8 +107,8 @@ public static class Lua52PrototypeConverter
 
         return Lua53Instruction.CreateAbc(opcode, instruction.A, instruction.B, instruction.C)
             with
-            {
-                RawValue = instruction.Opcode is Lua52Opcode.LoadConstant or
+        {
+            RawValue = instruction.Opcode is Lua52Opcode.LoadConstant or
                     Lua52Opcode.LoadConstantExtra or Lua52Opcode.Closure
                     ? Lua53Instruction.CreateABx(opcode, instruction.A, instruction.Bx).RawValue
                     : instruction.Opcode is Lua52Opcode.Jump or Lua52Opcode.NumericForLoop or
@@ -117,7 +117,7 @@ public static class Lua52PrototypeConverter
                         : instruction.Opcode == Lua52Opcode.ExtraArgument
                             ? Lua53Instruction.CreateAx(opcode, instruction.Ax).RawValue
                             : Lua53Instruction.CreateAbc(opcode, instruction.A, instruction.B, instruction.C).RawValue,
-            };
+        };
     }
 
     private static Lua53Constant Translate(Lua52Constant constant) => constant.Kind switch

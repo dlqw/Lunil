@@ -120,7 +120,7 @@ internal static class BuildCommand
         {
             context.CancellationToken.ThrowIfCancellationRequested();
             var bytes = LuaVersionFeatureTable.Get(module.Module.LanguageVersion).ChunkFormat switch
-                {
+            {
                 LuaChunkFormat.Lua51 => Lua51CanonicalPrototypeWriter.Write(
                     module.Module, functionId: 0, context.Options.StripDebug),
                 LuaChunkFormat.Lua52 => Lua52CanonicalPrototypeWriter.Write(

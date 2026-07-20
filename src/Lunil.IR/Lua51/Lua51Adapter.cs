@@ -170,9 +170,22 @@ public static class Lua51ChunkReader
             for (var i = 0; i < localCount; i++) locals.Add(new(ReadString(), ReadInt(), ReadInt()));
             var upvalueNameCount = ReadInt(); Add(ref _debug, upvalueNameCount, _options.MaximumDebugEntryCount, "debug entry count"); Ensure(upvalueNameCount, 1);
             var names = ImmutableArray.CreateBuilder<Lua51String?>(upvalueNameCount); for (var i = 0; i < upvalueNameCount; i++) names.Add(ReadString());
-            return new() { Source = source, LineDefined = ld, LastLineDefined = lld, UpvalueCount = nups, ParameterCount = pars,
-                VarArgFlags = vararg, MaximumStackSize = stack, Code = code.MoveToImmutable(), Constants = constants.MoveToImmutable(),
-                NestedPrototypes = nested.MoveToImmutable(), LineInfo = lines.MoveToImmutable(), LocalVariables = locals.MoveToImmutable(), UpvalueNames = names.MoveToImmutable() };
+            return new()
+            {
+                Source = source,
+                LineDefined = ld,
+                LastLineDefined = lld,
+                UpvalueCount = nups,
+                ParameterCount = pars,
+                VarArgFlags = vararg,
+                MaximumStackSize = stack,
+                Code = code.MoveToImmutable(),
+                Constants = constants.MoveToImmutable(),
+                NestedPrototypes = nested.MoveToImmutable(),
+                LineInfo = lines.MoveToImmutable(),
+                LocalVariables = locals.MoveToImmutable(),
+                UpvalueNames = names.MoveToImmutable()
+            };
         }
         private Lua51Constant ReadConstant() => ReadByte() switch
         {
@@ -278,9 +291,14 @@ public static class Lua51PrototypeConverter
 
         return new Lua53Prototype
         {
-            Source = p.Source is { } s ? new Lua53String(s.ToArray()) : null, LineDefined = p.LineDefined, LastLineDefined = p.LastLineDefined,
-            ParameterCount = p.ParameterCount, VarArgFlags = p.VarArgFlags, MaximumStackSize = p.MaximumStackSize,
-            Code = code.MoveToImmutable(), Constants = p.Constants.Select(Translate).ToImmutableArray(),
+            Source = p.Source is { } s ? new Lua53String(s.ToArray()) : null,
+            LineDefined = p.LineDefined,
+            LastLineDefined = p.LastLineDefined,
+            ParameterCount = p.ParameterCount,
+            VarArgFlags = p.VarArgFlags,
+            MaximumStackSize = p.MaximumStackSize,
+            Code = code.MoveToImmutable(),
+            Constants = p.Constants.Select(Translate).ToImmutableArray(),
             NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(nested, nestedUpvalues[index])).ToImmutableArray(),
             LineInfo = p.LineInfo.IsEmpty ? [] : p.LineInfo.Where((_, index) => !skipped[index]).ToImmutableArray(),
             LocalVariables = p.LocalVariables.Select(x => new Lua53LocalVariable(x.Name is { } n ? new Lua53String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
@@ -292,21 +310,44 @@ public static class Lua51PrototypeConverter
     {
         var op = i.Opcode switch
         {
-            Lua51Opcode.Move => Lua53Opcode.Move, Lua51Opcode.LoadConstant => Lua53Opcode.LoadConstant,
-            Lua51Opcode.LoadBoolean => Lua53Opcode.LoadBoolean, Lua51Opcode.LoadNil => Lua53Opcode.LoadNil,
-            Lua51Opcode.GetUpvalue => Lua53Opcode.GetUpvalue, Lua51Opcode.GetGlobal => Lua53Opcode.GetGlobal,
-            Lua51Opcode.GetTable => Lua53Opcode.GetTable, Lua51Opcode.SetGlobal => Lua53Opcode.SetTableUpvalue,
-            Lua51Opcode.SetUpvalue => Lua53Opcode.SetUpvalue, Lua51Opcode.SetTable => Lua53Opcode.SetTable,
-            Lua51Opcode.NewTable => Lua53Opcode.NewTable, Lua51Opcode.Self => Lua53Opcode.Self,
-            Lua51Opcode.Add => Lua53Opcode.Add, Lua51Opcode.Subtract => Lua53Opcode.Subtract, Lua51Opcode.Multiply => Lua53Opcode.Multiply,
-            Lua51Opcode.Divide => Lua53Opcode.Divide, Lua51Opcode.Modulo => Lua53Opcode.Modulo, Lua51Opcode.Power => Lua53Opcode.Power,
-            Lua51Opcode.UnaryMinus => Lua53Opcode.UnaryMinus, Lua51Opcode.LogicalNot => Lua53Opcode.LogicalNot, Lua51Opcode.Length => Lua53Opcode.Length,
-            Lua51Opcode.Concatenate => Lua53Opcode.Concatenate, Lua51Opcode.Jump => Lua53Opcode.Jump, Lua51Opcode.Equal => Lua53Opcode.Equal,
-            Lua51Opcode.LessThan => Lua53Opcode.LessThan, Lua51Opcode.LessOrEqual => Lua53Opcode.LessOrEqual, Lua51Opcode.Test => Lua53Opcode.Test,
-            Lua51Opcode.TestSet => Lua53Opcode.TestSet, Lua51Opcode.Call => Lua53Opcode.Call, Lua51Opcode.TailCall => Lua53Opcode.TailCall,
-            Lua51Opcode.Return => Lua53Opcode.Return, Lua51Opcode.NumericForLoop => Lua53Opcode.NumericForLoop, Lua51Opcode.NumericForPrepare => Lua53Opcode.NumericForPrepare,
-            Lua51Opcode.GenericForLoop => Lua53Opcode.GenericForLoop, Lua51Opcode.SetList => Lua53Opcode.SetList, Lua51Opcode.Closure => Lua53Opcode.Closure,
-            Lua51Opcode.VarArg => Lua53Opcode.VarArg, Lua51Opcode.Close => Lua53Opcode.Jump,
+            Lua51Opcode.Move => Lua53Opcode.Move,
+            Lua51Opcode.LoadConstant => Lua53Opcode.LoadConstant,
+            Lua51Opcode.LoadBoolean => Lua53Opcode.LoadBoolean,
+            Lua51Opcode.LoadNil => Lua53Opcode.LoadNil,
+            Lua51Opcode.GetUpvalue => Lua53Opcode.GetUpvalue,
+            Lua51Opcode.GetGlobal => Lua53Opcode.GetGlobal,
+            Lua51Opcode.GetTable => Lua53Opcode.GetTable,
+            Lua51Opcode.SetGlobal => Lua53Opcode.SetTableUpvalue,
+            Lua51Opcode.SetUpvalue => Lua53Opcode.SetUpvalue,
+            Lua51Opcode.SetTable => Lua53Opcode.SetTable,
+            Lua51Opcode.NewTable => Lua53Opcode.NewTable,
+            Lua51Opcode.Self => Lua53Opcode.Self,
+            Lua51Opcode.Add => Lua53Opcode.Add,
+            Lua51Opcode.Subtract => Lua53Opcode.Subtract,
+            Lua51Opcode.Multiply => Lua53Opcode.Multiply,
+            Lua51Opcode.Divide => Lua53Opcode.Divide,
+            Lua51Opcode.Modulo => Lua53Opcode.Modulo,
+            Lua51Opcode.Power => Lua53Opcode.Power,
+            Lua51Opcode.UnaryMinus => Lua53Opcode.UnaryMinus,
+            Lua51Opcode.LogicalNot => Lua53Opcode.LogicalNot,
+            Lua51Opcode.Length => Lua53Opcode.Length,
+            Lua51Opcode.Concatenate => Lua53Opcode.Concatenate,
+            Lua51Opcode.Jump => Lua53Opcode.Jump,
+            Lua51Opcode.Equal => Lua53Opcode.Equal,
+            Lua51Opcode.LessThan => Lua53Opcode.LessThan,
+            Lua51Opcode.LessOrEqual => Lua53Opcode.LessOrEqual,
+            Lua51Opcode.Test => Lua53Opcode.Test,
+            Lua51Opcode.TestSet => Lua53Opcode.TestSet,
+            Lua51Opcode.Call => Lua53Opcode.Call,
+            Lua51Opcode.TailCall => Lua53Opcode.TailCall,
+            Lua51Opcode.Return => Lua53Opcode.Return,
+            Lua51Opcode.NumericForLoop => Lua53Opcode.NumericForLoop,
+            Lua51Opcode.NumericForPrepare => Lua53Opcode.NumericForPrepare,
+            Lua51Opcode.GenericForLoop => Lua53Opcode.GenericForLoop,
+            Lua51Opcode.SetList => Lua53Opcode.SetList,
+            Lua51Opcode.Closure => Lua53Opcode.Closure,
+            Lua51Opcode.VarArg => Lua53Opcode.VarArg,
+            Lua51Opcode.Close => Lua53Opcode.Jump,
             _ => throw new InvalidDataException($"Unsupported Lua 5.1 opcode {i.Opcode}"),
         };
         if (i.Opcode is Lua51Opcode.GetGlobal) return Lua53Instruction.CreateAbc(op, i.A, 0, i.Bx | (1 << 8));
@@ -317,8 +358,11 @@ public static class Lua51PrototypeConverter
     }
     private static Lua53Constant Translate(Lua51Constant c) => c.Kind switch
     {
-        Lua51ConstantKind.Nil => Lua53Constant.Nil, Lua51ConstantKind.False => Lua53Constant.False, Lua51ConstantKind.True => Lua53Constant.True,
-        Lua51ConstantKind.Number => Lua53Constant.FromFloat(c.NumberValue), Lua51ConstantKind.String => Lua53Constant.FromString(new Lua53String(c.StringValue!.Value.ToArray()), c.StringValue.Value.Length <= 40),
+        Lua51ConstantKind.Nil => Lua53Constant.Nil,
+        Lua51ConstantKind.False => Lua53Constant.False,
+        Lua51ConstantKind.True => Lua53Constant.True,
+        Lua51ConstantKind.Number => Lua53Constant.FromFloat(c.NumberValue),
+        Lua51ConstantKind.String => Lua53Constant.FromString(new Lua53String(c.StringValue!.Value.ToArray()), c.StringValue.Value.Length <= 40),
         _ => throw new InvalidDataException("Unknown Lua 5.1 constant kind"),
     };
 }
@@ -339,10 +383,18 @@ public static class Lua51CanonicalPrototypeWriter
     }
     private static Lua51Prototype Translate(Lua53Prototype p, bool stripDebug) => new()
     {
-        Source = p.Source is { } s ? new Lua51String(s.ToArray()) : null, LineDefined = p.LineDefined, LastLineDefined = p.LastLineDefined,
-        UpvalueCount = checked((byte)p.Upvalues.Length), ParameterCount = p.ParameterCount, VarArgFlags = p.VarArgFlags, MaximumStackSize = p.MaximumStackSize,
-        Code = TranslateCode(p), Constants = p.Constants.Select(Translate).ToImmutableArray(), NestedPrototypes = p.NestedPrototypes.Select(x => Translate(x, stripDebug)).ToImmutableArray(),
-        LineInfo = TranslateLineInfo(p, stripDebug), LocalVariables = stripDebug ? [] : p.LocalVariables.Select(x => new Lua51LocalVariable(x.Name is { } n ? new Lua51String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
+        Source = p.Source is { } s ? new Lua51String(s.ToArray()) : null,
+        LineDefined = p.LineDefined,
+        LastLineDefined = p.LastLineDefined,
+        UpvalueCount = checked((byte)p.Upvalues.Length),
+        ParameterCount = p.ParameterCount,
+        VarArgFlags = p.VarArgFlags,
+        MaximumStackSize = p.MaximumStackSize,
+        Code = TranslateCode(p),
+        Constants = p.Constants.Select(Translate).ToImmutableArray(),
+        NestedPrototypes = p.NestedPrototypes.Select(x => Translate(x, stripDebug)).ToImmutableArray(),
+        LineInfo = TranslateLineInfo(p, stripDebug),
+        LocalVariables = stripDebug ? [] : p.LocalVariables.Select(x => new Lua51LocalVariable(x.Name is { } n ? new Lua51String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
         UpvalueNames = stripDebug ? [] : p.UpvalueNames.Select(x => x is { } n ? (Lua51String?)new Lua51String(n.ToArray()) : null).ToImmutableArray(),
     };
     private static ImmutableArray<int> TranslateLineInfo(Lua53Prototype prototype, bool stripDebug)
@@ -403,24 +455,51 @@ public static class Lua51CanonicalPrototypeWriter
     };
     private static Lua51Opcode Map(Lua53Opcode op) => op switch
     {
-        Lua53Opcode.Move => Lua51Opcode.Move, Lua53Opcode.LoadConstant => Lua51Opcode.LoadConstant, Lua53Opcode.LoadBoolean => Lua51Opcode.LoadBoolean,
-        Lua53Opcode.LoadNil => Lua51Opcode.LoadNil, Lua53Opcode.GetUpvalue => Lua51Opcode.GetUpvalue, Lua53Opcode.GetTable => Lua51Opcode.GetTable,
-        Lua53Opcode.SetUpvalue => Lua51Opcode.SetUpvalue, Lua53Opcode.SetTable => Lua51Opcode.SetTable, Lua53Opcode.NewTable => Lua51Opcode.NewTable,
-        Lua53Opcode.Self => Lua51Opcode.Self, Lua53Opcode.Add => Lua51Opcode.Add, Lua53Opcode.Subtract => Lua51Opcode.Subtract,
-        Lua53Opcode.Multiply => Lua51Opcode.Multiply, Lua53Opcode.Divide => Lua51Opcode.Divide, Lua53Opcode.Modulo => Lua51Opcode.Modulo,
-        Lua53Opcode.Power => Lua51Opcode.Power, Lua53Opcode.UnaryMinus => Lua51Opcode.UnaryMinus, Lua53Opcode.LogicalNot => Lua51Opcode.LogicalNot,
-        Lua53Opcode.Length => Lua51Opcode.Length, Lua53Opcode.Concatenate => Lua51Opcode.Concatenate, Lua53Opcode.Jump => Lua51Opcode.Jump,
-        Lua53Opcode.Equal => Lua51Opcode.Equal, Lua53Opcode.LessThan => Lua51Opcode.LessThan, Lua53Opcode.LessOrEqual => Lua51Opcode.LessOrEqual,
-        Lua53Opcode.Test => Lua51Opcode.Test, Lua53Opcode.TestSet => Lua51Opcode.TestSet, Lua53Opcode.Call => Lua51Opcode.Call,
-        Lua53Opcode.TailCall => Lua51Opcode.TailCall, Lua53Opcode.Return => Lua51Opcode.Return, Lua53Opcode.NumericForLoop => Lua51Opcode.NumericForLoop,
-        Lua53Opcode.NumericForPrepare => Lua51Opcode.NumericForPrepare, Lua53Opcode.GenericForCall => Lua51Opcode.GenericForLoop,
-        Lua53Opcode.GenericForLoop => Lua51Opcode.GenericForLoop, Lua53Opcode.SetList => Lua51Opcode.SetList, Lua53Opcode.Closure => Lua51Opcode.Closure,
-        Lua53Opcode.VarArg => Lua51Opcode.VarArg, _ => throw new InvalidDataException($"Opcode {op} is not representable in Lua 5.1"),
+        Lua53Opcode.Move => Lua51Opcode.Move,
+        Lua53Opcode.LoadConstant => Lua51Opcode.LoadConstant,
+        Lua53Opcode.LoadBoolean => Lua51Opcode.LoadBoolean,
+        Lua53Opcode.LoadNil => Lua51Opcode.LoadNil,
+        Lua53Opcode.GetUpvalue => Lua51Opcode.GetUpvalue,
+        Lua53Opcode.GetTable => Lua51Opcode.GetTable,
+        Lua53Opcode.SetUpvalue => Lua51Opcode.SetUpvalue,
+        Lua53Opcode.SetTable => Lua51Opcode.SetTable,
+        Lua53Opcode.NewTable => Lua51Opcode.NewTable,
+        Lua53Opcode.Self => Lua51Opcode.Self,
+        Lua53Opcode.Add => Lua51Opcode.Add,
+        Lua53Opcode.Subtract => Lua51Opcode.Subtract,
+        Lua53Opcode.Multiply => Lua51Opcode.Multiply,
+        Lua53Opcode.Divide => Lua51Opcode.Divide,
+        Lua53Opcode.Modulo => Lua51Opcode.Modulo,
+        Lua53Opcode.Power => Lua51Opcode.Power,
+        Lua53Opcode.UnaryMinus => Lua51Opcode.UnaryMinus,
+        Lua53Opcode.LogicalNot => Lua51Opcode.LogicalNot,
+        Lua53Opcode.Length => Lua51Opcode.Length,
+        Lua53Opcode.Concatenate => Lua51Opcode.Concatenate,
+        Lua53Opcode.Jump => Lua51Opcode.Jump,
+        Lua53Opcode.Equal => Lua51Opcode.Equal,
+        Lua53Opcode.LessThan => Lua51Opcode.LessThan,
+        Lua53Opcode.LessOrEqual => Lua51Opcode.LessOrEqual,
+        Lua53Opcode.Test => Lua51Opcode.Test,
+        Lua53Opcode.TestSet => Lua51Opcode.TestSet,
+        Lua53Opcode.Call => Lua51Opcode.Call,
+        Lua53Opcode.TailCall => Lua51Opcode.TailCall,
+        Lua53Opcode.Return => Lua51Opcode.Return,
+        Lua53Opcode.NumericForLoop => Lua51Opcode.NumericForLoop,
+        Lua53Opcode.NumericForPrepare => Lua51Opcode.NumericForPrepare,
+        Lua53Opcode.GenericForCall => Lua51Opcode.GenericForLoop,
+        Lua53Opcode.GenericForLoop => Lua51Opcode.GenericForLoop,
+        Lua53Opcode.SetList => Lua51Opcode.SetList,
+        Lua53Opcode.Closure => Lua51Opcode.Closure,
+        Lua53Opcode.VarArg => Lua51Opcode.VarArg,
+        _ => throw new InvalidDataException($"Opcode {op} is not representable in Lua 5.1"),
     };
     private static Lua51Constant Translate(Lua53Constant c) => c.Kind switch
     {
-        Lua53ConstantKind.Nil => Lua51Constant.Nil, Lua53ConstantKind.False => Lua51Constant.False, Lua53ConstantKind.True => Lua51Constant.True,
-        Lua53ConstantKind.Integer => Lua51Constant.FromNumber(c.IntegerValue), Lua53ConstantKind.Float => Lua51Constant.FromNumber(c.FloatValue),
+        Lua53ConstantKind.Nil => Lua51Constant.Nil,
+        Lua53ConstantKind.False => Lua51Constant.False,
+        Lua53ConstantKind.True => Lua51Constant.True,
+        Lua53ConstantKind.Integer => Lua51Constant.FromNumber(c.IntegerValue),
+        Lua53ConstantKind.Float => Lua51Constant.FromNumber(c.FloatValue),
         Lua53ConstantKind.ShortString or Lua53ConstantKind.LongString => Lua51Constant.FromString(new Lua51String(c.StringValue!.Value.ToArray())),
         _ => throw new InvalidDataException("Unknown constant kind"),
     };

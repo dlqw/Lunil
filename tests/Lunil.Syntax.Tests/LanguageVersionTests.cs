@@ -59,6 +59,25 @@ public sealed class LanguageVersionTests
             SourceText.FromUtf8("global print"),
             LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 },
             LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua54 });
-        Assert.Contains(lua54.Diagnostics, diagnostic => diagnostic.Code == "LUA2013");
+        Assert.NotEmpty(lua54.Diagnostics);
+        Assert.DoesNotContain(lua54.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51)]
+    [InlineData(LuaLanguageVersion.Lua52)]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    public void EarlierVersionsTreatGlobalAsAnIdentifier(LuaLanguageVersion version)
+    {
+        var result = LuaParser.Parse(
+            SourceText.FromUtf8("local global = 1\nreturn global"),
+            LuaLexerOptions.Default with { LanguageVersion = version },
+            LuaParserOptions.Default with { LanguageVersion = version });
+
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(result.Root.DescendantNodes(),
+            node => node.Kind == LuaSyntaxKind.GlobalDeclarationStatement);
     }
 }
