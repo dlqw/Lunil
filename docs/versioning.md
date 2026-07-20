@@ -23,9 +23,9 @@ This example produces `0.9.1`. Stable tags `v0.8.0` and `v0.9.0` remain immutabl
 | --- | --- | --- |
 | `0.8.x` | Maintained | Backward-compatible fixes only |
 | `0.9.x` | Stable | Backward-compatible fixes only |
-| `0.10.0-alpha.N` | Active development | Planned feature, API, and backend work |
-| `0.10.0-beta.N` | Future feature freeze | Compatibility, diagnostics, documentation, reliability, and performance hardening |
-| `0.10.0-rc.N` | Future release candidate | Release-blocking fixes only |
+| `0.10.0-alpha.N` | Published development history | Immutable prerelease evidence |
+| `0.10.0-beta.N` | Unused channel | No release published |
+| `0.10.0-rc.N` | Active release candidate | Release-blocking fixes only |
 
 ## Prerelease channels
 
