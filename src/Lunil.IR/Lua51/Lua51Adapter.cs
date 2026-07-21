@@ -223,19 +223,37 @@ public static class Lua51PrototypeConverter
     public static LuaIrModule Convert(Lua51Chunk chunk)
     {
         ArgumentNullException.ThrowIfNull(chunk);
+        var environmentRequirements = new Dictionary<Lua51Prototype, bool>(
+            ReferenceEqualityComparer.Instance);
+        AnalyzeEnvironmentRequirements(chunk.MainPrototype, environmentRequirements);
+        var main = Translate(chunk.MainPrototype, default, environmentRequirements);
         return Lua53PrototypeConverter.Convert(new Lua53Chunk(
             new Lua53ChunkTarget(chunk.Target.ByteOrder == Lua51ByteOrder.LittleEndian ? Lua53ByteOrder.LittleEndian : Lua53ByteOrder.BigEndian,
-                4, (byte)chunk.Target.SizeOfSizeT, 4, 8, (byte)chunk.Target.NumberSize), chunk.MainPrototype.UpvalueCount, Translate(chunk.MainPrototype)), LuaLanguageVersion.Lua51);
+                4, (byte)chunk.Target.SizeOfSizeT, 4, 8, (byte)chunk.Target.NumberSize),
+            checked((byte)main.Upvalues.Length),
+            main), LuaLanguageVersion.Lua51);
     }
-    private static Lua53Prototype Translate(Lua51Prototype p) => Translate(p, default);
 
     private static Lua53Prototype Translate(
         Lua51Prototype p,
-        ImmutableArray<Lua53UpvalueDescriptor> upvalues)
+        ImmutableArray<Lua53UpvalueDescriptor> upvalues,
+        IReadOnlyDictionary<Lua51Prototype, bool> environmentRequirements)
     {
+        var hasEnvironment = environmentRequirements[p];
+        var upvalueOffset = hasEnvironment ? 1 : 0;
         if (upvalues.IsDefault)
-            upvalues = Enumerable.Range(0, p.UpvalueCount)
-                .Select(_ => new Lua53UpvalueDescriptor(1, 0)).ToImmutableArray();
+        {
+            var rootUpvalues = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(
+                checked(p.UpvalueCount + upvalueOffset));
+            if (hasEnvironment)
+            {
+                rootUpvalues.Add(new Lua53UpvalueDescriptor(1, 0));
+            }
+
+            rootUpvalues.AddRange(Enumerable.Range(0, p.UpvalueCount)
+                .Select(_ => new Lua53UpvalueDescriptor(1, 0)));
+            upvalues = rootUpvalues.MoveToImmutable();
+        }
         var nestedUpvalues = new ImmutableArray<Lua53UpvalueDescriptor>[p.NestedPrototypes.Length];
         var skipped = new bool[p.Code.Length];
         for (var pc = 0; pc < p.Code.Length; pc++)
@@ -243,8 +261,18 @@ public static class Lua51PrototypeConverter
             var instruction = p.Code[pc];
             if (instruction.Opcode != Lua51Opcode.Closure || instruction.Bx >= nestedUpvalues.Length)
                 continue;
-            var count = p.NestedPrototypes[instruction.Bx].UpvalueCount;
-            var descriptors = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(count);
+            var nested = p.NestedPrototypes[instruction.Bx];
+            var count = nested.UpvalueCount;
+            var nestedHasEnvironment = environmentRequirements[nested];
+            var descriptors = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(
+                checked(count + (nestedHasEnvironment ? 1 : 0)));
+            if (nestedHasEnvironment)
+            {
+                // GETGLOBAL and SETGLOBAL refer to the function environment implicitly in
+                // Lua 5.1. Keep it at canonical upvalue index zero for closures that need it.
+                descriptors.Add(new Lua53UpvalueDescriptor(0, 0));
+            }
+
             for (var index = 0; index < count; index++)
             {
                 var bindingPc = pc + index + 1;
@@ -254,7 +282,9 @@ public static class Lua51PrototypeConverter
                 descriptors.Add(binding.Opcode switch
                 {
                     Lua51Opcode.Move => new Lua53UpvalueDescriptor(1, checked((byte)binding.B)),
-                    Lua51Opcode.GetUpvalue => new Lua53UpvalueDescriptor(0, checked((byte)binding.B)),
+                    Lua51Opcode.GetUpvalue => new Lua53UpvalueDescriptor(
+                        0,
+                        checked((byte)(binding.B + upvalueOffset))),
                     _ => throw new InvalidDataException("Lua 5.1 closure has an invalid upvalue binding instruction."),
                 });
                 skipped[bindingPc] = true;
@@ -325,7 +355,7 @@ public static class Lua51PrototypeConverter
                         instruction.Opcode == Lua51Opcode.NumericForLoop ? Lua53Opcode.NumericForLoop : Lua53Opcode.NumericForPrepare,
                     instruction.A, mapped));
             }
-            else code.Add(Translate(instruction));
+            else code.Add(Translate(instruction, upvalueOffset));
         }
 
         return new Lua53Prototype
@@ -338,15 +368,64 @@ public static class Lua51PrototypeConverter
             MaximumStackSize = p.MaximumStackSize,
             Code = code.MoveToImmutable(),
             Constants = p.Constants.Select(Translate).ToImmutableArray(),
-            NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(nested, nestedUpvalues[index])).ToImmutableArray(),
+            NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(
+                nested,
+                nestedUpvalues[index],
+                environmentRequirements)).ToImmutableArray(),
             LineInfo = TranslateLineInfo(p, skipped),
             LocalVariables = p.LocalVariables.Select(x => new Lua53LocalVariable(
                 x.Name is { } n ? new Lua53String(n.ToArray()) : null,
                 pcMap[x.StartProgramCounter],
                 pcMap[x.EndProgramCounter])).ToImmutableArray(),
-            UpvalueNames = p.UpvalueNames.Select(x => x is { } n ? (Lua53String?)new Lua53String(n.ToArray()) : null).ToImmutableArray(),
+            UpvalueNames = TranslateUpvalueNames(
+                p.UpvalueNames,
+                upvalues.Length,
+                hasEnvironment),
             Upvalues = upvalues,
         };
+    }
+
+    private static ImmutableArray<Lua53String?> TranslateUpvalueNames(
+        ImmutableArray<Lua51String?> names,
+        int upvalueCount,
+        bool hasEnvironment)
+    {
+        var result = ImmutableArray.CreateBuilder<Lua53String?>(upvalueCount);
+        if (hasEnvironment)
+        {
+            result.Add(new Lua53String("_ENV"u8.ToArray()));
+        }
+        foreach (var name in names)
+        {
+            result.Add(name is { } value ? new Lua53String(value.ToArray()) : null);
+        }
+
+        while (result.Count < upvalueCount)
+        {
+            result.Add(null);
+        }
+
+        return result.MoveToImmutable();
+    }
+
+    private static bool AnalyzeEnvironmentRequirements(
+        Lua51Prototype prototype,
+        IDictionary<Lua51Prototype, bool> requirements)
+    {
+        if (requirements.TryGetValue(prototype, out var existing))
+        {
+            return existing;
+        }
+
+        var required = prototype.Code.Any(static instruction =>
+            instruction.Opcode is Lua51Opcode.GetGlobal or Lua51Opcode.SetGlobal);
+        foreach (var nested in prototype.NestedPrototypes)
+        {
+            required |= AnalyzeEnvironmentRequirements(nested, requirements);
+        }
+
+        requirements[prototype] = required;
+        return required;
     }
 
     private static ImmutableArray<int> TranslateLineInfo(Lua51Prototype prototype, bool[] skipped)
@@ -374,7 +453,7 @@ public static class Lua51PrototypeConverter
         return lines.ToImmutable();
     }
 
-    private static Lua53Instruction Translate(Lua51Instruction i)
+    private static Lua53Instruction Translate(Lua51Instruction i, int upvalueOffset)
     {
         if (i.Opcode == Lua51Opcode.Close)
         {
@@ -427,6 +506,8 @@ public static class Lua51PrototypeConverter
         };
         if (i.Opcode is Lua51Opcode.GetGlobal) return Lua53Instruction.CreateAbc(op, i.A, 0, i.Bx | (1 << 8));
         if (i.Opcode is Lua51Opcode.SetGlobal) return Lua53Instruction.CreateAbc(op, 0, i.Bx | (1 << 8), i.A);
+        if (i.Opcode is Lua51Opcode.GetUpvalue or Lua51Opcode.SetUpvalue)
+            return Lua53Instruction.CreateAbc(op, i.A, checked(i.B + upvalueOffset), i.C);
         return i.Opcode is Lua51Opcode.LoadConstant or Lua51Opcode.Closure ? Lua53Instruction.CreateABx(op, i.A, i.Bx) :
             i.Opcode is Lua51Opcode.Jump or Lua51Opcode.NumericForLoop or Lua51Opcode.NumericForPrepare ? Lua53Instruction.CreateASignedBx(op, i.A, i.SignedBx) :
             Lua53Instruction.CreateAbc(op, i.A, i.B, i.C);

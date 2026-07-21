@@ -697,7 +697,11 @@ public static class Lua54PrototypeConverter
                     ? $"(upvalue {index})"
                     : Encoding.UTF8.GetString(debugName.AsSpan());
                 var sourceKind = _entry.ParentId < 0
-                    ? LuaIrUpvalueSourceKind.Environment
+                    ? index == 0
+                        ? LuaIrUpvalueSourceKind.Environment
+                        : descriptor.InStack == 1
+                            ? LuaIrUpvalueSourceKind.Register
+                            : LuaIrUpvalueSourceKind.Upvalue
                     : descriptor.InStack == 1
                         ? LuaIrUpvalueSourceKind.Register
                         : LuaIrUpvalueSourceKind.Upvalue;

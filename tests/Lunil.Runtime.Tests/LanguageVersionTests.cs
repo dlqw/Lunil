@@ -1,9 +1,12 @@
 using System.Buffers.Binary;
 using Lunil.Core;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
+using Lunil.Compiler;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
+using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Tests;
 
@@ -65,6 +68,114 @@ public sealed class LanguageVersionTests
         Assert.Equal(42, result.Values[7].AsInteger());
         Assert.Equal(15, result.Values[8].AsInteger());
         Assert.Equal(15, result.Values[9].AsFloat());
+    }
+
+    [Fact]
+    public void Lua51BinaryGlobalAccessUsesTheInjectedEnvironmentUpvalue()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+        });
+        state.SetGlobal("value", LuaValue.FromInteger(17));
+        var module = Lua51PrototypeConverter.Convert(new Lua51Chunk(
+            Lua51ChunkTarget.Host,
+            new Lua51Prototype
+            {
+                UpvalueCount = 0,
+                MaximumStackSize = 2,
+                Code =
+                [
+                    Lua51Instruction.CreateABx(Lua51Opcode.GetGlobal, 0, 0),
+                    Lua51Instruction.CreateAbc(Lua51Opcode.Return, 0, 2, 0),
+                ],
+                Constants = [Lua51Constant.FromString(new Lua51String("value"u8.ToArray()))],
+                NestedPrototypes = [],
+                LineInfo = [],
+                LocalVariables = [],
+                UpvalueNames = [],
+            }));
+
+        var result = new LuaInterpreter().Execute(state, state.CreateMainClosure(module));
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(17, result.Values.Single().AsInteger());
+    }
+
+    [Fact]
+    public void Lua51NestedBinaryGlobalAccessCapturesTheParentEnvironment()
+    {
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+        });
+        state.SetGlobal("value", LuaValue.FromInteger(23));
+        var module = Lua51PrototypeConverter.Convert(new Lua51Chunk(
+            Lua51ChunkTarget.Host,
+            new Lua51Prototype
+            {
+                UpvalueCount = 0,
+                MaximumStackSize = 2,
+                Code =
+                [
+                    Lua51Instruction.CreateABx(Lua51Opcode.Closure, 0, 0),
+                    Lua51Instruction.CreateAbc(Lua51Opcode.Return, 0, 2, 0),
+                ],
+                Constants = [],
+                NestedPrototypes =
+                [
+                    new Lua51Prototype
+                    {
+                        UpvalueCount = 0,
+                        MaximumStackSize = 2,
+                        Code =
+                        [
+                            Lua51Instruction.CreateABx(Lua51Opcode.GetGlobal, 0, 0),
+                            Lua51Instruction.CreateAbc(Lua51Opcode.Return, 0, 2, 0),
+                        ],
+                        Constants = [Lua51Constant.FromString(new Lua51String("value"u8.ToArray()))],
+                        NestedPrototypes = [],
+                        LineInfo = [],
+                        LocalVariables = [],
+                        UpvalueNames = [],
+                    },
+                ],
+                LineInfo = [],
+                LocalVariables = [],
+                UpvalueNames = [],
+            }));
+
+        var interpreter = new LuaInterpreter();
+        var outer = interpreter.Execute(state, state.CreateMainClosure(module));
+        var innerClosure = outer.Values.Single().TryGetClosure();
+        Assert.NotNull(innerClosure);
+        var inner = interpreter.Execute(state, innerClosure!);
+
+        Assert.Equal(LuaVmSignal.Completed, inner.Signal);
+        Assert.Equal(23, inner.Values.Single().AsInteger());
+    }
+
+    [Fact]
+    public void Lua51CanonicalWriterRoundTripsEnvironmentAccessInsideLunil()
+    {
+        var compilation = new LuaCompiler(new LuaCompilerOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+        }).CompileUtf8("return value", "@lua51-writer.lua");
+        Assert.True(compilation.Succeeded, string.Join(Environment.NewLine, compilation.Diagnostics));
+
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+        });
+        state.SetGlobal("value", LuaValue.FromInteger(29));
+        var chunk = Lua51CanonicalPrototypeWriter.Write(
+            compilation.Module!,
+            compilation.Module!.MainFunctionId);
+        var result = new LuaInterpreter().ExecuteBinaryChunk(state, chunk);
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(29, result.Values.Single().AsInteger());
     }
 
     [Fact]

@@ -160,8 +160,9 @@ public static class LuaIrVerifier
         LuaIrFunction function,
         ImmutableArray<LuaIrVerificationError>.Builder errors)
     {
-        foreach (var upvalue in function.Upvalues)
+        for (var index = 0; index < function.Upvalues.Length; index++)
         {
+            var upvalue = function.Upvalues[index];
             if (upvalue.Kind > 3)
             {
                 errors.Add(new(function.Id, -1, $"Upvalue '{upvalue.Name}' has an invalid kind."));
@@ -169,9 +170,13 @@ public static class LuaIrVerifier
 
             if (function.ParentFunctionId < 0)
             {
-                if (upvalue.SourceKind != LuaIrUpvalueSourceKind.Environment)
+                // The first root upvalue is the language environment. Additional root
+                // upvalues have no lexical parent; preserve their binary descriptor kind so
+                // round-tripping multi-upvalue main chunks does not misidentify them as _ENV.
+                if (index == 0 &&
+                    upvalue.SourceKind != LuaIrUpvalueSourceKind.Environment)
                 {
-                    errors.Add(new(function.Id, -1, "A root upvalue must be supplied by the environment."));
+                    errors.Add(new(function.Id, -1, "The first root upvalue must be supplied by the environment."));
                 }
 
                 continue;

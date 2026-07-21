@@ -75,6 +75,34 @@ public sealed class Lua51ChunkTests
         Assert.Equal(Lua51Opcode.VarArg, chunk.MainPrototype.Code[0].Opcode);
     }
 
+    [Fact]
+    public void ConverterAddsAnEnvironmentUpvalueForLua51GlobalInstructions()
+    {
+        var prototype = new Lua51Prototype
+        {
+            UpvalueCount = 0,
+            MaximumStackSize = 2,
+            Code =
+            [
+                Lua51Instruction.CreateABx(Lua51Opcode.GetGlobal, 0, 0),
+                Lua51Instruction.CreateAbc(Lua51Opcode.Return, 0, 2, 0),
+            ],
+            Constants = [Lua51Constant.FromString(new Lua51String("value"u8.ToArray()))],
+            NestedPrototypes = [],
+            LineInfo = [],
+            LocalVariables = [],
+            UpvalueNames = [],
+        };
+
+        var module = Lua51PrototypeConverter.Convert(
+            new Lua51Chunk(Lua51ChunkTarget.Host, prototype));
+
+        var function = Assert.Single(module.Functions);
+        Assert.Equal(LuaIrUpvalueSourceKind.Environment, Assert.Single(function.Upvalues).SourceKind);
+        Assert.Contains(function.Instructions, instruction =>
+            instruction.Opcode == LuaIrOpcode.GetUpvalue && instruction.B == 0);
+    }
+
     private static LuaIrModule CreateEmptyModule()
     {
         var instructions = ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0));
