@@ -1,8 +1,6 @@
 # ADR 0005: Enable qualified exact-numeric Tier 2 by default
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0003](0003-tier1-auto-default-rollout.md),
   [ADR 0004](0004-tier2-exact-numeric-productionization.md)
 - Extended by: [ADR 0012](0012-guarded-table-call-fastpaths.md)

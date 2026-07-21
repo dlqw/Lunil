@@ -21,9 +21,9 @@ CODEOWNERS file covers source, tests, benchmarks, scripts, workflows, build/vers
 public API baselines, and release metadata. Community Markdown, changelogs, generated
 performance charts, and benchmark result reports do not generate a code-owner request.
 
-CI still runs the public-repository, community-documentation, and generated-chart checks for
-those documentation-only changes, but skips the six-platform restore/build/test, publish, package,
-and backend-evidence steps. Any source, test, benchmark harness, script, workflow, version,
+CI still runs the public-safety and generated-chart checks for those documentation-only changes,
+but skips the six-platform restore/build/test, publish, package, and backend-evidence steps. Any
+source, test, benchmark harness, script, workflow, version,
 API-baseline, or release-configuration change makes the run full again. Manual dispatches and
 release-tag workflows always run their complete required gates; an exemption cannot weaken a
 release.

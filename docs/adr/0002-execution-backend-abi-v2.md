@@ -1,8 +1,6 @@
 # ADR 0002: Execution backend Runtime ABI v2
 
-- Status: Accepted
 - Date: 2026-07-12
-- Target: Lua 5.4.8, .NET 10
 - Extends: [ADR 0001](0001-execution-backend-abi-v1.md)
 
 ## Context

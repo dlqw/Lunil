@@ -1,8 +1,6 @@
 # ADR 0018: Remove Lua persisted/static AOT
 
-- Status: Accepted
 - Date: 2026-07-17
-- Target: `0.8.0-alpha.12`, Lua 5.4.8, .NET 10
 - Supersedes: [ADR 0010](0010-persisted-cil-aot-performance-productionization.md),
   [ADR 0015](0015-persisted-profile-guided-numeric-regions.md)
 - Related: [ADR 0013](0013-64-bit-instruction-accounting.md)

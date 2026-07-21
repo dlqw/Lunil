@@ -1,8 +1,6 @@
 # ADR 0006: Productionize exact-numeric Loop OSR without changing the default
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0002](0002-execution-backend-abi-v2.md),
   [ADR 0004](0004-tier2-exact-numeric-productionization.md),
   [ADR 0005](0005-tier2-auto-default-rollout.md)

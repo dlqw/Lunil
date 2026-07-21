@@ -1,8 +1,6 @@
 # ADR 0019: Compact Tier 0 interpreter loop
 
-- Status: Accepted
 - Date: 2026-07-18
-- Target: `0.8.0-alpha.13`; amended for `0.9.1`, Lua 5.4.8, .NET 10
 - Related: [ADR 0001](0001-execution-backend-abi-v1.md),
   [ADR 0013](0013-64-bit-instruction-accounting.md),
   [ADR 0018](0018-remove-lua-aot.md)

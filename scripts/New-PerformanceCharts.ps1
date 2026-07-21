@@ -34,7 +34,6 @@ function Get-PublicEngineLabel([string] $Engine) {
         'LuaJIT' { return 'LuaJIT 2.1' }
         'Native Lua 5.4' { return 'PUC Lua 5.4.8' }
         'Lunil Auto JIT' { return "Lunil Auto JIT $($data.release)" }
-        'MoonSharp' { return 'MoonSharp 2.0.0' }
         'NeoLua' { return 'NeoLua 1.3.19' }
         'Luau' { return 'Luau 0.623' }
         'GopherLua' { return 'GopherLua 1.1.1' }
@@ -45,8 +44,10 @@ function Get-PublicEngineLabel([string] $Engine) {
 }
 
 function Get-PublicOverall($Report) {
-    $publicEngines = @('LuaJIT', 'Native Lua 5.4', 'Lunil Auto JIT', 'MoonSharp', 'NeoLua', 'Luau', 'GopherLua', 'Wasmoon', 'UniLua')
-    return @($Report.overall | Where-Object { $_.engine -in $publicEngines })
+    $publicEngines = @('LuaJIT', 'Native Lua 5.4', 'Lunil Auto JIT', 'NeoLua', 'Luau', 'GopherLua', 'Wasmoon', 'UniLua')
+    return @($Report.overall |
+        Where-Object { $_.engine -in $publicEngines } |
+        Sort-Object { [double]$_.speedupVsNativeLua } -Descending)
 }
 
 function Get-RidScope($Report, [switch] $ForDescription) {

@@ -1,8 +1,6 @@
 # ADR 0020: Generation-bound direct compiled calls
 
-- Status: Accepted
 - Date: 2026-07-18
-- Target: `0.8.0-alpha.14`, Lua 5.4.8, .NET 10
 - Related: [issue #64](https://github.com/dlqw/Lunil/issues/64),
   [ADR 0013](0013-64-bit-instruction-accounting.md),
   [ADR 0017](0017-versioned-invalidation-and-function-slots.md),

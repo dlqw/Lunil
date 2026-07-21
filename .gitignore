@@ -16,6 +16,7 @@ TestResults/
 
 # Local agent instructions and working material
 .codex/
+.agents/
 AGENTS.md
 CLAUDE.md
 .claude/

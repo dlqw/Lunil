@@ -1,8 +1,6 @@
 # ADR 0014: Separate stable object identity, dense heap slots, and the young generation
 
-- Status: Accepted for the 0.8 development line
 - Date: 2026-07-17
-- Target: Lua 5.4.8, .NET 10
 
 ## Context
 

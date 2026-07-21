@@ -32,6 +32,7 @@ public sealed partial class LuaHost : IDisposable
         ArgumentNullException.ThrowIfNull(configured.Execution);
         ArgumentNullException.ThrowIfNull(configured.Jit);
         ArgumentNullException.ThrowIfNull(configured.Workspace);
+        ArgumentNullException.ThrowIfNull(configured.Clr);
         if (!LuaLanguageVersions.IsKnown(configured.LanguageVersion))
         {
             throw new ArgumentOutOfRangeException(
@@ -93,6 +94,7 @@ public sealed partial class LuaHost : IDisposable
             Options.ModuleResolver);
         StateOptions = ResolveStateOptions(Options);
         State = new LuaState(StateOptions);
+        ClrBridge = new LuaClrBridge(State, Options.Clr);
         _interpreterExecutor = new LuaExecutor(new LuaExecutorOptions
         {
             Interpreter = Options.Execution,
@@ -103,6 +105,11 @@ public sealed partial class LuaHost : IDisposable
             StandardLibraryOptions = Options.StandardLibrary ??
                 LuaHostCapabilityProfiles.Create(Options.Profile);
             LuaStandardLibrary.InstallAll(State, StandardLibraryOptions);
+        }
+
+        if (Options.Clr.InstallGlobalModule)
+        {
+            ClrBridge.InstallGlobalModule();
         }
     }
 
@@ -127,6 +134,9 @@ public sealed partial class LuaHost : IDisposable
     public LuaStateOptions StateOptions { get; }
 
     public LuaState State { get; }
+
+    /// <summary>Gets the capability-controlled CLR bridge owned by this host's Lua state.</summary>
+    public LuaClrBridge ClrBridge { get; }
 
     public LuaStandardLibraryOptions? StandardLibraryOptions { get; }
 

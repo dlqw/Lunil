@@ -1,8 +1,6 @@
 # ADR 0008: Prepare Loop OSR only after qualification and strengthen rollout evidence
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0007](0007-loop-osr-default-rollout-readiness.md)
 
 ## Context

@@ -49,11 +49,20 @@ jobs:
           elseif ($env:EVENT_NAME -eq 'pull_request') {
             $paths = @(git diff --name-only "$($env:BASE_SHA)...$($env:HEAD_SHA)")
           }
-          elseif ($env:BEFORE_SHA -and $env:BEFORE_SHA -ne $zeroSha) {
-            $paths = @(git diff --name-only $env:BEFORE_SHA $env:CURRENT_SHA)
-          }
           else {
-            $paths = @(git ls-tree -r --name-only $env:CURRENT_SHA)
+            $beforeAvailable = $false
+            if ($env:BEFORE_SHA -and $env:BEFORE_SHA -ne $zeroSha) {
+              git cat-file -e "$($env:BEFORE_SHA)^{commit}" 2>$null
+              $beforeAvailable = $LASTEXITCODE -eq 0
+            }
+            if ($beforeAvailable) {
+              $paths = @(git diff --name-only $env:BEFORE_SHA $env:CURRENT_SHA)
+            }
+            else {
+              # A force-push can leave the event's before-SHA unreachable from the checkout.
+              # Classify the current tree as a full change rather than failing open as docs-only.
+              $paths = @(git ls-tree -r --name-only $env:CURRENT_SHA)
+            }
           }
           if ($LASTEXITCODE -ne 0) {
             throw 'Unable to determine changed paths.'
@@ -273,12 +282,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Verify public repository boundaries
+      - name: Verify public repository safety
         shell: pwsh
-        run: ./scripts/Test-PublicRepository.ps1
-      - name: Verify community documentation boundaries
-        shell: pwsh
-        run: ./scripts/Test-CommunityDocumentation.ps1
+        run: ./scripts/Test-PublicSafety.ps1
       - name: Verify generated performance charts
         shell: pwsh
         run: |

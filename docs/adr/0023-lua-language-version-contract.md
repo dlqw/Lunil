@@ -1,8 +1,6 @@
 # ADR 0023: Explicit Lua language-version contract
 
-- Status: Accepted
 - Date: 2026-07-20
-- Target: `0.10.0-alpha.1`; Lua 5.1–5.5 compatibility line
 - Related: [0.10.0 roadmap](../roadmap.md), [version management](../versioning.md)
 
 ## Context

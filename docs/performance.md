@@ -10,25 +10,24 @@ The formal `0.10.0` results compare the default Auto JIT with pinned reference r
 The release dataset uses the same eight Lua workloads, six balanced rounds, and six release RIDs:
 `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`.
 
-| Engine | Version | Geomean vs PUC Lua 5.4.8 | Geomean vs MoonSharp 2.0.0 |
-| --- | --- | ---: | ---: |
-| LuaJIT | 2.1 (commit `3c4f9fe`) | 11.518x | 164.301x |
-| PUC Lua | 5.4.8 | 1.000x | 14.287x |
-| **Lunil Auto JIT** | **0.9.0** | **1.688x** | **24.089x** |
-| MoonSharp | 2.0.0 | 0.070x | 1.000x |
+| Engine | Version | Geomean vs PUC Lua 5.4.8 |
+| --- | --- | ---: |
+| LuaJIT | 2.1 (commit `3c4f9fe`) | 11.518x |
+| **Lunil Auto JIT** | **0.9.0** | **1.688x** |
+| PUC Lua | 5.4.8 | 1.000x |
 
 ![Runtime comparison for Lunil 0.9.0](../assets/performance/0.9.0-runtime-overview.svg)
 
-| Auto JIT workload | Vs PUC Lua 5.4.8 | Vs MoonSharp 2.0.0 |
-| --- | ---: | ---: |
-| Arithmetic | 1.643x | 36.094x |
-| Iterative Fibonacci | 3.232x | 46.988x |
-| Mandelbrot | 4.210x | 63.829x |
-| Control flow | 2.101x | 34.773x |
-| Function calls | 2.568x | 35.421x |
-| Table access | 0.478x | 12.467x |
-| Prime sieve | 0.530x | 12.698x |
-| String build | 2.164x | 5.372x |
+| Auto JIT workload | Vs PUC Lua 5.4.8 |
+| --- | ---: |
+| Arithmetic | 1.643x |
+| Iterative Fibonacci | 3.232x |
+| Mandelbrot | 4.210x |
+| Control flow | 2.101x |
+| Function calls | 2.568x |
+| Table access | 0.478x |
+| Prime sieve | 0.530x |
+| String build | 2.164x |
 
 ![Auto JIT workload comparison for Lunil 0.9.0](../assets/performance/0.9.0-auto-workloads.svg)
 
@@ -38,7 +37,6 @@ The release dataset uses the same eight Lua workloads, six balanced rounds, and 
 | --- | --- | --- |
 | PUC Lua | 5.4.8 | Lua.org source archive SHA-256 `4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae` |
 | LuaJIT | 2.1 | Git commit `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3` |
-| MoonSharp | 2.0.0 | NuGet package `MoonSharp` |
 
 ## 0.10.0 cross-runtime dataset
 
@@ -53,17 +51,12 @@ Engines measured (with pinned identity):
 |---|---|---|
 | PUC Lua | 5.4.8 | `lua54` |
 | LuaJIT | 2.1 @ `3c4f9fe` | `lua51-dialect` |
-| MoonSharp | 2.0.0 | `managed-dotnet` |
 | Lunil Auto JIT | 0.10.0 | `managed-dotnet` |
 | NeoLua | NuGet 1.3.19 (net8 out-of-process harness) | `managed-dotnet` |
 | Luau | 0.623 | `lua51-dialect` |
 | GopherLua | 1.1.1 | `lua51-dialect` |
 | Wasmoon | 1.16.0 | `lua54` |
 | UniLua | `194eb311` | `lua52-managed` |
-
-Comparison policy: compare only within semantic groups; do **not** merge LuaJIT / dialect scores into a single
-total against managed engines. Six-RID CI aggregation remains a follow-up over the same harness; this release
-locks the win-x64 formal dataset and engine pins.
 
 Provision optional engines with `scripts/Install-OptionalCrossRuntimeEngines.ps1`, then
 `scripts/Measure-CrossRuntimePerformance.ps1`. Export public JSON via
@@ -83,7 +76,7 @@ Provision optional engines with `scripts/Install-OptionalCrossRuntimeEngines.ps1
   [`benchmarks/results/0.10.0-performance.json`](../benchmarks/results/0.10.0-performance.json).
 
 Absolute timings depend on the machine. New comparisons should preserve the same workload sources,
-reference versions, and measurement protocol.
+reference versions, semantic groups, and measurement protocol.
 
 ## Reproduce a Lunil workload
 

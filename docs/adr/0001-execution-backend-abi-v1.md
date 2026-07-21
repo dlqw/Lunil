@@ -1,8 +1,6 @@
 # ADR 0001: Execution kernel and code-generation ABI v1
 
-- Status: Accepted
 - Date: 2026-07-12
-- Target: Lua 5.4.8, .NET 10
 - Supersedes: the provisional `VmSignal Execute(LuaThread, ref LuaFrame)` signature in
   `docs/compiler-design.md`
 - Extended by: [ADR 0013](0013-64-bit-instruction-accounting.md)

@@ -1,7 +1,5 @@
 # PUC Lua 5.4 prototype 导入契约
 
-状态：0.4.0 已实现
-
 输入版本：PUC Lua 5.4
 
 输出版本：canonical IR v3

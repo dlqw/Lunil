@@ -1,8 +1,6 @@
 # ADR 0024: Lua 5.3 end-to-end compatibility slice
 
-- Status: Accepted
 - Date: 2026-07-20
-- Target: `0.10.0-alpha.1`
 - Related issue: GitHub #83
 
 ## Context
@@ -37,9 +35,9 @@ binary chunk format are not identical to Lua 5.4.
 
 The slice covers the source/compiler/runtime/hosting path, the Lua 5.3 standard-library boundary,
 Lua 5.3 canonical chunk writing, and verified import of Lua 5.3 chunks into canonical IR. The
-official Lua 5.3.4 test archive is pinned with selected upstream fixtures, while the full suite
-remains an incremental conformance target because it contains platform, internal-API, and
-unsupported-library cases. An opt-in PUC Lua 5.3 differential corpus is available through
+official Lua 5.3.4 test archive is pinned with selected upstream fixtures. Platform-specific,
+internal-API, and unsupported-library cases are outside this compatibility contract. An opt-in
+PUC Lua 5.3 differential corpus is available through
 `LUNIL_PUC_LUA53` (or `lua5.3`/`lua53` on PATH).
 
 ## Consequences

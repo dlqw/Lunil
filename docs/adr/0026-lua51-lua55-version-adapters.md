@@ -1,9 +1,5 @@
 # ADR 0026: Lua 5.1 and Lua 5.5 adapter boundaries
 
-## Status
-
-Accepted for the `0.10.0-alpha.2` compatibility line.
-
 ## Decision
 
 Lua 5.1 and Lua 5.5 are represented by independent compile-time adapter capabilities. They are

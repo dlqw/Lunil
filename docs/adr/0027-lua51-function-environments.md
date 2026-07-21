@@ -1,8 +1,6 @@
 # ADR 0027: Lua 5.1 function and thread environments
 
-- Status: Accepted
 - Date: 2026-07-21
-- Target: `0.10.x` compatibility qualification on the stable `0.10.0` adapter line
 - Related: [ADR 0023](0023-lua-language-version-contract.md), [ADR 0026](0026-lua51-lua55-version-adapters.md)
 
 ## Context
