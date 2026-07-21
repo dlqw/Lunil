@@ -197,6 +197,27 @@ jobs:
       - name: Document the intentional lightweight path
         run: echo "Documentation-only change; build and test are intentionally skipped."
 
+  puc-multi-version-differential:
+    name: PUC Lua 5.1-5.5 differential gate
+    needs: change_scope
+    if: needs.change_scope.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Install pinned PUC Lua source oracles
+        shell: pwsh
+        run: ./scripts/Install-PucLuaOracles.ps1
+      - name: Run source, imported-chunk, and produced-chunk comparisons
+        run: >-
+          dotnet test tests/Lunil.Runtime.Tests/Lunil.Runtime.Tests.csproj
+          --configuration Release
+          --filter "FullyQualifiedName~Lunil.Runtime.Tests.Differential.PucLua"
+
   backend-performance-decision:
     name: Aggregate Tier 1/Tier 2/Loop OSR six-RID evidence
     if: >-
@@ -319,4 +340,3 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/packages/*.snupkg
           if-no-files-found: error
-

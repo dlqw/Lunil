@@ -1,0 +1,11 @@
+{
+  "schema": "lunil.lua-semantic-fixture.v1",
+  "languageVersion": "Lua54",
+  "mode": "semantic-version-fixture",
+  "cases": [
+    { "path": "lua-5.4.8-semantic-fixture/numeric.lua", "expected": [{ "kind": "Integer", "value": 3 }] },
+    { "path": "lua-5.4.8-semantic-fixture/bitwise.lua", "expected": [{ "kind": "Integer", "value": 1 }] },
+    { "path": "lua-5.4.8-semantic-fixture/goto.lua", "expected": [{ "kind": "Integer", "value": 0 }] },
+    { "path": "lua-5.4.8-semantic-fixture/close.lua", "expected": [{ "kind": "Boolean", "value": true }] }
+  ]
+}
