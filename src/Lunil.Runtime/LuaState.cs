@@ -38,9 +38,12 @@ public sealed class LuaState
 
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
         LanguageVersion = options.LanguageVersion;
+        var features = LuaVersionFeatureTable.Get(LanguageVersion);
+        ArithmeticStringCoercionProducesFloat = features.ArithmeticStringCoercionProducesFloat;
+        CoercesNumericStringsForBitwiseOperations =
+            features.CoercesNumericStringsForBitwiseOperations;
         Heap = new LuaHeap(options.Heap);
-        Heap.PreservesDeadThreadOpenUpvalues =
-            LuaVersionFeatureTable.Get(LanguageVersion).PreservesDeadThreadOpenUpvalues;
+        Heap.PreservesDeadThreadOpenUpvalues = features.PreservesDeadThreadOpenUpvalues;
         Strings = new LuaStringPool(Heap);
         MemoryErrorString = Strings.GetOrCreate("not enough memory"u8);
         Globals = new LuaTable(Heap);
@@ -53,6 +56,10 @@ public sealed class LuaState
     }
 
     public LuaLanguageVersion LanguageVersion { get; }
+
+    internal bool ArithmeticStringCoercionProducesFloat { get; }
+
+    internal bool CoercesNumericStringsForBitwiseOperations { get; }
 
     public LuaHeap Heap { get; }
 

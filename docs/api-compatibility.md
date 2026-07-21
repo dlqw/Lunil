@@ -55,9 +55,9 @@ compatibility line without changing the reviewed API/package baseline.
 - `LuaLanguageVersion` identifies Lua 5.1 through 5.5, while `LuaLanguageVersions` validates,
   parses, and displays identities and retains Lua 5.4 as `Default`;
 - `LuaChunkFormat` identifies the matching PUC binary-chunk family;
-- `LuaVersionProfileAttribute`, generated `LuaVersionFeatures` (including the reviewed
-  `HasToBeClosedProtocol` patch addition), and `LuaVersionFeatureTable.Get` expose the version
-  capability table;
+- `LuaVersionProfileAttribute`, generated `LuaVersionFeatures` (including the reviewed patch
+  additions for the to-be-closed protocol and numeric-string coercion), and
+  `LuaVersionFeatureTable.Get` expose the version capability table;
 - compiler, syntax, semantics, runtime, hosting, workspace, canonical-module, and closure option or
   result types carry `LanguageVersion` where the version boundary is observable;
 - the CLI accepts `--lua-version 5.1|5.2|5.3|5.4|5.5`, configuration `languageVersion`, and the

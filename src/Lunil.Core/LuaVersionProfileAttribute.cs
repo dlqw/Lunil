@@ -22,6 +22,14 @@ public sealed class LuaVersionProfileAttribute : Attribute
 
     public bool CachesClosuresByUpvalues { get; init; }
 
+    /// <summary>
+    /// Whether an integer-valued string coerced by an arithmetic operator produces a float.
+    /// </summary>
+    public bool ArithmeticStringCoercionProducesFloat { get; init; }
+
+    /// <summary>Whether bitwise operators coerce numeric strings to integers.</summary>
+    public bool CoercesNumericStringsForBitwiseOperations { get; init; }
+
     public bool HasWarnLibrary { get; init; }
 
     public bool HasCoroutineClose { get; init; }

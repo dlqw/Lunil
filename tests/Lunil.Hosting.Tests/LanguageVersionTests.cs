@@ -272,6 +272,25 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua53NumericStringCoercionRetainsVersionSpecificNumberTags()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua53,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+        });
+
+        var result = host.RunUtf8(
+            "return math.type('12' + 3), math.type(-'12'), '12' | 3, ~'12'");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("float", result.Execution!.Values[0].AsString().ToString());
+        Assert.Equal("float", result.Execution.Values[1].AsString().ToString());
+        Assert.Equal(15, result.Execution.Values[2].AsInteger());
+        Assert.Equal(-13, result.Execution.Values[3].AsInteger());
+    }
+
+    [Fact]
     public void HostInstallsLua53LibraryWithLua53OnlySurface()
     {
         using var host = new LuaHost(new LuaHostOptions

@@ -47,6 +47,8 @@ public enum LuaLanguageVersion : byte
         SynchronousFinalizerErrors = true,
         PreservesDeadThreadOpenUpvalues = true,
         CachesClosuresByUpvalues = true,
+        ArithmeticStringCoercionProducesFloat = true,
+        CoercesNumericStringsForBitwiseOperations = true,
         HasUtf8Library = true,
         HasRawLength = true,
         HasTableMove = true,

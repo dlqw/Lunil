@@ -34,29 +34,42 @@ public sealed class LuaLanguageVersionTests
     [Fact]
     public void GeneratedProfilesKeepChunkAndSurfaceCapabilitiesVersioned()
     {
+        var lua51 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua51);
+        Assert.Equal(LuaChunkFormat.Lua51, lua51.ChunkFormat);
+        Assert.False(lua51.ArithmeticStringCoercionProducesFloat);
+        Assert.False(lua51.CoercesNumericStringsForBitwiseOperations);
+
         var lua53 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua53);
         Assert.Equal(LuaChunkFormat.Lua53, lua53.ChunkFormat);
         Assert.True(lua53.SynchronousFinalizerErrors);
         Assert.False(lua53.HasWarnLibrary);
         Assert.False(lua53.HasCoroutineClose);
         Assert.True(lua53.HasUtf8Library);
+        Assert.True(lua53.ArithmeticStringCoercionProducesFloat);
+        Assert.True(lua53.CoercesNumericStringsForBitwiseOperations);
 
         var lua52 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua52);
         Assert.Equal(LuaChunkFormat.Lua52, lua52.ChunkFormat);
         Assert.True(lua52.HasBit32Library);
         Assert.False(lua52.HasUtf8Library);
+        Assert.False(lua52.ArithmeticStringCoercionProducesFloat);
+        Assert.False(lua52.CoercesNumericStringsForBitwiseOperations);
 
         var lua54 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua54);
         Assert.Equal(LuaChunkFormat.Lua54, lua54.ChunkFormat);
         Assert.False(lua54.SynchronousFinalizerErrors);
         Assert.True(lua54.HasWarnLibrary);
         Assert.True(lua54.HasCoroutineClose);
+        Assert.False(lua54.ArithmeticStringCoercionProducesFloat);
+        Assert.False(lua54.CoercesNumericStringsForBitwiseOperations);
 
         var lua55 = LuaVersionFeatureTable.Get(LuaLanguageVersion.Lua55);
         Assert.Equal(LuaChunkFormat.Lua55, lua55.ChunkFormat);
         Assert.True(lua55.HasWarnLibrary);
         Assert.True(lua55.HasCoroutineClose);
         Assert.True(lua55.HasUtf8Library);
+        Assert.False(lua55.ArithmeticStringCoercionProducesFloat);
+        Assert.False(lua55.CoercesNumericStringsForBitwiseOperations);
     }
 
     [Theory]
