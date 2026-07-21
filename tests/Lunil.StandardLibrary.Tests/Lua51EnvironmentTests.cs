@@ -49,6 +49,54 @@ public sealed class Lua51EnvironmentTests
     }
 
     [Fact]
+    public void ModuleUsesNestedGlobalPathAndLuaOptionCallbacks()
+    {
+        var state = CreateState();
+        var values = Execute(
+            state,
+            """
+            local root = _G
+            local loaded = package.loaded
+            root.existing = { nested = { seed = 3 } }
+            local function decorate(m)
+              m.decorated = true
+              m.caller_env_was_set = getfenv(2) == m
+            end
+            local result_count = select('#', module("existing.nested", decorate))
+            exported = 7
+            return root.existing.nested.seed, root.existing.nested.exported,
+              root.existing.nested.decorated, root.existing.nested.caller_env_was_set,
+              loaded["existing.nested"] == root.existing.nested, result_count
+            """);
+        Assert.Equal(3, values[0].AsFloat());
+        Assert.Equal(7, values[1].AsFloat());
+        Assert.True(values[2].IsTruthy);
+        Assert.True(values[3].IsTruthy);
+        Assert.True(values[4].IsTruthy);
+        Assert.Equal(0, values[5].AsInteger());
+    }
+
+    [Fact]
+    public void ThreadEnvironmentControlsNewLua51ChunksAndSetFEnvZeroReturnsNothing()
+    {
+        var state = CreateState();
+        var values = Execute(
+            state,
+            """
+            local original = _G
+            local env = { marker = 17, assert = assert, loadstring = loadstring }
+            local set_count = select('#', setfenv(0, env))
+            local loaded = assert(loadstring("return marker"))
+            local active = getfenv(0) == env
+            setfenv(0, original)
+            return set_count, active, loaded()
+            """);
+        Assert.Equal(0, values[0].AsInteger());
+        Assert.True(values[1].IsTruthy);
+        Assert.Equal(17, values[2].AsFloat());
+    }
+
+    [Fact]
     public void SetFEnvDoesNotMutateSiblingSharedEnvByIdentity()
     {
         var state = CreateState();

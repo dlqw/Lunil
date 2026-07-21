@@ -33,17 +33,14 @@ public sealed class PucMultiVersionConformanceHarnessTests
         _ = version;
         var fixtures = Path.Combine(AppContext.BaseDirectory, "Fixtures", "multi-version", label);
         var manifestPath = Path.Combine(fixtures, "manifest.json");
-        if (!File.Exists(manifestPath))
-        {
-            // Fixture not vendored yet — harness structure is still required to exist.
-            Assert.True(true);
-            return;
-        }
+        Assert.True(File.Exists(manifestPath), manifestPath);
 
         using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
         var root = doc.RootElement;
         Assert.Equal("lunil.lua-conformance-manifest.v1", root.GetProperty("schema").GetString());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("archiveSha256").GetString()));
+        var suiteDirectory = Path.GetFullPath(Path.Combine(fixtures, suiteDirectoryName));
+        Assert.True(Directory.Exists(suiteDirectory), suiteDirectory);
         var files = root.GetProperty("files");
         Assert.True(files.GetArrayLength() > 0);
         foreach (var entry in files.EnumerateArray())
@@ -51,17 +48,23 @@ public sealed class PucMultiVersionConformanceHarnessTests
             var classification = entry.GetProperty("classification").GetString();
             Assert.Contains(classification, AllowedClassifications);
             Assert.False(string.IsNullOrWhiteSpace(entry.GetProperty("reason").GetString()));
+            var fixturePath = Path.GetFullPath(Path.Combine(
+                suiteDirectory,
+                entry.GetProperty("path").GetString()!));
+            Assert.StartsWith(
+                suiteDirectory + Path.DirectorySeparatorChar,
+                fixturePath,
+                StringComparison.Ordinal);
+            Assert.True(File.Exists(fixturePath), fixturePath);
+            var fixtureSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(fixturePath)));
+            Assert.Equal(entry.GetProperty("sha256").GetString()!.ToUpperInvariant(), fixtureSha256);
         }
 
         var archiveName = root.GetProperty("archiveFileName").GetString();
         var archivePath = Path.Combine(fixtures, archiveName!);
-        if (File.Exists(archivePath))
-        {
-            var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath)));
-            Assert.Equal(root.GetProperty("archiveSha256").GetString()!.ToUpperInvariant(), actual);
-        }
-
-        _ = suiteDirectoryName;
+        Assert.True(File.Exists(archivePath), archivePath);
+        var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath)));
+        Assert.Equal(root.GetProperty("archiveSha256").GetString()!.ToUpperInvariant(), actual);
     }
 
     [Theory]

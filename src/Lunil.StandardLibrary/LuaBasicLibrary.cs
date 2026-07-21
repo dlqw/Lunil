@@ -50,7 +50,7 @@ internal static class LuaBasicLibrary
         }
         if (features.HasModuleLibrary)
         {
-            SetFunction(state, "module", Module);
+            SetStepFunction(state, "module", Module);
         }
         if (LuaFunctionEnvironments.SupportsFunctionEnvironments(state.LanguageVersion))
         {
@@ -346,52 +346,124 @@ internal static class LuaBasicLibrary
         return [LuaLibraryHelpers.String(state, LuaValueOperations.BasicTypeName(value))];
     }
 
-    private static LuaValue[] Module(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private static LuaNativeStep Module(
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> values)
     {
-        var name = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "module");
-        var moduleName = Encoding.UTF8.GetString(name);
-        var existing = state.GetGlobal(moduleName);
-        var module = existing.Kind == LuaValueKind.Table
-            ? existing.AsTable()
-            : state.CreateTable(hashCapacity: 8);
-        LuaLibraryHelpers.Set(state, module, "_NAME", LuaLibraryHelpers.String(state, moduleName));
-        LuaLibraryHelpers.Set(state, module, "_M", LuaValue.FromTable(module));
-        var dot = moduleName.LastIndexOf('.');
-        LuaLibraryHelpers.Set(
-            state,
-            module,
-            "_PACKAGE",
-            LuaLibraryHelpers.String(state, dot >= 0 ? moduleName[..(dot + 1)] : string.Empty));
-        state.SetGlobal(moduleName, LuaValue.FromTable(module));
-        var package = state.GetGlobal("package");
-        if (package.Kind == LuaValueKind.Table)
+        LuaValue[] state;
+        var optionIndex = 0;
+        if (continuationId == 0)
         {
-            var loaded = package.AsTable().Get(LuaLibraryHelpers.String(state, "loaded"));
-            if (loaded.Kind == LuaValueKind.Table)
+            var name = LuaLibraryHelpers.CheckStringBytes(values, 0, "module");
+            var moduleName = Encoding.UTF8.GetString(name);
+            var module = ResolveModuleTable(context.State, moduleName);
+            if (module.Get(LuaLibraryHelpers.String(context.State, "_NAME")).IsNil)
             {
-                loaded.AsTable().Set(
-                    LuaLibraryHelpers.String(state, moduleName),
+                LuaLibraryHelpers.Set(
+                    context.State,
+                    module,
+                    "_NAME",
+                    LuaLibraryHelpers.String(context.State, moduleName));
+                LuaLibraryHelpers.Set(
+                    context.State,
+                    module,
+                    "_M",
                     LuaValue.FromTable(module));
+                var dot = moduleName.LastIndexOf('.');
+                LuaLibraryHelpers.Set(
+                    context.State,
+                    module,
+                    "_PACKAGE",
+                    LuaLibraryHelpers.String(
+                        context.State,
+                        dot >= 0 ? moduleName[..(dot + 1)] : string.Empty));
             }
-        }
 
-        // PUC module applies options then setfenv(2, module) so the calling chunk writes into
-        // the module table through its environment / _ENV upvalue.
-        for (var index = 1; index < arguments.Length; index++)
-        {
-            LuaFunctionEnvironments.CallModuleOption(state, arguments[index], module);
-        }
-
-        var thread = state.RunningThread ?? state.MainThread;
-        if (LuaFunctionEnvironments.TryResolveLevelTarget(state, thread, level: 1, out var caller))
-        {
-            if (caller.Kind == LuaValueKind.Function)
+            // PUC module performs setfenv(2, module) before invoking the option callbacks.
+            if (!LuaFunctionEnvironments.TryResolveLevelTarget(
+                    context.State,
+                    context.Thread,
+                    level: 1,
+                    out var caller) ||
+                caller.Kind != LuaValueKind.Function)
             {
-                LuaFunctionEnvironments.SetFunctionEnvironment(state, caller, module);
+                throw new LuaRuntimeException("unable to resolve module caller environment");
             }
+
+            LuaFunctionEnvironments.SetFunctionEnvironment(context.State, caller, module);
+
+            state = new LuaValue[values.Length + 1];
+            state[0] = LuaValue.FromTable(module);
+            values[1..].CopyTo(state.AsSpan(1));
+        }
+        else
+        {
+            state = context.InvocationState as LuaValue[] ??
+                throw new InvalidOperationException("module lost its reusable state.");
+            optionIndex = checked((int)state[^1].AsInteger() + 1);
         }
 
-        return [LuaValue.FromTable(module)];
+        var optionCount = state.Length - 2;
+        if (optionIndex >= optionCount)
+        {
+            return LuaNativeStep.Completed();
+        }
+
+        state[^1] = LuaValue.FromInteger(optionIndex);
+        return LuaNativeStep.CallLuaWithReusableState(
+            state[optionIndex + 1],
+            [state[0]],
+            continuationId: 1,
+            stateValues: state,
+            callIsYieldable: false);
+    }
+
+    private static LuaTable ResolveModuleTable(LuaState state, string moduleName)
+    {
+        var loaded = GetLoadedModules(state);
+        var moduleKey = LuaLibraryHelpers.String(state, moduleName);
+        var cached = loaded?.Get(moduleKey) ?? LuaValue.Nil;
+        if (cached.Kind == LuaValueKind.Table)
+        {
+            return cached.AsTable();
+        }
+
+        var current = state.Globals;
+        foreach (var segment in moduleName.Split('.'))
+        {
+            var key = LuaLibraryHelpers.String(state, segment);
+            var value = current.Get(key);
+            if (value.IsNil)
+            {
+                var child = state.CreateTable(hashCapacity: 1);
+                current.Set(key, LuaValue.FromTable(child));
+                current = child;
+                continue;
+            }
+
+            if (value.Kind != LuaValueKind.Table)
+            {
+                throw new LuaRuntimeException($"name conflict for module '{moduleName}'");
+            }
+
+            current = value.AsTable();
+        }
+
+        loaded?.Set(moduleKey, LuaValue.FromTable(current));
+        return current;
+    }
+
+    private static LuaTable? GetLoadedModules(LuaState state)
+    {
+        var package = state.GetGlobal("package");
+        if (package.Kind != LuaValueKind.Table)
+        {
+            return null;
+        }
+
+        var loaded = package.AsTable().Get(LuaLibraryHelpers.String(state, "loaded"));
+        return loaded.Kind == LuaValueKind.Table ? loaded.AsTable() : null;
     }
 
     private static LuaValue[] GetFEnv(LuaState state, ReadOnlySpan<LuaValue> arguments)
@@ -442,7 +514,7 @@ internal static class LuaBasicLibrary
             }
 
             LuaFunctionEnvironments.SetEnvironment(state, target, environment);
-            return [target];
+            return level == 0 ? [] : [target];
         }
 
         LuaFunctionEnvironments.SetEnvironment(state, selector, environment);

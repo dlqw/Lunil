@@ -181,38 +181,4 @@ internal static class LuaFunctionEnvironments
         return false;
     }
 
-    public static void CallModuleOption(LuaState state, LuaValue option, LuaTable module)
-    {
-        var argument = LuaValue.FromTable(module);
-        if (option.TryGetNativeFunction() is { Body: not null } descriptor)
-        {
-            descriptor.Body(state, [argument]);
-            return;
-        }
-
-        if (option.TryGetNativeClosure() is { } native)
-        {
-            if (native.Descriptor.Body is not null)
-            {
-                native.Descriptor.Body(state, [argument]);
-                return;
-            }
-
-            throw new LuaRuntimeException("module option function is not callable from this host path");
-        }
-
-        if (option.TryGetClosure() is { } closure)
-        {
-            var result = new LuaInterpreter().Execute(state, closure, [argument]);
-            if (result.Signal != LuaVmSignal.Completed)
-            {
-                throw new LuaRuntimeException(
-                    $"module option did not complete (signal={result.Signal})");
-            }
-
-            return;
-        }
-
-        throw LuaLibraryHelpers.BadArgument("module", 1, "function expected");
-    }
 }

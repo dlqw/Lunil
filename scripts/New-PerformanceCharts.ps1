@@ -49,9 +49,24 @@ function Get-PublicOverall($Report) {
     return @($Report.overall | Where-Object { $_.engine -in $publicEngines })
 }
 
+function Get-RidScope($Report, [switch] $ForDescription) {
+    $rids = @($Report.source.rids)
+    if ($rids.Count -eq 1) {
+        if ($ForDescription) { return "$($rids[0]) formal release dataset" }
+        return "$($rids[0]) formal dataset"
+    }
+
+    if ($ForDescription) {
+        if ($rids.Count -eq 6) { return 'six release platforms' }
+        return "$($rids.Count) release platforms"
+    }
+    if ($rids.Count -eq 6) { return 'six-RID geometric mean' }
+    return "$($rids.Count)-RID geometric mean"
+}
+
 function New-EngineOverviewSvg($Report) {
     $width = 1120
-    $height = 780
+    $height = 620
     $plotLeft = 260
     $plotRight = 1040
     $plotWidth = $plotRight - $plotLeft
@@ -59,12 +74,19 @@ function New-EngineOverviewSvg($Report) {
     $maximum = 16.0
     $ticks = @(0.03, 0.1, 0.3, 1.0, 3.0, 10.0)
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780" role="img" aria-labelledby="title desc">')
+    $ridCount = @($Report.source.rids).Count
+    $engineScope = if ($ridCount -eq 1) {
+        "geometric mean across 8 workloads · $(Get-RidScope $Report)"
+    }
+    else {
+        "geometric mean across 8 workloads × $ridCount release RIDs"
+    }
+    $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">')
     $lines.Add("  <title id=`"title`">Lunil $($Report.release) runtime comparison</title>")
-    $lines.Add('  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to PUC Lua 5.4.8.</desc>')
-    $lines.Add('  <rect width="1120" height="780" rx="20" fill="#f8fafc"/>')
+    $lines.Add("  <desc id=`"desc`">Geometric mean speedup across eight workloads and $(Get-RidScope $Report -ForDescription), normalized to PUC Lua 5.4.8.</desc>")
+    $lines.Add('  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>')
     $lines.Add('  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Runtime comparison</text>')
-    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · geometric mean across 8 workloads × 6 release RIDs</text>")
+    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · $engineScope</text>")
     foreach ($tick in $ticks) {
         $position = $plotLeft + (([Math]::Log($tick) - [Math]::Log($minimum)) / ([Math]::Log($maximum) - [Math]::Log($minimum))) * $plotWidth
         $x = Format-Number $position '0.0'
@@ -94,7 +116,7 @@ function New-EngineOverviewSvg($Report) {
 
 function New-WorkloadSvg($Report) {
     $width = 1120
-    $height = 780
+    $height = 620
     $plotLeft = 250
     $plotRight = 1030
     $plotWidth = $plotRight - $plotLeft
@@ -123,12 +145,12 @@ function New-WorkloadSvg($Report) {
         string_build = 'String build'
     }
     $lines = [Collections.Generic.List[string]]::new()
-    $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780" role="img" aria-labelledby="title desc">')
+    $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">')
     $lines.Add("  <title id=`"title`">Lunil $($Report.release) Auto JIT by workload</title>")
-    $lines.Add('  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to PUC Lua 5.4.8.</desc>')
-    $lines.Add('  <rect width="1120" height="780" rx="20" fill="#f8fafc"/>')
+    $lines.Add("  <desc id=`"desc`">Auto JIT speedup per workload across $(Get-RidScope $Report -ForDescription), normalized to PUC Lua 5.4.8.</desc>")
+    $lines.Add('  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>')
     $lines.Add('  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Auto JIT by workload</text>')
-    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · six-RID geometric mean · PUC Lua 5.4.8 = 1.000×</text>")
+    $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · $(Get-RidScope $Report) · PUC Lua 5.4.8 = 1.000×</text>")
     foreach ($tick in $ticks) {
         $position = $plotLeft + ($tick / $maximum) * $plotWidth
         $stroke = if ($tick -eq 1.0) { '#0f766e' } else { '#cbd5e1' }

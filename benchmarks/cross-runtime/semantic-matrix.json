@@ -14,35 +14,35 @@
       "version": "5.1.5",
       "semantics": "lua51",
       "source": "https://www.lua.org/ftp/lua-5.1.5.tar.gz",
-      "oracleExecutable": "artifacts/codex/lua51/lua.exe"
+      "oracleEnvironmentVariable": "LUNIL_PUC_LUA51"
     },
     {
       "name": "puc-lua-5.2",
       "version": "5.2.4",
       "semantics": "lua52",
       "source": "https://www.lua.org/ftp/lua-5.2.4.tar.gz",
-      "oracleExecutable": "artifacts/lua-5.2.4/src/lua.exe"
+      "oracleEnvironmentVariable": "LUNIL_PUC_LUA52"
     },
     {
       "name": "puc-lua-5.3",
       "version": "5.3.6",
       "semantics": "lua53",
       "source": "https://www.lua.org/ftp/lua-5.3.6.tar.gz",
-      "oracleExecutable": "artifacts/puc-lua53/lua-5.3.6/src/lua.exe"
+      "oracleEnvironmentVariable": "LUNIL_PUC_LUA53"
     },
     {
       "name": "puc-lua-5.4",
       "version": "5.4.8",
       "semantics": "lua54",
       "source": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
-      "oracleExecutable": "artifacts/cross-runtime-tools/win-x64/src/lua-5.4.8/src/lua.exe"
+      "oracleEnvironmentVariable": "LUNIL_PUC_LUA54"
     },
     {
       "name": "puc-lua-5.5",
       "version": "5.5.0",
       "semantics": "lua55",
       "source": "https://www.lua.org/ftp/lua-5.5.0.tar.gz",
-      "oracleExecutable": "artifacts/codex/lua55/lua.exe"
+      "oracleEnvironmentVariable": "LUNIL_PUC_LUA55"
     },
     {
       "name": "neolua",

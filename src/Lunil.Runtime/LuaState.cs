@@ -264,11 +264,17 @@ public sealed class LuaState
 
         var function = module.Functions[module.MainFunctionId];
         var upvalues = new LuaUpvalue[function.Upvalues.Length];
+        var threadEnvironment = LanguageVersion == LuaLanguageVersion.Lua51
+            ? (RunningThread ?? MainThread).Environment
+            : LuaValue.Nil;
+        var environment = threadEnvironment.Kind == LuaValueKind.Table
+            ? threadEnvironment
+            : LuaValue.FromTable(Globals);
         for (var index = 0; index < upvalues.Length; index++)
         {
             upvalues[index] = new LuaUpvalue(
                 Heap,
-                index == 0 ? LuaValue.FromTable(Globals) : LuaValue.Nil);
+                index == 0 ? environment : LuaValue.Nil);
         }
 
         return new LuaClosure(

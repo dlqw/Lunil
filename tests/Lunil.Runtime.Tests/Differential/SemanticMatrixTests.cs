@@ -29,6 +29,16 @@ public sealed class SemanticMatrixTests
         Assert.True(root.GetProperty("engines").GetArrayLength() >= 10);
         Assert.True(root.GetProperty("workloads").GetArrayLength() >= 5);
         Assert.True(root.GetProperty("comparisonPolicy").GetProperty("compareOnlyWithinSemanticGroup").GetBoolean());
+        foreach (var engine in root.GetProperty("engines").EnumerateArray()
+                     .Where(static engine => engine.GetProperty("name").GetString()!.StartsWith(
+                         "puc-lua-",
+                         StringComparison.Ordinal)))
+        {
+            Assert.StartsWith(
+                "LUNIL_PUC_LUA",
+                engine.GetProperty("oracleEnvironmentVariable").GetString(),
+                StringComparison.Ordinal);
+        }
     }
 
     [Theory]
@@ -106,5 +116,30 @@ public sealed class SemanticMatrixTests
         Assert.Equal(LuaVmSignal.Completed, result.Signal);
         Assert.Equal("a-b-c", result.Values[0].AsString().ToString());
         Assert.Equal("ell", result.Values[1].AsString().ToString());
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51)]
+    [InlineData(LuaLanguageVersion.Lua52)]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    [InlineData(LuaLanguageVersion.Lua55)]
+    public void GcFinalizerWorkload(LuaLanguageVersion version)
+    {
+        var state = new LuaState(new LuaStateOptions { LanguageVersion = version });
+        LuaStandardLibrary.InstallAll(state);
+        var source = version == LuaLanguageVersion.Lua51
+            ? "collectgarbage('collect'); return type(collectgarbage('count')), 0"
+            : "local finalized = 0; do local value = setmetatable({}, " +
+              "{ __gc = function() finalized = finalized + 1 end }) end; " +
+              "collectgarbage('collect'); collectgarbage('collect'); " +
+              "return type(collectgarbage('count')), finalized";
+        var compilation = new LuaCompiler(new LuaCompilerOptions { LanguageVersion = version })
+            .CompileUtf8(source, "@semantic-gc.lua");
+        Assert.True(compilation.Succeeded, string.Join(Environment.NewLine, compilation.Diagnostics));
+        var result = new LuaInterpreter().Execute(state, state.CreateMainClosure(compilation.Module!));
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal("number", result.Values[0].AsString().ToString());
+        Assert.Equal(version == LuaLanguageVersion.Lua51 ? 0 : 1, result.Values[1].AsFloat());
     }
 }

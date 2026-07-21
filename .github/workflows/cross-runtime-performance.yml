@@ -81,9 +81,12 @@ jobs:
           cache-dependency-path: "**/*.csproj"
       - name: Restore and build benchmark host
         run: >-
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj &&
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj &&
           dotnet build
           benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
           --configuration Release
+          --no-restore
           -p:ContinuousIntegrationBuild=true
       - name: Build pinned native Lua and LuaJIT
         shell: pwsh
@@ -131,9 +134,12 @@ jobs:
           cache-dependency-path: "**/*.csproj"
       - name: Restore and build benchmark host
         run: >-
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj &&
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj &&
           dotnet build
           benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
           --configuration Release
+          --no-restore
           -p:ContinuousIntegrationBuild=true
       - name: Build pinned native Lua and LuaJIT
         shell: pwsh

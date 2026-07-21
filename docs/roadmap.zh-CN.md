@@ -21,11 +21,12 @@
 
 ## 0.10.0：Lua 版本兼容与运行时对比
 
-Lunil 0.10.0 计划完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.5。
-稳定版 `0.10.0` 已交付五个版本的显式 adapter 与独立官方 binary chunk codec。`0.10.x` 后续工作
-补强函数环境（`getfenv`/`setfenv`/`module`）、可执行语义矩阵门禁、多版本 JIT smoke，以及跨运行时
-引擎接入（树内 NeoLua；Luau/GopherLua/Wasmoon/UniLua 为可选外部可执行文件）。完整六 RID 性能数据行
-与 5.1/5.2/5.5 官方 suite 全量归档仍见 `tasklist/0.10.0.md`。每个版本都拥有独立的语言和运行时契约：
+Lunil 0.10.0 已完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.5。
+稳定版 `0.10.0` 已交付五个版本的显式 adapter、独立官方 binary chunk codec、函数环境兼容
+（`getfenv`/`setfenv`/`module`）、可执行语义矩阵门禁、多版本 JIT smoke、5.1/5.2/5.5 官方 suite
+归档，以及跨运行时引擎接入（树内 NeoLua；Luau/GopherLua/Wasmoon/UniLua 为可选外部可执行文件）。
+正式 win-x64 对比已经发布；可选 peer 的六 RID 性能数据行属于同一 harness 的非阻塞扩展。每个版本都拥有
+独立的语言和运行时契约：
 
 - 对应版本的语法、词法规则、运算符和多返回值行为；
 - 对应版本的 VM 指令和 binary chunk 格式，并进行显式版本校验；
@@ -34,7 +35,7 @@ Lunil 0.10.0 计划完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.
 - 版本感知的 source、chunk、compiler、interpreter 和 host 配置 API；
 - 每个版本独立的 conformance 和 differential 覆盖。
 
-Lua 5.4 仍是 0.9.x 兼容基线。0.10.0 契约必须允许宿主显式选择每个版本，不能静默套用其他版本
+Lua 5.4 仍是默认兼容基线。0.10.0 契约允许宿主显式选择每个版本，不能静默套用其他版本
 的语义。
 
 性能数据集新增以下独立运行时：

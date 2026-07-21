@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
   <title id="title">Lunil 0.10.0 runtime comparison</title>
-  <desc id="desc">Geometric mean speedup across eight workloads and six release platforms, normalized to PUC Lua 5.4.8.</desc>
-  <rect width="1120" height="780" rx="20" fill="#f8fafc"/>
+  <desc id="desc">Geometric mean speedup across eight workloads and win-x64 formal release dataset, normalized to PUC Lua 5.4.8.</desc>
+  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>
   <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Runtime comparison</text>
-  <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.10.0 · geometric mean across 8 workloads × 6 release RIDs</text>
+  <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.10.0 · geometric mean across 8 workloads · win-x64 formal dataset</text>
   <line x1="260.0" y1="126" x2="260.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
   <text x="260.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">0.03×</text>
   <line x1="409.6" y1="126" x2="409.6" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>

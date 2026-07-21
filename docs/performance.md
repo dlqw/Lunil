@@ -2,10 +2,10 @@
 
 [简体中文](performance.zh-CN.md)
 
-The `0.9.0` results compare the default Auto JIT with pinned reference runtimes. PUC Lua 5.4.8 is
-normalized to `1.000x`; values above `1.000x` are faster.
+The formal `0.10.0` results compare the default Auto JIT with pinned reference runtimes on the
+`win-x64` release RID. PUC Lua 5.4.8 is normalized to `1.000x`; values above `1.000x` are faster.
 
-## `0.9.0` results
+## `0.9.0` historical results
 
 The release dataset uses the same eight Lua workloads, six balanced rounds, and six release RIDs:
 `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`.
@@ -79,8 +79,8 @@ Provision optional engines with `scripts/Install-OptionalCrossRuntimeEngines.ps1
   from the primary CPU-time-per-operation metric.
 - Results are checked against the workload manifest; ratios use matched balanced rounds and a
   deterministic paired bootstrap interval.
-- The six-RID release dataset is stored in
-  [`benchmarks/results/0.9.0-performance.json`](../benchmarks/results/0.9.0-performance.json).
+- The formal `win-x64` release dataset is stored in
+  [`benchmarks/results/0.10.0-performance.json`](../benchmarks/results/0.10.0-performance.json).
 
 Absolute timings depend on the machine. New comparisons should preserve the same workload sources,
 reference versions, and measurement protocol.
@@ -103,5 +103,6 @@ The committed charts can be regenerated or verified with:
 
 ```powershell
 ./scripts/New-PerformanceCharts.ps1 -Verify
+./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.10.0-performance.json -Verify
 ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-performance.json -Verify
 ```

@@ -21,14 +21,13 @@ primary scope; later releases do not change the compatibility contract of earlie
 
 ## 0.10.0 — Lua version compatibility and runtime comparisons
 
-Lunil 0.10.0 targets complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5.
-Stable `0.10.0` shipped explicit adapters for all five versions, including independent official
-binary-chunk codecs for Lua 5.1, 5.2, 5.3, 5.4, and 5.5. Follow-up work on the `0.10.x` line deepens
-function environments (`getfenv`/`setfenv`/`module`), executable semantic-matrix gates, multi-version
-JIT smoke, and cross-runtime engine wiring (NeoLua in-tree; Luau/GopherLua/Wasmoon/UniLua via optional
-executables). Full six-RID performance rows for every optional peer and fully vendored official suites
-for 5.1/5.2/5.5 remain tracked in `tasklist/0.10.0.md`. Each version has its own
-language and runtime contract:
+Lunil 0.10.0 delivers complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5.
+Stable `0.10.0` ships explicit adapters for all five versions, independent official binary-chunk codecs,
+function-environment compatibility (`getfenv`/`setfenv`/`module`), executable semantic-matrix gates,
+multi-version JIT smoke, vendored official 5.1/5.2/5.5 suites, and cross-runtime engine wiring (NeoLua
+in-tree; Luau/GopherLua/Wasmoon/UniLua via optional executables). The formal win-x64 comparison is
+published; six-RID performance rows for optional peers are a non-blocking expansion of the same harness.
+Each version has its own language and runtime contract:
 
 - version-specific syntax, lexical rules, operators, and multiple-result behavior;
 - version-specific VM instructions and binary-chunk formats with explicit version validation;
@@ -38,7 +37,7 @@ language and runtime contract:
 - version-aware source, chunk, compiler, interpreter, and host configuration APIs;
 - conformance and differential coverage for every supported version.
 
-Lua 5.4 remains the 0.9.x compatibility baseline. The 0.10.0 contract must let a host select each
+Lua 5.4 remains the default compatibility baseline. The 0.10.0 contract lets a host select each
 version without silently applying another version's semantics.
 
 The performance dataset adds these independent runtimes:

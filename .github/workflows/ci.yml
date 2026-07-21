@@ -112,6 +112,10 @@ jobs:
           cache-dependency-path: "**/*.csproj"
       - name: Restore
         run: dotnet restore Lunil.sln
+      - name: Restore cross-runtime harness projects
+        run: |
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Build
         run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Test
@@ -270,6 +274,11 @@ jobs:
       - name: Restore
         if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet restore Lunil.sln
+      - name: Restore cross-runtime harness projects
+        if: needs.change_scope.outputs.heavy == 'true'
+        run: |
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Restore public API baseline tool
         if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet tool restore
