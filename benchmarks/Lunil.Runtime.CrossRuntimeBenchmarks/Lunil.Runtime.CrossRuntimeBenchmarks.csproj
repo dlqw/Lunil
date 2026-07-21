@@ -1,7 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="MoonSharp" Version="2.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Runtime\Lunil.Runtime.csproj" />
@@ -14,12 +25,30 @@
     <None Include="..\cross-runtime\**\*" Link="cross-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
+  <Target Name="BuildAndCopyNeoLuaHarness" AfterTargets="Build">
+    <MSBuild Projects="..\Lunil.NeoLua.Harness\Lunil.NeoLua.Harness.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=net8.0" />
+    <ItemGroup>
+      <_NeoLuaFiles Include="..\Lunil.NeoLua.Harness\bin\$(Configuration)\net8.0\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_NeoLuaFiles)"
+          DestinationFolder="$(TargetDir)%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_NeoLuaFiles)' != ''" />
+  </Target>
+
+  <Target Name="BuildAndCopyUniLuaHarness" AfterTargets="Build">
+    <MSBuild Projects="..\Lunil.UniLua.Harness\Lunil.UniLua.Harness.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=net8.0;TreatWarningsAsErrors=false;EnableNETAnalyzers=false" />
+    <ItemGroup>
+      <_UniLuaFiles Include="..\Lunil.UniLua.Harness\bin\$(Configuration)\net8.0\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_UniLuaFiles)"
+          DestinationFolder="$(TargetDir)%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_UniLuaFiles)' != ''" />
+  </Target>
 
 </Project>

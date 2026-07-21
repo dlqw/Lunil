@@ -109,5 +109,35 @@
       "description": "Diagnostic-only table.concat number formatting over a persistent dense array.",
       "role": "diagnostic"
     }
-  ]
+  ],
+  "optionalEngines": [
+    "neolua",
+    "luau",
+    "gopherlua",
+    "wasmoon",
+    "unilua"
+  ],
+  "semanticGroups": {
+    "managed-dotnet": [
+      "moonsharp",
+      "neolua",
+      "lunil_interpreter",
+      "lunil_auto",
+      "lunil_tier1",
+      "lunil_tier2",
+      "lunil_loop_osr"
+    ],
+    "lua54": [
+      "lua54",
+      "wasmoon"
+    ],
+    "lua51-dialect": [
+      "luajit",
+      "luau",
+      "gopherlua"
+    ],
+    "lua52-managed": [
+      "unilua"
+    ]
+  }
 }

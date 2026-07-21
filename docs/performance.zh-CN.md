@@ -40,6 +40,33 @@
 | LuaJIT | 2.1 | Git commit `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3` |
 | MoonSharp | 2.0.0 | NuGet package `MoonSharp` |
 
+## 0.10.0 跨运行时数据集
+
+正式 win-x64 发布级测量（`rounds=6`，`targetMilliseconds=250`，8 个 workload）已发布为
+[`benchmarks/results/0.10.0-performance.json`](../benchmarks/results/0.10.0-performance.json)。
+图表：[`assets/performance/0.10.0-runtime-overview.svg`](../assets/performance/0.10.0-runtime-overview.svg)、
+[`assets/performance/0.10.0-auto-workloads.svg`](../assets/performance/0.10.0-auto-workloads.svg)。
+
+已测量引擎（含固定版本身份）：
+
+| 引擎 | 版本 / 身份 | 语义分组 |
+|---|---|---|
+| PUC Lua | 5.4.8 | `lua54` |
+| LuaJIT | 2.1 @ `3c4f9fe` | `lua51-dialect` |
+| MoonSharp | 2.0.0 | `managed-dotnet` |
+| Lunil Auto JIT | 0.10.0 | `managed-dotnet` |
+| NeoLua | NuGet 1.3.19（net8 外进程 harness） | `managed-dotnet` |
+| Luau | 0.623 | `lua51-dialect` |
+| GopherLua | 1.1.1 | `lua51-dialect` |
+| Wasmoon | 1.16.0 | `lua54` |
+| UniLua | `194eb311` | `lua52-managed` |
+
+比较策略：仅在语义分组内比较；**不得**把 LuaJIT / 方言与托管引擎混成一个总分。六 RID 聚合仍可在同一 harness 上后续补齐；本数据集锁定 win-x64 正式结果与引擎 pin。
+
+可选引擎安装：`scripts/Install-OptionalCrossRuntimeEngines.ps1`；测量：`scripts/Measure-CrossRuntimePerformance.ps1`；
+导出公开 JSON：`scripts/Export-PublicPerformanceDataset.ps1`。
+
+
 ## 测量方法
 
 - 每个引擎运行 `benchmarks/cross-runtime/workloads` 中的相同源码。

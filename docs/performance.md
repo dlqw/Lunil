@@ -40,6 +40,36 @@ The release dataset uses the same eight Lua workloads, six balanced rounds, and 
 | LuaJIT | 2.1 | Git commit `3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3` |
 | MoonSharp | 2.0.0 | NuGet package `MoonSharp` |
 
+## 0.10.0 cross-runtime dataset
+
+Formal win-x64 release measurement (`rounds=6`, `targetMilliseconds=250`, 8 workloads) is published as
+[`benchmarks/results/0.10.0-performance.json`](../benchmarks/results/0.10.0-performance.json).
+Charts: [`assets/performance/0.10.0-runtime-overview.svg`](../assets/performance/0.10.0-runtime-overview.svg),
+[`assets/performance/0.10.0-auto-workloads.svg`](../assets/performance/0.10.0-auto-workloads.svg).
+
+Engines measured (with pinned identity):
+
+| Engine | Version / identity | Semantic group |
+|---|---|---|
+| PUC Lua | 5.4.8 | `lua54` |
+| LuaJIT | 2.1 @ `3c4f9fe` | `lua51-dialect` |
+| MoonSharp | 2.0.0 | `managed-dotnet` |
+| Lunil Auto JIT | 0.10.0 | `managed-dotnet` |
+| NeoLua | NuGet 1.3.19 (net8 out-of-process harness) | `managed-dotnet` |
+| Luau | 0.623 | `lua51-dialect` |
+| GopherLua | 1.1.1 | `lua51-dialect` |
+| Wasmoon | 1.16.0 | `lua54` |
+| UniLua | `194eb311` | `lua52-managed` |
+
+Comparison policy: compare only within semantic groups; do **not** merge LuaJIT / dialect scores into a single
+total against managed engines. Six-RID CI aggregation remains a follow-up over the same harness; this release
+locks the win-x64 formal dataset and engine pins.
+
+Provision optional engines with `scripts/Install-OptionalCrossRuntimeEngines.ps1`, then
+`scripts/Measure-CrossRuntimePerformance.ps1`. Export public JSON via
+`scripts/Export-PublicPerformanceDataset.ps1`.
+
+
 ## Method
 
 - Each engine runs identical source from `benchmarks/cross-runtime/workloads`.

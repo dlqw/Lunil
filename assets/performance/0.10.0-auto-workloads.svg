@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780" role="img" aria-labelledby="title desc">
+  <title id="title">Lunil 0.10.0 Auto JIT by workload</title>
+  <desc id="desc">Auto JIT speedup per workload across six release platforms, normalized to PUC Lua 5.4.8.</desc>
+  <rect width="1120" height="780" rx="20" fill="#f8fafc"/>
+  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Auto JIT by workload</text>
+  <text x="56" y="94" font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#475569">Lunil 0.10.0 · six-RID geometric mean · PUC Lua 5.4.8 = 1.000×</text>
+  <line x1="250.0" y1="126" x2="250.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
+  <text x="250.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">0.0×</text>
+  <line x1="445.0" y1="126" x2="445.0" y2="532" stroke="#0f766e" stroke-width="1"/>
+  <text x="445.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">1.0×</text>
+  <line x1="640.0" y1="126" x2="640.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
+  <text x="640.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">2.0×</text>
+  <line x1="835.0" y1="126" x2="835.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
+  <text x="835.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">3.0×</text>
+  <line x1="1030.0" y1="126" x2="1030.0" y2="532" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 5"/>
+  <text x="1030.0" y="552" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="12" fill="#64748b">4.0×</text>
+  <text x="226" y="142" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Arithmetic</text>
+  <rect x="250" y="124" width="258.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="517.7" y="142" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.321×</text>
+  <text x="226" y="190" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Iterative Fibonacci</text>
+  <rect x="250" y="172" width="625.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="884.6" y="190" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">3.203×</text>
+  <text x="226" y="238" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Mandelbrot</text>
+  <rect x="250" y="220" width="651.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="911.2" y="238" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">3.339×</text>
+  <text x="226" y="286" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Control flow</text>
+  <rect x="250" y="268" width="324.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="583.9" y="286" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.661×</text>
+  <text x="226" y="334" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Function calls</text>
+  <rect x="250" y="316" width="554.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="813.6" y="334" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">2.839×</text>
+  <text x="226" y="382" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Table access</text>
+  <rect x="250" y="364" width="74.0" height="26" rx="6" fill="#a78bfa"/>
+  <text x="333.6" y="382" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.377×</text>
+  <text x="226" y="430" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Prime sieve</text>
+  <rect x="250" y="412" width="88.0" height="26" rx="6" fill="#a78bfa"/>
+  <text x="347.7" y="430" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.450×</text>
+  <text x="226" y="478" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">String build</text>
+  <rect x="250" y="460" width="386.0" height="26" rx="6" fill="#6d28d9"/>
+  <text x="646.1" y="478" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">1.980×</text>
+  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Purple bars above the green 1.000× line are faster than PUC Lua 5.4.8.</text>
+</svg>

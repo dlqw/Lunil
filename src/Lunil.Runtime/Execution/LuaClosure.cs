@@ -8,6 +8,7 @@ public sealed class LuaClosure : LuaGcObject
 {
     private readonly LuaUpvalue[] _upvalues;
     private readonly LuaFunctionSlot _functionSlot;
+    private LuaValue _legacyEnvironment;
 
     internal LuaClosure(
         LuaHeap owner,
@@ -60,6 +61,19 @@ public sealed class LuaClosure : LuaGcObject
 
     public LuaUpvalue GetUpvalue(int index) => _upvalues[index];
 
+    /// <summary>
+    /// Optional environment for closures that have no <c>_ENV</c> upvalue (Lua 5.1 setfenv).
+    /// </summary>
+    internal LuaValue LegacyEnvironment
+    {
+        get => _legacyEnvironment;
+        set
+        {
+            Owner.WriteBarrier(this, value);
+            _legacyEnvironment = value;
+        }
+    }
+
     public void JoinUpvalue(int index, LuaClosure source, int sourceIndex)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -73,6 +87,23 @@ public sealed class LuaClosure : LuaGcObject
         _upvalues[index] = upvalue;
     }
 
+    internal void ReplaceUpvalue(int index, LuaUpvalue upvalue)
+    {
+        ArgumentNullException.ThrowIfNull(upvalue);
+        if ((uint)index >= (uint)_upvalues.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index));
+        }
+
+        if (!ReferenceEquals(Owner, upvalue.Owner))
+        {
+            throw new LuaRuntimeException("cannot install an upvalue from another Lua state");
+        }
+
+        Owner.WriteBarrier(this, upvalue);
+        _upvalues[index] = upvalue;
+    }
+
     internal override void Traverse(LuaGcVisitor visitor)
     {
         foreach (var upvalue in _upvalues)
@@ -80,6 +111,7 @@ public sealed class LuaClosure : LuaGcObject
             visitor.Visit(upvalue);
         }
 
+        visitor.Visit(_legacyEnvironment);
         FunctionVersion.Traverse(visitor);
     }
 
@@ -448,6 +480,7 @@ public sealed class LuaNativeClosure : LuaGcObject
 {
     private readonly LuaValue[] _captures;
     private readonly object[] _captureIdentities;
+    private LuaValue _environment;
 
     internal LuaNativeClosure(
         LuaHeap owner,
@@ -472,6 +505,17 @@ public sealed class LuaNativeClosure : LuaGcObject
 
     public int CaptureCount => _captures.Length;
 
+    /// <summary>Lua 5.1 function environment for this native closure.</summary>
+    internal LuaValue Environment
+    {
+        get => _environment;
+        set
+        {
+            Owner.WriteBarrier(this, value);
+            _environment = value;
+        }
+    }
+
     public LuaValue GetCapture(int index) => _captures[index];
 
     public void SetCapture(int index, LuaValue value)
@@ -489,6 +533,8 @@ public sealed class LuaNativeClosure : LuaGcObject
         {
             visitor.Visit(value);
         }
+
+        visitor.Visit(_environment);
     }
 
     private static LuaHeap Validate(

@@ -23,6 +23,7 @@ public sealed class LuaThread : LuaGcObject
     private readonly SortedList<int, LuaUpvalue> _openUpvalues = [];
     private bool _deadOpenUpvaluesRemarked;
     private LuaValue _debugHook;
+    private LuaValue _environment;
     private LuaDebugHookMask _debugHookMask;
     private bool _isRunningDebugHook;
 
@@ -67,6 +68,17 @@ public sealed class LuaThread : LuaGcObject
     /// present in this collection.
     /// </summary>
     public IReadOnlyList<LuaFrame> Frames => _frames;
+
+    /// <summary>Lua 5.1 thread environment (getfenv/setfenv level 0). Nil means globals.</summary>
+    internal LuaValue Environment
+    {
+        get => _environment;
+        set
+        {
+            Owner.WriteBarrier(this, value);
+            _environment = value;
+        }
+    }
 
     public LuaValue DebugHook
     {
@@ -341,6 +353,7 @@ public sealed class LuaThread : LuaGcObject
         visitor.Visit(Entry);
         visitor.Visit(TerminalError);
         visitor.Visit(DebugHook);
+        visitor.Visit(_environment);
         visitor.Visit(DebugHookSubjectFunction);
         if (Resumer is not null)
         {

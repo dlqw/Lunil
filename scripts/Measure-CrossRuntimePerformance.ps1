@@ -11,6 +11,10 @@ param(
     [string] $OutputDirectory,
     [string] $LuaPath,
     [string] $LuaJitPath,
+    [string] $LuauPath,
+    [string] $GopherLuaPath,
+    [string] $WasmoonPath,
+    [string] $UniLuaPath,
     [string[]] $Workloads,
     [string[]] $Engines,
     [ValidateSet('Debug', 'Release')]
@@ -92,6 +96,18 @@ try {
         "--target-ms=$TargetMilliseconds",
         "--warmup-calls=$WarmupCalls"
     )
+    if (-not [string]::IsNullOrWhiteSpace($LuauPath)) {
+        $runnerArguments += "--luau=$([IO.Path]::GetFullPath($LuauPath))"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GopherLuaPath)) {
+        $runnerArguments += "--gopherlua=$([IO.Path]::GetFullPath($GopherLuaPath))"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WasmoonPath)) {
+        $runnerArguments += "--wasmoon=$([IO.Path]::GetFullPath($WasmoonPath))"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($UniLuaPath)) {
+        $runnerArguments += "--unilua=$([IO.Path]::GetFullPath($UniLuaPath))"
+    }
     if ($Workloads.Count -gt 0) {
         $runnerArguments += "--workloads=$($Workloads -join ',')"
     }

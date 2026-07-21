@@ -22,9 +22,10 @@
 ## 0.10.0：Lua 版本兼容与运行时对比
 
 Lunil 0.10.0 计划完整支持 Lua 5.1、Lua 5.2、Lua 5.3、Lua 5.4 和 Lua 5.5。
-稳定版 `0.10.0` 已包含五个版本的显式 adapter，以及 Lua 5.1、5.2、5.3、5.4、5.5 各自
-独立的官方 binary chunk codec；发布证据包含五版本 conformance、标准库/error matrix
-和语义跨运行时矩阵。每个版本都拥有独立的语言和运行时契约：
+稳定版 `0.10.0` 已交付五个版本的显式 adapter 与独立官方 binary chunk codec。`0.10.x` 后续工作
+补强函数环境（`getfenv`/`setfenv`/`module`）、可执行语义矩阵门禁、多版本 JIT smoke，以及跨运行时
+引擎接入（树内 NeoLua；Luau/GopherLua/Wasmoon/UniLua 为可选外部可执行文件）。完整六 RID 性能数据行
+与 5.1/5.2/5.5 官方 suite 全量归档仍见 `tasklist/0.10.0.md`。每个版本都拥有独立的语言和运行时契约：
 
 - 对应版本的语法、词法规则、运算符和多返回值行为；
 - 对应版本的 VM 指令和 binary chunk 格式，并进行显式版本校验；

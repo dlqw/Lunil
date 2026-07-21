@@ -260,6 +260,7 @@ jobs:
           ./scripts/New-PerformanceCharts.ps1 -Verify
           ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.5-performance.json -Verify
           ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-performance.json -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.10.0-performance.json -Verify
       - uses: actions/setup-dotnet@v6
         if: needs.change_scope.outputs.heavy == 'true'
         with:
@@ -309,3 +310,4 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/packages/*.snupkg
           if-no-files-found: error
+

@@ -52,6 +52,11 @@ internal static class LuaBasicLibrary
         {
             SetFunction(state, "module", Module);
         }
+        if (LuaFunctionEnvironments.SupportsFunctionEnvironments(state.LanguageVersion))
+        {
+            SetFunction(state, "getfenv", GetFEnv);
+            SetFunction(state, "setfenv", SetFEnv);
+        }
         if (features.HasWarnLibrary)
         {
             SetFunction(state, "warn", Warn);
@@ -370,7 +375,78 @@ internal static class LuaBasicLibrary
             }
         }
 
+        // PUC module applies options then setfenv(2, module) so the calling chunk writes into
+        // the module table through its environment / _ENV upvalue.
+        for (var index = 1; index < arguments.Length; index++)
+        {
+            LuaFunctionEnvironments.CallModuleOption(state, arguments[index], module);
+        }
+
+        var thread = state.RunningThread ?? state.MainThread;
+        if (LuaFunctionEnvironments.TryResolveLevelTarget(state, thread, level: 1, out var caller))
+        {
+            if (caller.Kind == LuaValueKind.Function)
+            {
+                LuaFunctionEnvironments.SetFunctionEnvironment(state, caller, module);
+            }
+        }
+
         return [LuaValue.FromTable(module)];
+    }
+
+    private static LuaValue[] GetFEnv(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var thread = state.RunningThread ?? state.MainThread;
+        if (arguments.Length == 0 || arguments[0].IsNil)
+        {
+            if (!LuaFunctionEnvironments.TryResolveLevelTarget(state, thread, 1, out var current))
+            {
+                throw LuaLibraryHelpers.BadArgument("getfenv", 0, "invalid level");
+            }
+
+            return [LuaFunctionEnvironments.GetEnvironment(state, current)];
+        }
+
+        var selector = arguments[0];
+        if (selector.Kind is LuaValueKind.Integer or LuaValueKind.Float)
+        {
+            var level = LuaLibraryHelpers.CheckInteger(arguments, 0, "getfenv");
+            if (!LuaFunctionEnvironments.TryResolveLevelTarget(state, thread, level, out var target))
+            {
+                throw LuaLibraryHelpers.BadArgument("getfenv", 0, "invalid level");
+            }
+
+            return [LuaFunctionEnvironments.GetEnvironment(state, target)];
+        }
+
+        return [LuaFunctionEnvironments.GetEnvironment(state, selector)];
+    }
+
+    private static LuaValue[] SetFEnv(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var selector = LuaLibraryHelpers.Required(arguments, 0, "setfenv");
+        var environmentValue = LuaLibraryHelpers.Required(arguments, 1, "setfenv");
+        if (environmentValue.Kind != LuaValueKind.Table)
+        {
+            throw LuaLibraryHelpers.BadArgument("setfenv", 1, "table expected");
+        }
+
+        var environment = environmentValue.AsTable();
+        var thread = state.RunningThread ?? state.MainThread;
+        if (selector.Kind is LuaValueKind.Integer or LuaValueKind.Float)
+        {
+            var level = LuaLibraryHelpers.CheckInteger(arguments, 0, "setfenv");
+            if (!LuaFunctionEnvironments.TryResolveLevelTarget(state, thread, level, out var target))
+            {
+                throw LuaLibraryHelpers.BadArgument("setfenv", 0, "invalid level");
+            }
+
+            LuaFunctionEnvironments.SetEnvironment(state, target, environment);
+            return [target];
+        }
+
+        LuaFunctionEnvironments.SetEnvironment(state, selector, environment);
+        return [selector];
     }
 
     private static LuaNativeStep ToStringStep(

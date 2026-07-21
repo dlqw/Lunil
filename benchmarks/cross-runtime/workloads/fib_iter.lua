@@ -1,7 +1,10 @@
 local function fib(count)
-    local first, second = 0, 1
+    local first = 0
+    local second = 1
     for _ = 1, count do
-        first, second = second, first + second
+        local nextValue = first + second
+        first = second
+        second = nextValue
     end
     return first
 end

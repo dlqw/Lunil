@@ -1,0 +1,36 @@
+# ADR 0027: Lua 5.1 function and thread environments
+
+- Status: Accepted
+- Date: 2026-07-21
+- Target: `0.10.x` follow-up on the stable `0.10.0` adapter line
+- Related: [ADR 0023](0023-lua-language-version-contract.md), [ADR 0026](0026-lua51-lua55-version-adapters.md), `tasklist/0.10.0.md`
+
+## Context
+
+Lunil executes all language versions through a shared canonical IR that models globals as an `_ENV`
+upvalue. Lua 5.1 additionally exposes `getfenv` / `setfenv` and relies on `module(...)` to rebind
+the caller's environment. Without these APIs, the 5.1 standard-library contract is incomplete even
+when chunk adapters and surface filtering are present.
+
+## Decision
+
+1. Install `getfenv` and `setfenv` only for `LuaLanguageVersion.Lua51` (basic library and
+   `debug.getfenv` / `debug.setfenv`).
+2. Map function environments onto the existing `_ENV` upvalue when present: `setfenv` replaces the
+   closure's environment upvalue cell with a fresh closed upvalue so sibling closures do not share
+   mutation identity incorrectly.
+3. Closures without an environment upvalue store a per-closure legacy environment value used only by
+   getfenv/setfenv.
+4. Native closures carry an optional environment cell; plain native descriptors without captures
+   report the state globals and reject environment mutation.
+5. Thread environments (getfenv/setfenv level 0) live on `LuaThread` and default to the state
+   globals when unset.
+6. `module(name, ...)` applies option functions, then rebinds the nearest Lua caller's environment
+   to the module table (PUC `setfenv(2, module)` semantics under the native call frame model).
+
+## Consequences
+
+- Lua 5.1 scripts that use `module` with `package.seeall` and environment rebinding become executable.
+- Later versions keep `_ENV` lexical semantics and do not expose getfenv/setfenv.
+- JIT and interpreter share the same upvalue cells; environment replacement invalidates only the
+  target closure's upvalue identity for subsequent global accesses.

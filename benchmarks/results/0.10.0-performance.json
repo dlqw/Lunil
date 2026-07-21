@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 3,
+  "release": "0.10.0",
+  "referenceRuntimes": {
+    "pucLua": {
+      "name": "PUC Lua",
+      "version": "5.4.8",
+      "sourceSha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
+    },
+    "luaJit": {
+      "name": "LuaJIT",
+      "version": "2.1",
+      "commit": "3c4f9fe2052b8d08a917ac0d5f38563f0297b5a3"
+    },
+    "moonSharp": {
+      "name": "MoonSharp",
+      "version": "2.0.0",
+      "package": "MoonSharp"
+    },
+    "neoLua": {
+      "name": "NeoLua",
+      "version": "1.3.19",
+      "package": "NeoLua",
+      "note": "net8 out-of-process harness"
+    },
+    "luau": {
+      "name": "Luau",
+      "version": "0.623",
+      "source": "https://github.com/luau-lang/luau/releases/tag/0.623"
+    },
+    "gopherLua": {
+      "name": "GopherLua",
+      "version": "1.1.1",
+      "source": "https://github.com/yuin/gopher-lua/releases/tag/v1.1.1"
+    },
+    "wasmoon": {
+      "name": "Wasmoon",
+      "version": "1.16.0",
+      "source": "https://github.com/ceifa/wasmoon/releases/tag/v1.16.0"
+    },
+    "uniLua": {
+      "name": "UniLua",
+      "version": "194eb311191111bfdbc77070de67c100235dc618",
+      "source": "https://github.com/xebecnan/UniLua"
+    }
+  },
+  "source": {
+    "rids": [
+      "win-x64"
+    ],
+    "workloads": 8,
+    "rounds": 6,
+    "targetMilliseconds": 250.0,
+    "baselineEngine": "lua54",
+    "comparisonEngine": "moonsharp",
+    "optionalEnginesMeasured": [
+      "neolua",
+      "luau",
+      "gopherlua",
+      "wasmoon",
+      "unilua"
+    ],
+    "comparisonPolicy": "compareOnlyWithinSemanticGroup; no single merged score across LuaJIT/dialects",
+    "reportPath": "artifacts/cross-runtime-performance/win-x64/0.10.0-formal/report.json"
+  },
+  "overall": [
+    {
+      "engine": "Native Lua 5.4",
+      "engineId": "lua54",
+      "speedupVsNativeLua": 1.0,
+      "speedupVsMoonSharp": 14.855379713627263,
+      "kind": "reference",
+      "semanticGroup": "lua54"
+    },
+    {
+      "engine": "LuaJIT",
+      "engineId": "luajit",
+      "speedupVsNativeLua": 9.37640900589499,
+      "speedupVsMoonSharp": 138.69152944915373,
+      "kind": "reference",
+      "semanticGroup": "lua51-dialect"
+    },
+    {
+      "engine": "MoonSharp",
+      "engineId": "moonsharp",
+      "speedupVsNativeLua": 0.06733552331255027,
+      "speedupVsMoonSharp": 1.0,
+      "kind": "reference",
+      "semanticGroup": "managed-dotnet"
+    },
+    {
+      "engine": "NeoLua",
+      "engineId": "neolua",
+      "speedupVsNativeLua": 0.35163338082111345,
+      "speedupVsMoonSharp": 5.243162572695044,
+      "kind": "reference",
+      "semanticGroup": "managed-dotnet"
+    },
+    {
+      "engine": "Lunil Auto JIT",
+      "engineId": "lunil_auto",
+      "speedupVsNativeLua": 1.475009347331101,
+      "speedupVsMoonSharp": 21.796194141088275,
+      "kind": "lunil-primary",
+      "semanticGroup": "managed-dotnet"
+    },
+    {
+      "engine": "Luau",
+      "engineId": "luau",
+      "speedupVsNativeLua": 1.0557745944303245,
+      "speedupVsMoonSharp": 15.666489326945502,
+      "kind": "reference",
+      "semanticGroup": "lua51-dialect"
+    },
+    {
+      "engine": "GopherLua",
+      "engineId": "gopherlua",
+      "speedupVsNativeLua": 0.21357561968550295,
+      "speedupVsMoonSharp": 3.173876517598165,
+      "kind": "reference",
+      "semanticGroup": "lua51-dialect"
+    },
+    {
+      "engine": "Wasmoon",
+      "engineId": "wasmoon",
+      "speedupVsNativeLua": 0.4703444787093942,
+      "speedupVsMoonSharp": 7.011969988854346,
+      "kind": "reference",
+      "semanticGroup": "lua54"
+    },
+    {
+      "engine": "UniLua",
+      "engineId": "unilua",
+      "speedupVsNativeLua": 0.3076254503432538,
+      "speedupVsMoonSharp": 4.557878322974532,
+      "kind": "reference",
+      "semanticGroup": "lua52-managed"
+    }
+  ],
+  "autoWorkloads": [
+    {
+      "workload": "arithmetic",
+      "speedupVsNativeLua": 1.321313092563161,
+      "speedupVsMoonSharp": 27.37424547283702
+    },
+    {
+      "workload": "fib_iter",
+      "speedupVsNativeLua": 3.2028356852539472,
+      "speedupVsMoonSharp": 57.11959447546283
+    },
+    {
+      "workload": "mandelbrot",
+      "speedupVsNativeLua": 3.3394227256119837,
+      "speedupVsMoonSharp": 51.82757885763001
+    },
+    {
+      "workload": "control_flow",
+      "speedupVsNativeLua": 1.6611558495672316,
+      "speedupVsMoonSharp": 32.26119493670886
+    },
+    {
+      "workload": "function_calls",
+      "speedupVsNativeLua": 2.8390512666504537,
+      "speedupVsMoonSharp": 40.50250403191579
+    },
+    {
+      "workload": "table_access",
+      "speedupVsNativeLua": 0.37741459431153623,
+      "speedupVsMoonSharp": 10.480439258750858
+    },
+    {
+      "workload": "sieve",
+      "speedupVsNativeLua": 0.4498198484599406,
+      "speedupVsMoonSharp": 10.436396761133604
+    },
+    {
+      "workload": "string_build",
+      "speedupVsNativeLua": 1.980183626001893,
+      "speedupVsMoonSharp": 4.398096524861158
+    }
+  ]
+}
