@@ -14,19 +14,19 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.10.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.10.1-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
 Lunil 是使用纯 C# 实现的版本化 Lua 编译器、分析工具链与 .NET 10 运行时。Lua 5.4.8 仍是默认版本，
-稳定版 `0.10.0` 另外提供显式 Lua 5.1–5.5 契约。源码和版本化 PUC Lua 二进制 chunk
+稳定版 `0.10.1` 另外提供显式 Lua 5.1–5.5 契约。源码和版本化 PUC Lua 二进制 chunk
 会汇入同一个经过验证的 canonical IR，再通过参考解释器或基于 profile 的 CoreCLR
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.10.0` 是当前支持版本。它暴露 Lua 5.1–5.5 的显式版本身份和独立
+> 稳定版 `0.10.1` 是当前支持版本。它暴露 Lua 5.1–5.5 的显式版本身份和独立
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 
 ## 性能
@@ -91,10 +91,10 @@ LuaJIT 2.1、MoonSharp 2.0.0 以及托管/方言引擎。
 
 ### CLI
 
-从已配置的 GitHub Packages source 安装稳定版 `0.10.0`，或直接在源码 checkout 中运行：
+从已配置的 GitHub Packages source 安装稳定版 `0.10.1`，或直接在源码 checkout 中运行：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.10.0
+dotnet tool install --global Lunil.Cli --version 0.10.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -121,7 +121,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 引用稳定版 Hosting package：
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.10.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.10.1" />
 ```
 
 通过可复用的 Restricted host 编译并执行：
@@ -183,7 +183,7 @@ flowchart LR
 
 ## 兼容性
 
-- 语言目标：默认 Lua 5.4.8；稳定版 `0.10.0` 提供显式 Lua 5.1–5.5 目标。
+- 语言目标：默认 Lua 5.4.8；稳定版 `0.10.1` 提供显式 Lua 5.1–5.5 目标。
 - 运行时目标：.NET 10。
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。

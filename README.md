@@ -14,20 +14,20 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.10.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.10.1-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
 Lunil is a pure C# versioned Lua compiler, analysis toolchain, and runtime for .NET 10. Lua 5.4.8
-remains the default; the stable `0.10.0` release additionally enables explicit Lua 5.1,
+remains the default; the stable `0.10.1` release additionally enables explicit Lua 5.1,
 Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and versioned binary chunks converge on one verified canonical IR, then execute through a reference
 interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter remain available in
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.10.0` is the supported release. It preserves Lua 5.4.8 as the default while exposing
+> Stable `0.10.1` is the supported release. It preserves Lua 5.4.8 as the default while exposing
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 
 ## Performance
@@ -74,7 +74,7 @@ methodology, pinned reference versions, and reproduction commands are in
 ## Highlights
 
 - **Versioned Lua fidelity** — Lua 5.4 remains the default, with explicit Lua 5.1–5.5 source and
-  binary-chunk adapters in stable 0.10.0; each version has its own syntax, numeric, library,
+  binary-chunk adapters in stable 0.10.1; each version has its own syntax, numeric, library,
   and chunk contract.
 - **Lua 5.4 fidelity** — complete syntax, binary strings, integer/float behavior, multiple results,
   varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
@@ -101,10 +101,10 @@ Native Lua C modules are not supported because Lunil does not expose the Lua C A
 
 ### CLI
 
-Install stable `0.10.0` from the configured GitHub Packages source, or run from a checkout:
+Install stable `0.10.1` from the configured GitHub Packages source, or run from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.10.0
+dotnet tool install --global Lunil.Cli --version 0.10.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -131,7 +131,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 Reference the stable hosting package:
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.10.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.10.1" />
 ```
 
 Compile and execute through a reusable restricted host:
@@ -196,7 +196,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 ## Compatibility
 
 - Language target: Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets are available in the
-  stable `0.10.0` release.
+  stable `0.10.1` release.
 - Runtime target: .NET 10.
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
