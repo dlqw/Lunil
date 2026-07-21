@@ -32,7 +32,8 @@ internal sealed class ExternalLuaEngine : IBenchmarkEngine
         string displayName,
         string executable,
         string harnessPath,
-        string suiteRoot)
+        string suiteRoot,
+        string? family = null)
     {
         _executable = Path.GetFullPath(executable);
         _harnessPath = Path.GetFullPath(harnessPath);
@@ -45,7 +46,7 @@ internal sealed class ExternalLuaEngine : IBenchmarkEngine
         Descriptor = new BenchmarkEngineDescriptor(
             id,
             displayName,
-            id == "lua54" ? "PUC Lua" : "LuaJIT",
+            family ?? (id == "lua54" ? "PUC Lua" : id == "luajit" ? "LuaJIT" : displayName),
             ReadVersion(_executable),
             "source loaded once; CPU-timed common Lua harness",
             _executable);

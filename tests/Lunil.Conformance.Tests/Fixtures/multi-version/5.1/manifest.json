@@ -1,0 +1,203 @@
+{
+  "schema": "lunil.lua-conformance-manifest.v1",
+  "upstreamVersion": "Lua 5.1.5 (official suite lua5.1-tests)",
+  "upstreamUrl": "https://www.lua.org/tests/lua5.1-tests.tar.gz",
+  "archiveFileName": "lua5.1-tests.tar.gz",
+  "archiveSha256": "49E4CA6561F82EA605908C5041AB5FAD66ED9930FA0686675BD51B02767F18AD",
+  "mode": "structural-harness + pinned-archive; executed-user-mode classification for future full runner",
+  "suiteDirectory": "lua-5.1.5-tests",
+  "files": [
+    {
+      "path": "all.lua",
+      "sha256": "CAE825D59D32E9A3C94F6A01B1CF292AEB229B351A55C5F3A810A9CD08D98EAB",
+      "classification": "driver-or-helper",
+      "reason": "Suite driver, helper, or documentation; not counted as a standalone executed case."
+    },
+    {
+      "path": "api.lua",
+      "sha256": "68994A85415486217E6852AD30245A4987CBF14CC60381BE9C66F886E4AF7123",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "attrib.lua",
+      "sha256": "C8C7DB0C5B7439139A767075102100717890C6004C7C6A3931BBA16D99AF6EBA",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "big.lua",
+      "sha256": "44EF5A981A6B885573D4ED3B0CD19B5EA452C6F16D3EABED02927593D53B34C4",
+      "classification": "excluded-user-mode",
+      "reason": "Resource-heavy or platform-sensitive case excluded from default Lunil user-mode corpus; retained for audit."
+    },
+    {
+      "path": "calls.lua",
+      "sha256": "343FC099D121F0BDC068BD7293A52FD5F32C2F3EFF6F1E823C41471BDF7C4639",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "checktable.lua",
+      "sha256": "2F905E55F23B8DB43B0C118460FFAA0D0517584C415E84C0E84298B8A0760CF0",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "closure.lua",
+      "sha256": "9496056E3B89461E06391A565E2C7E8935ABBF8F92FBB658C7714985FBBFB830",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "code.lua",
+      "sha256": "25265CED9789E6A4D6D996093D3AA2645765AE026149EBA8F2620AD12B8926BB",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "constructs.lua",
+      "sha256": "DA83DE439859CA44D6450D9BD76E4ABFA9891624207491238B2227683FDFDE5F",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "db.lua",
+      "sha256": "45BEE0F25A06A9B058F3D746C794488FFBF95AB591C5360A477ECA5B226B1BC4",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "errors.lua",
+      "sha256": "9D23589CAE9ED6BDFA3386FC4C3B474274AE469120A56664E935886C031BBBE5",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "events.lua",
+      "sha256": "6DD484A0C6F17BE699E0FDC577AD0341B60784F3F69666956B8AF7D6B778D73C",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "files.lua",
+      "sha256": "D9F714F374FBA9B9ED8DB8AEA88D538F04FB3E9AFF689BD6CC3D4036926E8DC7",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "gc.lua",
+      "sha256": "F3CC02F690371FA0CC2DDCED1C2378D36A0E1025A7359044A80D42B1E06EFE23",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "literals.lua",
+      "sha256": "633B3CB94FE7652C1A1EA99425F161A6DF0B64E572D8354739CC9E4E9A0B0F8B",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "locals.lua",
+      "sha256": "7EE8A582FEF614FA367852D4426B28485FD4DBEDED3FA29BF03890A179792FF0",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "main.lua",
+      "sha256": "D0B7B2E5BB806973FC5C853702F346258669CF4BC708F9FB292EDFE1D4D4EC65",
+      "classification": "driver-or-helper",
+      "reason": "Suite driver, helper, or documentation; not counted as a standalone executed case."
+    },
+    {
+      "path": "math.lua",
+      "sha256": "24A862FF81B7099EAA08170D317A5D75A6F7A9DEBE4328108CC248517F6696CA",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "nextvar.lua",
+      "sha256": "3E81E2ECF908F5576081A691A954B11ACAA15DC9EAA6E4C9CD4F53E40BAF07B6",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "pm.lua",
+      "sha256": "F7888930A69457635A606FE0597BE1DC69114602EAF61293CA510EED9D1971D6",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "README",
+      "sha256": "17E90E1E3342DDBA253719F3863D51C58A3A1E472460F653A35D66B22AB23A9D",
+      "classification": "driver-or-helper",
+      "reason": "Suite driver, helper, or documentation; not counted as a standalone executed case."
+    },
+    {
+      "path": "sort.lua",
+      "sha256": "B8F6FEFE976DD484A86B0C0D4989AF70421005ABBB6005567886FB9A40181CB2",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "strings.lua",
+      "sha256": "C97C706A6120847472AFF5020BEDAF29411B5177F4CF98D059BFD41EADA730F8",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "vararg.lua",
+      "sha256": "AFA3796DF77BF56574C2E71F8E4F219A6C4B4BA08D914B8110EA60E363A7D9FF",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "verybig.lua",
+      "sha256": "2E647A4285AC2C09BE7E9CB10CE83E19A359A2B3C630CB6E62962319C8CAEC1E",
+      "classification": "excluded-user-mode",
+      "reason": "Resource-heavy or platform-sensitive case excluded from default Lunil user-mode corpus; retained for audit."
+    },
+    {
+      "path": "etc/ltests.c",
+      "sha256": "45F0DFCB17D8930785A1E8A18E0AFE209F4BE0DBA4E6E1DF68A4663AAEECB54E",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "etc/ltests.h",
+      "sha256": "D12B37B364FA2D7321F2657267B3DDB7CBDF2C2DA7E7E4049C962455540CA9B5",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib1.c",
+      "sha256": "F4485757E24896D82147B282B1979CE3DEA9418DA00C8A94BC559CE15D559DBB",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib11.c",
+      "sha256": "00B82132E55C675E3035A5A8EF4C16B83C471D6D8B9E0CB633C98885E52D5895",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib2.c",
+      "sha256": "C9010467EB88B084CFAFF902FB21CF6E5BB7701CF4C9905DEAB8E17EB57DC8BA",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib21.c",
+      "sha256": "A4373E51C578ECD3F79759D57BE0349A66287980D5352BAF150D84E43E9CFC39",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/makefile",
+      "sha256": "B1E39B71CC100DFFA516EB12819344C28FA709AA246234C9BC92EA6F983565EC",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    }
+  ]
+}

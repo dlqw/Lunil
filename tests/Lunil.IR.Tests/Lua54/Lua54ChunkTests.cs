@@ -8,7 +8,7 @@ namespace Lunil.IR.Tests.Lua54;
 public sealed class Lua54ChunkTests
 {
     private const string PucLua548Fixture =
-        "G0x1YVQAGZMNChoKBAgIeFYAAAAAAAAAAAAAACh3QAGUQC5jb2RleC9maXh0dXJlLmx1YYCAAAEDhlEAAAADAAAAgYAUgAABAADGAAMBxgABAYEEhmhlbGxvgQEAAICGAQABAAAAgIGIbWVzc2FnZYKGgYVfRU5W";
+        "G0x1YVQAGZMNChoKBAgIeFYAAAAAAAAAAAAAACh3QAGXQC5maXh0dXJlcy9maXh0dXJlLmx1YYCAAAEChVEAAAABgBSAgwAAAEYAAwFGAAEBgQSGaGVsbG+BAQAAgIUBAAAAAICAgYVfRU5W";
 
     [Theory]
     [InlineData(Lua54ByteOrder.LittleEndian, 8, 8)]
@@ -46,7 +46,7 @@ public sealed class Lua54ChunkTests
 
         Assert.Equal(Lua54ChunkTarget.Host, chunk.Target);
         Assert.Equal(1, chunk.MainUpvalueCount);
-        Assert.EndsWith(".codex/fixture.lua", chunk.MainPrototype.Source?.ToString());
+        Assert.EndsWith(".fixtures/fixture.lua", chunk.MainPrototype.Source?.ToString());
         Assert.Contains(
             chunk.MainPrototype.Code,
             instruction => instruction.Opcode == Lua54Opcode.LoadInteger &&

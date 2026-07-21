@@ -20,6 +20,12 @@ public sealed class PucLua51DifferentialTests
         "local values = {10, 20, 30, key = 7}; return values[2], values.key, #values",
         "return (function(...) local values = {...}; return values[1], values[2] end)(7, 8)",
         "local x = 3; if x < 4 and x ~= 2 then x = x + 10 end; return x",
+        "local t = {a=1,b=2}; local n=0; for k,v in pairs(t) do n = n + v end; return n",
+        "local s = 0; for i,v in ipairs({10,20,30}) do s = s + i + v end; return s",
+        "local function f(a, b) return a or b, a and b end; return f(nil, 5), f(3, 4)",
+        "local mt = {__add = function(a,b) return a.n + b.n end}; local a=setmetatable({n=2}, mt); local b=setmetatable({n=5}, mt); return a+b",
+        "local function rec(n) if n <= 1 then return 1 end return n * rec(n-1) end; return rec(5)",
+        "local t={}; for i=1,10 do t[i]=i*i end; return t[1], t[10], #t",
         BuildLongStringScript(),
         BuildLargeConstantScript(),
     ];

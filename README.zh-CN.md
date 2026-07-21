@@ -31,34 +31,41 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 
 ## 性能
 
-`0.9.0` 的结果使用完全相同的 Lua 源码，在八个工作负载、六轮平衡采样和全部六个发布 RID
-上测试。PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。参考运行时为 PUC Lua 5.4.8、LuaJIT 2.1
-和 MoonSharp 2.0.0。
+正式 `0.10.0` 数据集使用完全相同的 Lua 源码，在八个工作负载、六轮平衡采样和 `win-x64`
+发布 RID 上测试。PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快；数据集还包含固定版本的
+LuaJIT 2.1、MoonSharp 2.0.0 以及托管/方言引擎。
 
 | 引擎 | 版本 | 相对 PUC Lua 5.4.8 几何均值 | 相对 MoonSharp 2.0.0 几何均值 |
 | --- | --- | ---: | ---: |
-| LuaJIT | 2.1（commit `3c4f9fe`） | 11.518x | 164.301x |
-| PUC Lua | 5.4.8 | 1.000x | 14.287x |
-| **Lunil Auto JIT** | **0.9.0** | **1.688x** | **24.089x** |
-| MoonSharp | 2.0.0 | 0.070x | 1.000x |
+| LuaJIT | 2.1（commit `3c4f9fe`） | 9.376x | 138.692x |
+| PUC Lua | 5.4.8 | 1.000x | 14.855x |
+| **Lunil Auto JIT** | **0.10.0** | **1.475x** | **21.796x** |
+| NeoLua | 1.3.19 | 0.352x | 5.243x |
+| Luau | 0.623 | 1.056x | 15.666x |
+| GopherLua | 1.1.1 | 0.214x | 3.174x |
+| Wasmoon | 1.16.0 | 0.470x | 7.012x |
+| UniLua | `194eb311` | 0.308x | 4.558x |
+| MoonSharp | 2.0.0 | 0.067x | 1.000x |
 
-![Lunil 0.9.0 运行时对比](assets/performance/0.9.0-runtime-overview.svg)
+比值仅用于同一语义分组内参考；不得把 LuaJIT/方言与托管引擎合并成一个总分。
+
+![Lunil 0.10.0 运行时对比](assets/performance/0.10.0-runtime-overview.svg)
 
 | Auto JIT 工作负载 | 相对 PUC Lua 5.4.8 | 相对 MoonSharp 2.0.0 |
 | --- | ---: | ---: |
-| 算术循环 | 1.643x | 36.094x |
-| 迭代 Fibonacci | 3.232x | 46.988x |
-| Mandelbrot | 4.210x | 63.829x |
-| 控制流 | 2.101x | 34.773x |
-| 函数调用 | 2.568x | 35.421x |
-| 表访问 | 0.478x | 12.467x |
-| 素数筛 | 0.530x | 12.698x |
-| 字符串构建 | 2.164x | 5.372x |
+| 算术循环 | 1.321x | 27.374x |
+| 迭代 Fibonacci | 3.203x | 57.120x |
+| Mandelbrot | 3.339x | 51.828x |
+| 控制流 | 1.661x | 32.261x |
+| 函数调用 | 2.839x | 40.503x |
+| 表访问 | 0.377x | 10.480x |
+| 素数筛 | 0.450x | 10.436x |
+| 字符串构建 | 1.980x | 4.398x |
 
-![Lunil 0.9.0 Auto JIT 按工作负载对比](assets/performance/0.9.0-auto-workloads.svg)
+![Lunil 0.10.0 Auto JIT 按工作负载对比](assets/performance/0.10.0-auto-workloads.svg)
 
-默认 Auto JIT 在 `string_build` 工作负载上达到 PUC Lua 5.4.8 的 `2.164x`。测试方法、固定的
-参考版本与复现命令见[性能文档](docs/performance.zh-CN.md)；精确结果见[机器可读数据集](benchmarks/results/0.9.0-performance.json)。
+默认 Auto JIT 在 `string_build` 工作负载上达到 PUC Lua 5.4.8 的 `1.980x`。测试方法、固定的
+参考版本与复现命令见[性能文档](docs/performance.zh-CN.md)；精确结果见[机器可读数据集](benchmarks/results/0.10.0-performance.json)。
 
 ## 主要能力
 
@@ -84,10 +91,10 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 
 ### CLI
 
-从已配置的 GitHub Packages source 安装稳定版 `0.9.0`，或直接在源码 checkout 中运行：
+从已配置的 GitHub Packages source 安装稳定版 `0.10.0`，或直接在源码 checkout 中运行：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.9.0
+dotnet tool install --global Lunil.Cli --version 0.10.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -114,7 +121,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 引用稳定版 Hosting package：
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.9.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.10.0" />
 ```
 
 通过可复用的 Restricted host 编译并执行：

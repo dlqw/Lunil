@@ -29,6 +29,11 @@ internal static class LuaDebugLibrary
         LuaLibraryHelpers.SetFunction(state, module, "getmetatable", GetMetatable);
         LuaLibraryHelpers.SetFunction(state, module, "getregistry", GetRegistry);
         LuaLibraryHelpers.SetFunction(state, module, "getupvalue", GetUpvalue);
+        if (LuaFunctionEnvironments.SupportsFunctionEnvironments(state.LanguageVersion))
+        {
+            LuaLibraryHelpers.SetFunction(state, module, "getfenv", DebugGetFEnv);
+            LuaLibraryHelpers.SetFunction(state, module, "setfenv", DebugSetFEnv);
+        }
         LuaLibraryHelpers.SetFunction(state, module, "getuservalue", GetUserValue);
         if (LuaVersionFeatureTable.Get(state.LanguageVersion).HasDebugSetCStackLimit)
         {
@@ -1029,4 +1034,28 @@ internal static class LuaDebugLibrary
 
     private static void SetInteger(LuaState state, LuaTable table, string name, long value) =>
         LuaLibraryHelpers.Set(state, table, name, LuaValue.FromInteger(value));
+
+    private static LuaValue[] DebugGetFEnv(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        if (arguments.Length == 0)
+        {
+            throw LuaLibraryHelpers.BadArgument("getfenv", 0, "value expected");
+        }
+
+        return [LuaFunctionEnvironments.GetEnvironment(state, arguments[0])];
+    }
+
+    private static LuaValue[] DebugSetFEnv(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    {
+        var target = LuaLibraryHelpers.Required(arguments, 0, "setfenv");
+        var environmentValue = LuaLibraryHelpers.Required(arguments, 1, "setfenv");
+        if (environmentValue.Kind != LuaValueKind.Table)
+        {
+            throw LuaLibraryHelpers.BadArgument("setfenv", 1, "table expected");
+        }
+
+        LuaFunctionEnvironments.SetEnvironment(state, target, environmentValue.AsTable());
+        return [target];
+    }
+
 }

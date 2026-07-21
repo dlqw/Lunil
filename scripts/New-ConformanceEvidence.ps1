@@ -39,7 +39,7 @@ $testProjects = @(
     [pscustomobject]@{
         Name = 'official-lua-5.4.8-user-mode'
         Project = 'tests/Lunil.Conformance.Tests/Lunil.Conformance.Tests.csproj'
-        ExpectedTests = 28
+        ExpectedTests = 34
     },
     [pscustomobject]@{
         Name = 'five-backend-differential'

@@ -10,7 +10,7 @@ Regenerate the oracle only from a binary whose provenance is already known:
 
 ```powershell
 ./scripts/Update-PucLua548Goldens.ps1 `
-  -LuaExecutable ./.codex/lua548/lua-5.4.8/src/lua.exe `
+  -LuaExecutable ./artifacts/puc-lua548/lua-5.4.8/src/lua.exe `
   -ExpectedExecutableSha256 A50CA50353BD4FCFB26C5683F7B1059C2B9C6A59F2DDB0234CAF309B4807E9DB
 ```
 

@@ -19,6 +19,11 @@ public sealed class PucLua52DifferentialTests
         "local values = {10, 20, 30, key = 7}; return values[2], values.key, #values",
         "local function iterator(limit, control) control = control + 1; if control <= limit then return control end end; local sum = 0; for k in iterator, 4, 0 do sum = sum + k end; return sum",
         "return (function(...) local values = {...}; return values[1], values[2] end)(7, 8)",
+        "goto done; ::done:: return 9",
+        "local _ENV = {x = 3}; return x",
+        "local s = 0; for i,v in ipairs({1,2,3}) do s = s + v end; return s, rawlen({1,2,3,4})",
+        "local function rec(n) if n==0 then return 1 end return n*rec(n-1) end; return rec(6)",
+        "local a,b = 2,3; repeat a = a + 1 until a > 5; return a, b * 2",
     ];
 
     [Fact]

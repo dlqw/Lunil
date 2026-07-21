@@ -25,6 +25,8 @@
     <ProjectReference Include="..\..\src\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Semantics\Lunil.Semantics.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Syntax\Lunil.Syntax.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.Compiler\Lunil.Compiler.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
   </ItemGroup>
 
 </Project>

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <None Update="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\benchmarks\cross-runtime\semantic-matrix.json" Link="Fixtures\semantic-matrix.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +30,7 @@
     <ProjectReference Include="..\..\src\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Semantics\Lunil.Semantics.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Syntax\Lunil.Syntax.csproj" />
+    <ProjectReference Include="..\..\src\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
   </ItemGroup>
 
 </Project>

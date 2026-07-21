@@ -1,0 +1,4 @@
+# Built hosts (provisioned by Install-OptionalCrossRuntimeEngines.ps1)
+*.exe
+*.dll
+*.pdb

@@ -54,17 +54,20 @@ if (workloads.Length == 0)
 }
 
 var harnessPath = Path.Combine(suiteRoot, "external-harness.lua");
-IBenchmarkEngine[] allEngines =
-[
+var engineList = new List<IBenchmarkEngine>
+{
     new ExternalLuaEngine("lua54", "Native Lua 5.4", luaPath, harnessPath, suiteRoot),
     new ExternalLuaEngine("luajit", "LuaJIT", luaJitPath, harnessPath, suiteRoot),
     new MoonSharpEngine(suiteRoot),
+    new NeoLuaEngine(suiteRoot, ResolveNeoLuaHarness(args)),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Interpreter),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Auto),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Tier1),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.Tier2),
     new LunilBenchmarkEngine(suiteRoot, LunilBenchmarkConfiguration.LoopOsr),
-];
+};
+TryAddOptionalEngines(engineList, suiteRoot, args);
+IBenchmarkEngine[] allEngines = [.. engineList];
 var engines = allEngines
     .Where(engine =>
         engineFilter.Count == 0 ||
@@ -104,6 +107,108 @@ if (report.Completeness.Complete && !report.PerformanceGate.Passed)
 }
 
 Console.WriteLine($"Cross-runtime performance report written to {outputDirectory}");
+
+static string ResolveNeoLuaHarness(string[] arguments)
+{
+    var configured = GetOption(arguments, "--neolua-harness=");
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        return configured;
+    }
+
+    var candidates = new[]
+    {
+        Path.Combine(AppContext.BaseDirectory, "Lunil.NeoLua.Harness.dll"),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Lunil.NeoLua.Harness", "bin", "Release", "net8.0", "Lunil.NeoLua.Harness.dll")),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Lunil.NeoLua.Harness", "bin", "Debug", "net8.0", "Lunil.NeoLua.Harness.dll")),
+    };
+    foreach (var candidate in candidates)
+    {
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    throw new FileNotFoundException(
+        "NeoLua harness was not found. Build benchmarks/Lunil.NeoLua.Harness or pass --neolua-harness=.");
+}
+
+static void TryAddOptionalEngines(List<IBenchmarkEngine> engines, string suiteRoot, string[] args)
+{
+    var repoRoot = FindRepositoryRoot(suiteRoot);
+    var optionalRoot = Path.Combine(repoRoot, "artifacts", "cross-runtime-tools", "win-x64", "optional");
+    var hostsRoot = Path.Combine(repoRoot, "benchmarks", "Lunil.OptionalEngineHosts");
+
+    var luau = GetOption(args, "--luau=") ??
+        FirstExisting(
+            Path.Combine(optionalRoot, "luau-0.623", "luau.exe"),
+            Path.Combine(optionalRoot, "luau.exe"));
+    var luauHost = GetOption(args, "--luau-host=") ??
+        Path.Combine(hostsRoot, "luau-host.cjs");
+    if (ProtocolProcessEngine.TryCreateLuau(suiteRoot, luau, luauHost, out var luauEngine))
+    {
+        engines.Add(luauEngine);
+    }
+
+    var gopher = GetOption(args, "--gopherlua=") ??
+        FirstExisting(
+            Path.Combine(hostsRoot, "gopherlua-host.exe"),
+            Path.Combine(optionalRoot, "gopherlua-host.exe"));
+    if (ProtocolProcessEngine.TryCreateGopherLua(suiteRoot, gopher, out var gopherEngine))
+    {
+        engines.Add(gopherEngine);
+    }
+
+    var wasmoonHost = GetOption(args, "--wasmoon=") ??
+        GetOption(args, "--wasmoon-host=") ??
+        Path.Combine(hostsRoot, "wasmoon-host.cjs");
+    if (ProtocolProcessEngine.TryCreateWasmoon(suiteRoot, wasmoonHost, out var wasmoonEngine))
+    {
+        engines.Add(wasmoonEngine);
+    }
+
+    var unilua = GetOption(args, "--unilua=") ??
+        GetOption(args, "--unilua-harness=") ??
+        FirstExisting(
+            Path.Combine(AppContext.BaseDirectory, "Lunil.UniLua.Harness.dll"),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Lunil.UniLua.Harness", "bin", "Release", "net8.0", "Lunil.UniLua.Harness.dll")),
+            Path.GetFullPath(Path.Combine(repoRoot, "benchmarks", "Lunil.UniLua.Harness", "bin", "Release", "net8.0", "Lunil.UniLua.Harness.dll")));
+    if (ProtocolProcessEngine.TryCreateUniLua(suiteRoot, unilua, out var uniluaEngine))
+    {
+        engines.Add(uniluaEngine);
+    }
+}
+
+static string FindRepositoryRoot(string suiteRoot)
+{
+    var current = new DirectoryInfo(Path.GetFullPath(suiteRoot));
+    while (current is not null)
+    {
+        if (File.Exists(Path.Combine(current.FullName, "Lunil.sln")) ||
+            File.Exists(Path.Combine(current.FullName, "Lunil.slnx")))
+        {
+            return current.FullName;
+        }
+
+        current = current.Parent;
+    }
+
+    return Path.GetFullPath(Path.Combine(suiteRoot, "..", ".."));
+}
+
+static string? FirstExisting(params string[] candidates)
+{
+    foreach (var candidate in candidates)
+    {
+        if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return null;
+}
 
 static void ValidateSuite(BenchmarkSuite suite, string suiteRoot)
 {

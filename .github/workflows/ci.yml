@@ -112,6 +112,10 @@ jobs:
           cache-dependency-path: "**/*.csproj"
       - name: Restore
         run: dotnet restore Lunil.sln
+      - name: Restore cross-runtime harness projects
+        run: |
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Build
         run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
       - name: Test
@@ -260,6 +264,7 @@ jobs:
           ./scripts/New-PerformanceCharts.ps1 -Verify
           ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-alpha.5-performance.json -Verify
           ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.9.0-performance.json -Verify
+          ./scripts/New-PerformanceCharts.ps1 -DataPath benchmarks/results/0.10.0-performance.json -Verify
       - uses: actions/setup-dotnet@v6
         if: needs.change_scope.outputs.heavy == 'true'
         with:
@@ -269,6 +274,11 @@ jobs:
       - name: Restore
         if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet restore Lunil.sln
+      - name: Restore cross-runtime harness projects
+        if: needs.change_scope.outputs.heavy == 'true'
+        run: |
+          dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
+          dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Restore public API baseline tool
         if: needs.change_scope.outputs.heavy == 'true'
         run: dotnet tool restore
@@ -309,3 +319,4 @@ jobs:
             artifacts/packages/*.nupkg
             artifacts/packages/*.snupkg
           if-no-files-found: error
+

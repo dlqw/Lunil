@@ -32,41 +32,49 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 
 ## Performance
 
-The `0.9.0` results use identical Lua source across eight workloads, six balanced rounds, and all
-six release RIDs. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. The reference runtimes
-are PUC Lua 5.4.8, LuaJIT 2.1, and MoonSharp 2.0.0.
+The formal `0.10.0` dataset uses identical Lua source across eight workloads, six balanced rounds,
+and the `win-x64` release RID. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. The
+dataset includes PUC Lua 5.4.8, LuaJIT 2.1, MoonSharp 2.0.0, and pinned managed/dialect engines.
 
 | Engine | Version | Geomean vs PUC Lua 5.4.8 | Geomean vs MoonSharp 2.0.0 |
 | --- | --- | ---: | ---: |
-| LuaJIT | 2.1 (commit `3c4f9fe`) | 11.518x | 164.301x |
-| PUC Lua | 5.4.8 | 1.000x | 14.287x |
-| **Lunil Auto JIT** | **0.9.0** | **1.688x** | **24.089x** |
-| MoonSharp | 2.0.0 | 0.070x | 1.000x |
+| LuaJIT | 2.1 (commit `3c4f9fe`) | 9.376x | 138.692x |
+| PUC Lua | 5.4.8 | 1.000x | 14.855x |
+| **Lunil Auto JIT** | **0.10.0** | **1.475x** | **21.796x** |
+| NeoLua | 1.3.19 | 0.352x | 5.243x |
+| Luau | 0.623 | 1.056x | 15.666x |
+| GopherLua | 1.1.1 | 0.214x | 3.174x |
+| Wasmoon | 1.16.0 | 0.470x | 7.012x |
+| UniLua | `194eb311` | 0.308x | 4.558x |
+| MoonSharp | 2.0.0 | 0.067x | 1.000x |
 
-![Lunil 0.9.0 runtime comparison](assets/performance/0.9.0-runtime-overview.svg)
+Ratios are informative only within each engine's semantic group; LuaJIT/dialect values must not be
+treated as one merged score against managed engines.
+
+![Lunil 0.10.0 runtime comparison](assets/performance/0.10.0-runtime-overview.svg)
 
 | Auto JIT workload | Vs PUC Lua 5.4.8 | Vs MoonSharp 2.0.0 |
 | --- | ---: | ---: |
-| Arithmetic | 1.643x | 36.094x |
-| Iterative Fibonacci | 3.232x | 46.988x |
-| Mandelbrot | 4.210x | 63.829x |
-| Control flow | 2.101x | 34.773x |
-| Function calls | 2.568x | 35.421x |
-| Table access | 0.478x | 12.467x |
-| Prime sieve | 0.530x | 12.698x |
-| String build | 2.164x | 5.372x |
+| Arithmetic | 1.321x | 27.374x |
+| Iterative Fibonacci | 3.203x | 57.120x |
+| Mandelbrot | 3.339x | 51.828x |
+| Control flow | 1.661x | 32.261x |
+| Function calls | 2.839x | 40.503x |
+| Table access | 0.377x | 10.480x |
+| Prime sieve | 0.450x | 10.436x |
+| String build | 1.980x | 4.398x |
 
-![Lunil 0.9.0 Auto JIT by workload](assets/performance/0.9.0-auto-workloads.svg)
+![Lunil 0.10.0 Auto JIT by workload](assets/performance/0.10.0-auto-workloads.svg)
 
-The default Auto JIT reaches `2.164x` PUC Lua 5.4.8 on the `string_build` workload. Detailed
+The default Auto JIT reaches `1.980x` PUC Lua 5.4.8 on the `string_build` workload. Detailed
 methodology, pinned reference versions, and reproduction commands are in
 [Performance](docs/performance.md). Exact release values are also available in the
-[machine-readable dataset](benchmarks/results/0.9.0-performance.json).
+[machine-readable dataset](benchmarks/results/0.10.0-performance.json).
 
 ## Highlights
 
 - **Versioned Lua fidelity** — Lua 5.4 remains the default, with explicit Lua 5.1–5.5 source and
-  binary-chunk adapters in the 0.10 prerelease; each version has its own syntax, numeric, library,
+  binary-chunk adapters in stable 0.10.0; each version has its own syntax, numeric, library,
   and chunk contract.
 - **Lua 5.4 fidelity** — complete syntax, binary strings, integer/float behavior, multiple results,
   varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
@@ -93,10 +101,10 @@ Native Lua C modules are not supported because Lunil does not expose the Lua C A
 
 ### CLI
 
-Install stable `0.9.0` from the configured GitHub Packages source, or run from a checkout:
+Install stable `0.10.0` from the configured GitHub Packages source, or run from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.9.0
+dotnet tool install --global Lunil.Cli --version 0.10.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -123,7 +131,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 Reference the stable hosting package:
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.9.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.10.0" />
 ```
 
 Compile and execute through a reusable restricted host:

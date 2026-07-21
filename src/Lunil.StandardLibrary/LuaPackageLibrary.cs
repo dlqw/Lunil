@@ -355,7 +355,12 @@ internal static class LuaPackageLibrary
         }
 
         var metatable = state.CreateTable(hashCapacity: 1);
-        LuaLibraryHelpers.Set(state, metatable, "__index", LuaValue.FromTable(state.Globals));
+        var globals = state.LanguageVersion == LuaLanguageVersion.Lua51
+            ? LuaFunctionEnvironments.GetThreadEnvironment(
+                state,
+                state.RunningThread ?? state.MainThread)
+            : LuaValue.FromTable(state.Globals);
+        LuaLibraryHelpers.Set(state, metatable, "__index", globals);
         module.AsTable().SetMetatable(metatable);
         return [module];
     }

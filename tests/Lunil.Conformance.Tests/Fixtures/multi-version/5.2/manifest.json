@@ -1,0 +1,215 @@
+{
+  "schema": "lunil.lua-conformance-manifest.v1",
+  "upstreamVersion": "Lua 5.2.2 tests (pin for 5.2 line; no 5.2.4 suite published)",
+  "upstreamUrl": "https://www.lua.org/tests/lua-5.2.2-tests.tar.gz",
+  "archiveFileName": "lua-5.2.2-tests.tar.gz",
+  "archiveSha256": "07C1071C66D9CB4DC80200ED430FC21EBBBCCF1F55148B87EB0B9522932E4EB6",
+  "mode": "structural-harness + pinned-archive; executed-user-mode classification for future full runner",
+  "suiteDirectory": "lua-5.2.4-tests",
+  "files": [
+    {
+      "path": "all.lua",
+      "sha256": "A7F893C196410EF9D54D65B59DC0F0B8FF74F7758926AC2EA18D8BB55F4E7298",
+      "classification": "driver-or-helper",
+      "reason": "Suite driver, helper, or documentation; not counted as a standalone executed case."
+    },
+    {
+      "path": "api.lua",
+      "sha256": "CF317E1DB02602CA608137355542258FDD1B4AE74A0169CB877B7A321C1026B8",
+      "classification": "excluded-user-mode",
+      "reason": "Exercises C API, debug internals, or host filesystem surface beyond current user-mode gate."
+    },
+    {
+      "path": "attrib.lua",
+      "sha256": "70C4DB458CFBE60DFDCD8CFD8D387BDAEE4D9AD6A04118B7A381CEA555DAA6A5",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "big.lua",
+      "sha256": "2592FE6C8DE856C0C6739EA00F6377D4CE5EAA5C6B863107910A391BD3DCFD93",
+      "classification": "excluded-user-mode",
+      "reason": "Resource-heavy or platform-sensitive case excluded from default Lunil user-mode corpus; retained for audit."
+    },
+    {
+      "path": "bitwise.lua",
+      "sha256": "9C94744FCBE5946AB69C381F79D432CADF6F452535AA219D96AB1526FA2ACD23",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "calls.lua",
+      "sha256": "A3E1D9DC5F64F01696489B31861E2D7F8E1468CBF54D9C8105A449D709FC7E5A",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "checktable.lua",
+      "sha256": "029EB3E7773C57B445887C7F084E8CABC4EFC02BDAE906E38E59EF416D104981",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "closure.lua",
+      "sha256": "19A97713EAB4F4C21A7377B65B71D0A1F42150BE5372E9B487C1C6A6AB8E9BE9",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "code.lua",
+      "sha256": "63B15BAF6CFC4896D0CF2B2E9FEE3145A47BC0C8B1FA77C89FF34D5FA6CBDFC4",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "constructs.lua",
+      "sha256": "88A8B24DB6E1EB19F78D9D79E226C310A14CF40D548CC4D41518D7A4D9CBEDB9",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "coroutine.lua",
+      "sha256": "C6B7FE1ED9DE1713307326DEEE7C8E3285C4DFDD47569D9028429DA8CBE57275",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "db.lua",
+      "sha256": "BCBD872DCCBD426F319E9712C8798F6F5644258111EC2309DD9159C56AE5F371",
+      "classification": "excluded-user-mode",
+      "reason": "Exercises C API, debug internals, or host filesystem surface beyond current user-mode gate."
+    },
+    {
+      "path": "errors.lua",
+      "sha256": "B37ABB8A043BFC1732EC178D74F87A253663126458AEE2A4884EBC513FC72068",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "events.lua",
+      "sha256": "D7CB3EF27A049D59478F33E3EBAF5DE546C26628EC952AD701833DB23E1BCE6D",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "files.lua",
+      "sha256": "FDFABCDECCD90061F637030B58729AA0C796AC4383584F597D8F82227DD0EC47",
+      "classification": "excluded-user-mode",
+      "reason": "Exercises C API, debug internals, or host filesystem surface beyond current user-mode gate."
+    },
+    {
+      "path": "gc.lua",
+      "sha256": "652852F9FF5B6873C870E0E98C08241F477F1C1E768509B131348F3777F02C10",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "goto.lua",
+      "sha256": "8CDF3B84A9F1ED44D49D964BA655387304D747FDBCA4B3AF3A0CF418EF968DE1",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "literals.lua",
+      "sha256": "5D33685BC655F8755BCA27C448989E76D7EC429BF84F0BBA0D840D5E0F53FB0B",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "locals.lua",
+      "sha256": "F9FC3B433AA5A8DC52887A739E0F258A7AB0C0CA95D7D723D3E85F24184407E8",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "main.lua",
+      "sha256": "FAC3ABC10EBFFBEC28FE88EF73D510B53D0CD6471E91516393508C3CB16A2D94",
+      "classification": "driver-or-helper",
+      "reason": "Suite driver, helper, or documentation; not counted as a standalone executed case."
+    },
+    {
+      "path": "math.lua",
+      "sha256": "E6C13E287AAF8C18E321571599F11486B7FD79F754E54F19F9D8BA2E5257CDED",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "nextvar.lua",
+      "sha256": "516401261810E554CA181B14D746F9AE27FDE3A313781F97405B2D89448C0255",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "pm.lua",
+      "sha256": "43257F06057E20BD385E54D2C9CD62924F1FBADFA146548A43AB60D9180096E7",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "sort.lua",
+      "sha256": "1EC38AE800E5A995789E99DA35540259B0ECD860E5C6E98F4D9A5FDD577C7362",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "strings.lua",
+      "sha256": "6C66473A0C248699BA150E1DD42BFD38A3E40C2B5D844A5377D233D3FE31A462",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "vararg.lua",
+      "sha256": "5FAFD89BDF7C3B3FD803C8AA603F7B6F3D70C1452689CBDBD53438400E7EE437",
+      "classification": "executed-user-mode",
+      "reason": "Official user-mode suite script."
+    },
+    {
+      "path": "verybig.lua",
+      "sha256": "06AFF240C7C5C98D825FBEC0C310D7E910E9E33E8B610DC9BA125473D964ABB8",
+      "classification": "excluded-user-mode",
+      "reason": "Resource-heavy or platform-sensitive case excluded from default Lunil user-mode corpus; retained for audit."
+    },
+    {
+      "path": "libs/lib1.c",
+      "sha256": "760978BD0060E7556BD8495BF24097879C5CDF9C73331DE016A7528DC994E999",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib11.c",
+      "sha256": "13A746E191BAB332A684C5F149D784F23CC1151AD3C106205D281D305C1BB28A",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib2.c",
+      "sha256": "4D84AAFC3501D5430D4111DB1E72F8E527D52AF7C503BEF2CA1B873580CFDF29",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/lib21.c",
+      "sha256": "A4373E51C578ECD3F79759D57BE0349A66287980D5352BAF150D84E43E9CFC39",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "libs/makefile",
+      "sha256": "7CFB8AAD69D9E492D51D80A0921593155D92D4ABC8816D331CE0EBAAE3169C6F",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "ltests/ltests.c",
+      "sha256": "D52B3EC08B8B0FDCBDDB5B4C2DCD316EE72E78A931B46B2AED929741D7139108",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    },
+    {
+      "path": "ltests/ltests.h",
+      "sha256": "6B326E937939DA85CAD6301BCABC5566CEAC18FF4D5DAC6509628C13A3B8C4B4",
+      "classification": "driver-or-helper",
+      "reason": "Native library source/build artifact used by the official suite."
+    }
+  ]
+}
