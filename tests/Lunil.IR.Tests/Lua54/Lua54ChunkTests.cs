@@ -275,7 +275,10 @@ public sealed class Lua54ChunkTests
         var exception = Assert.Throws<Lua54ChunkFormatException>(() =>
             Lua54ChunkReader.Read(bytes));
 
-        Assert.Contains("version mismatch", exception.Reason);
+        Assert.Equal(
+            "binary chunk version mismatch; Lua54ChunkReader requires Lua 5.4 " +
+            "(0x54), but found 0x53",
+            exception.Reason);
     }
 
     [Fact]

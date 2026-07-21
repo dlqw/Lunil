@@ -29,7 +29,7 @@ public sealed class LanguageVersionTests
 
         Assert.Contains(result.Diagnostics, diagnostic =>
             diagnostic.Code == "LUA2010" &&
-            diagnostic.Message.Contains("Lua 5.4", StringComparison.Ordinal));
+            diagnostic.Message == "Local attributes require Lua 5.4 or later.");
     }
 
     [Fact]
