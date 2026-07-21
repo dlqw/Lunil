@@ -161,14 +161,17 @@ public sealed class LuaBinderTests
         }
     }
 
-    [Fact]
-    public void Lua53AllowsSameLabelInNestedBlock()
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    [InlineData(LuaLanguageVersion.Lua55)]
+    public void RejectsSameLabelInNestedBlockAcrossLua53AndLater(LuaLanguageVersion version)
     {
         var model = Bind(
             "::L:: do ::L:: end",
-            new LuaBinderOptions { LanguageVersion = LuaLanguageVersion.Lua53 });
+            new LuaBinderOptions { LanguageVersion = version });
 
-        Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3006");
+        Assert.Contains(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3006");
     }
 
     [Fact]
