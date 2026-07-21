@@ -5,10 +5,11 @@ informational versions, Git tags, changelog names, bundles, and GitHub releases 
 `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.10.0</VersionPrefix>
+<VersionPrefix>0.10.1</VersionPrefix>
 ```
 
-This example produces `0.10.0`. Stable tags `v0.8.0`, `v0.9.0`, and `v0.10.0` remain immutable.
+This example produces `0.10.1`. Stable tags `v0.8.0`, `v0.9.0`, `v0.10.0`, and `v0.10.1`
+remain immutable.
 
 ## Compatibility lines
 
