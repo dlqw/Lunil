@@ -828,7 +828,8 @@ public static class LuaBinder
                 return current;
             }
 
-            if (_options.LanguageVersion != LuaLanguageVersion.Lua54)
+            if (_options.LanguageVersion is not
+                (LuaLanguageVersion.Lua54 or LuaLanguageVersion.Lua55))
             {
                 return null;
             }

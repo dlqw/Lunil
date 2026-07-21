@@ -12,13 +12,14 @@ lunil build <input> --output <path> [--target chunk] [options]
 lunil dump <input> [--kind <kind>] [--format text|json] [options]
 ```
 
-- `run` analyzes source workspaces before execution and accepts a verified PUC Lua 5.4 chunk as
-  input. Arguments after `--` become main-chunk varargs and entries `arg[1..n]`; `arg[0]` is the
-  input identity.
+- `run` analyzes source workspaces before execution and accepts a verified PUC Lua chunk matching
+  the selected language version. Arguments after `--` become main-chunk varargs and entries
+  `arg[1..n]`; `arg[0]` is the input identity.
 - `check` accepts one or more source roots and produces deterministic cross-module diagnostics.
   Binary chunks are structurally verified but do not have source annotation/type views.
-- `build --target chunk` writes canonical PUC Lua 5.4 chunks. A workspace emits one `.luac` per
-  resolved module. `--strip-debug` removes chunk debug data.
+- `build --target chunk` writes canonical PUC Lua chunks for the selected version (Lua 5.4 by
+  default). A workspace emits one `.luac` per resolved module. `--strip-debug` removes chunk debug
+  data.
 - Lua AOT was removed in `0.8.0-alpha.12`. Legacy `--target aot`, JSON
   `buildTarget: "aot"`, and `LUNIL_BUILD_TARGET=aot` inputs fail closed with diagnostic
   `LUNIL0006`, phase `removed-feature`, and exit code `2`; they never masquerade as chunk output.

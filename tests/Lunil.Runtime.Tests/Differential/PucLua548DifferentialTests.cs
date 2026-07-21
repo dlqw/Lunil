@@ -12,6 +12,12 @@ namespace Lunil.Runtime.Tests.Differential;
 
 public sealed class PucLua548DifferentialTests
 {
+    private static string LuaExecutable =>
+        Environment.GetEnvironmentVariable("LUNIL_PUC_LUA54") ?? "lua";
+
+    private static string LuacExecutable =>
+        Environment.GetEnvironmentVariable("LUNIL_PUC_LUAC54") ?? "luac";
+
     private const string OraclePrelude = """
         local function encode(value)
             local kind = type(value)
@@ -234,7 +240,7 @@ public sealed class PucLua548DifferentialTests
         {
             using var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "lua",
+                FileName = LuaExecutable,
                 Arguments = "-v",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -257,7 +263,7 @@ public sealed class PucLua548DifferentialTests
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "lua",
+            FileName = LuaExecutable,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -334,7 +340,7 @@ public sealed class PucLua548DifferentialTests
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             var startInfo = new ProcessStartInfo
             {
-                FileName = "luac",
+                FileName = LuacExecutable,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

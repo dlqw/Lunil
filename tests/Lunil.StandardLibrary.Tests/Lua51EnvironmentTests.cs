@@ -117,6 +117,23 @@ public sealed class Lua51EnvironmentTests
     }
 
     [Fact]
+    public void SetFEnvKeepsAClosureWithoutGlobalsOnItsLegacyEnvironmentPath()
+    {
+        var state = CreateState();
+        var values = Execute(
+            state,
+            """
+            local function constant() return 1 end
+            local env = { marker = 9 }
+            setfenv(constant, env)
+            return getfenv(constant) == env, constant()
+            """);
+
+        Assert.True(values[0].IsTruthy);
+        Assert.Equal(1, values[1].AsFloat());
+    }
+
+    [Fact]
     public void DebugGetFEnvAndSetFEnvAreInstalledOnlyForLua51()
     {
         var lua51 = CreateState(LuaLanguageVersion.Lua51);

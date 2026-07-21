@@ -548,14 +548,19 @@ public static class Lua53PrototypeConverter
                 var name = debugName.IsEmpty
                     ? $"(upvalue {index})"
                     : Encoding.UTF8.GetString(debugName.AsSpan());
-                result.Add(new LuaIrUpvalue(
-                    name,
-                    index,
-                    _entry.ParentId < 0
+                var sourceKind = _entry.ParentId < 0
+                    ? index == 0
                         ? LuaIrUpvalueSourceKind.Environment
                         : descriptor.InStack != 0
                             ? LuaIrUpvalueSourceKind.Register
-                            : LuaIrUpvalueSourceKind.Upvalue,
+                            : LuaIrUpvalueSourceKind.Upvalue
+                    : descriptor.InStack != 0
+                        ? LuaIrUpvalueSourceKind.Register
+                        : LuaIrUpvalueSourceKind.Upvalue;
+                result.Add(new LuaIrUpvalue(
+                    name,
+                    index,
+                    sourceKind,
                     descriptor.Index)
                 {
                     DebugName = debugName,

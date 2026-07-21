@@ -127,6 +127,33 @@ public sealed class Lua53LanguageTests
         Assert.Equal(42, module.Functions[0].Constants[0].Integer);
     }
 
+    [Fact]
+    public void MainChunkOnlyTreatsItsFirstUpvalueAsTheEnvironment()
+    {
+        var module = Lua53PrototypeConverter.Convert(new Lua53Chunk(
+            Lua53ChunkTarget.Host,
+            2,
+            new Lua53Prototype
+            {
+                MaximumStackSize = 1,
+                Code = [Lua53Instruction.CreateAbc(Lua53Opcode.Return, 0, 1, 0)],
+                Constants = [],
+                Upvalues =
+                [
+                    new Lua53UpvalueDescriptor(1, 4),
+                    new Lua53UpvalueDescriptor(0, 7),
+                ],
+                NestedPrototypes = [],
+                LineInfo = [1],
+                LocalVariables = [],
+                UpvalueNames = [],
+            }));
+
+        var upvalues = module.Functions[0].Upvalues;
+        Assert.Equal(LuaIrUpvalueSourceKind.Environment, upvalues[0].SourceKind);
+        Assert.Equal(LuaIrUpvalueSourceKind.Upvalue, upvalues[1].SourceKind);
+    }
+
     private static byte[] CreateSimpleReturnChunk()
     {
         var bytes = new List<byte>();

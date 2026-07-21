@@ -21,21 +21,21 @@ primary scope; later releases do not change the compatibility contract of earlie
 
 ## 0.10.0 — Lua version compatibility and runtime comparisons
 
-Lunil 0.10.0 delivers complete support for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4, and Lua 5.5.
-Stable `0.10.0` ships explicit adapters for all five versions, independent official binary-chunk codecs,
-function-environment compatibility (`getfenv`/`setfenv`/`module`), executable semantic-matrix gates,
-multi-version JIT smoke, vendored official 5.1/5.2/5.5 suites, and cross-runtime engine wiring (NeoLua
-in-tree; Luau/GopherLua/Wasmoon/UniLua via optional executables). The formal win-x64 comparison is
-published; six-RID performance rows for optional peers are a non-blocking expansion of the same harness.
-Each version has its own language and runtime contract:
+Lunil 0.10.0 delivers explicit, selectable contracts for Lua 5.1, Lua 5.2, Lua 5.3, Lua 5.4,
+and Lua 5.5. Stable `0.10.0` ships independent binary-chunk codecs, Lua 5.1 function-environment
+compatibility (`getfenv`/`setfenv`/`module`), multi-version semantic/JIT fixtures, and
+cross-runtime performance wiring. The 0.10.x CI line additionally builds pinned official PUC Lua
+oracles for five-version source and chunk differential tests. Optional NeoLua, Luau, GopherLua,
+Wasmoon, and UniLua benchmark rows are not correctness evidence. Each version has its own language
+and runtime contract:
 
 - version-specific syntax, lexical rules, operators, and multiple-result behavior;
 - version-specific VM instructions and binary-chunk formats with explicit version validation;
-- the complete standard library surface and error behavior for that version;
+- the version-scoped standard library surface and tested error behavior for that version;
 - coroutines, metatables, weak tables, finalizers, debug facilities, resource accounting, and
   close/yield behavior;
 - version-aware source, chunk, compiler, interpreter, and host configuration APIs;
-- conformance and differential coverage for every supported version.
+- checked-in semantic fixtures and PUC differential coverage for every supported version.
 
 Lua 5.4 remains the default compatibility baseline. The 0.10.0 contract lets a host select each
 version without silently applying another version's semantics.

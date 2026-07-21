@@ -47,6 +47,8 @@ public enum LuaLanguageVersion : byte
         SynchronousFinalizerErrors = true,
         PreservesDeadThreadOpenUpvalues = true,
         CachesClosuresByUpvalues = true,
+        ArithmeticStringCoercionProducesFloat = true,
+        CoercesNumericStringsForBitwiseOperations = true,
         HasUtf8Library = true,
         HasRawLength = true,
         HasTableMove = true,
@@ -58,6 +60,7 @@ public enum LuaLanguageVersion : byte
     [LuaVersionProfile(
         ChunkFormat = LuaChunkFormat.Lua54,
         SupportsGenerationalCollection = true,
+        HasToBeClosedProtocol = true,
         HasWarnLibrary = true,
         HasCoroutineClose = true,
         HasUtf8Library = true,
@@ -72,6 +75,7 @@ public enum LuaLanguageVersion : byte
     [LuaVersionProfile(
         ChunkFormat = LuaChunkFormat.Lua55,
         SupportsGenerationalCollection = true,
+        HasToBeClosedProtocol = true,
         HasWarnLibrary = true,
         HasCoroutineClose = true,
         HasUtf8Library = true,

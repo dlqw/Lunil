@@ -113,8 +113,8 @@ public sealed class LuaCompiler
                     DiagnosticSeverity.Error,
                     default,
                     $"{LuaLanguageVersions.GetDisplayName(Options.LanguageVersion)} source " +
-                    "semantics are not implemented yet; Lunil will not apply Lua 5.4 semantics " +
-                    "silently.")));
+                    "semantics are not implemented in this build; Lunil will not silently " +
+                    "apply another language version's semantics.")));
         }
 
         var observedDiagnostics = new HashSet<Diagnostic>();

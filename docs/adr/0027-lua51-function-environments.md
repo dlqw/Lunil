@@ -17,8 +17,9 @@ when chunk adapters and surface filtering are present.
 1. Install `getfenv` and `setfenv` only for `LuaLanguageVersion.Lua51` (basic library and
    `debug.getfenv` / `debug.setfenv`).
 2. Map function environments onto the existing `_ENV` upvalue when present: `setfenv` replaces the
-   closure's environment upvalue cell with a fresh closed upvalue so sibling closures do not share
-   mutation identity incorrectly.
+   closure's environment upvalue cell with a fresh closed upvalue. Lua 5.1 stores the environment
+   on each closure, so this deliberately keeps sibling closures independent when only one sibling
+   is passed to `setfenv`.
 3. Closures without an environment upvalue store a per-closure legacy environment value used only by
    getfenv/setfenv.
 4. Native closures carry an optional environment cell; plain native descriptors without captures
@@ -27,6 +28,14 @@ when chunk adapters and surface filtering are present.
    when unset, and seed newly loaded Lua 5.1 main closures.
 6. `module(name, ...)` applies option functions, then rebinds the nearest Lua caller's environment
    to the module table (PUC `setfenv(2, module)` semantics under the native call frame model).
+7. The Lua 5.1 binary adapter injects a canonical environment upvalue at index zero only for a
+   function (or an ancestor that creates such a function) containing `GETGLOBAL`/`SETGLOBAL`.
+   Functions that never execute a global opcode retain their original upvalue layout and use the
+   per-closure legacy environment fallback for `getfenv`/`setfenv`.
+8. Main-chunk conversion marks only upvalue zero as `Environment`; additional root upvalues retain
+   their binary descriptor kind. Module caches are state-local and therefore language-version
+   homogeneous; `LuaState.CreateMainClosure` remains the fail-closed boundary for mismatched
+   modules.
 
 ## Consequences
 

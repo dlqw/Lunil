@@ -64,11 +64,6 @@ public static class LuaStandardLibrary
         }
 
         var math = InstallMath(state);
-        if (!features.HasRawLength)
-        {
-            // rawlen was introduced in Lua 5.2; the function is installed by the
-            // basic library only when the generated profile advertises it.
-        }
         if (!features.HasLegacyMath)
         {
             Remove(state, math, "log10");

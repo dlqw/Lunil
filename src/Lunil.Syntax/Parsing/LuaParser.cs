@@ -515,7 +515,7 @@ public static class LuaParser
                     AddDiagnostic(
                         "LUA2010",
                         TextSpan.FromBounds(attributeStart, Current.Span.Start),
-                        "Local attributes are only available in Lua 5.4.");
+                        "Local attributes require Lua 5.4 or later.");
                 }
             }
 

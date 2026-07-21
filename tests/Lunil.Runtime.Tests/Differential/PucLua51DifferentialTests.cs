@@ -6,6 +6,7 @@ using Lunil.Core;
 using Lunil.IR.Lua51;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
+using Lunil.StandardLibrary;
 
 namespace Lunil.Runtime.Tests.Differential;
 
@@ -189,10 +190,15 @@ public sealed class PucLua51DifferentialTests
         return Execute(state, state.LoadBinaryChunk(chunk));
     }
 
-    private static LuaState CreateState() => new(new LuaStateOptions
+    private static LuaState CreateState()
     {
-        LanguageVersion = LuaLanguageVersion.Lua51,
-    });
+        var state = new LuaState(new LuaStateOptions
+        {
+            LanguageVersion = LuaLanguageVersion.Lua51,
+        });
+        LuaStandardLibrary.InstallAll(state);
+        return state;
+    }
 
     private static string Execute(LuaState state, LuaClosure closure)
     {

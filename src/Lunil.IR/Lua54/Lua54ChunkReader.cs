@@ -62,7 +62,7 @@ public static class Lua54ChunkReader
         public Lua54Chunk ReadChunk()
         {
             Expect(Signature, "not a binary chunk");
-            ExpectByte(0x54, "version mismatch; expected Lua 5.4");
+            ExpectVersionByte();
             ExpectByte(0, "unsupported binary chunk format");
             Expect(LunilData, "corrupted LUAC_DATA marker");
 
@@ -123,6 +123,19 @@ public static class Lua54ChunkReader
             }
 
             return chunk;
+        }
+
+        private void ExpectVersionByte()
+        {
+            var offset = _offset;
+            var actual = ReadByte();
+            if (actual != 0x54)
+            {
+                throw new Lua54ChunkFormatException(
+                    $"binary chunk version mismatch; Lua54ChunkReader requires Lua 5.4 " +
+                    $"(0x54), but found 0x{actual:X2}",
+                    offset);
+            }
         }
 
         private Lua54Prototype ReadPrototype(Lua54String? parentSource, int depth)

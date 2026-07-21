@@ -1,4 +1,3 @@
-using Lunil.Core;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Values;
 
@@ -118,7 +117,7 @@ public static class LuaRuntimeOperations
         }
 
         if (operation == LuaIrUnaryOperator.BitwiseNot &&
-            state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+            state.CoercesNumericStringsForBitwiseOperations &&
             LuaValueOperations.TryToNumber(operand, out var numericBitwiseOperand))
         {
             if (!numericBitwiseOperand.TryGetInteger(out var integerOperand))
@@ -201,7 +200,7 @@ public static class LuaRuntimeOperations
                     NormalizeArithmeticOperand(state, right, numericRight)));
         }
 
-        if (IsBitwise(operation) && state.LanguageVersion == LuaLanguageVersion.Lua53)
+        if (IsBitwise(operation) && state.CoercesNumericStringsForBitwiseOperations)
         {
             var leftNumber = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise);
             var rightNumber = LuaValueOperations.TryToNumber(right, out var numericRightBitwise);
@@ -222,7 +221,7 @@ public static class LuaRuntimeOperations
             }
         }
 
-        if (IsBitwise(operation) && state.LanguageVersion != LuaLanguageVersion.Lua53 &&
+        if (IsBitwise(operation) && !state.CoercesNumericStringsForBitwiseOperations &&
             IsNumber(left) && IsNumber(right))
         {
             if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
@@ -446,7 +445,7 @@ public static class LuaRuntimeOperations
         LuaState state,
         LuaValue original,
         LuaValue numeric) =>
-        state.LanguageVersion == LuaLanguageVersion.Lua53 &&
+        state.ArithmeticStringCoercionProducesFloat &&
         original.Kind == LuaValueKind.String &&
         numeric.Kind == LuaValueKind.Integer
             ? LuaValue.FromFloat(numeric.AsInteger())

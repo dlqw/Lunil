@@ -184,6 +184,29 @@ public sealed class Lua54ChunkTests
     }
 
     [Fact]
+    public void MainChunkOnlyTreatsItsFirstUpvalueAsTheEnvironment()
+    {
+        var module = Lua54PrototypeConverter.Convert(new Lua54Chunk(
+            Lua54ChunkTarget.Host,
+            2,
+            new Lua54Prototype
+            {
+                MaximumStackSize = 2,
+                Code = [Lua54Instruction.CreateAbc(Lua54Opcode.ReturnZero, 0, 0, 0)],
+                Upvalues =
+                [
+                    new Lua54UpvalueDescriptor(1, 4, 0),
+                    new Lua54UpvalueDescriptor(0, 7, 0),
+                ],
+                UpvalueNames = [],
+            }));
+
+        var upvalues = module.Functions[0].Upvalues;
+        Assert.Equal(LuaIrUpvalueSourceKind.Environment, upvalues[0].SourceKind);
+        Assert.Equal(LuaIrUpvalueSourceKind.Upvalue, upvalues[1].SourceKind);
+    }
+
+    [Fact]
     public void PrototypeConverterDoesNotCloseUpvaluesForPlainLua54Jumps()
     {
         var prototype = new Lua54Prototype
@@ -252,7 +275,10 @@ public sealed class Lua54ChunkTests
         var exception = Assert.Throws<Lua54ChunkFormatException>(() =>
             Lua54ChunkReader.Read(bytes));
 
-        Assert.Contains("version mismatch", exception.Reason);
+        Assert.Equal(
+            "binary chunk version mismatch; Lua54ChunkReader requires Lua 5.4 " +
+            "(0x54), but found 0x53",
+            exception.Reason);
     }
 
     [Fact]

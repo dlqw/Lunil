@@ -223,19 +223,37 @@ public static class Lua51PrototypeConverter
     public static LuaIrModule Convert(Lua51Chunk chunk)
     {
         ArgumentNullException.ThrowIfNull(chunk);
+        var environmentRequirements = new Dictionary<Lua51Prototype, bool>(
+            ReferenceEqualityComparer.Instance);
+        AnalyzeEnvironmentRequirements(chunk.MainPrototype, environmentRequirements);
+        var main = Translate(chunk.MainPrototype, default, environmentRequirements);
         return Lua53PrototypeConverter.Convert(new Lua53Chunk(
             new Lua53ChunkTarget(chunk.Target.ByteOrder == Lua51ByteOrder.LittleEndian ? Lua53ByteOrder.LittleEndian : Lua53ByteOrder.BigEndian,
-                4, (byte)chunk.Target.SizeOfSizeT, 4, 8, (byte)chunk.Target.NumberSize), chunk.MainPrototype.UpvalueCount, Translate(chunk.MainPrototype)), LuaLanguageVersion.Lua51);
+                4, (byte)chunk.Target.SizeOfSizeT, 4, 8, (byte)chunk.Target.NumberSize),
+            checked((byte)main.Upvalues.Length),
+            main), LuaLanguageVersion.Lua51);
     }
-    private static Lua53Prototype Translate(Lua51Prototype p) => Translate(p, default);
 
     private static Lua53Prototype Translate(
         Lua51Prototype p,
-        ImmutableArray<Lua53UpvalueDescriptor> upvalues)
+        ImmutableArray<Lua53UpvalueDescriptor> upvalues,
+        IReadOnlyDictionary<Lua51Prototype, bool> environmentRequirements)
     {
+        var hasEnvironment = environmentRequirements[p];
+        var upvalueOffset = hasEnvironment ? 1 : 0;
         if (upvalues.IsDefault)
-            upvalues = Enumerable.Range(0, p.UpvalueCount)
-                .Select(_ => new Lua53UpvalueDescriptor(1, 0)).ToImmutableArray();
+        {
+            var rootUpvalues = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(
+                checked(p.UpvalueCount + upvalueOffset));
+            if (hasEnvironment)
+            {
+                rootUpvalues.Add(new Lua53UpvalueDescriptor(1, 0));
+            }
+
+            rootUpvalues.AddRange(Enumerable.Range(0, p.UpvalueCount)
+                .Select(_ => new Lua53UpvalueDescriptor(1, 0)));
+            upvalues = rootUpvalues.MoveToImmutable();
+        }
         var nestedUpvalues = new ImmutableArray<Lua53UpvalueDescriptor>[p.NestedPrototypes.Length];
         var skipped = new bool[p.Code.Length];
         for (var pc = 0; pc < p.Code.Length; pc++)
@@ -243,8 +261,18 @@ public static class Lua51PrototypeConverter
             var instruction = p.Code[pc];
             if (instruction.Opcode != Lua51Opcode.Closure || instruction.Bx >= nestedUpvalues.Length)
                 continue;
-            var count = p.NestedPrototypes[instruction.Bx].UpvalueCount;
-            var descriptors = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(count);
+            var nested = p.NestedPrototypes[instruction.Bx];
+            var count = nested.UpvalueCount;
+            var nestedHasEnvironment = environmentRequirements[nested];
+            var descriptors = ImmutableArray.CreateBuilder<Lua53UpvalueDescriptor>(
+                checked(count + (nestedHasEnvironment ? 1 : 0)));
+            if (nestedHasEnvironment)
+            {
+                // GETGLOBAL and SETGLOBAL refer to the function environment implicitly in
+                // Lua 5.1. Keep it at canonical upvalue index zero for closures that need it.
+                descriptors.Add(new Lua53UpvalueDescriptor(0, 0));
+            }
+
             for (var index = 0; index < count; index++)
             {
                 var bindingPc = pc + index + 1;
@@ -254,7 +282,9 @@ public static class Lua51PrototypeConverter
                 descriptors.Add(binding.Opcode switch
                 {
                     Lua51Opcode.Move => new Lua53UpvalueDescriptor(1, checked((byte)binding.B)),
-                    Lua51Opcode.GetUpvalue => new Lua53UpvalueDescriptor(0, checked((byte)binding.B)),
+                    Lua51Opcode.GetUpvalue => new Lua53UpvalueDescriptor(
+                        0,
+                        checked((byte)(binding.B + upvalueOffset))),
                     _ => throw new InvalidDataException("Lua 5.1 closure has an invalid upvalue binding instruction."),
                 });
                 skipped[bindingPc] = true;
@@ -325,7 +355,7 @@ public static class Lua51PrototypeConverter
                         instruction.Opcode == Lua51Opcode.NumericForLoop ? Lua53Opcode.NumericForLoop : Lua53Opcode.NumericForPrepare,
                     instruction.A, mapped));
             }
-            else code.Add(Translate(instruction));
+            else code.Add(Translate(instruction, upvalueOffset));
         }
 
         return new Lua53Prototype
@@ -338,15 +368,64 @@ public static class Lua51PrototypeConverter
             MaximumStackSize = p.MaximumStackSize,
             Code = code.MoveToImmutable(),
             Constants = p.Constants.Select(Translate).ToImmutableArray(),
-            NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(nested, nestedUpvalues[index])).ToImmutableArray(),
+            NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(
+                nested,
+                nestedUpvalues[index],
+                environmentRequirements)).ToImmutableArray(),
             LineInfo = TranslateLineInfo(p, skipped),
             LocalVariables = p.LocalVariables.Select(x => new Lua53LocalVariable(
                 x.Name is { } n ? new Lua53String(n.ToArray()) : null,
                 pcMap[x.StartProgramCounter],
                 pcMap[x.EndProgramCounter])).ToImmutableArray(),
-            UpvalueNames = p.UpvalueNames.Select(x => x is { } n ? (Lua53String?)new Lua53String(n.ToArray()) : null).ToImmutableArray(),
+            UpvalueNames = TranslateUpvalueNames(
+                p.UpvalueNames,
+                upvalues.Length,
+                hasEnvironment),
             Upvalues = upvalues,
         };
+    }
+
+    private static ImmutableArray<Lua53String?> TranslateUpvalueNames(
+        ImmutableArray<Lua51String?> names,
+        int upvalueCount,
+        bool hasEnvironment)
+    {
+        var result = ImmutableArray.CreateBuilder<Lua53String?>(upvalueCount);
+        if (hasEnvironment)
+        {
+            result.Add(new Lua53String("_ENV"u8.ToArray()));
+        }
+        foreach (var name in names)
+        {
+            result.Add(name is { } value ? new Lua53String(value.ToArray()) : null);
+        }
+
+        while (result.Count < upvalueCount)
+        {
+            result.Add(null);
+        }
+
+        return result.MoveToImmutable();
+    }
+
+    private static bool AnalyzeEnvironmentRequirements(
+        Lua51Prototype prototype,
+        IDictionary<Lua51Prototype, bool> requirements)
+    {
+        if (requirements.TryGetValue(prototype, out var existing))
+        {
+            return existing;
+        }
+
+        var required = prototype.Code.Any(static instruction =>
+            instruction.Opcode is Lua51Opcode.GetGlobal or Lua51Opcode.SetGlobal);
+        foreach (var nested in prototype.NestedPrototypes)
+        {
+            required |= AnalyzeEnvironmentRequirements(nested, requirements);
+        }
+
+        requirements[prototype] = required;
+        return required;
     }
 
     private static ImmutableArray<int> TranslateLineInfo(Lua51Prototype prototype, bool[] skipped)
@@ -374,7 +453,7 @@ public static class Lua51PrototypeConverter
         return lines.ToImmutable();
     }
 
-    private static Lua53Instruction Translate(Lua51Instruction i)
+    private static Lua53Instruction Translate(Lua51Instruction i, int upvalueOffset)
     {
         if (i.Opcode == Lua51Opcode.Close)
         {
@@ -427,6 +506,8 @@ public static class Lua51PrototypeConverter
         };
         if (i.Opcode is Lua51Opcode.GetGlobal) return Lua53Instruction.CreateAbc(op, i.A, 0, i.Bx | (1 << 8));
         if (i.Opcode is Lua51Opcode.SetGlobal) return Lua53Instruction.CreateAbc(op, 0, i.Bx | (1 << 8), i.A);
+        if (i.Opcode is Lua51Opcode.GetUpvalue or Lua51Opcode.SetUpvalue)
+            return Lua53Instruction.CreateAbc(op, i.A, checked(i.B + upvalueOffset), i.C);
         return i.Opcode is Lua51Opcode.LoadConstant or Lua51Opcode.Closure ? Lua53Instruction.CreateABx(op, i.A, i.Bx) :
             i.Opcode is Lua51Opcode.Jump or Lua51Opcode.NumericForLoop or Lua51Opcode.NumericForPrepare ? Lua53Instruction.CreateASignedBx(op, i.A, i.SignedBx) :
             Lua53Instruction.CreateAbc(op, i.A, i.B, i.C);
@@ -452,27 +533,135 @@ public static class Lua51CanonicalPrototypeWriter
     }
     public static Lua51Chunk CreateChunk(LuaIrModule module, int functionId, bool stripDebug = false)
     {
+        ArgumentNullException.ThrowIfNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua51) throw new InvalidDataException("Lua 5.1 writer requires a Lua 5.1 module.");
         var source = Lua53CanonicalPrototypeWriter.CreateChunk(module with { LanguageVersion = LuaLanguageVersion.Lua53 }, functionId);
-        return new(Lua51ChunkTarget.Host, Translate(source.MainPrototype, stripDebug));
+        var environmentIndexes = FindEnvironmentUpvalueIndexes(module);
+        return new(Lua51ChunkTarget.Host, Translate(
+            source.MainPrototype,
+            module,
+            functionId,
+            environmentIndexes,
+            stripDebug));
     }
-    private static Lua51Prototype Translate(Lua53Prototype p, bool stripDebug) => new()
+
+    private static Lua51Prototype Translate(
+        Lua53Prototype p,
+        LuaIrModule module,
+        int functionId,
+        IReadOnlyDictionary<int, int?> environmentIndexes,
+        bool stripDebug)
     {
-        Source = p.Source is { } s ? new Lua51String(s.ToArray()) : null,
-        LineDefined = p.LineDefined,
-        LastLineDefined = p.LastLineDefined,
-        UpvalueCount = checked((byte)p.Upvalues.Length),
-        ParameterCount = p.ParameterCount,
-        VarArgFlags = p.VarArgFlags == 0 ? (byte)0 : (byte)2,
-        MaximumStackSize = p.MaximumStackSize,
-        Code = TranslateCode(p),
-        Constants = p.Constants.Select(Translate).ToImmutableArray(),
-        NestedPrototypes = p.NestedPrototypes.Select(x => Translate(x, stripDebug)).ToImmutableArray(),
-        LineInfo = TranslateLineInfo(p, stripDebug),
-        LocalVariables = stripDebug ? [] : p.LocalVariables.Select(x => new Lua51LocalVariable(x.Name is { } n ? new Lua51String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
-        UpvalueNames = stripDebug ? [] : p.UpvalueNames.Select(x => x is { } n ? (Lua51String?)new Lua51String(n.ToArray()) : null).ToImmutableArray(),
-    };
-    private static ImmutableArray<int> TranslateLineInfo(Lua53Prototype prototype, bool stripDebug)
+        var function = module.Functions[functionId];
+        if (p.Upvalues.Length != function.Upvalues.Length)
+        {
+            throw new InvalidDataException(
+                $"Lua 5.1 prototype {functionId} does not match its canonical upvalues.");
+        }
+
+        var childIds = module.Functions
+            .Where(candidate => candidate.ParentFunctionId == functionId)
+            .Select(static candidate => candidate.Id)
+            .ToImmutableArray();
+        if (p.NestedPrototypes.Length != childIds.Length)
+        {
+            throw new InvalidDataException(
+                $"Lua 5.1 prototype {functionId} does not match its canonical children.");
+        }
+
+        var environmentIndex = environmentIndexes[functionId];
+        return new Lua51Prototype
+        {
+            Source = p.Source is { } s ? new Lua51String(s.ToArray()) : null,
+            LineDefined = p.LineDefined,
+            LastLineDefined = p.LastLineDefined,
+            UpvalueCount = checked((byte)(p.Upvalues.Length - (environmentIndex.HasValue ? 1 : 0))),
+            ParameterCount = p.ParameterCount,
+            VarArgFlags = p.VarArgFlags == 0 ? (byte)0 : (byte)2,
+            MaximumStackSize = p.MaximumStackSize,
+            Code = TranslateCode(p, environmentIndex, childIds, environmentIndexes),
+            Constants = p.Constants.Select(Translate).ToImmutableArray(),
+            NestedPrototypes = p.NestedPrototypes.Select((nested, index) => Translate(
+                nested,
+                module,
+                childIds[index],
+                environmentIndexes,
+                stripDebug)).ToImmutableArray(),
+            LineInfo = TranslateLineInfo(p, childIds, environmentIndexes, stripDebug),
+            LocalVariables = stripDebug ? [] : p.LocalVariables.Select(x => new Lua51LocalVariable(x.Name is { } n ? new Lua51String(n.ToArray()) : null, x.StartProgramCounter, x.EndProgramCounter)).ToImmutableArray(),
+            UpvalueNames = TranslateUpvalueNames(p, environmentIndex, stripDebug),
+        };
+    }
+
+    private static Dictionary<int, int?> FindEnvironmentUpvalueIndexes(LuaIrModule module)
+    {
+        var indexes = new Dictionary<int, int?>();
+        int? Resolve(int functionId)
+        {
+            if (indexes.TryGetValue(functionId, out var existing))
+            {
+                return existing;
+            }
+
+            var function = module.Functions[functionId];
+            int? parentEnvironmentIndex = null;
+            if (function.ParentFunctionId >= 0)
+            {
+                parentEnvironmentIndex = Resolve(function.ParentFunctionId);
+            }
+
+            var candidates = function.Upvalues
+                .Select(static (upvalue, index) => (upvalue, index))
+                .Where(pair => function.ParentFunctionId < 0
+                    ? pair.upvalue.SourceKind == LuaIrUpvalueSourceKind.Environment
+                    : parentEnvironmentIndex.HasValue &&
+                        pair.upvalue.SourceKind == LuaIrUpvalueSourceKind.Upvalue &&
+                        pair.upvalue.SourceIndex == parentEnvironmentIndex.Value &&
+                        string.Equals(pair.upvalue.Name, "_ENV", StringComparison.Ordinal))
+                .Select(static pair => pair.index)
+                .ToArray();
+            if (candidates.Length > 1)
+            {
+                throw new InvalidDataException(
+                    $"Lua 5.1 function {functionId} has multiple canonical environment upvalues.");
+            }
+
+            var result = candidates.Length == 0 ? (int?)null : candidates[0];
+            indexes.Add(functionId, result);
+            return result;
+        }
+
+        foreach (var function in module.Functions)
+        {
+            Resolve(function.Id);
+        }
+
+        return indexes;
+    }
+
+    private static ImmutableArray<Lua51String?> TranslateUpvalueNames(
+        Lua53Prototype prototype,
+        int? environmentIndex,
+        bool stripDebug)
+    {
+        if (stripDebug || prototype.UpvalueNames.IsEmpty)
+        {
+            return [];
+        }
+
+        return prototype.UpvalueNames
+            .Where((_, index) => index != environmentIndex)
+            .Select(static name => name is { } value
+                ? (Lua51String?)new Lua51String(value.ToArray())
+                : null)
+            .ToImmutableArray();
+    }
+
+    private static ImmutableArray<int> TranslateLineInfo(
+        Lua53Prototype prototype,
+        ImmutableArray<int> childIds,
+        IReadOnlyDictionary<int, int?> environmentIndexes,
+        bool stripDebug)
     {
         if (stripDebug || prototype.LineInfo.IsEmpty) return [];
         var lines = ImmutableArray.CreateBuilder<int>();
@@ -486,14 +675,22 @@ public static class Lua51CanonicalPrototypeWriter
                 lines.Add(line);
             }
             if (instruction.Opcode != Lua53Opcode.Closure) continue;
-            for (var index = 0; index < prototype.NestedPrototypes[instruction.Bx].Upvalues.Length; index++)
+            var childEnvironmentIndex = environmentIndexes[childIds[instruction.Bx]];
+            var bindingCount = prototype.NestedPrototypes[instruction.Bx].Upvalues.Length -
+                (childEnvironmentIndex.HasValue ? 1 : 0);
+            for (var index = 0; index < bindingCount; index++)
                 lines.Add(line);
         }
         return lines.ToImmutable();
     }
-    private static ImmutableArray<Lua51Instruction> TranslateCode(Lua53Prototype prototype)
+    private static ImmutableArray<Lua51Instruction> TranslateCode(
+        Lua53Prototype prototype,
+        int? environmentIndex,
+        ImmutableArray<int> childIds,
+        IReadOnlyDictionary<int, int?> environmentIndexes)
     {
-        var pcMap = BuildPcMap(prototype);
+        var globalAccesses = AnalyzeGlobalAccesses(prototype, environmentIndex);
+        var pcMap = BuildPcMap(prototype, childIds, environmentIndexes);
         var count = pcMap[^1];
         var code = ImmutableArray.CreateBuilder<Lua51Instruction>(count);
         for (var pc = 0; pc < prototype.Code.Length; pc++)
@@ -538,19 +735,45 @@ public static class Lua51CanonicalPrototypeWriter
                     0,
                     0));
             }
-            else code.Add(Translate(instruction));
-            if (instruction.Opcode != Lua53Opcode.Closure) continue;
-            foreach (var upvalue in prototype.NestedPrototypes[instruction.Bx].Upvalues)
+            else if (globalAccesses.TryGetValue(pc, out var globalAccess))
             {
+                code.Add(globalAccess.IsSet
+                    ? Lua51Instruction.CreateABx(
+                        Lua51Opcode.SetGlobal,
+                        instruction.C,
+                        globalAccess.ConstantIndex)
+                    : Lua51Instruction.CreateABx(
+                        Lua51Opcode.GetGlobal,
+                        instruction.A,
+                        globalAccess.ConstantIndex));
+            }
+            else code.Add(Translate(instruction, environmentIndex));
+            if (instruction.Opcode != Lua53Opcode.Closure) continue;
+            var childEnvironmentIndex = environmentIndexes[childIds[instruction.Bx]];
+            foreach (var (upvalue, index) in prototype.NestedPrototypes[instruction.Bx].Upvalues
+                .Select(static (upvalue, index) => (upvalue, index)))
+            {
+                if (index == childEnvironmentIndex)
+                {
+                    continue;
+                }
+
                 code.Add(Lua51Instruction.CreateAbc(
                     upvalue.InStack != 0 ? Lua51Opcode.Move : Lua51Opcode.GetUpvalue,
-                    0, upvalue.Index, 0));
+                    0,
+                    upvalue.InStack != 0
+                        ? upvalue.Index
+                        : RemapUpvalueIndex(upvalue.Index, environmentIndex),
+                    0));
             }
         }
         return code.MoveToImmutable();
     }
 
-    private static int[] BuildPcMap(Lua53Prototype prototype)
+    private static int[] BuildPcMap(
+        Lua53Prototype prototype,
+        ImmutableArray<int> childIds,
+        IReadOnlyDictionary<int, int?> environmentIndexes)
     {
         var pcMap = new int[prototype.Code.Length + 1];
         var count = 0;
@@ -560,7 +783,8 @@ public static class Lua51CanonicalPrototypeWriter
             var instruction = prototype.Code[pc];
             if (instruction.Opcode == Lua53Opcode.Closure)
             {
-                count += prototype.NestedPrototypes[instruction.Bx].Upvalues.Length;
+                count += prototype.NestedPrototypes[instruction.Bx].Upvalues.Length -
+                    (environmentIndexes[childIds[instruction.Bx]].HasValue ? 1 : 0);
             }
             else if (instruction.Opcode == Lua53Opcode.Jump && instruction.A > 0)
             {
@@ -571,14 +795,188 @@ public static class Lua51CanonicalPrototypeWriter
         pcMap[^1] = count;
         return pcMap;
     }
-    private static Lua51Instruction Translate(Lua53Instruction i) => i.Opcode switch
+
+    private static Dictionary<int, GlobalAccess> AnalyzeGlobalAccesses(
+        Lua53Prototype prototype,
+        int? environmentIndex)
     {
-        Lua53Opcode.GetGlobal => Lua51Instruction.CreateABx(Lua51Opcode.GetGlobal, i.A, i.C & 0xff),
-        Lua53Opcode.SetTableUpvalue => Lua51Instruction.CreateABx(Lua51Opcode.SetGlobal, i.C, i.B & 0xff),
-        Lua53Opcode.LoadConstant => Lua51Instruction.CreateABx(Lua51Opcode.LoadConstant, i.A, i.Bx),
-        Lua53Opcode.Jump or Lua53Opcode.NumericForLoop or Lua53Opcode.NumericForPrepare => Lua51Instruction.CreateASignedBx(Map(i.Opcode), i.A, i.SignedBx),
-        _ => Lua51Instruction.CreateAbc(Map(i.Opcode), i.A, i.B, i.C),
-    };
+        var accesses = new Dictionary<int, GlobalAccess>();
+        if (!environmentIndex.HasValue)
+        {
+            return accesses;
+        }
+
+        var consumedEnvironmentLoads = new HashSet<int>();
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            var instruction = prototype.Code[pc];
+            var environmentRegister = instruction.Opcode switch
+            {
+                Lua53Opcode.GetTable => instruction.B,
+                Lua53Opcode.SetTable => instruction.A,
+                _ => -1,
+            };
+            if (environmentRegister < 0)
+            {
+                continue;
+            }
+
+            var environmentDefinition = FindRegisterDefinition(
+                prototype,
+                pc,
+                environmentRegister);
+            if (environmentDefinition < 0 ||
+                prototype.Code[environmentDefinition] is not
+                {
+                    Opcode: Lua53Opcode.GetUpvalue,
+                    B: var upvalueIndex,
+                } ||
+                upvalueIndex != environmentIndex.Value)
+            {
+                continue;
+            }
+
+            var keyRegister = instruction.Opcode == Lua53Opcode.GetTable
+                ? instruction.C
+                : instruction.B;
+            var keyDefinition = FindRegisterDefinition(prototype, pc, keyRegister);
+            if (keyDefinition < 0 ||
+                prototype.Code[keyDefinition].Opcode != Lua53Opcode.LoadConstant)
+            {
+                throw new InvalidDataException(
+                    "Lua 5.1 function-environment access requires a constant string key.");
+            }
+
+            var constantIndex = prototype.Code[keyDefinition].Bx;
+            if ((uint)constantIndex >= (uint)prototype.Constants.Length ||
+                prototype.Constants[constantIndex].Kind is not
+                    (Lua53ConstantKind.ShortString or Lua53ConstantKind.LongString))
+            {
+                throw new InvalidDataException(
+                    "Lua 5.1 function-environment access requires a constant string key.");
+            }
+
+            accesses.Add(pc, new GlobalAccess(
+                instruction.Opcode == Lua53Opcode.SetTable,
+                constantIndex));
+            consumedEnvironmentLoads.Add(environmentDefinition);
+        }
+
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            if (prototype.Code[pc] is
+                {
+                    Opcode: Lua53Opcode.GetUpvalue,
+                    B: var upvalueIndex,
+                } &&
+                upvalueIndex == environmentIndex.Value &&
+                !consumedEnvironmentLoads.Contains(pc))
+            {
+                throw new InvalidDataException(
+                    "A canonical Lua 5.1 environment value cannot be materialized directly.");
+            }
+        }
+
+        return accesses;
+    }
+
+    private static int FindRegisterDefinition(
+        Lua53Prototype prototype,
+        int programCounter,
+        int register)
+    {
+        for (var pc = programCounter - 1; pc >= 0; pc--)
+        {
+            if (WritesRegister(prototype.Code[pc], register))
+            {
+                return pc;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool WritesRegister(Lua53Instruction instruction, int register) =>
+        instruction.Opcode switch
+        {
+            Lua53Opcode.LoadNil => register >= instruction.A &&
+                register <= instruction.A + instruction.B,
+            Lua53Opcode.Self => register == instruction.A || register == instruction.A + 1,
+            Lua53Opcode.Call => register >= instruction.A &&
+                (instruction.C == 0 || register < instruction.A + instruction.C - 1),
+            Lua53Opcode.NumericForLoop => register == instruction.A ||
+                register == instruction.A + 3,
+            Lua53Opcode.NumericForPrepare => register == instruction.A,
+            Lua53Opcode.GenericForCall => register >= instruction.A + 3 &&
+                register < instruction.A + 3 + instruction.C,
+            Lua53Opcode.GenericForLoop => register == instruction.A,
+            Lua53Opcode.VarArg => register >= instruction.A &&
+                (instruction.C == 0 || register < instruction.A + instruction.C - 1),
+            Lua53Opcode.Move or Lua53Opcode.LoadConstant or Lua53Opcode.LoadConstantExtra or
+                Lua53Opcode.LoadBoolean or Lua53Opcode.GetUpvalue or Lua53Opcode.GetGlobal or
+                Lua53Opcode.GetTable or Lua53Opcode.NewTable or Lua53Opcode.Add or
+                Lua53Opcode.Subtract or Lua53Opcode.Multiply or Lua53Opcode.Modulo or
+                Lua53Opcode.Power or Lua53Opcode.Divide or Lua53Opcode.FloorDivide or
+                Lua53Opcode.BitwiseAnd or Lua53Opcode.BitwiseOr or Lua53Opcode.BitwiseXor or
+                Lua53Opcode.ShiftLeft or Lua53Opcode.ShiftRight or Lua53Opcode.UnaryMinus or
+                Lua53Opcode.BitwiseNot or Lua53Opcode.LogicalNot or Lua53Opcode.Length or
+                Lua53Opcode.Concatenate or Lua53Opcode.TestSet or Lua53Opcode.Closure =>
+                register == instruction.A,
+            _ => false,
+        };
+
+    private static int RemapUpvalueIndex(int upvalueIndex, int? environmentIndex)
+    {
+        if (!environmentIndex.HasValue)
+        {
+            return upvalueIndex;
+        }
+
+        if (upvalueIndex == environmentIndex.Value)
+        {
+            throw new InvalidDataException(
+                "Lua 5.1 function-environment upvalues are implicit and cannot be bound directly.");
+        }
+
+        return upvalueIndex > environmentIndex.Value ? upvalueIndex - 1 : upvalueIndex;
+    }
+
+    private static Lua51Instruction Translate(
+        Lua53Instruction i,
+        int? environmentIndex)
+    {
+        if (i.Opcode == Lua53Opcode.GetUpvalue && i.B == environmentIndex)
+        {
+            // Keep the instruction count stable for jump/debug mappings. The register is dead
+            // after the associated table access is restored to GETGLOBAL/SETGLOBAL.
+            return Lua51Instruction.CreateAbc(Lua51Opcode.LoadNil, i.A, i.A, 0);
+        }
+
+        if (i.Opcode is Lua53Opcode.GetUpvalue or Lua53Opcode.SetUpvalue)
+        {
+            return Lua51Instruction.CreateAbc(
+                Map(i.Opcode),
+                i.A,
+                RemapUpvalueIndex(i.B, environmentIndex),
+                i.C);
+        }
+
+        return i.Opcode switch
+        {
+            Lua53Opcode.GetGlobal => Lua51Instruction.CreateABx(Lua51Opcode.GetGlobal, i.A, i.C & 0xff),
+            Lua53Opcode.SetTableUpvalue => Lua51Instruction.CreateABx(Lua51Opcode.SetGlobal, i.C, i.B & 0xff),
+            Lua53Opcode.LoadConstant => Lua51Instruction.CreateABx(Lua51Opcode.LoadConstant, i.A, i.Bx),
+            Lua53Opcode.LoadNil => Lua51Instruction.CreateAbc(
+                Lua51Opcode.LoadNil,
+                i.A,
+                checked(i.A + i.B),
+                0),
+            Lua53Opcode.Jump or Lua53Opcode.NumericForLoop or Lua53Opcode.NumericForPrepare => Lua51Instruction.CreateASignedBx(Map(i.Opcode), i.A, i.SignedBx),
+            _ => Lua51Instruction.CreateAbc(Map(i.Opcode), i.A, i.B, i.C),
+        };
+    }
+
+    private readonly record struct GlobalAccess(bool IsSet, int ConstantIndex);
     private static Lua51Opcode Map(Lua53Opcode op) => op switch
     {
         Lua53Opcode.Move => Lua51Opcode.Move,

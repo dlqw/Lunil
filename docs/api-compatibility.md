@@ -1,8 +1,8 @@
 # Versioned API and package compatibility
 
 Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable, while
-the stable `0.9` line uses reviewed public-API and package snapshots so intentional architecture
-work is visible without rewriting stable `0.8` declarations.
+the stable `0.10` line uses reviewed public-API and package snapshots so multi-version additions
+remain visible without rewriting stable `0.7`, `0.8`, or `0.9` declarations.
 
 ## Compatibility lines
 
@@ -47,6 +47,25 @@ The validation scripts derive the active compatibility line from `Directory.Buil
 `0.9.1` they still read and update only `api/0.9.0/`, allowing patch releases on the `0.9.x`
 compatibility line without changing the reviewed API/package baseline.
 
+### Frozen `0.10.0`
+
+[`api/0.10.0/`](../api/0.10.0/) is the reviewed 13-assembly and 13-package baseline for the stable
+`0.10.x` line. It adds the public multi-version contract without changing older baselines:
+
+- `LuaLanguageVersion` identifies Lua 5.1 through 5.5, while `LuaLanguageVersions` validates,
+  parses, and displays identities and retains Lua 5.4 as `Default`;
+- `LuaChunkFormat` identifies the matching PUC binary-chunk family;
+- `LuaVersionProfileAttribute`, generated `LuaVersionFeatures` (including the reviewed patch
+  additions for the to-be-closed protocol and numeric-string coercion), and
+  `LuaVersionFeatureTable.Get` expose the version capability table;
+- compiler, syntax, semantics, runtime, hosting, workspace, canonical-module, and closure option or
+  result types carry `LanguageVersion` where the version boundary is observable;
+- the CLI accepts `--lua-version 5.1|5.2|5.3|5.4|5.5`, configuration `languageVersion`, and the
+  `LUNIL_LUA_VERSION` environment variable.
+
+Patch releases on `0.10.x` use this baseline and may add only reviewed backward-compatible fixes.
+The 0.9 declarations remain pinned to `api/0.9.0/`.
+
 ## Public API baseline
 
 The active `manifest.json` pins 13 shipped assemblies and the SHA-256 of a generated C# declaration
@@ -64,8 +83,8 @@ declarations:
 
 ```powershell
 ./scripts/Update-PublicApiBaselines.ps1 -Configuration Release
-git diff -- api/0.9.0
-git diff --exit-code v0.8.0 -- api/0.8.0
+git diff -- api/0.10.0
+git diff --exit-code v0.9.0 -- api/0.9.0
 ```
 
 Stable updates are limited by the promotion policy in [versioning](versioning.md); new API and
@@ -97,8 +116,8 @@ The update command is reserved for a reviewed package-boundary change:
 
 ```powershell
 ./scripts/Update-PackageBaseline.ps1 -Version $version
-git diff -- api/0.9.0/packages.json
-git diff --exit-code v0.8.0 -- api/0.8.0/packages.json
+git diff -- api/0.10.0/packages.json
+git diff --exit-code v0.9.0 -- api/0.9.0/packages.json
 ```
 
 Normal CI and tag-triggered release workflows enforce the active gates. Stable patch fixes update

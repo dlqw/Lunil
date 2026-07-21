@@ -1,4 +1,5 @@
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -88,6 +89,22 @@ public sealed class LuaIoLibraryTests
     }
 
     [Fact]
+    public void Lua55LinesAutoClosesNamedFile()
+    {
+        var files = new MemoryFileSystem(new Dictionary<string, byte[]>
+        {
+            ["lines-55.txt"] = "a\nb\n"u8.ToArray(),
+        });
+
+        _ = Execute(
+            files,
+            "for line in io.lines('lines-55.txt') do end",
+            LuaLanguageVersion.Lua55);
+
+        Assert.Equal(1, files.CloseCounts["lines-55.txt"]);
+    }
+
+    [Fact]
     public void ReadAndOpenValidatePucModesAndFormatArgumentNumbers()
     {
         var files = new MemoryFileSystem(new Dictionary<string, byte[]>
@@ -147,9 +164,12 @@ public sealed class LuaIoLibraryTests
         Assert.Equal(16, files.OpenedStreams["unbuffered.txt"].ReadOperationCount);
     }
 
-    private static LuaValue[] Execute(MemoryFileSystem files, string source)
+    private static LuaValue[] Execute(
+        MemoryFileSystem files,
+        string source,
+        LuaLanguageVersion languageVersion = LuaLanguageVersion.Lua54)
     {
-        var state = new LuaState();
+        var state = new LuaState(new LuaStateOptions { LanguageVersion = languageVersion });
         LuaStandardLibrary.InstallBasic(state, new LuaStandardLibraryOptions
         {
             FileSystem = files,
@@ -157,7 +177,10 @@ public sealed class LuaIoLibraryTests
         });
         LuaStandardLibrary.InstallIo(state);
         var lowering = LuaLowerer.Lower(
-            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+            LuaBinder.Bind(
+                LuaParser.Parse(
+                    SourceText.FromUtf8(source),
+                    parserOptions: new LuaParserOptions { LanguageVersion = languageVersion })));
         Assert.Empty(lowering.Diagnostics);
         return new LuaInterpreter().Execute(state, state.CreateMainClosure(lowering.Module!))
             .Values.ToArray();

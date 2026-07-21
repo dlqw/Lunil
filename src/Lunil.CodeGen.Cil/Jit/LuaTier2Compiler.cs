@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Lunil.Core;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
@@ -155,12 +156,17 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             cancellationToken);
         var livenessAnalysisDuration = Stopwatch.GetElapsedTime(livenessStarted);
         var optimizationStarted = Stopwatch.GetTimestamp();
-        var optimized = BuildOptimizations(function, profile, liveness);
+        var optimized = BuildOptimizations(
+            function,
+            profile,
+            liveness,
+            module.LanguageVersion);
         var boundDirectCalls = BuildBoundDirectCalls(
             module,
             function,
             profile,
             optimized,
+            module.LanguageVersion,
             cancellationToken,
             out var boundDirectCallCodeBytes);
         var numericRegionPlans = BuildNumericRegionPlans(
@@ -346,7 +352,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             function,
             out _,
             cancellationToken);
-        var optimized = BuildOptimizations(function, profile, liveness);
+        var optimized = BuildOptimizations(
+            function,
+            profile,
+            liveness,
+            module.LanguageVersion);
         var numericOptimizationCount = optimized.Values.Count(static optimization =>
             optimization.Kind is LuaJitOptimizationKind.NumericUnary or
                 LuaJitOptimizationKind.NumericBinary);
@@ -492,7 +502,11 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             var plan = LuaNumericRegionPlanner.TryCreate(
                 function,
                 region,
-                BuildNumericRegionHints(function, region, profile),
+                BuildNumericRegionHints(
+                    function,
+                    region,
+                    profile,
+                    module.LanguageVersion),
                 boundDirectCalls,
                 tableSites,
                 cancellationToken);
@@ -672,14 +686,16 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static ImmutableArray<LuaNumericRegionTypeHint> BuildNumericRegionHints(
         LuaIrFunction function,
         LuaNaturalLoopRegion region,
-        LuaJitFunctionProfile profile)
+        LuaJitFunctionProfile profile,
+        LuaLanguageVersion languageVersion)
     {
         var result = ImmutableArray.CreateBuilder<LuaNumericRegionTypeHint>();
         for (var register = 0;
             register < Math.Min(function.ParameterCount, profile.ArgumentKinds.Length);
             register++)
         {
-            var kind = ToNumericRegionKind(profile.ArgumentKinds[register]);
+            var kind = ToNumericRegionKind(
+                NormalizeNumericKinds(profile.ArgumentKinds[register], languageVersion));
             if (kind is not LuaNumericRegionValueKind.Conflict)
             {
                 result.Add(new LuaNumericRegionTypeHint(
@@ -710,19 +726,19 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         result,
                         site.ProgramCounter,
                         instruction.B,
-                        site.FirstOperandKinds);
+                        NormalizeNumericKinds(site.FirstOperandKinds, languageVersion));
                     break;
                 case LuaIrOpcode.Binary:
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.B,
-                        site.FirstOperandKinds);
+                        NormalizeNumericKinds(site.FirstOperandKinds, languageVersion));
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.C,
-                        site.SecondOperandKinds);
+                        NormalizeNumericKinds(site.SecondOperandKinds, languageVersion));
                     break;
                 case LuaIrOpcode.JumpIfFalse:
                 case LuaIrOpcode.JumpIfTrue:
@@ -730,48 +746,48 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         result,
                         site.ProgramCounter,
                         instruction.A,
-                        site.FirstOperandKinds);
+                        NormalizeNumericKinds(site.FirstOperandKinds, languageVersion));
                     break;
                 case LuaIrOpcode.NumericForLoop:
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.A,
-                        site.FirstOperandKinds);
+                        NormalizeNumericKinds(site.FirstOperandKinds, languageVersion));
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.A + 1,
-                        site.SecondOperandKinds);
+                        NormalizeNumericKinds(site.SecondOperandKinds, languageVersion));
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.A + 2,
-                        site.ThirdOperandKinds);
+                        NormalizeNumericKinds(site.ThirdOperandKinds, languageVersion));
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.A + 3,
-                        site.FirstOperandKinds);
+                        NormalizeNumericKinds(site.FirstOperandKinds, languageVersion));
                     break;
                 case LuaIrOpcode.GetTable:
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.C,
-                        site.SecondOperandKinds);
+                        NormalizeNumericKinds(site.SecondOperandKinds, languageVersion));
                     break;
                 case LuaIrOpcode.SetTable:
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.B,
-                        site.SecondOperandKinds);
+                        NormalizeNumericKinds(site.SecondOperandKinds, languageVersion));
                     AddNumericRegionHint(
                         result,
                         site.ProgramCounter,
                         instruction.C,
-                        site.ThirdOperandKinds);
+                        NormalizeNumericKinds(site.ThirdOperandKinds, languageVersion));
                     break;
             }
         }
@@ -1022,6 +1038,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaIrFunction caller,
         LuaJitFunctionProfile profile,
         ImmutableDictionary<int, OptimizedInstruction> optimized,
+        LuaLanguageVersion languageVersion,
         CancellationToken cancellationToken,
         out long estimatedCodeBytes)
     {
@@ -1060,7 +1077,9 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 candidate.Opcode == LuaIrOpcode.Call);
             if (site is null ||
                 site.CallArgumentKinds.Length != callee.ParameterCount ||
-                site.CallArgumentKinds.Any(static kinds => kinds is not
+                site.CallArgumentKinds.Any(kinds => NormalizeNumericKinds(
+                    kinds,
+                    languageVersion) is not
                     (LuaJitValueKinds.Integer or LuaJitValueKinds.Float or
                         LuaJitValueKinds.Boolean)))
             {
@@ -1070,7 +1089,9 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             UInt128 argumentSignature = 0;
             for (var argument = 0; argument < site.CallArgumentKinds.Length; argument++)
             {
-                argumentSignature |= (UInt128)(ushort)site.CallArgumentKinds[argument]
+                argumentSignature |= (UInt128)(ushort)NormalizeNumericKinds(
+                        site.CallArgumentKinds[argument],
+                        languageVersion)
                     << (argument * 10);
             }
 
@@ -1079,7 +1100,9 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             {
                 var exactProfile = new LuaJitFunctionProfile(
                     Samples: 1,
-                    ArgumentKinds: site.CallArgumentKinds,
+                    ArgumentKinds: site.CallArgumentKinds
+                        .Select(kinds => NormalizeNumericKinds(kinds, languageVersion))
+                        .ToImmutableArray(),
                     Sites: []);
                 compiled = ReflectionEmitLuaDirectCallCompiler.TryCompile(
                     callee,
@@ -1293,7 +1316,8 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     private static ImmutableDictionary<int, OptimizedInstruction> BuildOptimizations(
         LuaIrFunction function,
         LuaJitFunctionProfile profile,
-        LuaRegisterLivenessResult liveness)
+        LuaRegisterLivenessResult liveness,
+        LuaLanguageVersion languageVersion)
     {
         var result = ImmutableDictionary.CreateBuilder<int, OptimizedInstruction>();
         AddConstantFolds(function, liveness, result);
@@ -1305,6 +1329,12 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             }
 
             var instruction = function.Instructions[site.ProgramCounter];
+            var firstOperandKinds = NormalizeNumericKinds(
+                site.FirstOperandKinds,
+                languageVersion);
+            var secondOperandKinds = NormalizeNumericKinds(
+                site.SecondOperandKinds,
+                languageVersion);
             if (site.Opcode != instruction.Opcode)
             {
                 continue;
@@ -1327,30 +1357,33 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         site.ProgramCounter,
                         OptimizedInstruction.DeadMove(site.ProgramCounter));
                     break;
-                case LuaIrOpcode.Unary when IsStableUnary(instruction, site):
+                case LuaIrOpcode.Unary when IsStableUnary(instruction, firstOperandKinds):
                     result.Add(
                         site.ProgramCounter,
                         OptimizedInstruction.Unary(
                             site.ProgramCounter,
-                            site.FirstOperandKinds));
+                            firstOperandKinds));
                     break;
-                case LuaIrOpcode.Binary when IsStableNumeric(site.FirstOperandKinds) &&
-                    IsStableNumeric(site.SecondOperandKinds) &&
+                case LuaIrOpcode.Binary when IsStableNumeric(firstOperandKinds) &&
+                    IsStableNumeric(secondOperandKinds) &&
                     instruction.D != (int)LuaIrBinaryOperator.Concatenate:
                     result.Add(
                         site.ProgramCounter,
                         OptimizedInstruction.Binary(
                             site.ProgramCounter,
-                            site.FirstOperandKinds,
-                            site.SecondOperandKinds));
+                            firstOperandKinds,
+                            secondOperandKinds));
                     break;
-                case LuaIrOpcode.Binary when IsStablePrimitiveBinary(instruction, site):
+                case LuaIrOpcode.Binary when IsStablePrimitiveBinary(
+                    instruction,
+                    firstOperandKinds,
+                    secondOperandKinds):
                     result.Add(
                         site.ProgramCounter,
                         OptimizedInstruction.PrimitiveBinary(
                             site.ProgramCounter,
-                            site.FirstOperandKinds,
-                            site.SecondOperandKinds));
+                            firstOperandKinds,
+                            secondOperandKinds));
                     break;
                 case LuaIrOpcode.JumpIfFalse:
                 case LuaIrOpcode.JumpIfTrue:
@@ -1510,14 +1543,29 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
     private static bool IsStableUnary(
         LuaIrInstruction instruction,
-        LuaJitSiteProfile site) => (LuaIrUnaryOperator)instruction.C switch
+        LuaJitValueKinds firstOperandKinds) => (LuaIrUnaryOperator)instruction.C switch
         {
             LuaIrUnaryOperator.Negate or LuaIrUnaryOperator.BitwiseNot =>
-                IsStableNumeric(site.FirstOperandKinds),
-            LuaIrUnaryOperator.LogicalNot => site.FirstOperandKinds != LuaJitValueKinds.None,
-            LuaIrUnaryOperator.Length => site.FirstOperandKinds is LuaJitValueKinds.String,
+                IsStableNumeric(firstOperandKinds),
+            LuaIrUnaryOperator.LogicalNot => firstOperandKinds != LuaJitValueKinds.None,
+            LuaIrUnaryOperator.Length => firstOperandKinds is LuaJitValueKinds.String,
             _ => false,
         };
+
+    private static LuaJitValueKinds NormalizeNumericKinds(
+        LuaJitValueKinds kinds,
+        LuaLanguageVersion languageVersion)
+    {
+        if (languageVersion is not (LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52) ||
+            (kinds & LuaJitValueKinds.Integer) == 0)
+        {
+            return kinds;
+        }
+
+        // Lua 5.1/5.2 have a single floating-point number model. Treat stale integer
+        // profile observations as float guards so they cannot select integer arithmetic.
+        return (kinds & ~LuaJitValueKinds.Integer) | LuaJitValueKinds.Float;
+    }
 
     private static bool IsStableNumeric(LuaJitValueKinds kinds) =>
         kinds != LuaJitValueKinds.None &&
@@ -1525,20 +1573,21 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
     private static bool IsStablePrimitiveBinary(
         LuaIrInstruction instruction,
-        LuaJitSiteProfile site)
+        LuaJitValueKinds firstOperandKinds,
+        LuaJitValueKinds secondOperandKinds)
     {
         var operation = (LuaIrBinaryOperator)instruction.D;
         if (operation is LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual)
         {
-            return IsExactPrimitiveKind(site.FirstOperandKinds) &&
-                IsExactPrimitiveKind(site.SecondOperandKinds);
+            return IsExactPrimitiveKind(firstOperandKinds) &&
+                IsExactPrimitiveKind(secondOperandKinds);
         }
 
         return operation is (LuaIrBinaryOperator.LessThan or
                 LuaIrBinaryOperator.LessThanOrEqual or LuaIrBinaryOperator.GreaterThan or
                 LuaIrBinaryOperator.GreaterThanOrEqual) &&
-            site.FirstOperandKinds == LuaJitValueKinds.String &&
-            site.SecondOperandKinds == LuaJitValueKinds.String;
+            firstOperandKinds == LuaJitValueKinds.String &&
+            secondOperandKinds == LuaJitValueKinds.String;
     }
 
     private static bool IsExactPrimitiveKind(LuaJitValueKinds kinds) => kinds is
