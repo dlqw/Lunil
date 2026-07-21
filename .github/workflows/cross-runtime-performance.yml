@@ -83,6 +83,7 @@ jobs:
         run: >-
           dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj &&
           dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj &&
+          dotnet restore benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj &&
           dotnet build
           benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
           --configuration Release
@@ -136,6 +137,7 @@ jobs:
         run: >-
           dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj &&
           dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj &&
+          dotnet restore benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj &&
           dotnet build
           benchmarks/Lunil.Runtime.CrossRuntimeBenchmarks/Lunil.Runtime.CrossRuntimeBenchmarks.csproj
           --configuration Release
