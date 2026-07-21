@@ -228,6 +228,7 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                 var cachesClosuresByUpvalues = false;
                 var hasWarnLibrary = false;
                 var hasCoroutineClose = false;
+                var hasToBeClosedProtocol = false;
                 var hasUtf8Library = false;
                 var hasBit32Library = false;
                 var hasRawLength = false;
@@ -293,6 +294,11 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                             named.Value.Value is bool hasClose)
                         {
                             hasCoroutineClose = hasClose;
+                        }
+                        else if (named.Key == "HasToBeClosedProtocol" &&
+                            named.Value.Value is bool hasToBeClosed)
+                        {
+                            hasToBeClosedProtocol = hasToBeClosed;
                         }
                         else if (named.Key == "HasUtf8Library" && named.Value.Value is bool hasUtf8)
                         {
@@ -376,6 +382,7 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                     CachesClosuresByUpvalues: cachesClosuresByUpvalues,
                     HasWarnLibrary: hasWarnLibrary,
                     HasCoroutineClose: hasCoroutineClose,
+                    HasToBeClosedProtocol: hasToBeClosedProtocol,
                     HasUtf8Library: hasUtf8Library,
                     HasBit32Library: hasBit32Library,
                     HasRawLength: hasRawLength,
@@ -424,6 +431,7 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                         $"{value.CachesClosuresByUpvalues.ToString().ToLowerInvariant()}, " +
                         $"{value.HasWarnLibrary.ToString().ToLowerInvariant()}, " +
                         $"{value.HasCoroutineClose.ToString().ToLowerInvariant()}, " +
+                        $"{value.HasToBeClosedProtocol.ToString().ToLowerInvariant()}, " +
                         $"{value.HasUtf8Library.ToString().ToLowerInvariant()}, " +
                         $"{value.HasBit32Library.ToString().ToLowerInvariant()}, " +
                         $"{value.HasRawLength.ToString().ToLowerInvariant()}, " +
@@ -455,6 +463,7 @@ public sealed class LuaVersionProfileGenerator : ISourceGenerator
                 bool CachesClosuresByUpvalues,
                 bool HasWarnLibrary,
                 bool HasCoroutineClose,
+                bool HasToBeClosedProtocol,
                 bool HasUtf8Library,
                 bool HasBit32Library,
                 bool HasRawLength,

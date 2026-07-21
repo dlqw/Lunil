@@ -584,7 +584,7 @@ internal static class LuaIoLibrary
         captures[1] = LuaValue.FromBoolean(autoClose);
         formats.CopyTo(captures.AsSpan(2));
         var iterator = state.CreateNativeClosure(LinesIteratorDescriptor, captures);
-        return autoClose && state.LanguageVersion == LuaLanguageVersion.Lua54
+        return autoClose && LuaVersionFeatureTable.Get(state.LanguageVersion).HasToBeClosedProtocol
             ? [LuaValue.FromFunction(iterator), LuaValue.Nil, LuaValue.Nil, file]
             : [LuaValue.FromFunction(iterator)];
     }

@@ -26,6 +26,9 @@ public sealed class LuaVersionProfileAttribute : Attribute
 
     public bool HasCoroutineClose { get; init; }
 
+    /// <summary>Whether locals and iterator resources participate in the to-be-closed protocol.</summary>
+    public bool HasToBeClosedProtocol { get; init; }
+
     public bool HasUtf8Library { get; init; }
 
     public bool HasBit32Library { get; init; }

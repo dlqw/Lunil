@@ -863,14 +863,14 @@ public static class LuaLowerer
                 LowerExpressionList(expressionList, controlBase, 4);
                 _nextRegister = controlBase + 4;
                 _localTop = _nextRegister;
-                if (_owner._model.LanguageVersion == LuaLanguageVersion.Lua54)
+                if (LuaVersionFeatureTable.Get(_owner._model.LanguageVersion).HasToBeClosedProtocol)
                 {
                     Emit(new LuaIrInstruction(
                         LuaIrOpcode.MarkToBeClosed,
                         controlBase + 3,
                         span: statement.Span));
-                    // Lua 5.4 models the fourth generic-for control register as an implicit
-                    // to-be-closed local. Lua 5.3 has no close protocol for this register.
+                    // Lua 5.4 and later model the fourth generic-for control register as an
+                    // implicit to-be-closed local. Earlier versions have no close protocol.
                     _activeSyntheticCloseRegisters.Add(controlBase + 3);
                     _activeToBeClosedRegisters.Add(controlBase + 3);
                 }

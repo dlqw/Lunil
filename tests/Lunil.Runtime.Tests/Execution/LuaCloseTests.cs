@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.Execution;
@@ -143,6 +144,18 @@ public sealed class LuaCloseTests
         Assert.Equal([LuaValue.FromInteger(42)], values);
     }
 
+    [Fact]
+    public void Lua55GenericForUsesTheToBeClosedProtocol()
+    {
+        var module = Compile(
+            "for value in iterator, state, nil do end",
+            LuaLanguageVersion.Lua55);
+
+        Assert.Contains(
+            module.Functions[0].Instructions,
+            static instruction => instruction.Opcode == LuaIrOpcode.MarkToBeClosed);
+    }
+
     private static LuaValue[] Execute(string source)
     {
         var state = CreateState();
@@ -172,10 +185,15 @@ public sealed class LuaCloseTests
         return state;
     }
 
-    private static Lunil.IR.Canonical.LuaIrModule Compile(string source)
+    private static Lunil.IR.Canonical.LuaIrModule Compile(
+        string source,
+        LuaLanguageVersion languageVersion = LuaLanguageVersion.Lua54)
     {
         var lowering = LuaLowerer.Lower(
-            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+            LuaBinder.Bind(
+                LuaParser.Parse(
+                    SourceText.FromUtf8(source),
+                    parserOptions: new LuaParserOptions { LanguageVersion = languageVersion })));
         Assert.Empty(lowering.Diagnostics);
         return Assert.IsType<Lunil.IR.Canonical.LuaIrModule>(lowering.Module);
     }
