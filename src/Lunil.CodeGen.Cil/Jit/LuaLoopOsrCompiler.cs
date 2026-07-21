@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Lunil.Core;
 using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
@@ -439,7 +440,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
             ? LuaNumericRegionPlanner.TryCreate(
                 function,
                 verifiedRegion,
-                ToNumericRegionHints(plan.NumericTypes),
+                ToNumericRegionHints(plan.NumericTypes, module.LanguageVersion),
                 cancellationToken)
             : null;
         var specializedInstructionCount = numericRegionPlan?.DirectNumericInstructionCount ?? 0;
@@ -510,14 +511,16 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
     }
 
     private static IEnumerable<LuaNumericRegionTypeHint> ToNumericRegionHints(
-        ImmutableArray<LuaJitOsrRegisterTypeProfile> types)
+        ImmutableArray<LuaJitOsrRegisterTypeProfile> types,
+        LuaLanguageVersion languageVersion)
     {
         foreach (var type in types)
         {
+            var kinds = NormalizeNumericKinds(type.Kinds, languageVersion);
             yield return new LuaNumericRegionTypeHint(
                 type.ProgramCounter,
                 type.Register,
-                type.Kinds switch
+                kinds switch
                 {
                     LuaJitValueKinds.Integer => LuaNumericRegionValueKind.Integer,
                     LuaJitValueKinds.Float => LuaNumericRegionValueKind.Float,
@@ -526,6 +529,22 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
                     _ => LuaNumericRegionValueKind.Conflict,
                 });
         }
+    }
+
+    private static LuaJitValueKinds NormalizeNumericKinds(
+        LuaJitValueKinds kinds,
+        LuaLanguageVersion languageVersion)
+    {
+        if (languageVersion is not (LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52) ||
+            (kinds & LuaJitValueKinds.Integer) == 0)
+        {
+            return kinds;
+        }
+
+        // Lua 5.1/5.2 expose one floating-point number model. An integer-only
+        // observation can come from a stale profile; use a float guard instead
+        // of emitting an integer-specialized OSR region.
+        return (kinds & ~LuaJitValueKinds.Integer) | LuaJitValueKinds.Float;
     }
 
     [UnconditionalSuppressMessage(
