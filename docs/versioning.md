@@ -5,10 +5,10 @@ informational versions, Git tags, changelog names, bundles, and GitHub releases 
 `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.9.1</VersionPrefix>
+<VersionPrefix>0.10.0</VersionPrefix>
 ```
 
-This example produces `0.9.1`. Stable tags `v0.8.0` and `v0.9.0` remain immutable.
+This example produces `0.10.0`. Stable tags `v0.8.0`, `v0.9.0`, and `v0.10.0` remain immutable.
 
 ## Compatibility lines
 
@@ -22,10 +22,11 @@ This example produces `0.9.1`. Stable tags `v0.8.0` and `v0.9.0` remain immutabl
 | Line | Status | Change policy |
 | --- | --- | --- |
 | `0.8.x` | Maintained | Backward-compatible fixes only |
-| `0.9.x` | Stable | Backward-compatible fixes only |
+| `0.9.x` | Maintained | Backward-compatible fixes only |
+| `0.10.x` | Stable | Backward-compatible fixes only |
 | `0.10.0-alpha.N` | Published development history | Immutable prerelease evidence |
 | `0.10.0-beta.N` | Unused channel | No release published |
-| `0.10.0-rc.N` | Active release candidate | Release-blocking fixes only |
+| `0.10.0-rc.N` | Published release-candidate history | Immutable prerelease evidence |
 
 ## Prerelease channels
 
