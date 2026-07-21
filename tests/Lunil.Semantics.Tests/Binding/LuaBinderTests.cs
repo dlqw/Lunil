@@ -162,16 +162,20 @@ public sealed class LuaBinderTests
     }
 
     [Theory]
-    [InlineData(LuaLanguageVersion.Lua53)]
-    [InlineData(LuaLanguageVersion.Lua54)]
-    [InlineData(LuaLanguageVersion.Lua55)]
-    public void RejectsSameLabelInNestedBlockAcrossLua53AndLater(LuaLanguageVersion version)
+    [InlineData(LuaLanguageVersion.Lua53, false)]
+    [InlineData(LuaLanguageVersion.Lua54, true)]
+    [InlineData(LuaLanguageVersion.Lua55, true)]
+    public void AppliesVersionSpecificNestedLabelShadowingRules(
+        LuaLanguageVersion version,
+        bool rejectsNestedLabel)
     {
         var model = Bind(
             "::L:: do ::L:: end",
             new LuaBinderOptions { LanguageVersion = version });
 
-        Assert.Contains(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3006");
+        Assert.Equal(
+            rejectsNestedLabel,
+            model.Diagnostics.Any(diagnostic => diagnostic.Code == "LUA3006"));
     }
 
     [Fact]
