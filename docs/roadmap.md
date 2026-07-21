@@ -53,21 +53,23 @@ The performance dataset adds these independent runtimes:
 Published rows identify the exact runtime version and source identity. Lua 5.1–5.5, LuaJIT, and
 dialect-specific runtimes remain in separate semantic groups rather than one combined score.
 
-## 0.11.0 — complete CLR interoperation
+## 0.11.0 — capability-controlled CLR interoperation
 
-The 0.11.0 line targets a complete, capability-controlled CLR bridge:
+The 0.11.0 line adds a host-owned CLR bridge without changing the meaning of any Lua 5.1–5.5
+language contract. The bridge is opt-in, capability-controlled, and unavailable to a restricted host
+unless the host explicitly supplies an allowlist.
 
-- CLR type discovery and construction;
-- static and instance members, properties, indexers, fields, methods, operators, and events;
-- overload resolution, optional and named arguments, generic methods and types, arrays, enums,
-  nullable values, tuples, and value/reference conversions;
-- Lua function to CLR delegate conversion and CLR delegate/event callbacks into Lua;
-- CLR exceptions, cancellation, async/task values, `ref`/`out` parameters, and deterministic error
-  translation;
-- explicit lifetime, disposal, ownership, threading, reflection, and sandbox capability rules;
-- consistent behavior in the interpreter, JIT, NativeAOT, trimming, and all supported Lua versions.
+| Milestone | User-visible scope | Dependencies | Acceptance criteria | Public surfaces and verification |
+| --- | --- | --- | --- | --- |
+| `0.11.0-alpha.1` | Discover allowlisted CLR types, construct allowlisted objects, and represent them as Lua userdata with explicit ownership. | Existing host profiles, userdata ownership, language-version contract. | Restricted hosts deny discovery and construction by default; configured assemblies and type names are matched exactly; constructors use deterministic conversion and reject unsupported values; no arbitrary assembly loading occurs; interpreter and JIT observe the same results. | Hosting API, interop guide, capability examples, host tests, trimming analysis, and package-consumer smoke. |
+| `0.11.0-alpha.2` | Invoke allowlisted static/instance methods, properties, fields, indexers, and operators. | Alpha.1 object identity and conversion rules. | Member lookup is allowlist-scoped and cached by type identity; overload resolution is deterministic; optional/named arguments, enums, nullable values, arrays, tuples, and numeric conversions have explicit rules; inaccessible members fail with stable Lua diagnostics. | Hosting API reference, conversion matrix, member-resolution tests, and NativeAOT/trimming fixture coverage. |
+| `0.11.0-alpha.3` | Convert Lua functions to CLR delegates and route CLR callbacks/events back into Lua. | Alpha.2 invocation and host scheduling boundaries. | Delegate signatures are validated before subscription; callbacks preserve state ownership, error boundaries, cancellation, and coroutine rules; event subscriptions are disposable and cannot retain an unrooted Lua closure. | Callback guide, lifecycle examples, delegate/event tests, GC and reentrancy coverage. |
+| `0.11.0-beta.1` | Add task/`ValueTask`, cancellation, `ref`/`out`, exception translation, disposal, and thread policy. | Alpha.3 callback lifetime and scheduler contracts. | Async results have one documented Lua representation; cancellation and CLR exceptions map to stable diagnostics; `ref`/`out` results preserve ordering; disposal is idempotent; calls from unsupported threads fail closed. | Migration notes, error contract, async and failure-path tests, package and publish-mode validation. |
+| `0.11.0-rc.1` | Freeze the interop contract across all supported Lua versions and runtime publish modes. | Beta.1 complete behavior and compatibility baselines. | Lua 5.1–5.5 behavior is matrix-tested; interpreter/JIT/NativeAOT/trimming/ReadyToRun agree; allowlist and lifetime rules are documented; public API and package baselines are reproducible. | API/package baselines, release notes, compatibility matrix, six-RID bundle smoke, and CLI/consumer examples. |
 
-The bridge is part of the public hosting contract and is not an unrestricted reflection escape hatch.
+The bridge remains part of the public hosting contract, but it is never an unrestricted reflection
+escape hatch. A host must declare the assemblies, types, members, construction policy, and lifetime
+policy that Lua may observe.
 
 ## 0.12.0 — complete hot-update support
 

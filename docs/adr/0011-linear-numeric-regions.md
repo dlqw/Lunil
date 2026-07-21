@@ -1,9 +1,5 @@
 # ADR 0011: Share linear unboxed numeric regions across Tier 2 and Loop OSR
 
-## Status
-
-Accepted for the 0.8 development line.
-
 ## Context
 
 The existing exact-numeric Tier 2 and Loop OSR methods still dispatched canonical PCs, wrote the

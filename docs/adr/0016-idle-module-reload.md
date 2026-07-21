@@ -1,9 +1,6 @@
 # ADR 0016: Track require provenance and reload modules only while the host is idle
 
-- Status: Accepted for manual reload v1
 - Date: 2026-07-17
-- Target: Lua 5.4.8, .NET 10
-- Follow-up: concurrent invalidation and immutable function versions
 
 ## Context
 
@@ -43,8 +40,8 @@ releases its handles. Reinstalling a different loaded table clears all records.
 `LuaState.IsIdle` is true only when no thread, native callback, or finalizer is executing. It is an
 observation, not a cross-thread barrier. `LuaHost` serializes its own execute, binary-execute,
 reload, and dispose operations through one gate and rejects reentrant reload with `StateBusy`.
-Hosts that expose the same state to another executor must still provide external quiescence. A
-strict generation/lease barrier is deferred to the concurrent invalidation milestone.
+Hosts that expose the same state to another executor must still provide external quiescence.
+Concurrent invalidation is outside this API contract.
 
 ### Prepare, execute, commit
 

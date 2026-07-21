@@ -1,14 +1,12 @@
 # ADR 0003: Qualified Tier 1 is enabled by default
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0002](0002-execution-backend-abi-v2.md)
 
 ## Context
 
 The original CoreCLR JIT productization kept `LuaJitExecutorOptions.Default.Policy` at
-`InterpreterOnly` because its first backend measurements did not satisfy the approved throughput
+`InterpreterOnly` because its first backend measurements did not satisfy the required throughput
 and compile-latency gates. Runtime ABI v2 introduced direct lowering, deterministic benefit
 eligibility, owner-safe verified-plan caching, bounded compilation cancellation, and repeated
 cross-RID evidence collection.

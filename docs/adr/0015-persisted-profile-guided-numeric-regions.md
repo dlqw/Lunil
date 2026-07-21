@@ -1,8 +1,7 @@
 # ADR 0015: Persist exact-module profile-guided numeric regions
 
-- Status: Superseded by ADR 0018 in `0.8.0-alpha.12`
 - Date: 2026-07-17
-- Target: Lua 5.4.8, .NET 10
+- Superseded by: [ADR 0018](0018-remove-lua-aot.md) in `0.8.0-alpha.12`
 - Depends on: [ADR 0010](0010-persisted-cil-aot-performance-productionization.md),
   [ADR 0011](0011-linear-numeric-regions.md)
 

@@ -1,8 +1,6 @@
 # ADR 0025: Lua 5.2 end-to-end compatibility slice
 
-- Status: Accepted
 - Date: 2026-07-21
-- Target: `0.10.0-alpha.2`
 
 ## Decision
 

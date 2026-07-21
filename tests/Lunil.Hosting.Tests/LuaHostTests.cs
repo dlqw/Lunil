@@ -12,6 +12,302 @@ namespace Lunil.Hosting.Tests;
 public sealed class LuaHostTests
 {
     [Fact]
+    public void ClrBridgeIsDisabledAndNotInstalledByDefault()
+    {
+        using var host = new LuaHost();
+
+        Assert.False(host.ClrBridge.IsEnabled);
+        var result = host.RunUtf8("return clr == nil");
+
+        Assert.True(result.Succeeded);
+        Assert.True(Assert.Single(result.Execution!.Values).AsBoolean());
+    }
+
+    [Fact]
+    public void ClrBridgeDiscoversAndConstructsOnlyAllowlistedTypes()
+    {
+        var typeName = typeof(SampleValue).FullName!;
+        var assemblyName = typeof(SampleValue).Assembly.GetName().Name!;
+        using var host = new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [assemblyName],
+                AllowedTypeNames = [typeName],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"""
+            local info = clr.type('{typeName}')
+            local value = clr.new('{typeName}', 41)
+            return info.name, info.assembly, info.constructible, type(value)
+            """);
+
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        var values = result.Execution!.Values;
+        Assert.Equal(typeName, values[0].AsString().ToString());
+        Assert.Equal(assemblyName, values[1].AsString().ToString());
+        Assert.True(values[2].AsBoolean());
+        Assert.Equal("userdata", values[3].AsString().ToString());
+
+        var direct = host.ClrBridge.CreateInstance(
+            typeName,
+            [LuaValue.FromInteger(42)]);
+        var payload = Assert.IsType<LuaClrObject>(direct.Payload);
+        Assert.Equal(42, Assert.IsType<SampleValue>(payload.Instance).Value);
+    }
+
+    [Fact]
+    public void ClrBridgeRejectsTypesOutsideExactAllowlists()
+    {
+        var typeName = typeof(SampleValue).FullName!;
+        var assemblyName = typeof(SampleValue).Assembly.GetName().Name!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery,
+                AllowedAssemblyNames = [assemblyName],
+                AllowedTypeNames = [typeName],
+            },
+        });
+
+        var notAllowed = Assert.Throws<LuaClrException>(
+            () => host.ClrBridge.ResolveType(typeof(string).FullName!));
+        Assert.Equal(LuaClrErrorCode.TypeNotAllowed, notAllowed.Code);
+
+        var notLoaded = Assert.Throws<LuaClrException>(
+            () => new LuaClrBridge(host.State, new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery,
+                AllowedAssemblyNames = ["System.Private.CoreLib"],
+                AllowedTypeNames = [typeName],
+            }).ResolveType(typeName));
+        Assert.Equal(LuaClrErrorCode.TypeNotFound, notLoaded.Code);
+    }
+
+    [Fact]
+    public void ClrBridgeRejectsValuesOwnedByAnotherLuaState()
+    {
+        var typeName = typeof(LuaValueChoice).FullName!;
+        var options = new LuaClrOptions
+        {
+            Capabilities = LuaClrCapabilities.Construction,
+            AllowedAssemblyNames = [typeof(LuaValueChoice).Assembly.GetName().Name!],
+            AllowedTypeNames = [typeName],
+        };
+        using var first = new LuaHost(new LuaHostOptions { Clr = options });
+        using var second = new LuaHost(new LuaHostOptions { Clr = options });
+        var foreign = LuaValue.FromTable(first.State.CreateTable());
+
+        Assert.Throws<LuaRuntimeException>(
+            () => second.ClrBridge.CreateInstance(typeName, [foreign]));
+    }
+
+    [Fact]
+    public void ClrGlobalModuleReportsCapabilityFailuresAsLuaErrors()
+    {
+        var typeName = typeof(SampleValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery,
+                AllowedAssemblyNames = [typeof(SampleValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"""
+            local ok, message = pcall(clr.new, '{typeName}')
+            return ok, string.find(message, 'CapabilityDenied', 1, true) ~= nil
+            """);
+
+        Assert.True(result.Succeeded);
+        Assert.False(result.Execution!.Values[0].AsBoolean());
+        Assert.True(result.Execution.Values[1].AsBoolean());
+    }
+
+    [Theory]
+    [InlineData(LuaHostExecutionBackend.Interpreter)]
+    [InlineData(LuaHostExecutionBackend.Jit)]
+    public void ClrGlobalModuleMatchesInterpreterAndJit(LuaHostExecutionBackend backend)
+    {
+        var typeName = typeof(SampleValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = backend,
+            Jit = LuaJitExecutorOptions.Default with
+            {
+                FunctionEntryThreshold = 1,
+                SynchronousCompilation = true,
+                EnableTier2 = false,
+                EnableLoopOsr = false,
+            },
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [typeof(SampleValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"""
+            local info = clr.type('{typeName}')
+            return info.name, type(clr.new('{typeName}', 42))
+            """);
+
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        Assert.Equal(typeName, result.Execution!.Values[0].AsString().ToString());
+        Assert.Equal("userdata", result.Execution.Values[1].AsString().ToString());
+    }
+
+    [Fact]
+    public void ClrBridgeDisposesOwnedConstructedObjectsExactlyOnce()
+    {
+        var typeName = typeof(CountingDisposable).FullName!;
+        var options = new LuaClrOptions
+        {
+            Capabilities = LuaClrCapabilities.Construction,
+            AllowedAssemblyNames = [typeof(CountingDisposable).Assembly.GetName().Name!],
+            AllowedTypeNames = [typeName],
+            OwnConstructedObjects = true,
+        };
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = options,
+        });
+
+        var userdata = host.ClrBridge.CreateInstance(typeName);
+        var payload = Assert.IsType<LuaClrObject>(userdata.Payload);
+        var disposable = Assert.IsType<CountingDisposable>(payload.Instance);
+        userdata.DisposePayload();
+        userdata.DisposePayload();
+
+        Assert.Equal(1, disposable.DisposeCount);
+        Assert.True(payload.IsDisposed);
+    }
+
+    [Fact]
+    public void ClrBridgeConstructsImplicitDefaultValueTypes()
+    {
+        var typeName = typeof(SampleStruct).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [typeof(SampleStruct).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+            },
+        });
+
+        var userdata = host.ClrBridge.CreateInstance(typeName);
+        var payload = Assert.IsType<LuaClrObject>(userdata.Payload);
+        Assert.Equal(typeof(SampleStruct), payload.Instance.GetType());
+        Assert.Equal(0, Assert.IsType<SampleStruct>(payload.Instance).Value);
+    }
+
+    [Fact]
+    public void ClrBridgeUsesLuaNumericTagsForDeterministicOverloadSelection()
+    {
+        var typeName = typeof(NumericChoice).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [typeof(NumericChoice).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+            },
+        });
+
+        var integer = host.ClrBridge.CreateInstance(typeName, [LuaValue.FromInteger(42)]);
+        var floating = host.ClrBridge.CreateInstance(typeName, [LuaValue.FromFloat(42)]);
+
+        Assert.Equal("long", Assert.IsType<NumericChoice>(
+            Assert.IsType<LuaClrObject>(integer.Payload).Instance).Constructor);
+        Assert.Equal("double", Assert.IsType<NumericChoice>(
+            Assert.IsType<LuaClrObject>(floating.Payload).Instance).Constructor);
+    }
+
+    [Fact]
+    public void ClrBridgeWrapsConstructorFailuresWithStableCode()
+    {
+        var typeName = typeof(ThrowingConstructor).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [typeof(ThrowingConstructor).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+            },
+        });
+
+        var exception = Assert.Throws<LuaClrException>(
+            () => host.ClrBridge.CreateInstance(typeName));
+
+        Assert.Equal(LuaClrErrorCode.ConstructionFailed, exception.Code);
+        Assert.IsType<InvalidOperationException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void ClrBridgeRejectsInvalidCapabilityConfiguration()
+    {
+        var state = new LuaState();
+
+        Assert.Throws<ArgumentException>(() => new LuaClrBridge(state, new LuaClrOptions
+        {
+            Capabilities = LuaClrCapabilities.Construction,
+        }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LuaClrBridge(
+            state,
+            new LuaClrOptions
+            {
+                Capabilities = (LuaClrCapabilities)128,
+            }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LuaClrBridge(
+            state,
+            new LuaClrOptions
+            {
+                MaximumTypeNameLength = 0,
+            }));
+    }
+
+    [Fact]
+    public void ClrBridgeRejectsPublicTypesNestedInAnInternalType()
+    {
+        var typeName = typeof(InternalContainer.PublicValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery,
+                AllowedAssemblyNames = [typeof(InternalContainer).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+            },
+        });
+
+        var exception = Assert.Throws<LuaClrException>(
+            () => host.ClrBridge.ResolveType(typeName));
+
+        Assert.Equal(LuaClrErrorCode.TypeNotAllowed, exception.Code);
+    }
+
+    [Fact]
     public void RunCompilesAndExecutesThroughOnePublicBoundary()
     {
         using var host = new LuaHost();
@@ -612,5 +908,71 @@ public sealed class LuaHostTests
 
         public void Set(string path, string source) =>
             _files[path] = Encoding.UTF8.GetBytes(source);
+    }
+
+    public sealed class SampleValue
+    {
+        public SampleValue()
+            : this(0)
+        {
+        }
+
+        public SampleValue(int value)
+        {
+            Value = value;
+        }
+
+        public int Value { get; }
+    }
+
+    public sealed class CountingDisposable : IDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    public struct SampleStruct
+    {
+        public int Value { get; set; }
+    }
+
+    public sealed class NumericChoice
+    {
+        public NumericChoice(long value)
+        {
+            Constructor = "long";
+        }
+
+        public NumericChoice(double value)
+        {
+            Constructor = "double";
+        }
+
+        public NumericChoice(object value)
+        {
+            Constructor = "object";
+        }
+
+        public string Constructor { get; }
+    }
+
+    public sealed class ThrowingConstructor
+    {
+        public ThrowingConstructor() => throw new InvalidOperationException("expected failure");
+    }
+
+    public sealed class LuaValueChoice
+    {
+        public LuaValueChoice(LuaValue value) => Value = value;
+
+        public LuaValue Value { get; }
+    }
+
+    internal sealed class InternalContainer
+    {
+        public sealed class PublicValue
+        {
+        }
     }
 }

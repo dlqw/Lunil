@@ -1,9 +1,7 @@
 # ADR 0017: Quiesce JIT generations and publish immutable function versions
 
-- Status: Accepted
 - Date: 2026-07-17
-- Target: Lua 5.4.8, .NET 10
-- Supersedes: the deferred concurrent/versioned parts of ADR 0016
+- Supersedes: the concurrent/versioned parts of ADR 0016
 
 ## Context
 

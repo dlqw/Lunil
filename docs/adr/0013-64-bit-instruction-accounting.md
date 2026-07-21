@@ -1,8 +1,6 @@
 # ADR 0013: Use 64-bit compiled instruction accounting
 
-- Status: Accepted for the 0.8 development line
 - Date: 2026-07-16
-- Target: Lua 5.4.8, .NET 10
 - Extends: [ADR 0001](0001-execution-backend-abi-v1.md),
   [ADR 0011](0011-linear-numeric-regions.md)
 

@@ -1,8 +1,6 @@
 # ADR 0012: Qualify guarded Tier 2 table and Lua-call fast paths
 
-- Status: Accepted for the 0.8 development line
 - Date: 2026-07-16
-- Target: Lua 5.4.8, .NET 10
 - Extends: [ADR 0005](0005-tier2-auto-default-rollout.md),
   [ADR 0011](0011-linear-numeric-regions.md)
 

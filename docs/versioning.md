@@ -5,11 +5,11 @@ informational versions, Git tags, changelog names, bundles, and GitHub releases 
 `Directory.Build.props`:
 
 ```xml
-<VersionPrefix>0.10.1</VersionPrefix>
+<VersionPrefix>0.11.0-alpha.1</VersionPrefix>
 ```
 
-This example produces `0.10.1`. Stable tags `v0.8.0`, `v0.9.0`, `v0.10.0`, and `v0.10.1`
-remain immutable.
+This example produces `0.11.0-alpha.1`. Stable tags `v0.8.0`, `v0.9.0`, `v0.10.0`, and
+`v0.10.1` remain immutable.
 
 ## Compatibility lines
 
@@ -25,6 +25,7 @@ remain immutable.
 | `0.8.x` | Maintained | Backward-compatible fixes only |
 | `0.9.x` | Maintained | Backward-compatible fixes only |
 | `0.10.x` | Stable | Backward-compatible fixes only |
+| `0.11.0-alpha.N` | Active development | Feature and public API development |
 | `0.10.0-alpha.N` | Published development history | Immutable prerelease evidence |
 | `0.10.0-beta.N` | Unused channel | No release published |
 | `0.10.0-rc.N` | Published release-candidate history | Immutable prerelease evidence |
@@ -43,6 +44,7 @@ Numbers increase monotonically within a channel and restart at `1` when entering
 ```text
 0.9.0-alpha.1 -> ... -> 0.9.0
 0.10.0-alpha.1 -> ... -> 0.10.0
+0.11.0-alpha.1 -> ... -> 0.11.0
 ```
 
 ## Versioned assets

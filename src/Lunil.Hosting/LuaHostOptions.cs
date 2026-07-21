@@ -82,4 +82,10 @@ public sealed record LuaHostOptions
     /// its own capability set. Explicit capabilities take precedence over profile defaults.
     /// </summary>
     public LuaStandardLibraryOptions? StandardLibrary { get; init; }
+
+    /// <summary>
+    /// Gets the optional capability-controlled CLR bridge configuration. The default keeps the
+    /// bridge disabled and does not install a <c>clr</c> global module.
+    /// </summary>
+    public LuaClrOptions Clr { get; init; } = LuaClrOptions.Disabled;
 }

@@ -1,8 +1,6 @@
 # ADR 0021: Bounded table/operand PICs in Tier 2
 
-- Status: Accepted
 - Date: 2026-07-18
-- Target: `0.8.0-alpha.15`, Lua 5.4.8, .NET 10
 - Related: [issue #58](https://github.com/dlqw/Lunil/issues/58),
   [ADR 0011](0011-linear-numeric-regions.md),
   [ADR 0012](0012-guarded-table-call-fastpaths.md),

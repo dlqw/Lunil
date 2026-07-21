@@ -28,39 +28,38 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > [!NOTE]
 > 稳定版 `0.10.1` 是当前支持版本。它暴露 Lua 5.1–5.5 的显式版本身份和独立
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
+> `0.11.0-alpha.1` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
+> 嵌入 Host 未配置时该 bridge 保持禁用。
 
 ## 性能
 
 正式 `0.10.0` 数据集使用完全相同的 Lua 源码，在八个工作负载、六轮平衡采样和 `win-x64`
-发布 RID 上测试。PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快；数据集还包含固定版本的
-LuaJIT 2.1、MoonSharp 2.0.0 以及托管/方言引擎。
+发布 RID 上测试。PUC Lua 5.4.8 归一化为 `1.000x`，数值越高越快。每行标注语义分组，
+比较仅在兼容的语言契约之间进行。
 
-| 引擎 | 版本 | 相对 PUC Lua 5.4.8 几何均值 | 相对 MoonSharp 2.0.0 几何均值 |
-| --- | --- | ---: | ---: |
-| LuaJIT | 2.1（commit `3c4f9fe`） | 9.376x | 138.692x |
-| PUC Lua | 5.4.8 | 1.000x | 14.855x |
-| **Lunil Auto JIT** | **0.10.0** | **1.475x** | **21.796x** |
-| NeoLua | 1.3.19 | 0.352x | 5.243x |
-| Luau | 0.623 | 1.056x | 15.666x |
-| GopherLua | 1.1.1 | 0.214x | 3.174x |
-| Wasmoon | 1.16.0 | 0.470x | 7.012x |
-| UniLua | `194eb311` | 0.308x | 4.558x |
-| MoonSharp | 2.0.0 | 0.067x | 1.000x |
-
-比值仅用于同一语义分组内参考；不得把 LuaJIT/方言与托管引擎合并成一个总分。
+| 引擎 | 版本 | 语义分组 | 相对 PUC Lua 5.4.8 几何均值 |
+| --- | --- | --- | ---: |
+| LuaJIT | 2.1（commit `3c4f9fe`） | `lua51-dialect` | 9.376x |
+| **Lunil Auto JIT** | **0.10.0** | **lua54** | **1.475x** |
+| Luau | 0.623 | `lua51-dialect` | 1.056x |
+| PUC Lua | 5.4.8 | `lua54` | 1.000x |
+| Wasmoon | 1.16.0 | `lua54` | 0.470x |
+| NeoLua | 1.3.19 | `managed-dotnet` | 0.352x |
+| UniLua | `194eb311` | `lua52-managed` | 0.308x |
+| GopherLua | 1.1.1 | `lua51-dialect` | 0.214x |
 
 ![Lunil 0.10.0 运行时对比](assets/performance/0.10.0-runtime-overview.svg)
 
-| Auto JIT 工作负载 | 相对 PUC Lua 5.4.8 | 相对 MoonSharp 2.0.0 |
-| --- | ---: | ---: |
-| 算术循环 | 1.321x | 27.374x |
-| 迭代 Fibonacci | 3.203x | 57.120x |
-| Mandelbrot | 3.339x | 51.828x |
-| 控制流 | 1.661x | 32.261x |
-| 函数调用 | 2.839x | 40.503x |
-| 表访问 | 0.377x | 10.480x |
-| 素数筛 | 0.450x | 10.436x |
-| 字符串构建 | 1.980x | 4.398x |
+| Auto JIT 工作负载 | 相对 PUC Lua 5.4.8 |
+| --- | ---: |
+| 算术循环 | 1.321x |
+| 迭代 Fibonacci | 3.203x |
+| Mandelbrot | 3.339x |
+| 控制流 | 1.661x |
+| 函数调用 | 2.839x |
+| 表访问 | 0.377x |
+| 素数筛 | 0.450x |
+| 字符串构建 | 1.980x |
 
 ![Lunil 0.10.0 Auto JIT 按工作负载对比](assets/performance/0.10.0-auto-workloads.svg)
 
@@ -77,6 +76,8 @@ LuaJIT 2.1、MoonSharp 2.0.0 以及托管/方言引擎。
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
 - **自适应执行**：动态代码可用时，默认 Auto JIT 选择经过验证的编译路径；否则使用参考解释器。
 - **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
+- **受能力控制的 CLR bridge**：0.11 开发线可以发现和构造精确 allowlist 中的 CLR 类型，
+  不会加载 assembly，也不会开放无限制 reflection。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
 
@@ -187,9 +188,9 @@ flowchart LR
 - 运行时目标：.NET 10。
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
-- 稳定线：`0.10.x`；下一条开发线将在启动时另行记录。
+- 稳定线：`0.10.x`；活跃 prerelease 线：`0.11.0-alpha.1`。
 
-兼容性变更和部署说明见 [`0.8.0` 迁移指南](docs/migration-0.8.0.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
+兼容性变更和部署说明见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
 [.NET NativeAOT 与 trimming（简体中文）](docs/nativeaot-build-integration.zh-CN.md)。
 
 ## 文档
@@ -198,6 +199,7 @@ flowchart LR
 | --- | --- |
 | [性能](docs/performance.zh-CN.md) | 当前数据、图表、方法与复现方式 |
 | [路线图](docs/roadmap.zh-CN.md) | Lua 版本兼容、运行时对比、CLR 互操作与热更新 |
+| [CLR 互操作](docs/clr-interop.zh-CN.md) | Allowlist 配置、构造、转换、ownership 与发布约束 |
 | [编译器设计（简体中文）](docs/compiler-design.zh-CN.md) | 编译器、IR、运行时与执行架构 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
 | [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |

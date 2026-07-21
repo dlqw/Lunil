@@ -1,16 +1,13 @@
 # ADR 0028: Lua version syntax / lexical boundary audit
 
-- Status: Accepted
 - Date: 2026-07-21
-- Target: `0.10.x` roadmap completion
 - Related: [ADR 0023](0023-lua-language-version-contract.md), [ADR 0026](0026-lua51-lua55-version-adapters.md)
 
 ## Context
 
 Lunil 0.10 ships explicit language-version identity through lexer, parser, binder, chunk
-adapters, and stdlib surface gates. The remaining gap called out by the 0.10.0 tasklist is a
-**systematic audit** of version-conditioned syntax and lexical boundaries so the pipeline is not
-implicitly 5.4-centric.
+adapters, and stdlib surface gates. Version-conditioned syntax and lexical boundaries require a
+**systematic audit** so the pipeline is not implicitly 5.4-centric.
 
 ## Decision
 

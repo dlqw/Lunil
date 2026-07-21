@@ -1,9 +1,5 @@
 # Lunil 编译器与运行时技术设计
 
-状态：已批准并进入实现
-目标版本：Lua 5.4.8、.NET 10
-文档版本：0.2
-
 ## 1. 目标与范围
 
 Lunil 是完全使用 C# 实现的 Lua 5.4 编译器、运行时与静态分析工具链。项目必须提供：
@@ -182,7 +178,7 @@ vararg/function/generic/structural-table type syntax。所有 token、annotation
 
 分析流水线为 Lua binder、模块解析、约束生成、控制流图、类型收窄、跨模块固定点、诊断与 suppression。必须识别 `x ~= nil`、`type(x) == "string"`、`assert(x)`、短路表达式、判别字段与 `---@cast` 等收窄形式。循环递归类型、循环模块依赖和过深泛型实例化使用预算与稳定的 widening 规则收敛。
 
-当前 `Lunil.Analysis` 单文档阶段已实现 semantic type/type-pack、class/alias/enum declaration、
+`Lunil.Analysis` 单文档分析支持 semantic type/type-pack、class/alias/enum declaration、
 structural table、array/map、function/overload/callable、generic substitution、operator lookup、structural
 assignability、expression/symbol inference、call/assignment/return constraint，以及每函数 CFG。流状态覆盖
 nil/type/assert/判别字段/短路收窄、definite assignment、unreachable、numeric/generic-for、return-pack
@@ -318,13 +314,13 @@ yield 返回显式 `VmSignal.Yield`，而不是保留 CLR 调用栈。resume 从
 
 0.2.0 运行时基线采用引用字段加 64 位 payload 的 16-byte `LuaValue`。所有 collectable value 具有唯一 `LuaHeap` owner 和稳定对象编号；栈、table、upvalue、闭包、线程、handle、永久根及 pending continuation 的写入都执行 owner 校验与 barrier。跨 `LuaState` 写入和逻辑回收后的悬空对象访问会产生 Lua 运行时错误。
 
-`LuaHeap` 已实现 incremental/generational 三色状态机、gray/gray-again、old-to-young remembered set、逻辑分配债务、配额、安全点、每次分配触发的 stress 模式、minor/major promotion，以及独立于 CLR GC 的 sweep。atomic 阶段处理动态 `__mode`、弱键/弱值、PUC 字符串强引用例外、ephemeron fixed point 和 finalizer separation；finalizer 在解释器安全点执行，可通过 `LuaHandle` 复活对象，且异常进入 warning 通道。
+`LuaHeap` 采用 incremental/generational 三色状态机、gray/gray-again、old-to-young remembered set、逻辑分配债务、配额、安全点、每次分配触发的 stress 模式、minor/major promotion，以及独立于 CLR GC 的 sweep。atomic 阶段处理动态 `__mode`、弱键/弱值、PUC 字符串强引用例外、ephemeron fixed point 和 finalizer separation；finalizer 在解释器安全点执行，可通过 `LuaHandle` 复活对象，且异常进入 warning 通道。
 
 `LuaTable` 使用连续 array part 与开放寻址 hash part，hash 删除保留 tombstone 以支持 `next(table, deletedKey)`，rehash 后失效的键按 Lua 错误拒绝。键实现 integer/float 归一、NaN 拒绝、每 state 随机 seed，并分别维护 storage、shape、metatable version。逻辑容量变化计入 heap quota，所有强弱边及 metatable 写入都经过 barrier。无 metatable 的强 array 快路径使用 forward barrier 直接标记新子对象，避免增量 GC 反复扫描增长中的 dense table，并在一次 probe 内完成 existing update 或 sequential append；潜在 weak/metatable table 与无 integer tag 的快路径键回退到通用 normalization/backward-barrier 路径。
 
 `LuaInterpreter` 直接执行 canonical IR，Lua 调用和 Lua 元方法只压入显式 frame。共享调度覆盖 `__index`、`__newindex`、`__call`、算术/位运算、`__len`、`__concat`、`__eq`、`__lt`、`__le` 及其 fallback；类型元表与对象元表走同一路径，并具有 2,000 层链预算。普通算术和 numeric-for 使用与 lexer 共享的 Lua 数字解析器转换完整数字字符串，integer loop 在边界处用宽中间值判定，避免 64 位回绕造成额外迭代。
 
-Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换均已完成，并继续由解释器/JIT 差分及官方 portable user-mode 语料回归。
+Lua 错误以 `LuaValue` 传播。`pcall`/`xpcall` 使用最近的显式 protected boundary；`xpcall` handler 自身失败产生 PUC 的 `error in error handling`。`__close` 在正常返回、跳转和错误展开中逆序运行，Lua closure closer 可跨多个解释器迭代恢复；返回值和 tail-call 目标/参数在 closer 前快照，closer 错误替换当前错误，nil/false close value 被忽略。协程 yield/resume、完整标准库和 chunk-to-canonical 执行转换共享解释器/JIT 差分及官方 portable user-mode 语料契约。
 
 ### 8.7 require 记录与 idle-only 模块重载
 
@@ -781,10 +777,10 @@ sandbox filesystem 与各命令执行器之间的单向依赖。
 - 常见 table 字段命中不装箱；
 - 多返回值使用 Lua 栈区间；
 - 分别测量冷启动、解释器吞吐、JIT 预热、稳定吞吐、NativeAOT/裁剪发布体积和峰值内存；
-- 以原生 PUC Lua 5.4.8 为固定 `1.000x` 归一化基准，同时对照 LuaJIT、MoonSharp 与
+- 以原生 PUC Lua 5.4.8 为固定 `1.000x` 归一化基准，并按语义分组报告其他运行时与
   Lunil 全部执行配置；
-- Auto 与 Tier 2 必须在每个跨运行时 workload 上达到 MoonSharp 的 1.05 倍配对中位数，
-  CI95 下界不低于 1.00 倍，并保持单一路由和零 timed-region fallback/deopt；
+- Auto 与 Tier 2 使用按 workload 定义的 PUC Lua 基准门槛，CI95 下界不低于对应门槛，
+  并保持单一路由和零 timed-region fallback/deopt；
 - 未通过全部语义测试的优化不得进入默认优化级别。
 
 后端微基准使用 `scripts/Measure-BackendPerformance.ps1` 测量启动、稳态吞吐、分配、编译 p95、

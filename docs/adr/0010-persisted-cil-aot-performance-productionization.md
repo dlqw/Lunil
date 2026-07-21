@@ -1,8 +1,7 @@
 # ADR 0010: Productize persisted CIL AOT performance
 
-- Status: Superseded by ADR 0018 in `0.8.0-alpha.12`
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
+- Superseded by: [ADR 0018](0018-remove-lua-aot.md) in `0.8.0-alpha.12`
 - Depends on: [ADR 0002](0002-execution-backend-abi-v2.md)
 
 ## Context

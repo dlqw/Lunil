@@ -25,8 +25,5 @@
   <text x="236" y="238" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">Lunil Auto JIT 0.8.0</text>
   <rect x="260" y="220" width="388.0" height="26" rx="6" fill="#6d28d9"/>
   <text x="658.0" y="238" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.680×</text>
-  <text x="236" y="286" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="600" fill="#1e293b">MoonSharp 2.0.0</text>
-  <rect x="260" y="268" width="102.0" height="26" rx="6" fill="#64748b"/>
-  <text x="372.0" y="286" text-anchor="start" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">0.068×</text>
   <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · PUC Lua 5.4.8 = 1.000×</text>
 </svg>

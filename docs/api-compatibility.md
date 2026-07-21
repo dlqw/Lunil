@@ -1,8 +1,8 @@
 # Versioned API and package compatibility
 
-Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable, while
-the stable `0.10` line uses reviewed public-API and package snapshots so multi-version additions
-remain visible without rewriting stable `0.7`, `0.8`, or `0.9` declarations.
+Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable. The
+active `0.11` prerelease line uses reviewed public-API and package snapshots without rewriting the
+stable `0.7`, `0.8`, `0.9`, or `0.10` declarations.
 
 ## Compatibility lines
 
@@ -66,6 +66,13 @@ compatibility line without changing the reviewed API/package baseline.
 Patch releases on `0.10.x` use this baseline and may add only reviewed backward-compatible fixes.
 The 0.9 declarations remain pinned to `api/0.9.0/`.
 
+### Reviewed `0.11.0` prerelease snapshot
+
+[`api/0.11.0/`](../api/0.11.0/) is the active Alpha snapshot. Unlike a stable freeze, it may gain
+reviewed public API while the 0.11 feature contract is under development. Alpha.1 adds the optional
+Hosting CLR bridge, its capability and allowlist options, type and constructor descriptions,
+object ownership wrapper, and stable error codes. The earlier stable baselines remain immutable.
+
 ## Public API baseline
 
 The active `manifest.json` pins 13 shipped assemblies and the SHA-256 of a generated C# declaration
@@ -83,8 +90,8 @@ declarations:
 
 ```powershell
 ./scripts/Update-PublicApiBaselines.ps1 -Configuration Release
-git diff -- api/0.10.0
-git diff --exit-code v0.9.0 -- api/0.9.0
+git diff -- api/0.11.0
+git diff --exit-code v0.10.1 -- api/0.10.0
 ```
 
 Stable updates are limited by the promotion policy in [versioning](versioning.md); new API and
@@ -116,10 +123,10 @@ The update command is reserved for a reviewed package-boundary change:
 
 ```powershell
 ./scripts/Update-PackageBaseline.ps1 -Version $version
-git diff -- api/0.10.0/packages.json
-git diff --exit-code v0.9.0 -- api/0.9.0/packages.json
+git diff -- api/0.11.0/packages.json
+git diff --exit-code v0.10.1 -- api/0.10.0/packages.json
 ```
 
-Normal CI and tag-triggered release workflows enforce the active gates. Stable patch fixes update
-the accepted baseline only when a deliberate compatible surface or asset change requires it;
-breaking changes wait for the next pre-1.0 minor compatibility line.
+Normal CI and tag-triggered release workflows enforce the active gates. Alpha additions require a
+deliberate snapshot update; stable patch fixes update their accepted baseline only for a compatible
+surface or asset change. Breaking stable-line changes wait for the next pre-1.0 minor line.

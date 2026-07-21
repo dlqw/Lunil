@@ -1,8 +1,6 @@
 # ADR 0009: Enable qualified Loop OSR by default
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0008](0008-loop-osr-qualified-preparation-and-evidence.md)
 
 ## Context

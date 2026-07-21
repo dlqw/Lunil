@@ -1,8 +1,6 @@
 # ADR 0004: Productionize exact-numeric Tier 2 without changing the default
 
-- Status: Accepted
 - Date: 2026-07-13
-- Target: Lua 5.4.8, .NET 10
 - Depends on: [ADR 0002](0002-execution-backend-abi-v2.md),
   [ADR 0003](0003-tier1-auto-default-rollout.md)
 
@@ -10,7 +8,7 @@
 
 The original profile-guided Tier 2 executor interpreted an optimized managed program. On the
 initial arithmetic qualification workload it was slower and allocated substantially more than both the interpreter and
-Tier 1, so it could not satisfy the approved 4x arithmetic gate. It also repeated canonical
+Tier 1, so it could not satisfy the required 4x arithmetic gate. It also repeated canonical
 liveness analysis during promotion and did not expose enough phase attribution to distinguish
 profile planning, CIL emission, and delegate creation.
 

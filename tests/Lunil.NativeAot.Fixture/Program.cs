@@ -1,9 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
+using Lunil.Hosting;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
+using Lunil.Runtime.Values;
 using Lunil.Workspace;
 
 namespace Lunil.NativeAot.Fixture;
@@ -101,6 +104,12 @@ public static class Program
             }
         }
 
+        if (!VerifyClrInterop())
+        {
+            Console.Error.WriteLine("The preserved CLR interoperation contract is invalid.");
+            return 6;
+        }
+
         Console.WriteLine("LUNIL_NATIVEAOT_OK");
         return 0;
     }
@@ -131,5 +140,43 @@ public static class Program
             string.Join(
                 "; ",
                 compilation.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+    }
+
+    [DynamicDependency(
+        DynamicallyAccessedMemberTypes.PublicConstructors,
+        typeof(ClrFixtureValue))]
+    private static bool VerifyClrInterop()
+    {
+        var typeName = typeof(ClrFixtureValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
+                AllowedAssemblyNames = [typeof(ClrFixtureValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var info = host.ClrBridge.ResolveType(typeName);
+        var userdata = host.ClrBridge.CreateInstance(typeName, [LuaValue.FromInteger(42)]);
+        var payload = userdata.GetPayload<LuaClrObject>();
+        var luaResult = host.RunUtf8($"return type(clr.new('{typeName}', 43))");
+        return info.IsConstructible &&
+            payload.Instance is ClrFixtureValue { Value: 42 } &&
+            luaResult.Succeeded &&
+            luaResult.Execution!.Values[0].AsString().ToString() == "userdata";
+    }
+
+    public sealed class ClrFixtureValue
+    {
+        public ClrFixtureValue(long value)
+        {
+            Value = value;
+        }
+
+        public long Value { get; }
     }
 }

@@ -29,40 +29,38 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > [!NOTE]
 > Stable `0.10.1` is the supported release. It preserves Lua 5.4.8 as the default while exposing
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
+> The `0.11.0-alpha.1` source line adds an opt-in, exact-allowlist CLR type discovery and object
+> construction bridge; it remains disabled unless an embedding host configures it.
 
 ## Performance
 
 The formal `0.10.0` dataset uses identical Lua source across eight workloads, six balanced rounds,
-and the `win-x64` release RID. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. The
-dataset includes PUC Lua 5.4.8, LuaJIT 2.1, MoonSharp 2.0.0, and pinned managed/dialect engines.
+and the `win-x64` release RID. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. Each
+row identifies its semantic group so comparisons stay within compatible language contracts.
 
-| Engine | Version | Geomean vs PUC Lua 5.4.8 | Geomean vs MoonSharp 2.0.0 |
-| --- | --- | ---: | ---: |
-| LuaJIT | 2.1 (commit `3c4f9fe`) | 9.376x | 138.692x |
-| PUC Lua | 5.4.8 | 1.000x | 14.855x |
-| **Lunil Auto JIT** | **0.10.0** | **1.475x** | **21.796x** |
-| NeoLua | 1.3.19 | 0.352x | 5.243x |
-| Luau | 0.623 | 1.056x | 15.666x |
-| GopherLua | 1.1.1 | 0.214x | 3.174x |
-| Wasmoon | 1.16.0 | 0.470x | 7.012x |
-| UniLua | `194eb311` | 0.308x | 4.558x |
-| MoonSharp | 2.0.0 | 0.067x | 1.000x |
-
-Ratios are informative only within each engine's semantic group; LuaJIT/dialect values must not be
-treated as one merged score against managed engines.
+| Engine | Version | Semantic group | Geomean vs PUC Lua 5.4.8 |
+| --- | --- | --- | ---: |
+| LuaJIT | 2.1 (commit `3c4f9fe`) | `lua51-dialect` | 9.376x |
+| **Lunil Auto JIT** | **0.10.0** | **lua54** | **1.475x** |
+| Luau | 0.623 | `lua51-dialect` | 1.056x |
+| PUC Lua | 5.4.8 | `lua54` | 1.000x |
+| Wasmoon | 1.16.0 | `lua54` | 0.470x |
+| NeoLua | 1.3.19 | `managed-dotnet` | 0.352x |
+| UniLua | `194eb311` | `lua52-managed` | 0.308x |
+| GopherLua | 1.1.1 | `lua51-dialect` | 0.214x |
 
 ![Lunil 0.10.0 runtime comparison](assets/performance/0.10.0-runtime-overview.svg)
 
-| Auto JIT workload | Vs PUC Lua 5.4.8 | Vs MoonSharp 2.0.0 |
-| --- | ---: | ---: |
-| Arithmetic | 1.321x | 27.374x |
-| Iterative Fibonacci | 3.203x | 57.120x |
-| Mandelbrot | 3.339x | 51.828x |
-| Control flow | 1.661x | 32.261x |
-| Function calls | 2.839x | 40.503x |
-| Table access | 0.377x | 10.480x |
-| Prime sieve | 0.450x | 10.436x |
-| String build | 1.980x | 4.398x |
+| Auto JIT workload | Vs PUC Lua 5.4.8 |
+| --- | ---: |
+| Arithmetic | 1.321x |
+| Iterative Fibonacci | 3.203x |
+| Mandelbrot | 3.339x |
+| Control flow | 1.661x |
+| Function calls | 2.839x |
+| Table access | 0.377x |
+| Prime sieve | 0.450x |
+| String build | 1.980x |
 
 ![Lunil 0.10.0 Auto JIT by workload](assets/performance/0.10.0-auto-workloads.svg)
 
@@ -86,6 +84,8 @@ methodology, pinned reference versions, and reproduction commands are in
   is available and otherwise uses the reference interpreter.
 - **Embeddable and sandboxable** — reusable hosting API with restricted, trusted, and deterministic
   capability profiles.
+- **Capability-controlled CLR bridge** — the 0.11 development line can discover and construct
+  exact-allowlisted CLR types without loading assemblies or enabling unrestricted reflection.
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
   use deterministic interpreter fallback when dynamic code is unavailable.
 
@@ -201,9 +201,9 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
-- Stable line: `0.10.x`; the next development line will be documented when it opens.
+- Stable line: `0.10.x`; active prerelease line: `0.11.0-alpha.1`.
 
-Compatibility changes and deployment notes are documented in the [0.8.0 migration guide](docs/migration-0.8.0.md).
+Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).
 .NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
 
 ## Documentation
@@ -212,6 +212,7 @@ Compatibility changes and deployment notes are documented in the [0.8.0 migratio
 | --- | --- |
 | [Performance](docs/performance.md) | Current benchmark data, charts, methodology, and reproduction |
 | [Roadmap](docs/roadmap.md) | Lua version compatibility, runtime comparisons, CLR interoperation, and hot updates |
+| [CLR interoperation](docs/clr-interop.md) | Allowlist configuration, construction, conversion, ownership, and deployment |
 | [Compiler design](docs/compiler-design.md) | Compiler, IR, runtime, and execution architecture |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
 | [API compatibility](docs/api-compatibility.md) | Versioned public API and package baselines |

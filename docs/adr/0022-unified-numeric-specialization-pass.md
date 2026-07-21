@@ -1,8 +1,6 @@
 # ADR 0022: Unified numeric specialization pass and retained compiler seams
 
-- Status: Accepted
 - Date: 2026-07-18
-- Scope: `0.9.0-alpha.1`
 
 ## Context
 
