@@ -32,7 +32,7 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.5` hot-update preview; it is not the stable package
+> The current source tree is the `0.12.0-alpha.6` hot-update preview; it is not the stable package
 > line.
 
 ## Performance
@@ -86,6 +86,8 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   across compilation and workspace snapshots without using source offsets or transient IDs.
 - **Code intelligence indexes** — typed call sites, unresolved call retention, reference queries,
   and compilation/workspace call graphs are available without reinterpreting the generic AST.
+- **Runnable analysis embedding** — a CI-executed sample covers compiler, semantics, annotations,
+  CFGs, call/reference indexes, cyclic workspaces, stable identities, and cache invalidation.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
 - **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
@@ -214,6 +216,11 @@ For a completed `LuaWorkspaceResult`, `FindReferences(LuaSymbolKey)`,
 `FindGlobalReferences(string)`, and `GetCallGraph()` add module/source identities, stable function
 keys, and conservative module-export targets. Reassigned module aliases are not reported as static
 module targets.
+
+The [static analysis embedding guide](docs/static-analysis-embedding.md) and its
+[executable sample](samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs) cover UTF-8 byte
+spans versus UTF-16 editor positions, diagnostic phases, stable snapshot identities, CFGs,
+workspace cycles, cache invalidation, lifetime, concurrency, and production budgets.
 
 ## Quick start
 
