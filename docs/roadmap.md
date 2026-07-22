@@ -24,6 +24,17 @@ Hosts control execution policy, instruction budgets, language version, module id
 
 NativeAOT and trimmed hosts use the same public semantics through the managed execution path when dynamic code is unavailable. Module publication and function slots use content identities and generations so a stale compiled entry cannot run after replacement.
 
+Production hot updates enter through signed, resource-bounded patch bundles. Isolated background
+preparation binds a bundle to expected live module revisions; a game-loop update window then
+publishes the dependency-ordered module set atomically. Suspended frames retain their captured code
+generation, while calls that enter after commit observe the replacement generation. Signed state
+schemas and reversible host adapters migrate Lua tables, userdata payloads, coroutines, timers,
+ subscriptions, and tasks inside the same publication journal. A process-local coordinator adds
+ all-State barrier publication, ordered canary/ring rollout, health-gated rollback, and a durable
+ hash-chained deployment journal with host-reconciled crash recovery. The journal enforces one writer
+ through a lifetime sidecar lock, serves concurrent verified readers, and uses atomic, retention-aware
+ compaction so a long-running deployment service does not permanently exhaust its active file.
+
 ## Reading the design notes
 
 The [architecture notes](adr/) document the execution ABI, numeric specialization, invalidation, heap identity, and language adapters. The compiler, runtime-continuation, conformance, and interoperability guides provide API and operational details for each public boundary.

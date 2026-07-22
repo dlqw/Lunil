@@ -76,6 +76,7 @@ internal static class LunilCli
                 CliCommand.Check => await CheckCommand.ExecuteAsync(context).ConfigureAwait(false),
                 CliCommand.Build => await BuildCommand.ExecuteAsync(context).ConfigureAwait(false),
                 CliCommand.Dump => await DumpCommand.ExecuteAsync(context).ConfigureAwait(false),
+                CliCommand.Patch => await PatchCommand.ExecuteAsync(context).ConfigureAwait(false),
                 _ => throw new CliUsageException("A command is required."),
             };
             return (int)result;
@@ -222,6 +223,7 @@ Usage:
   lunil check <input...> [options]
   lunil build <input> --output <path> [--target chunk] [options]
   lunil dump <input> [--kind <kind>] [--format text|json] [options]
+  lunil patch <pack|verify|inspect|dry-run|diff> ... [options]
 
 Global options:
   -h, --help                      Show help.
@@ -277,6 +279,15 @@ dump options:
   -o, --output <path|->           Write the dump to a file or stdout.
       --kind <kind>               summary, syntax, annotations, analysis, ir, or chunk.
       --format <text|json>        Dump serialization format (default: text).
+""",
+            CliCommand.Patch => global + """
+
+patch actions:
+  pack <manifest.json> <payload-root> -o <bundle> --private-key <pem> --key-id <id>
+  verify <bundle> --public-key <pem> --key-id <id>
+  inspect <bundle> --public-key <pem> --key-id <id>
+  dry-run <bundle> --public-key <pem> --key-id <id>
+  diff <base-bundle> <target-bundle> --public-key <pem> --key-id <id>
 """,
             _ => global,
         };

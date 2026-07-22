@@ -1,11 +1,90 @@
 using System.Text;
 using System.Reflection;
 using System.Text.Json;
+using System.Security.Cryptography;
+using Lunil.Core;
+using Lunil.Hosting;
 
 namespace Lunil.Cli.Tests;
 
 public sealed class LunilCliTests
 {
+    [Fact]
+    public async Task PatchCommandsPackVerifyInspectAndDryRunSignedBundle()
+    {
+        using var fixture = new CliFixture();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var privateKey = fixture.Write("private.pem", key.ExportECPrivateKeyPem());
+        var publicKey = fixture.Write("public.pem", key.ExportSubjectPublicKeyInfoPem());
+        fixture.Write(Path.Combine("payload", "modules", "main.lua"), "return 42");
+        var manifest = new LuaPatchManifest
+        {
+            PatchId = "cli-hotfix",
+            Channel = "qa",
+            TargetBuild = "game-2",
+            BaseRevision = "game-1",
+            TargetRevision = "game-2",
+            LanguageVersion = LuaLanguageVersion.Lua54,
+            RuntimeAbi = "lunil-0.12",
+            CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
+            ExpiresAt = new DateTimeOffset(2030, 7, 22, 0, 0, 0, TimeSpan.Zero),
+            Nonce = "cli-1",
+            Entries = [new LuaPatchEntryManifest
+            {
+                Name = "modules/main.lua",
+                ModuleName = "game.main",
+                Kind = LuaPatchEntryKind.Source,
+                ContentHash = new string('0', 64),
+                Length = 0,
+            }],
+        };
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllBytesAsync(manifestPath, LuaPatchManifestSerializer.Serialize(manifest));
+        var bundle = Path.Combine(fixture.Root, "hotfix.lpatch");
+
+        var pack = await fixture.RunAsync(
+            "patch", "pack", manifestPath, Path.Combine(fixture.Root, "payload"),
+            "--output", bundle, "--private-key", privateKey, "--key-id", "qa-1");
+        var verify = await fixture.RunAsync(
+            "patch", "verify", bundle, "--public-key", publicKey, "--key-id", "qa-1");
+        var inspect = await fixture.RunAsync(
+            "patch", "inspect", bundle, "--public-key", publicKey, "--key-id", "qa-1");
+        var dryRun = await fixture.RunAsync(
+            "patch", "dry-run", bundle, "--public-key", publicKey, "--key-id", "qa-1");
+
+        fixture.Write(Path.Combine("payload", "modules", "main.lua"), "return 43");
+        var nextManifest = manifest with
+        {
+            PatchId = "cli-hotfix-2",
+            BaseRevision = "game-2",
+            TargetRevision = "game-3",
+            Nonce = "cli-2",
+        };
+        var nextManifestPath = Path.Combine(fixture.Root, "manifest-next.json");
+        await File.WriteAllBytesAsync(
+            nextManifestPath,
+            LuaPatchManifestSerializer.Serialize(nextManifest));
+        var nextBundle = Path.Combine(fixture.Root, "hotfix-next.lpatch");
+        Assert.Equal(0, (await fixture.RunAsync(
+            "patch", "pack", nextManifestPath, Path.Combine(fixture.Root, "payload"),
+            "--output", nextBundle, "--private-key", privateKey, "--key-id", "qa-1")).ExitCode);
+        var diff = await fixture.RunAsync(
+            "patch", "diff", bundle, nextBundle,
+            "--public-key", publicKey, "--key-id", "qa-1");
+
+        Assert.Equal(0, pack.ExitCode);
+        Assert.True(File.Exists(bundle));
+        Assert.Equal(0, verify.ExitCode);
+        Assert.Contains("verified cli-hotfix game-2", verify.StandardOutput, StringComparison.Ordinal);
+        Assert.Equal(0, inspect.ExitCode);
+        Assert.Contains("lunil.patch.inspect.v1", inspect.StandardOutput, StringComparison.Ordinal);
+        Assert.Equal(0, dryRun.ExitCode);
+        Assert.Contains("\"preflight\": \"Ready\"", dryRun.StandardOutput, StringComparison.Ordinal);
+        Assert.Equal(0, diff.ExitCode);
+        Assert.Contains("lunil.patch.diff.v1", diff.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("game.main", diff.StandardOutput, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task HelpAndVersionAreAvailableWithoutACommand()
     {

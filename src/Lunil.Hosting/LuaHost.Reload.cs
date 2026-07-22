@@ -557,16 +557,24 @@ public sealed partial class LuaHost
             return new LuaFunctionMigrationPlan(prepared, rejected);
         }
 
-        public ImmutableArray<LuaFunctionMigrationResult> Apply()
+        public ImmutableArray<LuaFunctionMigrationResult> Apply() => Publish().Results;
+
+        public LuaFunctionMigrationPublication Publish()
         {
             var results = ImmutableArray.CreateBuilder<LuaFunctionMigrationResult>(
                 _prepared.Count + _rejected.Count);
+            var published = new List<PreparedFunctionMigration>(_prepared.Count);
             results.AddRange(_rejected);
             foreach (var migration in _prepared)
             {
                 var updated = migration.Slot.TryPublish(
                     migration.Previous,
                     migration.Replacement);
+                if (updated)
+                {
+                    published.Add(migration);
+                }
+
                 results.Add(new LuaFunctionMigrationResult(
                     migration.Previous.LogicalKey,
                     updated
@@ -580,11 +588,13 @@ public sealed partial class LuaHost
                     migration.Replacement.UpvalueLayoutFingerprint));
             }
 
-            return results
+            return new LuaFunctionMigrationPublication(
+                published,
+                results
                 .OrderBy(static result => result.LogicalKey, StringComparer.Ordinal)
                 .ThenBy(static result => result.Status)
                 .ThenBy(static result => result.PreviousGeneration)
-                .ToImmutableArray();
+                .ToImmutableArray());
         }
 
         private static LuaFunctionMigrationResult Result(
@@ -702,9 +712,45 @@ public sealed partial class LuaHost
             }
         }
 
-        private sealed record PreparedFunctionMigration(
+        public sealed record PreparedFunctionMigration(
             LuaFunctionSlot Slot,
             LuaFunctionVersion Previous,
             LuaFunctionVersion Replacement);
+
+        public sealed class LuaFunctionMigrationPublication
+        {
+            private readonly List<PreparedFunctionMigration> _published;
+            private bool _rolledBack;
+
+            public LuaFunctionMigrationPublication(
+                List<PreparedFunctionMigration> published,
+                ImmutableArray<LuaFunctionMigrationResult> results)
+            {
+                _published = published;
+                Results = results;
+            }
+
+            public ImmutableArray<LuaFunctionMigrationResult> Results { get; }
+
+            public bool Rollback()
+            {
+                if (_rolledBack)
+                {
+                    return true;
+                }
+
+                var restored = true;
+                for (var index = _published.Count - 1; index >= 0; index--)
+                {
+                    var migration = _published[index];
+                    restored &= migration.Slot.TryPublish(
+                        migration.Replacement,
+                        migration.Previous);
+                }
+
+                _rolledBack = true;
+                return restored;
+            }
+        }
     }
 }

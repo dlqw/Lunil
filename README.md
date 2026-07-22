@@ -32,6 +32,8 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
+> The current source tree is the `0.12.0-alpha.2` hot-update preview; it is not the stable package
+> line.
 
 ## Performance
 
@@ -87,6 +89,9 @@ methodology, pinned reference versions, and reproduction commands are in
   capability profiles.
 - **Capability-controlled CLR bridge** — the 0.11 can discover, construct, and invoke
   exact-allowlisted CLR types without loading assemblies or enabling unrestricted reflection.
+- **Production hot-update preview** — signed Patch Bundles, game-loop atomic publication, state and
+  resource migration, multi-State ring rollout, exclusively owned and compactable recovery journals,
+  and .NET telemetry.
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
   use deterministic interpreter fallback when dynamic code is unavailable.
 
@@ -234,6 +239,8 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics. See
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
 - Stable line: `0.11.x` (current release `0.11.0`); `0.10.x` remains compatible for existing hosts.
+- Preview source line: `0.12.0-alpha.2`; its reviewed API snapshot may grow before the stable
+  `0.12.0` freeze.
 
 Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).
 .NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
@@ -245,6 +252,7 @@ Compatibility changes and deployment notes are documented in the [0.11.0 migrati
 | [Performance](docs/performance.md) | Current benchmark data, charts, methodology, and reproduction |
 | [Roadmap](docs/roadmap.md) | Lua version compatibility, runtime comparisons, CLR interoperation, and hot updates |
 | [CLR interoperation](docs/clr-interop.md) | Allowlist configuration, construction, conversion, ownership, and deployment |
+| [Signed patch bundles](docs/hot-update.md) | Patch trust, game-loop safe points, multi-State ring rollout, durable recovery journals, and CLI workflows |
 | [Compiler design](docs/compiler-design.md) | Compiler, IR, runtime, and execution architecture |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
 | [API compatibility](docs/api-compatibility.md) | Versioned public API and package baselines |

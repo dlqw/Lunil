@@ -6,13 +6,20 @@ This guide describes how Lunil keeps public APIs and NuGet packages compatible a
 
 Each supported minor line has a declaration and package baseline under [`api/`](../api/). A baseline records the public/protected .NET surface, nullable annotations, generic constraints, package metadata, dependency groups, and package assets for that line. Stable baselines are immutable: a patch must retain source and binary compatibility with the baseline for its line.
 
-The repository contains baselines for `0.7.0`, `0.8.0`, `0.9.0`, `0.10.0`, and `0.11.0`. They are independent compatibility contracts, so a change in one line does not rewrite an older line.
+The repository contains baselines for `0.7.0`, `0.8.0`, `0.9.0`, `0.10.0`, `0.11.0`, and the
+reviewed `0.12.0` prerelease surface. They are independent compatibility contracts, so a change in
+one line does not rewrite an older line.
 
 ## Public contracts by line
 
 - `0.8` uses 64-bit `LuaCompiledExit.InstructionsConsumed`, allowing a compiled entry to account for more than `Int32.MaxValue` canonical instructions. It does not provide Lua persisted/static AOT APIs or the `Lunil.Build` package; .NET NativeAOT and trimming remain supported deployment modes.
 - `0.10` exposes `LuaLanguageVersion`, `LuaChunkFormat`, `LuaVersionProfileAttribute`, `LuaVersionFeatures`, and `LuaVersionFeatureTable`. Compiler, runtime, hosting, workspace, canonical-module, and closure options carry `LanguageVersion` where callers can observe the language boundary. The CLI accepts `--lua-version`, `languageVersion`, and `LUNIL_LUA_VERSION`.
 - `0.11` adds the opt-in CLR bridge in `Lunil.Hosting`. Its allowlists, capabilities, type descriptions, object wrappers, and error codes are public API; see [CLR interoperation](clr-interop.md).
+- `0.12` adds signed Patch Bundles, transactional game-loop update windows, state/resource migration,
+  multi-State rollout, exclusively owned and compactable recovery journals, hard resource limits,
+  and hot-update telemetry in `Lunil.Hosting`; see [Signed patch bundles](hot-update.md). The
+  `alpha.2` baseline is reviewed but
+  may grow through later `0.12` prereleases before the stable surface is frozen.
 
 ## Verifying a consumer package
 
