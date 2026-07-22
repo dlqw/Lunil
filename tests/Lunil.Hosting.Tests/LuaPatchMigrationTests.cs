@@ -194,6 +194,54 @@ public sealed class LuaPatchMigrationTests
     }
 
     [Fact]
+    public void ContinueCoroutinePreservesTheLiveThreadAcrossCommit()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {version='old',co=coroutine.create(function() " +
+                "coroutine.yield('old-worker') end)}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; old_worker=require('a').co").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "worker",
+                    Kind = LuaPatchResourceKind.Coroutine,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/co",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry(
+                "a",
+                "return {version='new',co=coroutine.create(function() " +
+                "coroutine.yield('new-worker') end)}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        var values = host.RunUtf8("""
+            local module = require('a')
+            local same = module.co == old_worker
+            local ok, value = coroutine.resume(module.co)
+            return module.version, same, ok, value
+            """).Execution!.Values;
+        Assert.Equal("new", values[0].AsString().ToString());
+        Assert.True(values[1].AsBoolean());
+        Assert.True(values[2].AsBoolean());
+        Assert.Equal("old-worker", values[3].AsString().ToString());
+    }
+
+    [Fact]
     public void StateSchemaRevisionIsRecheckedBeforeCandidateExecution()
     {
         using var host = CreateHost(new Dictionary<string, string>

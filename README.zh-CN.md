@@ -30,7 +30,7 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.6` 热更新预览，不是稳定 package 版本线。
+> 当前源码树为 `0.12.0-alpha.7` 热更新预览，不是稳定 package 版本线。
 
 ## 性能
 
