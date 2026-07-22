@@ -81,6 +81,35 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
 
+## 0.11.0 CLR 互操作
+
+CLR 互操作是 opt-in 且 fail-closed 的。Host 必须授予所需 capability，并提供精确、大小写敏感的
+assembly、type、member、delegate 和 event allowlist；bridge 只搜索已经加载的 assembly，不会暴露
+无限制 reflection。
+
+```csharp
+var options = LuaHostOptions.Restricted with
+{
+    Clr = new LuaClrOptions
+    {
+        Capabilities = LuaClrCapabilities.TypeDiscovery |
+            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
+        AllowedAssemblyNames = ["Example.Contracts"],
+        AllowedTypeNames = ["Example.Contracts.Point"],
+        AllowedMemberNames = ["Translate"],
+        InstallGlobalModule = true,
+    },
+};
+using var host = new LuaHost(options);
+var result = host.RunUtf8(
+    "local p = clr.new('Example.Contracts.Point', 1, 2); return p:Translate(3)");
+```
+
+安装后的 `clr` 模块提供确定性的类型发现与构造、显式 member 访问与调用、可释放的 event
+subscription、`Task`/`ValueTask` 等待、取消和幂等释放。Allowlist 内的 userdata 还支持 property、
+field、indexer、operator 与 bound method。Delegate 转换和 event callback 需要独立 allowlist，并且
+遵守 Lua state ownership。转换、overload、NativeAOT、trimming 与部署细节见 [CLR 互操作文档](docs/clr-interop.zh-CN.md)。
+
 由于 Lunil 不公开 Lua C ABI，因此不支持原生 Lua C module。
 
 ## 快速开始

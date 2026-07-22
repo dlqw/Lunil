@@ -89,6 +89,37 @@ methodology, pinned reference versions, and reproduction commands are in
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
   use deterministic interpreter fallback when dynamic code is unavailable.
 
+## CLR interoperation in 0.11.0
+
+CLR interoperation is opt-in and fail-closed. A host must grant the required capabilities and
+provide exact, case-sensitive assembly, type, member, delegate, and event allowlists; the bridge
+only searches assemblies that are already loaded and never exposes unrestricted reflection.
+
+```csharp
+var options = LuaHostOptions.Restricted with
+{
+    Clr = new LuaClrOptions
+    {
+        Capabilities = LuaClrCapabilities.TypeDiscovery |
+            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
+        AllowedAssemblyNames = ["Example.Contracts"],
+        AllowedTypeNames = ["Example.Contracts.Point"],
+        AllowedMemberNames = ["Translate"],
+        InstallGlobalModule = true,
+    },
+};
+using var host = new LuaHost(options);
+var result = host.RunUtf8(
+    "local p = clr.new('Example.Contracts.Point', 1, 2); return p:Translate(3)");
+```
+
+The installed `clr` module provides deterministic type discovery and construction, explicit
+member access and invocation, disposable event subscriptions, `Task`/`ValueTask` awaiting,
+cancellation, and idempotent disposal. Allowlisted userdata also supports properties, fields,
+indexers, operators, and bound method calls. Delegate conversion and event callbacks require
+separate allowlists and preserve Lua state ownership. See the [CLR interoperation guide](docs/clr-interop.md)
+for conversion, overload, NativeAOT, trimming, and deployment details.
+
 Native Lua C modules are not supported because Lunil does not expose the Lua C ABI.
 
 ## Quick start
