@@ -17,6 +17,29 @@ a later game-loop safe point, commit checks the signed manifest expiry again bef
 executing any candidate. An expired commit returns `LuaPatchCommitStatus.Expired` without changing
 live state; coordinated ring commits apply the same check during barrier preparation.
 
+Production preparation should perform policy validation and replay recording as one host operation:
+
+```csharp
+var prepareOptions = new LuaPatchPrepareOptions
+{
+    AcceptancePolicy = new LuaPatchAcceptancePolicy
+    {
+        TargetBuild = currentBuild,
+        CurrentRevision = currentRevision,
+        RuntimeAbi = "lunil-0.12",
+        AllowedChannels = ["production"],
+    },
+    ReplayStore = replayStore,
+};
+```
+
+`replayStore` implements `ILuaPatchReplayStore`. Its `TryAccept` operation must use one atomic,
+durable check-and-insert across the complete deployment replay domain; for a database, use a unique
+constraint on the patch-id/nonce identity and commit it before returning `true`. Preparation requires
+the policy and store together. A policy mismatch or duplicate returns
+`LuaPatchPrepareStatus.AcceptanceRejected` with the precise `Acceptance` result, before any candidate
+executes. `ReplayLookup` remains useful for advisory reads, but it is not atomic replay protection.
+
 ## Dependency and compilation preflight
 
 `LuaPatchDependencyPlan` orders required dependencies before dependents and treats a cyclic strongly
@@ -34,7 +57,7 @@ a rollback-safe cache policy. No candidate loader is executed during preparation
 Open an update window between ticks or frames and commit the prepared patch on the same thread:
 
 ```csharp
-var preparation = await host.PreparePatchAsync(bundle, cancellationToken: stoppingToken);
+var preparation = await host.PreparePatchAsync(bundle, prepareOptions, stoppingToken);
 if (!preparation.Succeeded)
 {
     return;
@@ -101,7 +124,7 @@ Place the canonical bytes returned by `LuaPatchMigrationSchemaSerializer.Seriali
 entry path before `lunil patch pack`. Supply every adapter named by the schema when preparing:
 
 ```csharp
-var preparation = await host.PreparePatchAsync(bundle, new LuaPatchPrepareOptions
+var preparation = await host.PreparePatchAsync(bundle, prepareOptions with
 {
     StateMigrationAdapters = stateAdapters,
     ResourceMigrationAdapters = resourceAdapters,

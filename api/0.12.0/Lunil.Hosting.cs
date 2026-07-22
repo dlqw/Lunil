@@ -19,6 +19,11 @@ namespace Lunil.Hosting
         System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJournalEntry> ReadAll();
     }
 
+    public interface ILuaPatchReplayStore
+    {
+        bool TryAccept(string patchId, string nonce, System.DateTimeOffset acceptedAt);
+    }
+
     public interface ILuaPatchResourceMigrationAdapter
     {
         string AdapterId { get; }
@@ -501,6 +506,7 @@ namespace Lunil.Hosting
         public System.TimeSpan MaximumFutureSkew { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchReplayLookup? ReplayLookup { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptanceResult Evaluate(Lunil.Hosting.LuaPatchManifest manifest, System.DateTimeOffset? utcNow = null) => throw null;
+        public Lunil.Hosting.LuaPatchAcceptanceResult TryAccept(Lunil.Hosting.LuaPatchManifest manifest, Lunil.Hosting.ILuaPatchReplayStore replayStore, System.DateTimeOffset? utcNow = null) => throw null;
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
@@ -1114,6 +1120,9 @@ namespace Lunil.Hosting
         public System.Collections.Generic.IReadOnlyDictionary<string, Lunil.Hosting.ILuaPatchStateMigrationAdapter>? StateMigrationAdapters { get => throw null; init { } }
         public System.Collections.Generic.IReadOnlyDictionary<string, Lunil.Hosting.ILuaPatchResourceMigrationAdapter>? ResourceMigrationAdapters { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchResourceLimits ResourceLimits { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchAcceptancePolicy? AcceptancePolicy { get => throw null; init { } }
+        public Lunil.Hosting.ILuaPatchReplayStore? ReplayStore { get => throw null; init { } }
+        public System.TimeProvider TimeProvider { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchPrepareOptions? left, Lunil.Hosting.LuaPatchPrepareOptions? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaPatchPrepareOptions? left, Lunil.Hosting.LuaPatchPrepareOptions? right) => throw null;
@@ -1129,6 +1138,7 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaPatchPreflightResult Preflight { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchModulePrepareResult> Modules { get => throw null; init { } }
         public string? Message { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchAcceptanceResult? Acceptance { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
         public LuaPatchPrepareResult(Lunil.Hosting.LuaPatchPrepareStatus Status, Lunil.Hosting.LuaPreparedPatch? PreparedPatch, Lunil.Hosting.LuaPatchPreflightResult Preflight, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchModulePrepareResult> Modules, string? Message) { }
         public override string ToString() => throw null;
@@ -1148,7 +1158,8 @@ namespace Lunil.Hosting
         ModuleNotLoaded = 3,
         UnsupportedCachePolicy = 4,
         MigrationAdapterMissing = 5,
-        StateSchemaVersionMismatch = 6
+        StateSchemaVersionMismatch = 6,
+        AcceptanceRejected = 7
     }
 
     public sealed class LuaPatchRecoveryRecord : System.IEquatable<Lunil.Hosting.LuaPatchRecoveryRecord>

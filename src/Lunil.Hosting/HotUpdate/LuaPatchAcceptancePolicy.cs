@@ -24,6 +24,16 @@ public sealed record LuaPatchAcceptanceResult(
 
 public delegate bool LuaPatchReplayLookup(string patchId, string nonce);
 
+/// <summary>
+/// Atomically records accepted patch identities. Implementations must make the check-and-record
+/// operation indivisible across every host that shares the replay domain and durably publish a
+/// successful acceptance before returning <see langword="true"/>.
+/// </summary>
+public interface ILuaPatchReplayStore
+{
+    bool TryAccept(string patchId, string nonce, DateTimeOffset acceptedAt);
+}
+
 public sealed record LuaPatchAcceptancePolicy
 {
     public required string TargetBuild { get; init; }
@@ -112,6 +122,31 @@ public sealed record LuaPatchAcceptancePolicy
         }
 
         return new LuaPatchAcceptanceResult(LuaPatchAcceptanceStatus.Accepted, null);
+    }
+
+    /// <summary>
+    /// Evaluates manifest policy and then atomically records the patch identity. A false store
+    /// result is reported as a replay; the non-atomic <see cref="ReplayLookup"/> alone is not a
+    /// substitute for this operation.
+    /// </summary>
+    public LuaPatchAcceptanceResult TryAccept(
+        LuaPatchManifest manifest,
+        ILuaPatchReplayStore replayStore,
+        DateTimeOffset? utcNow = null)
+    {
+        ArgumentNullException.ThrowIfNull(replayStore);
+        var now = utcNow ?? DateTimeOffset.UtcNow;
+        var evaluation = Evaluate(manifest, now);
+        if (!evaluation.Accepted)
+        {
+            return evaluation;
+        }
+
+        return replayStore.TryAccept(manifest.PatchId, manifest.Nonce, now)
+            ? evaluation
+            : Rejected(
+                LuaPatchAcceptanceStatus.ReplayDetected,
+                "The patch id and nonce were already accepted.");
     }
 
     private static LuaPatchAcceptanceResult Rejected(

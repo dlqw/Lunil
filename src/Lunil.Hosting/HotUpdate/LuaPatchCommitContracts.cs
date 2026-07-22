@@ -16,6 +16,7 @@ public enum LuaPatchPrepareStatus : byte
     UnsupportedCachePolicy,
     MigrationAdapterMissing,
     StateSchemaVersionMismatch,
+    AcceptanceRejected,
 }
 
 /// <summary>Per-module evidence captured while a patch is prepared.</summary>
@@ -52,6 +53,18 @@ public sealed record LuaPatchPrepareOptions
     { get; init; }
 
     public LuaPatchResourceLimits ResourceLimits { get; init; } = LuaPatchResourceLimits.Default;
+
+    /// <summary>
+    /// Optional deployment acceptance policy. It must be configured together with
+    /// <see cref="ReplayStore"/> so preparation cannot rely on a non-atomic replay lookup.
+    /// </summary>
+    public LuaPatchAcceptancePolicy? AcceptancePolicy { get; init; }
+
+    /// <summary>Atomic, durable replay store paired with <see cref="AcceptancePolicy"/>.</summary>
+    public ILuaPatchReplayStore? ReplayStore { get; init; }
+
+    /// <summary>Clock used for acceptance timestamps and time-based policy checks.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }
 
 /// <summary>
@@ -119,6 +132,9 @@ public sealed record LuaPatchPrepareResult(
     ImmutableArray<LuaPatchModulePrepareResult> Modules,
     string? Message)
 {
+    /// <summary>Acceptance evidence when preparation was configured with a policy.</summary>
+    public LuaPatchAcceptanceResult? Acceptance { get; init; }
+
     public bool Succeeded => Status == LuaPatchPrepareStatus.Ready && PreparedPatch is not null;
 }
 

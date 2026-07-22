@@ -186,6 +186,27 @@ public sealed class LuaPatchBundleTests
         Assert.Equal(LuaPatchAcceptanceStatus.Expired, expired.Status);
     }
 
+    [Fact]
+    public void AcceptancePolicyUsesAtomicReplayStoreForCheckAndRecord()
+    {
+        var manifest = CreateManifest();
+        var policy = new LuaPatchAcceptancePolicy
+        {
+            TargetBuild = "game-100",
+            CurrentRevision = "build-99",
+            RuntimeAbi = "lunil-0.12",
+            AllowedChannels = ["production"],
+        };
+        var store = new AtomicReplayStore();
+
+        var first = policy.TryAccept(manifest, store, manifest.CreatedAt);
+        var replay = policy.TryAccept(manifest, store, manifest.CreatedAt);
+
+        Assert.True(first.Accepted);
+        Assert.Equal(LuaPatchAcceptanceStatus.ReplayDetected, replay.Status);
+        Assert.Equal(2, store.AttemptCount);
+    }
+
     private static LuaPatchBundle CreateBundle(ILuaPatchSigner signer)
     {
         var main = new LuaPatchEntry(
@@ -229,5 +250,21 @@ public sealed class LuaPatchBundleTests
         using var stream = new MemoryStream();
         bundle.Write(stream);
         return stream.ToArray();
+    }
+
+    private sealed class AtomicReplayStore : ILuaPatchReplayStore
+    {
+        private readonly HashSet<string> _accepted = new(StringComparer.Ordinal);
+
+        public int AttemptCount { get; private set; }
+
+        public bool TryAccept(string patchId, string nonce, DateTimeOffset acceptedAt)
+        {
+            lock (_accepted)
+            {
+                AttemptCount++;
+                return _accepted.Add(patchId + "\0" + nonce);
+            }
+        }
     }
 }
