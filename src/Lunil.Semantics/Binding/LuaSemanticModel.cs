@@ -5,7 +5,7 @@ using Lunil.Syntax.Parsing;
 
 namespace Lunil.Semantics.Binding;
 
-public sealed record LuaSemanticModel(
+public sealed partial record LuaSemanticModel(
     LuaParseResult Syntax,
     ImmutableArray<Diagnostic> Diagnostics,
     ImmutableArray<LuaSymbol> Symbols,

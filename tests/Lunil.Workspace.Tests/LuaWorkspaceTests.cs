@@ -1,4 +1,5 @@
 using Lunil.Core.Diagnostics;
+using Lunil.EmmyLua;
 
 namespace Lunil.Workspace.Tests;
 
@@ -37,6 +38,53 @@ public sealed class LuaWorkspaceTests
         var dependency = Assert.Single(result.Graph.Dependencies);
         Assert.Equal(LuaModuleDependencyKind.Static, dependency.Kind);
         Assert.Equal("dep", dependency.Target?.Name);
+    }
+
+    [Fact]
+    public async Task StableKeysSurviveWorkspaceReanalysisWithUnrelatedEdits()
+    {
+        using var workspace = new LuaWorkspace();
+        var first = await workspace.AnalyzeAsync([
+            Document("app", "---@class Player\nlocal stable = 1\nreturn stable"),
+        ]);
+        var firstModule = Assert.Single(first.Modules);
+        var firstSymbol = Assert.Single(firstModule.Compilation.SemanticModel.Symbols, symbol =>
+            symbol.Name == "stable");
+        var firstKey = firstModule.Compilation.SemanticModel.GetSymbolKey(
+            firstSymbol,
+            firstModule.Identity);
+        var firstAnnotation = Assert.Single(
+            firstModule.Compilation.Annotations.Annotations.OfType<LuaClassAnnotationSyntax>());
+        var firstAnnotationKey = firstModule.Compilation.GetAnnotationKey(
+            firstAnnotation,
+            firstModule.Identity);
+
+        var second = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "-- comment\n---@alias Other integer\n---@class Player\n" +
+                "local unrelated = 0\nlocal stable = 1\nreturn stable"),
+        ]);
+        var secondModule = Assert.Single(second.Modules);
+        var secondSymbol = Assert.Single(secondModule.Compilation.SemanticModel.Symbols, symbol =>
+            symbol.Name == "stable");
+
+        Assert.Equal(
+            firstKey,
+            secondModule.Compilation.SemanticModel.GetSymbolKey(
+                secondSymbol,
+                secondModule.Identity));
+        Assert.Same(
+            secondSymbol,
+            secondModule.Compilation.SemanticModel.ResolveSymbolKey(firstKey, secondModule.Identity));
+        var secondAnnotation = Assert.Single(
+            secondModule.Compilation.Annotations.Annotations.OfType<LuaClassAnnotationSyntax>());
+        Assert.Equal(
+            firstAnnotationKey,
+            secondModule.Compilation.GetAnnotationKey(secondAnnotation, secondModule.Identity));
+        Assert.Same(
+            secondAnnotation,
+            secondModule.Compilation.ResolveAnnotationKey(firstAnnotationKey, secondModule.Identity));
     }
 
     [Fact]
