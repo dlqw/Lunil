@@ -1475,6 +1475,11 @@ public sealed partial class LuaHost
                         LuaPatchMigrationSchemaErrorCode.ResourceActive,
                         $"Coroutine resource '{rule.ResourceId}' is still active.");
                 }
+
+                if (rule.Disposition == LuaPatchResourceDisposition.Continue)
+                {
+                    SetCandidatePath(path, value);
+                }
             }
 
             if (CandidateValue.IsNil)

@@ -117,8 +117,10 @@ engine also journals every path write, so a later module failure restores both t
 payload mutation.
 
 Resource rules cover `Coroutine`, `Timer`, `EventSubscription`, and `Task`, with `Continue`, `Cancel`,
-`Restart`, `Drain`, or `RejectIfActive` dispositions. Lunil can directly continue a coroutine or reject
-an active coroutine found at a state path. Reversible cancellation, restart, and drain—and all
+`Restart`, `Drain`, or `RejectIfActive` dispositions. For a runtime-owned coroutine, `Continue`
+installs the previous thread at the same candidate state path, preserving its identity and suspended
+execution state; `RejectIfActive` rejects a non-terminal thread at that path. Reversible cancellation,
+restart, and drain—and all
 host-owned timer, subscription, and task lifecycle changes—use a named
 `ILuaPatchResourceMigrationAdapter`. Missing adapters fail preparation, before the update window.
 Adapter `Prepare` methods must not mutate state; `Apply` must be exactly reversible by `Rollback`, and

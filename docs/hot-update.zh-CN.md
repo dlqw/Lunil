@@ -109,8 +109,9 @@ payload 或其他 host 自定义转换交给指定的 `ILuaPatchStateMigrationAd
 module 失败时会同时恢复 Lua graph 与 host payload 变更。
 
 Resource rule 覆盖 `Coroutine`、`Timer`、`EventSubscription` 和 `Task`，disposition 包括
-`Continue`、`Cancel`、`Restart`、`Drain` 与 `RejectIfActive`。Lunil 可以直接继续 coroutine，
-也可以拒绝 state path 上仍活跃的 coroutine。可逆 cancel/restart/drain，以及全部 host-owned
+`Continue`、`Cancel`、`Restart`、`Drain` 与 `RejectIfActive`。对于 runtime-owned coroutine，
+`Continue` 会把旧 thread 安装到 candidate 的相同 state path，保留 thread identity 与当前挂起点；
+`RejectIfActive` 会拒绝该路径上的非终止 thread。可逆 cancel/restart/drain，以及全部 host-owned
 timer、subscription 和 task 生命周期变更，使用指定的 `ILuaPatchResourceMigrationAdapter`；
 缺少 adapter 会在进入 update window 前使 prepare 失败。
 Adapter 的 `Prepare` 不得修改状态；`Apply` 必须能由 `Rollback` 完整逆转，operation dispose 只能
