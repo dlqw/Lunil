@@ -296,7 +296,8 @@ public sealed partial class LuaHost
         LuaPreparedPatch preparedPatch,
         LuaPatchUpdateWindow updateWindow,
         LuaPatchCommitOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(preparedPatch);
         ArgumentNullException.ThrowIfNull(updateWindow);
@@ -336,6 +337,16 @@ public sealed partial class LuaHost
                 preparedPatch,
                 LuaPatchCommitStatus.Deferred,
                 "The patch pause budget was exhausted before execution.",
+                started));
+        }
+
+        if (preparedPatch.Manifest.ExpiresAt is { } expiresAt &&
+            expiresAt <= (timeProvider ?? TimeProvider.System).GetUtcNow())
+        {
+            return PatchCommitSessionPreparation.FromFailure(EmptyCommitResult(
+                preparedPatch,
+                LuaPatchCommitStatus.Expired,
+                "The prepared patch has expired.",
                 started));
         }
 

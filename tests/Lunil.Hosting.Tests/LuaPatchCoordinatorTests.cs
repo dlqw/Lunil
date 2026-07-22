@@ -71,6 +71,32 @@ public sealed class LuaPatchCoordinatorTests
     }
 
     [Fact]
+    public void ExpiredPatchStopsAtBarrierPreparationUsingCoordinatorClock()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var expiresAt = new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero);
+        var bundle = CreateBundle(
+            "patch_candidate_ran=true; return {value=2}",
+            expiresAt);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "expired-rollout",
+            Ring(Target("state-a", host, bundle)),
+            new LuaPatchCoordinatorOptions
+            {
+                TimeProvider = new FixedTimeProvider(expiresAt),
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.PrepareFailed, result.Status);
+        var target = Assert.Single(result.Targets);
+        Assert.Equal(LuaPatchCommitStatus.Expired, target.Commit.Status);
+        Assert.False(target.Commit.SideEffectsMayHaveOccurred);
+        Assert.Equal(1, Value(host));
+        Assert.True(host.State.GetGlobal("patch_candidate_ran").IsNil);
+    }
+
+    [Fact]
     public void HealthRejectionRollsBackAlreadyPublishedCachesRecordsAndGenerations()
     {
         const string initial =
@@ -744,7 +770,13 @@ public sealed class LuaPatchCoordinatorTests
             },
         });
 
-    private static LuaPatchBundle CreateBundle(string source)
+    private static LuaPatchBundle CreateBundle(string source) => CreateBundle(
+        source,
+        new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero));
+
+    private static LuaPatchBundle CreateBundle(
+        string source,
+        DateTimeOffset expiresAt)
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         return LuaPatchBundle.Create(
@@ -758,7 +790,7 @@ public sealed class LuaPatchCoordinatorTests
                 LanguageVersion = LuaLanguageVersion.Lua54,
                 RuntimeAbi = "lunil-0.12",
                 CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
-                ExpiresAt = new DateTimeOffset(2026, 8, 22, 0, 0, 0, TimeSpan.Zero),
+                ExpiresAt = expiresAt,
                 Nonce = "coordinator-test",
             },
             [new LuaPatchEntry(

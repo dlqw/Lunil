@@ -122,6 +122,37 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
+    public void ExpiredPreparedPatchIsRejectedBeforeCandidateExecution()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var prepared = host.PreparePatch(CreateBundle(
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            Entry("a", "patch_candidate_ran=true; return {value=9}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+
+        LuaPatchCommitResult commit;
+        using (opened.Window!)
+        {
+            commit = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.Equal(LuaPatchCommitStatus.Expired, commit.Status);
+        Assert.False(commit.SideEffectsMayHaveOccurred);
+        Assert.All(commit.Modules, static module =>
+            Assert.Equal(LuaPatchModuleCommitStatus.NotExecuted, module.Status));
+        var values = host.RunUtf8("return require('a').value,patch_candidate_ran")
+            .Execution!.Values;
+        Assert.Equal(1, values[0].AsInteger());
+        Assert.True(values[1].IsNil);
+    }
+
+    [Fact]
     public void LaterExecutionFailureRestoresEveryTargetRevisionCacheAndClosureSlot()
     {
         using var host = CreateHost(new Dictionary<string, string>
@@ -393,7 +424,14 @@ public sealed class LuaPatchCommitTests
             dependency,
             LuaPatchDependencyKind.Required)).ToImmutableArray());
 
-    private static LuaPatchBundle CreateBundle(params LuaPatchEntry[] entries)
+    private static LuaPatchBundle CreateBundle(params LuaPatchEntry[] entries) =>
+        CreateBundle(
+            new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero),
+            entries);
+
+    private static LuaPatchBundle CreateBundle(
+        DateTimeOffset expiresAt,
+        params LuaPatchEntry[] entries)
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         return LuaPatchBundle.Create(
@@ -407,7 +445,7 @@ public sealed class LuaPatchCommitTests
                 LanguageVersion = LuaLanguageVersion.Lua54,
                 RuntimeAbi = "lunil-0.12",
                 CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
-                ExpiresAt = new DateTimeOffset(2026, 8, 22, 0, 0, 0, TimeSpan.Zero),
+                ExpiresAt = expiresAt,
                 Nonce = Guid.NewGuid().ToString("N"),
             },
             entries,

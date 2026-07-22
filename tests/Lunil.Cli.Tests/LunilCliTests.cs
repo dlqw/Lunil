@@ -27,7 +27,7 @@ public sealed class LunilCliTests
             LanguageVersion = LuaLanguageVersion.Lua54,
             RuntimeAbi = "lunil-0.12",
             CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
-            ExpiresAt = new DateTimeOffset(2030, 7, 22, 0, 0, 0, TimeSpan.Zero),
+            ExpiresAt = new DateTimeOffset(2099, 7, 22, 0, 0, 0, TimeSpan.Zero),
             Nonce = "cli-1",
             Entries = [new LuaPatchEntryManifest
             {

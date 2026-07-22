@@ -11,7 +11,10 @@ nonce、依赖以及 payload 的 SHA-256 identity。
 `LuaPatchBundle.Read` 会验证每个 payload hash，并通过显式 `LuaPatchEcdsaTrustStore` 校验 ECDSA
 P-256/SHA-256 签名。未受信 key、过期或非 canonical manifest、不安全路径、重复 module、缺少
 required dependency、尾随数据及超过大小限制的 bundle 均会被拒绝。`LuaPatchAcceptancePolicy`
-还会将已验证 bundle 绑定到当前 build、runtime ABI、revision、channel 和 host replay 记录。
+还会将已验证 bundle 绑定到当前 build、runtime ABI、revision、channel、expiry 和 host replay
+记录。prepared patch 可能等待到后续游戏循环安全点，因此 commit 会在构建或执行任何 candidate
+前再次检查已签名 manifest 的 expiry。过期 commit 返回 `LuaPatchCommitStatus.Expired`，且不修改
+live state；协调式 ring commit 也会在 barrier preparation 阶段执行相同检查。
 
 ## 依赖与编译预检
 

@@ -12,6 +12,7 @@ public enum LuaPatchAcceptanceStatus : byte
     CreatedInFuture,
     CreatedBeforeMinimum,
     ReplayDetected,
+    Expired,
 }
 
 public sealed record LuaPatchAcceptanceResult(
@@ -94,6 +95,13 @@ public sealed record LuaPatchAcceptancePolicy
             return Rejected(
                 LuaPatchAcceptanceStatus.CreatedBeforeMinimum,
                 "The patch predates the minimum accepted release time.");
+        }
+
+        if (manifest.ExpiresAt is { } expiresAt && expiresAt <= now)
+        {
+            return Rejected(
+                LuaPatchAcceptanceStatus.Expired,
+                "The patch has expired.");
         }
 
         if (ReplayLookup?.Invoke(manifest.PatchId, manifest.Nonce) == true)
