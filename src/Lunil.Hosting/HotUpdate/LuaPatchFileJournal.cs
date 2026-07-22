@@ -620,7 +620,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
     }
 
 #pragma warning disable CA2101 // The Unix open ABI requires an explicitly marshalled UTF-8 path.
-#pragma warning disable SYSLIB1054 // DllImport avoids enabling unsafe code for three libc calls.
+#pragma warning disable SYSLIB1054 // DllImport avoids enabling unsafe code for the libc calls.
     [DllImport("libc", EntryPoint = "open", SetLastError = true, ExactSpelling = true)]
     private static extern int UnixOpen(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
@@ -629,10 +629,16 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
     [DllImport("libc", EntryPoint = "fsync", SetLastError = true, ExactSpelling = true)]
     private static extern int UnixFsync(int descriptor);
 
+    [DllImport("libc", EntryPoint = "flock", SetLastError = true, ExactSpelling = true)]
+    private static extern int UnixFlock(int descriptor, int operation);
+
     [DllImport("libc", EntryPoint = "close", ExactSpelling = true)]
     private static extern int UnixClose(int descriptor);
 #pragma warning restore SYSLIB1054
 #pragma warning restore CA2101
+
+    private const int UnixLockExclusive = 2;
+    private const int UnixLockNonBlocking = 4;
 
     private void EnsureWriterOwnership()
     {
@@ -642,16 +648,16 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         }
 
         EnsureDirectory();
+        FileStream writerLock;
         try
         {
-            _writerLock = new FileStream(
+            writerLock = new FileStream(
                 WriterLockPath,
                 FileMode.OpenOrCreate,
                 FileAccess.ReadWrite,
                 FileShare.Read,
                 bufferSize: 1,
                 FileOptions.WriteThrough);
-            _initialized = false;
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException)
@@ -661,6 +667,23 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                 "Another journal writer owns this path, or the writer lock cannot be opened.",
                 exception);
         }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            var descriptor = writerLock.SafeFileHandle.DangerousGetHandle().ToInt32();
+            if (UnixFlock(descriptor, UnixLockExclusive | UnixLockNonBlocking) != 0)
+            {
+                var exception = NativeIoException("flock", WriterLockPath);
+                writerLock.Dispose();
+                throw new LuaPatchJournalException(
+                    LuaPatchJournalErrorCode.WriterUnavailable,
+                    "Another journal writer owns this path, or the writer lock cannot be opened.",
+                    exception);
+            }
+        }
+
+        _writerLock = writerLock;
+        _initialized = false;
     }
 
     private void EnsureDirectory()
