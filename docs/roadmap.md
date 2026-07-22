@@ -2,8 +2,6 @@
 
 [简体中文](roadmap.zh-CN.md)
 
-This guide maps Lunil's public technical boundaries. It is an architecture reference, not a delivery schedule.
-
 ## Language compatibility
 
 A host selects a `LuaLanguageVersion`; that identity flows through source parsing, binary chunk loading, canonical IR, runtime state, and standard-library installation. Lua 5.4 is the default when no version is selected. A module or chunk from one version is rejected by a state configured for another version instead of inheriting nearby-version behavior.

@@ -2,8 +2,6 @@
 
 [English](roadmap.md)
 
-本文档说明 Lunil 的公开技术边界，是架构参考而非开发排期。
-
 ## 语言兼容性
 
 宿主选择 `LuaLanguageVersion` 后，该身份会贯穿源代码解析、binary chunk 加载、canonical IR、运行时状态和标准库安装。未显式选择时默认 Lua 5.4。某个版本的 module 或 chunk 不能在另一版本的 state 中执行，更不能静默继承相邻版本的行为。
