@@ -30,6 +30,7 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
+> 当前源码树为 `0.12.0-alpha.2` 热更新预览，不是稳定 package 版本线。
 
 ## 性能
 
@@ -78,6 +79,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 - **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
 - **受能力控制的 CLR bridge**：0.11 可以发现、构造和调用精确 allowlist 中的 CLR 类型，
   不会加载 assembly，也不会开放无限制 reflection。
+- **生产热更新预览**：签名 Patch Bundle、游戏循环原子发布、状态与资源迁移、多 State ring 灰度、
+  具备排他 ownership 与 compaction 生命周期的持久恢复 journal，以及 .NET telemetry。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
 
@@ -218,6 +221,7 @@ flowchart LR
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
 - 稳定线：`0.11.x`（当前版本 `0.11.0`）；`0.10.x` 仍兼容既有 Host。
+- 预览源码线：`0.12.0-alpha.2`；其 reviewed API snapshot 在稳定版 `0.12.0` freeze 前仍可扩展。
 
 兼容性变更和部署说明见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
 [.NET NativeAOT 与 trimming（简体中文）](docs/nativeaot-build-integration.zh-CN.md)。
@@ -229,6 +233,7 @@ flowchart LR
 | [性能](docs/performance.zh-CN.md) | 当前数据、图表、方法与复现方式 |
 | [路线图](docs/roadmap.zh-CN.md) | Lua 版本兼容、运行时对比、CLR 互操作与热更新 |
 | [CLR 互操作](docs/clr-interop.zh-CN.md) | Allowlist 配置、构造、转换、ownership 与发布约束 |
+| [签名 Patch Bundle](docs/hot-update.zh-CN.md) | Patch 信任、游戏循环安全点、多 State ring 灰度、持久恢复 journal 与 CLI 工作流 |
 | [编译器设计（简体中文）](docs/compiler-design.zh-CN.md) | 编译器、IR、运行时与执行架构 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
 | [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |

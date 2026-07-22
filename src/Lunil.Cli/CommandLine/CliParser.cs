@@ -24,6 +24,7 @@ internal static class CliParser
         var buildTarget = configuration.BuildTarget ?? CliBuildTarget.Chunk;
         var dumpKind = configuration.DumpKind ?? CliDumpKind.Summary;
         var dumpFormat = configuration.DumpFormat ?? CliDumpFormat.Text;
+        var patchAction = CliPatchAction.None;
         var warningsAsErrors = configuration.WarningsAsErrors ?? false;
         var stripDebug = configuration.StripDebug ?? false;
         var maximumInputBytes = configuration.MaximumInputBytes ?? 64L * 1024 * 1024;
@@ -33,6 +34,9 @@ internal static class CliParser
         var maximumHeapBytes = configuration.MaximumHeapBytes ?? 256L * 1024 * 1024;
         string? output = null;
         string? moduleName = null;
+        string? patchKeyId = null;
+        string? patchPrivateKeyPath = null;
+        string? patchPublicKeyPath = null;
         var showHelp = false;
         var showVersion = false;
         var afterSeparator = false;
@@ -68,6 +72,10 @@ internal static class CliParser
                 {
                     command = parsedCommand;
                 }
+                else if (command == CliCommand.Patch && patchAction == CliPatchAction.None)
+                {
+                    patchAction = ParsePatchAction(argument);
+                }
                 else
                 {
                     inputs.Add(argument);
@@ -95,6 +103,15 @@ internal static class CliParser
                     break;
                 case "--module-name":
                     moduleName = ReadValue(arguments, ref index, name, inlineValue);
+                    break;
+                case "--key-id":
+                    patchKeyId = ReadValue(arguments, ref index, name, inlineValue);
+                    break;
+                case "--private-key":
+                    patchPrivateKeyPath = ReadValue(arguments, ref index, name, inlineValue);
+                    break;
+                case "--public-key":
+                    patchPublicKeyPath = ReadValue(arguments, ref index, name, inlineValue);
                     break;
                 case "--module-root":
                     moduleRoots.Add(ReadValue(arguments, ref index, name, inlineValue));
@@ -234,6 +251,10 @@ internal static class CliParser
             BuildTarget = buildTarget,
             DumpKind = dumpKind,
             DumpFormat = dumpFormat,
+            PatchAction = patchAction,
+            PatchKeyId = patchKeyId,
+            PatchPrivateKeyPath = patchPrivateKeyPath,
+            PatchPublicKeyPath = patchPublicKeyPath,
             WarningsAsErrors = warningsAsErrors,
             StripDebug = stripDebug,
             ShowHelp = showHelp,
@@ -268,7 +289,7 @@ internal static class CliParser
             throw new CliUsageException("A command is required: run, check, build, or dump.");
         }
 
-        if (outputSpecified && command is not (CliCommand.Build or CliCommand.Dump))
+        if (outputSpecified && command is not (CliCommand.Build or CliCommand.Dump or CliCommand.Patch))
         {
             throw new CliUsageException("Option '--output' is valid only for 'build' and 'dump'.");
         }
@@ -298,6 +319,11 @@ internal static class CliParser
             return;
         }
 
+        if (command == CliCommand.Patch)
+        {
+            return;
+        }
+
         if (inputCount != 1)
         {
             throw new CliUsageException($"Command '{command.ToString().ToLowerInvariant()}' requires exactly one input.");
@@ -317,10 +343,22 @@ internal static class CliParser
             "check" => CliCommand.Check,
             "build" => CliCommand.Build,
             "dump" => CliCommand.Dump,
+            "patch" => CliCommand.Patch,
             _ => CliCommand.None,
         };
         return command != CliCommand.None;
     }
+
+    private static CliPatchAction ParsePatchAction(string value) => value switch
+    {
+        "pack" => CliPatchAction.Pack,
+        "verify" => CliPatchAction.Verify,
+        "inspect" => CliPatchAction.Inspect,
+        "dry-run" => CliPatchAction.DryRun,
+        "diff" => CliPatchAction.Diff,
+        _ => throw new CliUsageException(
+            "Patch action must be pack, verify, inspect, dry-run, or diff."),
+    };
 
     private static (string Name, string? Value) SplitOption(string argument)
     {

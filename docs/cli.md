@@ -2,12 +2,16 @@
 
 `Lunil.Cli` exposes Lunil's compiler, workspace, host, and binary-chunk contracts through the `lunil` .NET tool and executable.
 
+Signed update bundles are available through `lunil patch pack`, `verify`, `inspect`, `diff`, and
+`dry-run`. See the [signed patch bundle guide](hot-update.md) for trust and resource boundaries.
+
 ## Commands
 
 ```text
 lunil run <input|-> [options] [-- script-args...]
 lunil check <input...> [options]
 lunil build <input> --output <path> [--target chunk] [options]
+lunil patch <pack|verify|inspect|dry-run|diff> ... [options]
 lunil dump <input> [--kind <kind>] [--format text|json] [options]
 ```
 

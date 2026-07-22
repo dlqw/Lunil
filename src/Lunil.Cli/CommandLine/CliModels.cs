@@ -10,6 +10,17 @@ internal enum CliCommand
     Check,
     Build,
     Dump,
+    Patch,
+}
+
+internal enum CliPatchAction
+{
+    None,
+    Pack,
+    Verify,
+    Inspect,
+    DryRun,
+    Diff,
 }
 
 internal enum CliDiagnosticFormat
@@ -83,6 +94,14 @@ internal sealed record CliOptions
     public CliDumpKind DumpKind { get; init; } = CliDumpKind.Summary;
 
     public CliDumpFormat DumpFormat { get; init; } = CliDumpFormat.Text;
+
+    public CliPatchAction PatchAction { get; init; }
+
+    public string? PatchKeyId { get; init; }
+
+    public string? PatchPrivateKeyPath { get; init; }
+
+    public string? PatchPublicKeyPath { get; init; }
 
     public bool WarningsAsErrors { get; init; }
 
