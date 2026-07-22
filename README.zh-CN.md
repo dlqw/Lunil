@@ -64,8 +64,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 
 ![Lunil 0.10.0 Auto JIT 按工作负载对比](assets/performance/0.10.0-auto-workloads.svg)
 
-默认 Auto JIT 在 `string_build` 工作负载上达到 PUC Lua 5.4.8 的 `1.980x`。测试方法、固定的
-参考版本与复现命令见[性能文档](docs/performance.zh-CN.md)；精确结果见[机器可读数据集](benchmarks/results/0.10.0-performance.json)。
+默认 Auto JIT 在 `string_build` 工作负载上达到 PUC Lua 5.4.8 的 `1.980x`。经过审核的发行数据、
+测试环境、固定参考版本与命令均保存在[机器可读数据集](benchmarks/results/0.10.0-performance.json)中。
 
 ## 主要能力
 
@@ -212,7 +212,7 @@ flowchart LR
 ```
 
 所有执行路径共享 canonical PC、精确指令计数、资源预算、safe point、debug 行为、失效与 fallback
-语义。完整架构见[编译器设计（简体中文）](docs/compiler-design.zh-CN.md)。
+语义。
 
 ## 兼容性
 
@@ -230,21 +230,18 @@ flowchart LR
 
 | 文档 | 内容 |
 | --- | --- |
-| [性能](docs/performance.zh-CN.md) | 当前数据、图表、方法与复现方式 |
-| [路线图](docs/roadmap.zh-CN.md) | Lua 版本兼容、运行时对比、CLR 互操作与热更新 |
 | [CLR 互操作](docs/clr-interop.zh-CN.md) | Allowlist 配置、构造、转换、ownership 与发布约束 |
 | [签名 Patch Bundle](docs/hot-update.zh-CN.md) | Patch 信任、游戏循环安全点、多 State ring 灰度、持久恢复 journal 与 CLI 工作流 |
-| [编译器设计（简体中文）](docs/compiler-design.zh-CN.md) | 编译器、IR、运行时与执行架构 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
-| [API 兼容性](docs/api-compatibility.md) | 版本化公共 API 与 package baseline |
-| [版本策略](docs/versioning.md) | 兼容性版本线与发布通道 |
+| [.NET NativeAOT 与 trimming](docs/nativeaot-build-integration.zh-CN.md) | 宿主集成、trimming 标注与发布验证 |
+| [PUC Lua prototype 导入](docs/puc-prototype-import.zh-CN.md) | 导入经过校验的 PUC Lua 5.4 binary prototype |
 | [更新日志](changelogs/) | 按版本组织的社区发布说明 |
 
 ## 参与贡献
 
 欢迎提交 issue 和范围明确的 pull request。请在 `feature/*`、`perf/*`、`fix/*` 或 `docs/*` 分支上
 开发，按影响
-补充测试，并在请求审核前运行 build、test、format 与相关文档检查。详见[分支管理](docs/branching.md)。
+补充测试，并在请求审核前运行 build、test、format 与相关文档检查。
 
 ## 安全问题
 
