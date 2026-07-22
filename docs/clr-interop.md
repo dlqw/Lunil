@@ -1,106 +1,82 @@
 # CLR interoperation
 
-Lunil 0.11 adds an opt-in CLR bridge to `Lunil.Hosting`. The bridge is disabled by default and
-never loads an assembly by name. A host must allow both an already loaded assembly and each CLR
-type that Lua may discover or construct.
+Lunil 0.11 provides an opt-in, capability-controlled CLR bridge. It only searches already-loaded
+assemblies and exact allowlists; reflection is never exposed as an unrestricted escape hatch.
+The default host remains unchanged and does not install a `clr` global.
 
 ## Configure a host
 
-The assembly and type allowlists use exact, case-sensitive names. `InstallGlobalModule` controls
-whether the host publishes the Lua `clr` table; the same bridge remains available to the embedding
-application through `LuaHost.ClrBridge` when the global table is not installed.
-
 ```csharp
-using Lunil.Hosting;
-
 var options = LuaHostOptions.Restricted with
 {
     Clr = new LuaClrOptions
     {
         Capabilities = LuaClrCapabilities.TypeDiscovery |
-            LuaClrCapabilities.Construction,
+            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess |
+            LuaClrCapabilities.Async,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
+        AllowedMemberNames = ["Value", "Translate"],
         InstallGlobalModule = true,
-        OwnConstructedObjects = true,
     },
 };
-
 using var host = new LuaHost(options);
-var run = host.RunUtf8("""
-    local info = clr.type("Example.Contracts.Point")
-    local point = clr.new("Example.Contracts.Point", 10, 20)
-    return info.name, info.assembly, info.constructible, type(point)
-    """);
+var run = host.RunUtf8("local p=clr.new('Example.Contracts.Point', 1, 2); return p:Translate(3)");
 ```
 
-`LuaClrOptions.Disabled` grants no CLR capability. Enabling discovery or construction without an
-assembly allowlist is rejected when the bridge is created. Type names are bounded by
-`MaximumTypeNameLength`, whose accepted range is 1 through 4096 characters.
+Assembly names, type names, and member names are ordinal and case-sensitive. The bridge does not
+load an assembly by name. A capability that needs an allowlist fails closed when its list is empty.
+Restricted, NativeAOT, trimming, and deterministic hosts use the same policy.
 
 ## Lua module
 
-When installed, the global `clr` table has two functions:
+When installed, the global `clr` table contains:
 
-- `clr.type(fullName)` returns `name`, `assembly`, `value_type`, `constructible`, and a
-  `constructors` array. Each constructor entry has a `parameters` array of CLR parameter type
-  names.
-- `clr.new(fullName, ...)` selects a public constructor and returns a full userdata whose payload
-  is a `LuaClrObject`.
+- `clr.type(fullName)` — metadata and public constructor descriptions.
+- `clr.new(fullName, ...)` — deterministic constructor selection and owned userdata creation.
+- `clr.members(fullName)` — allowlisted member metadata.
+- `clr.get(target, name [, index...])`, `clr.set(target, name, value)` — explicit member access.
+- `clr.call(target, name, ...)` — method/operator invocation. A type name as the first argument
+  invokes a static member.
+- `clr.on(target, event, callback)` — disposable event subscription.
+- `clr.await(task)` — waits for a `Task`/`ValueTask` userdata and converts its result.
+- `clr.cancellation()`, `clr.cancel(value)` — create and signal a bridge-owned cancellation token source.
+- `clr.dispose(value)` — idempotent disposal of bridge userdata or subscriptions.
 
-The module does not expose members, reflection objects, assembly loading, or unrestricted type
-lookup. Member access and callbacks are outside the alpha.1 contract.
+Constructed userdata also supports allowlisted properties, fields, methods, indexers, and CLR
+operators through normal Lua indexing and calls. A method lookup returns a bound function; both
+`object.method(x)` and `object:method(x)` are accepted.
 
-## Constructor selection and conversion
+## Conversion and overload rules
 
-Only public instance constructors with the same arity as the Lua argument list participate.
-Lunil converts every argument, chooses the candidate with the lowest total conversion cost, and
-uses the ordinal CLR parameter-type signature to break a tie. The result therefore does not depend
-on reflection enumeration order.
+Candidates are filtered by arity, optional/default parameters, and named host-side arguments. The
+lowest total conversion cost wins; ordinal parameter signatures break ties. Supported conversions
+include nil to references/nullable, booleans, strings/chars, exact enum names and integer values,
+all CLR numeric types with overflow checks, arrays and `ValueTuple` values represented by Lua tables,
+`LuaValue`, compatible CLR userdata, and primitive `object` fallback. Unsupported values produce a
+stable `NoMatchingConstructor` or `NoMatchingMember` error.
 
-The alpha.1 conversion surface is:
+Methods with `ref`/`out` parameters return the ordinary result followed by ref/out values in
+parameter order. Task and `ValueTask` results become `LuaClrTask` userdata and are consumed by
+`clr.await`. `LuaClrCancellation` userdata converts to `CancellationToken`; nil maps to `CancellationToken.None`. CLR exceptions are translated to `LuaClrException`/catchable Lua errors; set
+`IncludeExceptionMessages` only when exposing messages is appropriate for the host.
 
-| Lua value | CLR target |
-| --- | --- |
-| `nil` | Reference types and `Nullable<T>` |
-| Boolean | `bool` |
-| String | `string`, one-character `char`, or an exact enum name |
-| Integer or float | CLR numeric types; integers may also initialize an enum |
-| CLR userdata | The wrapped instance when it is assignable to the parameter type |
-| Any Lua value | `LuaValue`; primitive values also have an `object` fallback |
+## Delegates and events
 
-Unsupported values, overflow, and constructors with no fully convertible argument list produce
-`LuaClrErrorCode.NoMatchingConstructor`. A constructor exception produces
-`LuaClrErrorCode.ConstructionFailed` and retains the original exception as `InnerException` for the
-embedding application. Calls made through the Lua module surface the error code in a catchable Lua
-error message.
+Grant `DelegateConversion` and list exact delegate type names in `AllowedDelegateTypeNames`.
+`LuaClrBridge.CreateDelegate` validates every parameter and return type before creating a delegate.
+Grant `EventSubscription` and list event names in `AllowedEventNames`; `Subscribe` returns an
+idempotent `LuaClrSubscription`. The subscription userdata roots the Lua callback and releases it
+when disposed. Callback entry obeys `ThreadPolicy`, preserves Lua state ownership, and rejects
+callbacks that yield or re-enter a busy state from an unsupported thread.
 
-## Ownership
+## Ownership and deployment
 
-`clr.new` wraps the constructed instance in `LuaClrObject`. With the default
-`OwnConstructedObjects = true`, collection or explicit payload disposal calls `IDisposable.Dispose`
-at most once. Set the option to `false` when the embedding application owns the instance. The
-wrapper's `Dispose` method is idempotent in both modes.
+`LuaClrObject` owns constructed `IDisposable` instances by default and forwards `Dispose` at most once;
+set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions, and
+tasks belong to one `LuaState` and cannot be transferred to another state.
 
-The bridge and its userdata belong to one `LuaState`; normal owner validation prevents a Lua value
-from being installed in another state.
-
-## Deployment constraints
-
-The bridge only searches `AppDomain.CurrentDomain.GetAssemblies()` and matches assembly simple
-names plus type full names exactly. Applications published with trimming or NativeAOT must preserve
-constructors for every allowlisted type through their own linker metadata. The bridge does not add
-dynamic dependencies or substitute another type when metadata is absent.
-
-For a statically known type, a rooted method can declare the dependency explicitly:
-
-```csharp
-using System.Diagnostics.CodeAnalysis;
-
-[DynamicDependency(
-    DynamicallyAccessedMemberTypes.PublicConstructors,
-    typeof(Example.Contracts.Point))]
-static void PreserveClrBridgeTypes()
-{
-}
-```
+Trimming and NativeAOT applications must preserve public constructors, members, and delegate
+signatures for every allowlisted type with linker metadata such as `DynamicDependency`. Missing
+metadata fails closed with a stable bridge diagnostic. Interpreter and dynamic JIT share the same
+bridge implementation and conversion rules.

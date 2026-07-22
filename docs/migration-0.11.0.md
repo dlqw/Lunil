@@ -1,36 +1,36 @@
 # Migrating to Lunil 0.11.0
 
-The 0.11 line adds CLR interoperation to `Lunil.Hosting`. It is an additive, opt-in hosting
-feature: existing hosts keep the same compiler, language-version, runtime, standard-library, and
-execution behavior because `LuaHostOptions.Clr` defaults to `LuaClrOptions.Disabled`.
+The 0.11 line adds an additive, opt-in, capability-controlled CLR bridge to `Lunil.Hosting`.
+Existing hosts keep the same compiler, language-version, runtime, standard-library, and execution
+behavior because `LuaHostOptions.Clr` defaults to `LuaClrOptions.Disabled`.
 
 ## No action for existing hosts
 
-Code that creates `LuaHost` with existing options does not receive a `clr` global and does not
-grant type discovery or construction. The stable 0.10 API remains valid on the 0.11 line.
+Existing hosts do not receive a `clr` global and do not grant discovery, construction, member access,
+callbacks, events, async waiting, or disposal. The stable 0.10 API remains valid on 0.11.
 
 ## Opt in with exact allowlists
 
-Applications that need construction configure the assembly and type boundaries explicitly:
-
 ```csharp
-using Lunil.Hosting;
-
 using var host = new LuaHost(LuaHostOptions.Restricted with
 {
     Clr = new LuaClrOptions
     {
         Capabilities = LuaClrCapabilities.TypeDiscovery |
-            LuaClrCapabilities.Construction,
+            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
+        AllowedMemberNames = ["Value", "Translate"],
         InstallGlobalModule = true,
     },
 });
 ```
 
-The bridge uses already loaded assemblies only. Applications that previously used their own native
-functions for CLR construction can keep those functions or replace them with `clr.new`; no
-automatic global or reflection fallback is introduced.
+`AllowedMemberNames` accepts exact member names or type-qualified entries. Delegate and event
+capabilities require their own exact lists (`AllowedDelegateTypeNames`, `AllowedEventNames`).
+Use `ThreadPolicy` to choose callback admission and `OwnConstructedObjects` to choose disposal
+ownership. The bridge searches only already-loaded assemblies and never falls back to unrestricted
+reflection.
 
-See [CLR interoperation](clr-interop.md) for conversion, ownership, error, and deployment rules.
+See [CLR interoperation](clr-interop.md) for conversion, callbacks, async, ownership, errors, and
+deployment rules.

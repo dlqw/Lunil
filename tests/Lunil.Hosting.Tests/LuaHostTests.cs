@@ -1,5 +1,6 @@
 using System.Text;
 using Lunil.CodeGen.Cil.Jit;
+using Lunil.Core;
 using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -305,6 +306,111 @@ public sealed class LuaHostTests
             () => host.ClrBridge.ResolveType(typeName));
 
         Assert.Equal(LuaClrErrorCode.TypeNotAllowed, exception.Code);
+    }
+
+    [Fact]
+    public void ClrBridgeAllowsAllowlistedMembersAndIndexers()
+    {
+        var typeName = typeof(MemberValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
+                AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                AllowedMemberNames = ["Value", "Add", "Item"],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"local value=clr.new('{typeName}', 4); return value.Value,value:Add(3),value[1]");
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        Assert.Equal(4, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(7, result.Execution.Values[1].AsInteger());
+        Assert.Equal(8, result.Execution.Values[2].AsInteger());
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51)]
+    [InlineData(LuaLanguageVersion.Lua52)]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    [InlineData(LuaLanguageVersion.Lua55)]
+    public void ClrBridgeMembersMatchEveryLanguageVersion(LuaLanguageVersion languageVersion)
+    {
+        var typeName = typeof(MemberValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            LanguageVersion = languageVersion,
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
+                AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                AllowedMemberNames = ["Value", "Add"],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"local value=clr.new('{typeName}', 40); return value.Value,value:Add(2)");
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        Assert.Equal(40, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(42, result.Execution.Values[1].AsInteger());
+    }
+
+    [Fact]
+    public void ClrBridgeConvertsLuaFunctionsToDelegates()
+    {
+        var delegateName = typeof(Func<int, int>).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.DelegateConversion,
+                AllowedAssemblyNames = [typeof(Func<int, int>).Assembly.GetName().Name!],
+                AllowedTypeNames = [delegateName],
+                AllowedDelegateTypeNames = [delegateName],
+            },
+        });
+
+        var function = host.RunUtf8("return function(value) return value+1 end").Execution!.Values[0];
+        var callback = (Func<int, int>)host.ClrBridge.CreateDelegate(function, delegateName);
+        Assert.Equal(42, callback(41));
+    }
+
+    [Fact]
+    public void ClrBridgeSupportsRefOutAsyncAndEventCallbacks()
+    {
+        var typeName = typeof(MemberValue).FullName!;
+        var delegateName = typeof(IntCallback).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess |
+                    LuaClrCapabilities.DelegateConversion | LuaClrCapabilities.EventSubscription |
+                    LuaClrCapabilities.Async,
+                AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName, delegateName],
+                AllowedMemberNames = ["Compute", "Async", "Raise", "Changed", "WasCancelled"],
+                AllowedEventNames = ["Changed"],
+                AllowedDelegateTypeNames = [delegateName],
+                InstallGlobalModule = true,
+            },
+        });
+
+        var result = host.RunUtf8($"local value=clr.new('{typeName}', 4); local seen=0; local subscription=clr.on(value,'Changed',function(number) seen=number end); local total,doubled=value:Compute(3); value:Raise(9); local cancellation=clr.cancellation(); clr.cancel(cancellation); return total,doubled,seen,clr.await(clr.call('{typeName}','Async',6)),clr.call('{typeName}','WasCancelled',cancellation)");
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        Assert.Equal(7, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(6, result.Execution.Values[1].AsInteger());
+        Assert.Equal(9, result.Execution.Values[2].AsInteger());
+        Assert.Equal(6, result.Execution.Values[3].AsInteger());
+        Assert.True(result.Execution.Values[4].AsBoolean());
     }
 
     [Fact]
@@ -968,6 +1074,33 @@ public sealed class LuaHostTests
 
         public LuaValue Value { get; }
     }
+
+    public sealed class MemberValue
+    {
+        public MemberValue(int value) => Value = value;
+
+        public int Value { get; set; }
+
+        public int Add(int amount) => Value + amount;
+
+        public int this[int index] => Value * (index + 1);
+
+        public int Compute(int amount, out int doubled)
+        {
+            doubled = amount * 2;
+            return Value + amount;
+        }
+
+        public static Task<int> Async(int amount) => Task.FromResult(amount);
+
+        public static bool WasCancelled(CancellationToken token) => token.IsCancellationRequested;
+
+        public event IntCallback? Changed;
+
+        public void Raise(int value) => Changed?.Invoke(value);
+    }
+
+    public delegate void IntCallback(int value);
 
     internal sealed class InternalContainer
     {

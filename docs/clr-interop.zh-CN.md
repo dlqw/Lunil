@@ -1,101 +1,76 @@
 # CLR 互操作
 
-Lunil 0.11 在 `Lunil.Hosting` 中增加 opt-in CLR bridge。该 bridge 默认禁用，也不会按名称加载
-assembly。Host 必须同时允许一个已经加载的 assembly，以及 Lua 可以发现或构造的每个 CLR 类型。
+Lunil 0.11 提供 opt-in、受能力控制的 CLR bridge。bridge 只搜索已经加载的 assembly，并且要求精确
+allowlist；不会暴露不受限制的 reflection。默认 Host 行为不变，也不会安装 `clr` 全局表。
 
 ## 配置 Host
 
-Assembly 与类型 allowlist 使用区分大小写的精确名称。`InstallGlobalModule` 决定是否发布 Lua
-全局 `clr` table；未安装全局 table 时，嵌入应用仍可通过 `LuaHost.ClrBridge` 使用同一个 bridge。
-
 ```csharp
-using Lunil.Hosting;
-
 var options = LuaHostOptions.Restricted with
 {
     Clr = new LuaClrOptions
     {
         Capabilities = LuaClrCapabilities.TypeDiscovery |
-            LuaClrCapabilities.Construction,
+            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess |
+            LuaClrCapabilities.Async,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
+        AllowedMemberNames = ["Value", "Translate"],
         InstallGlobalModule = true,
-        OwnConstructedObjects = true,
     },
 };
-
 using var host = new LuaHost(options);
-var run = host.RunUtf8("""
-    local info = clr.type("Example.Contracts.Point")
-    local point = clr.new("Example.Contracts.Point", 10, 20)
-    return info.name, info.assembly, info.constructible, type(point)
-    """);
+var run = host.RunUtf8("local p=clr.new('Example.Contracts.Point', 1, 2); return p:Translate(3)");
 ```
 
-`LuaClrOptions.Disabled` 不授予任何 CLR capability。启用发现或构造却没有提供 assembly allowlist
-时，bridge 会在创建阶段拒绝配置。类型名受 `MaximumTypeNameLength` 限制，允许范围为 1 到 4096
-个字符。
+assembly、type 和 member 名称均使用 ordinal、大小写敏感匹配。bridge 不会按名称加载 assembly。
+需要 allowlist 的 capability 在列表为空时 fail closed。Restricted、NativeAOT、trimming 和
+Deterministic Host 使用相同策略。
 
-## Lua module
+## Lua 模块
 
-安装后的全局 `clr` table 提供两个函数：
+安装后，全局 `clr` 表提供：
 
-- `clr.type(fullName)` 返回 `name`、`assembly`、`value_type`、`constructible` 和
-  `constructors` 数组。每个 constructor entry 都包含一个由 CLR 参数类型名组成的 `parameters`
-  数组。
-- `clr.new(fullName, ...)` 选择 public constructor，并返回 payload 为 `LuaClrObject` 的 full
-  userdata。
+- `clr.type(fullName)`：类型元数据和 public constructor 描述。
+- `clr.new(fullName, ...)`：确定性的 constructor 选择和有 ownership 的 userdata。
+- `clr.members(fullName)`：allowlist 内的 member 元数据。
+- `clr.get(target, name [, index...])`、`clr.set(target, name, value)`：显式 member 访问。
+- `clr.call(target, name, ...)`：method/operator 调用；第一个参数为 type 名称时调用 static member。
+- `clr.on(target, event, callback)`：可释放的 event subscription。
+- `clr.await(task)`：等待 `Task`/`ValueTask` userdata 并转换结果。
+- `clr.cancellation()`、`clr.cancel(value)`：创建并触发 bridge-owned cancellation token source。
+- `clr.dispose(value)`：幂等释放 bridge userdata 或 subscription。
 
-该 module 不暴露 member、reflection object、assembly loading 或无限制类型查询。Member access
-与 callback 不属于 alpha.1 契约。
+构造出的 userdata 也可以通过普通 Lua indexing/call 使用 allowlist 内的 property、field、method、
+indexer 和 CLR operator。method 查询会返回 bound function；`object.method(x)` 和
+`object:method(x)` 都支持。
 
-## Constructor 选择与转换
+## 转换与 overload 规则
 
-只有参数数量与 Lua 实参数量相同的 public instance constructor 会参与选择。Lunil 转换所有实参，
-选择总转换成本最低的 candidate，并以 CLR 参数类型签名的 ordinal 顺序打破平局。因此结果不依赖
-reflection 的枚举顺序。
+Candidate 经过参数数量、optional/default 参数和 host-side named argument 过滤后，选择总转换成本
+最低者；并以参数类型签名的 ordinal 顺序打破平局。支持 nil 到 reference/nullable、boolean、
+string/char、精确 enum 名称与 integer、全部 CLR 数值类型（含溢出检查）、由 Lua table 表示的
+array 与 `ValueTuple`、`LuaValue`、兼容 CLR userdata 以及 primitive `object` fallback。不支持的值
+返回稳定的 `NoMatchingConstructor` 或 `NoMatchingMember`。
 
-alpha.1 的转换范围如下：
+带 `ref`/`out` 的 method 返回普通结果，再按参数顺序返回 ref/out 值。Task/ValueTask 结果包装为
+`LuaClrTask` userdata，由 `clr.await` 消费。`LuaClrCancellation` userdata 转换为 `CancellationToken`；nil 映射为 `CancellationToken.None`。CLR exception 转换为 `LuaClrException`/可捕获 Lua error；
+仅在适合公开异常消息时设置 `IncludeExceptionMessages`。
 
-| Lua value | CLR target |
-| --- | --- |
-| `nil` | 引用类型与 `Nullable<T>` |
-| Boolean | `bool` |
-| String | `string`、单字符 `char` 或精确 enum 名称 |
-| Integer 或 float | CLR 数值类型；integer 还可以初始化 enum |
-| CLR userdata | 当 wrapped instance 可赋给参数类型时使用该 instance |
-| 任意 Lua value | `LuaValue`；primitive value 还可回退为 `object` |
+## Delegate 与 event
 
-不受支持的 value、溢出和没有完整可转换实参列表的 constructor 会产生
-`LuaClrErrorCode.NoMatchingConstructor`。Constructor 抛出的异常会产生
-`LuaClrErrorCode.ConstructionFailed`，并在嵌入应用侧通过 `InnerException` 保留原始异常。经 Lua
-module 调用时，错误代码会出现在可由 Lua 捕获的错误消息中。
+授予 `DelegateConversion`，并在 `AllowedDelegateTypeNames` 列出精确 delegate 类型名。
+`LuaClrBridge.CreateDelegate` 会在创建前验证全部参数和返回类型。授予 `EventSubscription` 并在
+`AllowedEventNames` 列出 event 名称；`Subscribe` 返回幂等的 `LuaClrSubscription`。subscription
+userdata 会 root Lua callback，并在释放时解除订阅。callback 遵循 `ThreadPolicy` 和 state ownership，
+从不支持的线程进入 busy state 或尝试 yield 时会 fail closed。
 
-## Ownership
+## Ownership 与部署
 
-`clr.new` 使用 `LuaClrObject` 包装构造出的 instance。默认
-`OwnConstructedObjects = true`；userdata 被回收或显式释放 payload 时，
-`IDisposable.Dispose` 最多调用一次。如果 instance 由嵌入应用管理，请把该选项设为 `false`。
-两种模式下 wrapper 的 `Dispose` 都是幂等的。
+`LuaClrObject` 默认拥有构造出的 `IDisposable` instance，并且最多转发一次 `Dispose`；Host 自己拥有
+instance 时设置 `OwnConstructedObjects=false`。userdata、callback、subscription 和 task 都属于一个
+`LuaState`，不能转移到其他 state。
 
-Bridge 及其 userdata 只属于一个 `LuaState`；常规 owner 校验会阻止 Lua value 安装到其他 state。
-
-## 发布约束
-
-Bridge 只搜索 `AppDomain.CurrentDomain.GetAssemblies()`，并精确匹配 assembly simple name 与类型
-full name。使用 trimming 或 NativeAOT 发布的应用必须通过自己的 linker metadata 保留每个
-allowlist 类型的 constructor。Bridge 不增加 dynamic dependency，也不会在 metadata 缺失时替换成
-其他类型。
-
-对于静态已知类型，可以在 rooted method 上显式声明依赖：
-
-```csharp
-using System.Diagnostics.CodeAnalysis;
-
-[DynamicDependency(
-    DynamicallyAccessedMemberTypes.PublicConstructors,
-    typeof(Example.Contracts.Point))]
-static void PreserveClrBridgeTypes()
-{
-}
-```
+Trimming 和 NativeAOT 应用必须通过 `DynamicDependency` 等 linker metadata 保留每个 allowlist type 的
+public constructor、member 和 delegate signature。metadata 缺失时以稳定 bridge diagnostic fail closed。
+Interpreter 与 dynamic JIT 共用同一套 bridge 实现和转换规则。
