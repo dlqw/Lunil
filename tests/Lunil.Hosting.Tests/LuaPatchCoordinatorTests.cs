@@ -44,6 +44,78 @@ public sealed class LuaPatchCoordinatorTests
     }
 
     [Fact]
+    public void BarrierCommitUsesIndependentTargetScopesAndSealsEveryReplayReservation()
+    {
+        var directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "lunil-coordinator-replay-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var first = CreateHost("return {value=1}");
+            using var second = CreateHost("return {value=1}");
+            Load(first);
+            Load(second);
+            var bundle = CreateBundle("return {value=2}");
+            var store = new LuaPatchFileReplayStore(System.IO.Path.Combine(
+                directory,
+                "replay.ndjson"));
+            var firstPreparation = first.PreparePatch(
+                bundle,
+                AcceptanceOptions(store, "state-a"));
+            var secondPreparation = second.PreparePatch(
+                bundle,
+                AcceptanceOptions(store, "state-b"));
+            Assert.True(firstPreparation.Succeeded, firstPreparation.Message);
+            Assert.True(secondPreparation.Succeeded, secondPreparation.Message);
+            Assert.Throws<ArgumentException>(() => new LuaPatchCoordinator().CommitRing(
+                "rollout-wrong-scope",
+                Ring(new LuaPatchDeploymentTarget(
+                    "state-z",
+                    first,
+                    firstPreparation.PreparedPatch!))));
+            var ring = Ring(
+                new LuaPatchDeploymentTarget(
+                    "state-a", first, firstPreparation.PreparedPatch!),
+                new LuaPatchDeploymentTarget(
+                    "state-b", second, secondPreparation.PreparedPatch!));
+
+            var result = new LuaPatchCoordinator().CommitRing(
+                "rollout-scoped-replay",
+                ring,
+                new LuaPatchCoordinatorOptions
+                {
+                    Journal = new MemoryJournal(),
+                    TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                        2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
+                });
+
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal(
+                [
+                    LuaPatchReplayRecordState.Reserved,
+                    LuaPatchReplayRecordState.Reserved,
+                    LuaPatchReplayRecordState.Committed,
+                    LuaPatchReplayRecordState.Committed,
+                ],
+                store.ReadAll().Select(static record => record.State).ToArray());
+            Assert.Equal(
+                LuaPatchPrepareStatus.AcceptanceRejected,
+                first.PreparePatch(bundle, AcceptanceOptions(store, "state-a")).Status);
+            Assert.Equal(
+                LuaPatchPrepareStatus.AcceptanceRejected,
+                second.PreparePatch(bundle, AcceptanceOptions(store, "state-b")).Status);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CandidateFailureOnOneStateRollsBackEveryPreparedParticipant()
     {
         using var first = CreateHost("return {value=1}");
@@ -165,6 +237,63 @@ public sealed class LuaPatchCoordinatorTests
         Assert.Equal(1, Value(second));
         Assert.All(result.Targets, static target =>
             Assert.Equal(LuaPatchCommitStatus.BarrierAborted, target.Commit.Status));
+    }
+
+    [Fact]
+    public void JournalCommitFailureReopensCompletedReplayReservation()
+    {
+        var directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "lunil-coordinator-replay-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var host = CreateHost("return {value=1}");
+            Load(host);
+            var bundle = CreateBundle("return {value=2}");
+            var store = new LuaPatchFileReplayStore(System.IO.Path.Combine(
+                directory,
+                "replay.ndjson"));
+            var preparation = host.PreparePatch(
+                bundle,
+                AcceptanceOptions(store, "state-a"));
+            Assert.True(preparation.Succeeded, preparation.Message);
+
+            var result = new LuaPatchCoordinator().CommitRing(
+                "rollout-replay-rollback",
+                Ring(new LuaPatchDeploymentTarget(
+                    "state-a",
+                    host,
+                    preparation.PreparedPatch!)),
+                new LuaPatchCoordinatorOptions
+                {
+                    Journal = new MemoryJournal
+                    {
+                        ThrowOn = LuaPatchJournalPhase.Committed,
+                    },
+                    TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                        2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
+                });
+
+            Assert.Equal(LuaPatchRingCommitStatus.JournalFailed, result.Status);
+            Assert.Equal(
+                [
+                    LuaPatchReplayRecordState.Reserved,
+                    LuaPatchReplayRecordState.Committed,
+                    LuaPatchReplayRecordState.Reopened,
+                ],
+                store.ReadAll().Select(static record => record.State).ToArray());
+            Assert.True(host.PreparePatch(
+                bundle,
+                AcceptanceOptions(store, "state-a")).Succeeded);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     [Theory]
@@ -743,6 +872,23 @@ public sealed class LuaPatchCoordinatorTests
         Assert.True(preparation.Succeeded, preparation.Message);
         return new LuaPatchDeploymentTarget(id, host, preparation.PreparedPatch!);
     }
+
+    private static LuaPatchPrepareOptions AcceptanceOptions(
+        ILuaPatchReplayStore store,
+        string scope) => new()
+        {
+            AcceptancePolicy = new LuaPatchAcceptancePolicy
+            {
+                TargetBuild = "build-2",
+                CurrentRevision = "build-1",
+                RuntimeAbi = "lunil-0.12",
+                AllowedChannels = ["test"],
+            },
+            ReplayStore = store,
+            ReplayScope = scope,
+            TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
+        };
 
     private static LuaPatchRolloutRing Ring(params LuaPatchDeploymentTarget[] targets) => new()
     {

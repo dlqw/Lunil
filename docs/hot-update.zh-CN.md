@@ -19,6 +19,7 @@ live state；协调式 ring commit 也会在 barrier preparation 阶段执行相
 生产环境应在一次 host operation 内完成 policy 校验与 replay 记录：
 
 ```csharp
+var replayStore = new LuaPatchFileReplayStore("state/accepted-patches.ndjson");
 var prepareOptions = new LuaPatchPrepareOptions
 {
     AcceptancePolicy = new LuaPatchAcceptancePolicy
@@ -29,14 +30,31 @@ var prepareOptions = new LuaPatchPrepareOptions
         AllowedChannels = ["production"],
     },
     ReplayStore = replayStore,
+    ReplayScope = "state-a", // 稳定 target id；coordinator rollout 中应等于 TargetId。
 };
 ```
 
-`replayStore` 实现 `ILuaPatchReplayStore`。其 `TryAccept` 必须在整个 deployment replay domain
-内执行一次原子且持久化的 check-and-insert；使用数据库时，应对 patch-id/nonce identity 建立唯一
-约束，并在返回 `true` 前提交事务。Prepare 要求 policy 与 store 成对配置。Policy 不匹配或发现重复
-时返回 `LuaPatchPrepareStatus.AcceptanceRejected`，并在 `Acceptance` 中给出精确原因，且不会执行
-candidate。`ReplayLookup` 仍可用于提示性查询，但不能充当原子 replay protection。
+Prepare 要求同时配置 `AcceptancePolicy`、`ReplayStore` 与 `ReplayScope`。Scope 是稳定的部署目标
+identity，不是进程 id。同一个签名 patch 因而可以分别为 rollout 中的每个 target 建立 reservation；
+在每个 target scope 内，其他 patch 仍不能复用已有 patch id 或 nonce。`LuaPatchCoordinator` 会验证
+prepared patch 的 scope 与 `LuaPatchDeploymentTarget.TargetId` 一致。
+
+`ILuaPatchReplayStore.TryReserve` 会持久化 reservation；若相同 scoped identity 尚未 commit，则返回
+原 reservation。这个幂等行为允许进程丢失内存中的 `LuaPreparedPatch` 后重新执行 preflight 与 live
+binding。Commit 随后调用 `TryAcquireCommit`，只有持有返回 lease 的进程可以执行 candidate。未完成
+lease 被 dispose（包括进程退出后 OS handle 自动释放）时 reservation 仍可重试；`Complete` 将其变为
+terminal，transaction rollback 则通过 `Reopen` 补偿已经完成的 lease。Policy 不匹配、已 commit 或
+冲突 identity 会在执行 candidate 前返回 `LuaPatchPrepareStatus.AcceptanceRejected`，并在
+`Acceptance` 中给出原因。`ReplayLookup` 只用于直接调用 `Evaluate` 时的提示性检查，durable
+reservation 路径会有意忽略它。
+
+对于共享本地 replay 文件的进程，可直接使用内置 `LuaPatchFileReplayStore`。每次状态变更都会获取
+带超时的跨进程 writer lock，验证完整 canonical NDJSON sequence 与 SHA-256 hash
+chain，追加 `Reserved`、`Committed` 或 `Reopened` event，并执行 durable flush。每个 reservation
+使用独立 OS lock，因此同一 identity 的 commit 会被串行化，不同 rollout target 不会互相阻塞。
+`ReadAll()` 返回校验后的审计 event。文件损坏、尾部截断、锁超时或达到 identity/entry/byte 上限
+都会 fail closed。Event 不会自动 compact，因为删除 terminal identity 会重新开放 replay。若 target 不共享
+该文件系统，应在共享事务数据库中实现同样的 reservation state machine 与独占 commit lease。
 
 ## 依赖与编译预检
 

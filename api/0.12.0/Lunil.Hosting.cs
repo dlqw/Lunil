@@ -19,9 +19,18 @@ namespace Lunil.Hosting
         System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJournalEntry> ReadAll();
     }
 
+    public interface ILuaPatchReplayCommitLease : System.IDisposable
+    {
+        Lunil.Hosting.LuaPatchReplayReservation Reservation { get; }
+        bool IsCompleted { get; }
+        void Complete(System.DateTimeOffset committedAt);
+        void Reopen(System.DateTimeOffset reopenedAt);
+    }
+
     public interface ILuaPatchReplayStore
     {
-        bool TryAccept(string patchId, string nonce, System.DateTimeOffset acceptedAt);
+        Lunil.Hosting.LuaPatchReplayReservationResult TryReserve(string scope, string patchId, string nonce, System.DateTimeOffset reservedAt);
+        Lunil.Hosting.ILuaPatchReplayCommitLease? TryAcquireCommit(Lunil.Hosting.LuaPatchReplayReservation reservation, System.DateTimeOffset acquiredAt);
     }
 
     public interface ILuaPatchResourceMigrationAdapter
@@ -506,7 +515,7 @@ namespace Lunil.Hosting
         public System.TimeSpan MaximumFutureSkew { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchReplayLookup? ReplayLookup { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptanceResult Evaluate(Lunil.Hosting.LuaPatchManifest manifest, System.DateTimeOffset? utcNow = null) => throw null;
-        public Lunil.Hosting.LuaPatchAcceptanceResult TryAccept(Lunil.Hosting.LuaPatchManifest manifest, Lunil.Hosting.ILuaPatchReplayStore replayStore, System.DateTimeOffset? utcNow = null) => throw null;
+        public Lunil.Hosting.LuaPatchAcceptanceResult TryReserve(Lunil.Hosting.LuaPatchManifest manifest, string scope, Lunil.Hosting.ILuaPatchReplayStore replayStore, System.DateTimeOffset? utcNow = null) => throw null;
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
@@ -519,6 +528,7 @@ namespace Lunil.Hosting
     {
         public Lunil.Hosting.LuaPatchAcceptanceStatus Status { get => throw null; init { } }
         public string? Message { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchReplayReservation? ReplayReservation { get => throw null; init { } }
         public bool Accepted { get => throw null; }
         public LuaPatchAcceptanceResult(Lunil.Hosting.LuaPatchAcceptanceStatus Status, string? Message) { }
         public override string ToString() => throw null;
@@ -616,7 +626,8 @@ namespace Lunil.Hosting
         CachePolicyFailed = 6,
         PublicationFailed = 7,
         BarrierAborted = 8,
-        Expired = 9
+        Expired = 9,
+        ReplayRejected = 10
     }
 
     public sealed class LuaPatchCoordinator
@@ -814,6 +825,35 @@ namespace Lunil.Hosting
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchFileJournalOptions? other) => throw null;
+    }
+
+    public sealed class LuaPatchFileReplayStore : Lunil.Hosting.ILuaPatchReplayStore
+    {
+        public string Path { get => throw null; }
+        public string WriterLockPath { get => throw null; }
+        public string CommitLockDirectory { get => throw null; }
+        public LuaPatchFileReplayStore(string path, Lunil.Hosting.LuaPatchFileReplayStoreOptions? options = null) { }
+        public Lunil.Hosting.LuaPatchReplayReservationResult TryReserve(string scope, string patchId, string nonce, System.DateTimeOffset reservedAt) => throw null;
+        public Lunil.Hosting.ILuaPatchReplayCommitLease? TryAcquireCommit(Lunil.Hosting.LuaPatchReplayReservation reservation, System.DateTimeOffset acquiredAt) => throw null;
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchReplayRecord> ReadAll() => throw null;
+    }
+
+    public sealed class LuaPatchFileReplayStoreOptions : System.IEquatable<Lunil.Hosting.LuaPatchFileReplayStoreOptions>
+    {
+        public static Lunil.Hosting.LuaPatchFileReplayStoreOptions Default { get => throw null; }
+        public long MaximumBytes { get => throw null; init { } }
+        public int MaximumEntries { get => throw null; init { } }
+        public int MaximumLineBytes { get => throw null; init { } }
+        public int MaximumIdentityCharacters { get => throw null; init { } }
+        public bool CreateDirectory { get => throw null; init { } }
+        public System.TimeSpan WriterLockTimeout { get => throw null; init { } }
+        public System.TimeSpan CommitLockTimeout { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchFileReplayStoreOptions? left, Lunil.Hosting.LuaPatchFileReplayStoreOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchFileReplayStoreOptions? left, Lunil.Hosting.LuaPatchFileReplayStoreOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchFileReplayStoreOptions? other) => throw null;
     }
 
     public static class LuaPatchFormat
@@ -1122,6 +1162,7 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaPatchResourceLimits ResourceLimits { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptancePolicy? AcceptancePolicy { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchReplayStore? ReplayStore { get => throw null; init { } }
+        public string? ReplayScope { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchPrepareOptions? left, Lunil.Hosting.LuaPatchPrepareOptions? right) => throw null;
@@ -1204,6 +1245,90 @@ namespace Lunil.Hosting
     }
 
     public delegate bool LuaPatchReplayLookup(string patchId, string nonce);
+
+    public sealed class LuaPatchReplayRecord : System.IEquatable<Lunil.Hosting.LuaPatchReplayRecord>
+    {
+        public long Sequence { get => throw null; init { } }
+        public required string Scope { get => throw null; init { } }
+        public required string PatchId { get => throw null; init { } }
+        public required string Nonce { get => throw null; init { } }
+        public required string ReservationId { get => throw null; init { } }
+        public required Lunil.Hosting.LuaPatchReplayRecordState State { get => throw null; init { } }
+        public required System.DateTimeOffset Timestamp { get => throw null; init { } }
+        public string? PreviousHash { get => throw null; init { } }
+        public required string Hash { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchReplayRecord? left, Lunil.Hosting.LuaPatchReplayRecord? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchReplayRecord? left, Lunil.Hosting.LuaPatchReplayRecord? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchReplayRecord? other) => throw null;
+    }
+
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<Lunil.Hosting.LuaPatchReplayRecordState>))]
+    public enum LuaPatchReplayRecordState
+    {
+        Reserved = 0,
+        Committed = 1,
+        Reopened = 2
+    }
+
+    public sealed class LuaPatchReplayReservation : System.IEquatable<Lunil.Hosting.LuaPatchReplayReservation>
+    {
+        public string Scope { get => throw null; init { } }
+        public string PatchId { get => throw null; init { } }
+        public string Nonce { get => throw null; init { } }
+        public string ReservationId { get => throw null; init { } }
+        public System.DateTimeOffset ReservedAt { get => throw null; init { } }
+        public LuaPatchReplayReservation(string Scope, string PatchId, string Nonce, string ReservationId, System.DateTimeOffset ReservedAt) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchReplayReservation? left, Lunil.Hosting.LuaPatchReplayReservation? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchReplayReservation? left, Lunil.Hosting.LuaPatchReplayReservation? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchReplayReservation? other) => throw null;
+        public void Deconstruct(out string Scope, out string PatchId, out string Nonce, out string ReservationId, out System.DateTimeOffset ReservedAt) => throw null;
+    }
+
+    public sealed class LuaPatchReplayReservationResult : System.IEquatable<Lunil.Hosting.LuaPatchReplayReservationResult>
+    {
+        public Lunil.Hosting.LuaPatchReplayReservationStatus Status { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchReplayReservation? Reservation { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Reserved { get => throw null; }
+        public LuaPatchReplayReservationResult(Lunil.Hosting.LuaPatchReplayReservationStatus Status, Lunil.Hosting.LuaPatchReplayReservation? Reservation, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchReplayReservationResult? left, Lunil.Hosting.LuaPatchReplayReservationResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchReplayReservationResult? left, Lunil.Hosting.LuaPatchReplayReservationResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchReplayReservationResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchReplayReservationStatus Status, out Lunil.Hosting.LuaPatchReplayReservation? Reservation, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchReplayReservationStatus
+    {
+        Reserved = 0,
+        ReplayDetected = 1
+    }
+
+    public enum LuaPatchReplayStoreErrorCode
+    {
+        InvalidRecord = 0,
+        Corrupted = 1,
+        HashMismatch = 2,
+        SequenceMismatch = 3,
+        ResourceLimitExceeded = 4,
+        IoFailure = 5,
+        WriterUnavailable = 6
+    }
+
+    public sealed class LuaPatchReplayStoreException : System.Exception
+    {
+        public Lunil.Hosting.LuaPatchReplayStoreErrorCode Code { get => throw null; }
+        public LuaPatchReplayStoreException(Lunil.Hosting.LuaPatchReplayStoreErrorCode code, string message) { }
+        public LuaPatchReplayStoreException(Lunil.Hosting.LuaPatchReplayStoreErrorCode code, string message, System.Exception innerException) { }
+    }
 
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<Lunil.Hosting.LuaPatchResourceDisposition>))]
     public enum LuaPatchResourceDisposition
@@ -1309,7 +1434,8 @@ namespace Lunil.Hosting
         PrepareFailed = 3,
         PublishFailed = 4,
         HealthRejected = 5,
-        JournalFailed = 6
+        JournalFailed = 6,
+        ReplayFailed = 7
     }
 
     public delegate Lunil.Hosting.LuaPatchRingHealthDecision LuaPatchRingHealthCallback(Lunil.Hosting.LuaPatchRingHealthContext context);
@@ -1513,6 +1639,7 @@ namespace Lunil.Hosting
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPreparedPatchModule> Modules { get => throw null; }
         public Lunil.Hosting.LuaPatchMigrationSchema? MigrationSchema { get => throw null; }
         public string? ExpectedStateSchemaVersion { get => throw null; }
+        public string? ReplayScope { get => throw null; }
     }
 
     public sealed class LuaPreparedPatchModule : System.IEquatable<Lunil.Hosting.LuaPreparedPatchModule>

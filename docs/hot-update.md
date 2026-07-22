@@ -20,6 +20,7 @@ live state; coordinated ring commits apply the same check during barrier prepara
 Production preparation should perform policy validation and replay recording as one host operation:
 
 ```csharp
+var replayStore = new LuaPatchFileReplayStore("state/accepted-patches.ndjson");
 var prepareOptions = new LuaPatchPrepareOptions
 {
     AcceptancePolicy = new LuaPatchAcceptancePolicy
@@ -30,15 +31,37 @@ var prepareOptions = new LuaPatchPrepareOptions
         AllowedChannels = ["production"],
     },
     ReplayStore = replayStore,
+    ReplayScope = "state-a", // Stable target id; equals TargetId in coordinator rollouts.
 };
 ```
 
-`replayStore` implements `ILuaPatchReplayStore`. Its `TryAccept` operation must use one atomic,
-durable check-and-insert across the complete deployment replay domain; for a database, use a unique
-constraint on the patch-id/nonce identity and commit it before returning `true`. Preparation requires
-the policy and store together. A policy mismatch or duplicate returns
+Preparation requires `AcceptancePolicy`, `ReplayStore`, and `ReplayScope` together. The scope is a
+stable deployment-target identity, not a process id. The same signed patch can therefore be reserved
+for every target in a rollout, while reuse of either its patch id or nonce by another patch remains
+blocked inside each target scope. `LuaPatchCoordinator` verifies that a prepared patch's scope equals
+its `LuaPatchDeploymentTarget.TargetId`.
+
+`ILuaPatchReplayStore.TryReserve` durably creates a reservation or returns the existing reservation
+for the same uncommitted scoped identity. This idempotent result lets a restarted host repeat
+preflight and live binding after losing its in-memory `LuaPreparedPatch`. Commit then calls
+`TryAcquireCommit`; only one process can hold the returned lease and execute candidates. Disposing
+an incomplete lease, including operating-system handle release after process exit, leaves the
+reservation retryable. `Complete` makes it terminal, while transaction rollback compensates a
+completed lease with `Reopen`. A policy mismatch or committed/conflicting identity returns
 `LuaPatchPrepareStatus.AcceptanceRejected` with the precise `Acceptance` result, before any candidate
-executes. `ReplayLookup` remains useful for advisory reads, but it is not atomic replay protection.
+executes. `ReplayLookup` is only an advisory check for direct `Evaluate` calls and is deliberately
+excluded from the durable reservation path.
+
+`LuaPatchFileReplayStore` is the built-in durable option for processes that share a local replay
+file. Every reservation state change takes a bounded inter-process writer lock, verifies the complete
+canonical NDJSON sequence and SHA-256 hash chain, appends a `Reserved`, `Committed`, or `Reopened`
+event, and flushes it to stable storage. Per-reservation operating-system locks serialize commit
+ownership without serializing different rollout targets. `ReadAll()` returns the verified audit
+events. Corruption, a truncated tail, lock timeout, or a configured identity/entry/byte limit fails
+closed.
+Events are never compacted automatically because deleting terminal identities reopens replay. For
+targets that do not share this filesystem, implement the same reservation state machine and exclusive
+commit lease with a shared transactional database.
 
 ## Dependency and compilation preflight
 

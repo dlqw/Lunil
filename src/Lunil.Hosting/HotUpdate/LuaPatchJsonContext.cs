@@ -10,4 +10,6 @@ namespace Lunil.Hosting;
 [JsonSerializable(typeof(LuaPatchMigrationSchema))]
 [JsonSerializable(typeof(LuaPatchJournalEntry))]
 [JsonSerializable(typeof(LuaPatchJournalHashPayload))]
+[JsonSerializable(typeof(LuaPatchReplayRecord))]
+[JsonSerializable(typeof(LuaPatchReplayHashPayload))]
 internal sealed partial class LuaPatchJsonContext : JsonSerializerContext;

@@ -19,19 +19,68 @@ public sealed record LuaPatchAcceptanceResult(
     LuaPatchAcceptanceStatus Status,
     string? Message)
 {
+    public LuaPatchReplayReservation? ReplayReservation { get; init; }
+
     public bool Accepted => Status == LuaPatchAcceptanceStatus.Accepted;
 }
 
 public delegate bool LuaPatchReplayLookup(string patchId, string nonce);
 
 /// <summary>
-/// Atomically records accepted patch identities. Implementations must make the check-and-record
-/// operation indivisible across every host that shares the replay domain and durably publish a
-/// successful acceptance before returning <see langword="true"/>.
+/// Atomically reserves scoped patch identities and serializes their commit attempts. A durable
+/// reservation is resumable after a process crash; a commit lease must be released automatically
+/// when its owning process exits.
 /// </summary>
 public interface ILuaPatchReplayStore
 {
-    bool TryAccept(string patchId, string nonce, DateTimeOffset acceptedAt);
+    LuaPatchReplayReservationResult TryReserve(
+        string scope,
+        string patchId,
+        string nonce,
+        DateTimeOffset reservedAt);
+
+    ILuaPatchReplayCommitLease? TryAcquireCommit(
+        LuaPatchReplayReservation reservation,
+        DateTimeOffset acquiredAt);
+}
+
+public enum LuaPatchReplayReservationStatus : byte
+{
+    Reserved,
+    ReplayDetected,
+}
+
+/// <summary>A durable, target-scoped identity reservation returned by a replay store.</summary>
+public sealed record LuaPatchReplayReservation(
+    string Scope,
+    string PatchId,
+    string Nonce,
+    string ReservationId,
+    DateTimeOffset ReservedAt);
+
+public sealed record LuaPatchReplayReservationResult(
+    LuaPatchReplayReservationStatus Status,
+    LuaPatchReplayReservation? Reservation,
+    string? Message)
+{
+    public bool Reserved => Status == LuaPatchReplayReservationStatus.Reserved &&
+        Reservation is not null;
+}
+
+/// <summary>
+/// Exclusive commit ownership for one reservation. Disposing an incomplete lease makes the
+/// reservation available for a crash-safe retry; completing it durably rejects later retries.
+/// </summary>
+public interface ILuaPatchReplayCommitLease : IDisposable
+{
+    LuaPatchReplayReservation Reservation { get; }
+
+    bool IsCompleted { get; }
+
+    void Complete(DateTimeOffset committedAt);
+
+    /// <summary>Compensates a completed lease while ownership is still held after rollback.</summary>
+    void Reopen(DateTimeOffset reopenedAt);
 }
 
 public sealed record LuaPatchAcceptancePolicy
@@ -125,28 +174,65 @@ public sealed record LuaPatchAcceptancePolicy
     }
 
     /// <summary>
-    /// Evaluates manifest policy and then atomically records the patch identity. A false store
-    /// result is reported as a replay; the non-atomic <see cref="ReplayLookup"/> alone is not a
-    /// substitute for this operation.
+    /// Evaluates manifest policy and then durably creates or resumes its scoped reservation.
+    /// The non-atomic <see cref="ReplayLookup"/> is excluded from this operation and cannot
+    /// substitute for the store lifecycle.
     /// </summary>
-    public LuaPatchAcceptanceResult TryAccept(
+    public LuaPatchAcceptanceResult TryReserve(
         LuaPatchManifest manifest,
+        string scope,
         ILuaPatchReplayStore replayStore,
         DateTimeOffset? utcNow = null)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
         ArgumentNullException.ThrowIfNull(replayStore);
         var now = utcNow ?? DateTimeOffset.UtcNow;
-        var evaluation = Evaluate(manifest, now);
+        // The durable store owns replay state for this path. A legacy lookup is intentionally
+        // excluded so an incomplete reservation can be rebound after a process restart.
+        var evaluation = ReplayLookup is null
+            ? Evaluate(manifest, now)
+            : (this with { ReplayLookup = null }).Evaluate(manifest, now);
         if (!evaluation.Accepted)
         {
             return evaluation;
         }
 
-        return replayStore.TryAccept(manifest.PatchId, manifest.Nonce, now)
-            ? evaluation
+        var reservation = replayStore.TryReserve(
+            scope,
+            manifest.PatchId,
+            manifest.Nonce,
+            now);
+        if (!Enum.IsDefined(reservation.Status) ||
+            (reservation.Status == LuaPatchReplayReservationStatus.Reserved) !=
+            (reservation.Reservation is not null))
+        {
+            throw new InvalidOperationException(
+                "The replay store returned an inconsistent reservation result.");
+        }
+
+        if (reservation.Reserved &&
+            (!string.Equals(reservation.Reservation!.Scope, scope, StringComparison.Ordinal) ||
+                !string.Equals(
+                    reservation.Reservation.PatchId,
+                    manifest.PatchId,
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    reservation.Reservation.Nonce,
+                    manifest.Nonce,
+                    StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(reservation.Reservation.ReservationId) ||
+                reservation.Reservation.ReservedAt == default))
+        {
+            throw new InvalidOperationException(
+                "The replay store returned a reservation for another scoped identity.");
+        }
+
+        return reservation.Reserved
+            ? evaluation with { ReplayReservation = reservation.Reservation }
             : Rejected(
                 LuaPatchAcceptanceStatus.ReplayDetected,
-                "The patch id and nonce were already accepted.");
+                reservation.Message ??
+                    "The scoped patch identity is committed or conflicts with another reservation.");
     }
 
     private static LuaPatchAcceptanceResult Rejected(

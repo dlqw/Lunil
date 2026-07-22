@@ -12,7 +12,7 @@ namespace Lunil.Hosting.Tests;
 public sealed class LuaPatchOperationalTests
 {
     [Fact]
-    public async Task ConcurrentPreparationAtomicallyAcceptsThePatchOnce()
+    public async Task ConcurrentTargetsReserveSamePatchInIndependentReplayScopes()
     {
         using var first = CreateHost(new Dictionary<string, string>
         {
@@ -36,23 +36,19 @@ public sealed class LuaPatchOperationalTests
                 AllowedChannels = ["test"],
             },
             ReplayStore = store,
+            ReplayScope = "state-a",
             TimeProvider = new FixedTimeProvider(new DateTimeOffset(
                 2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
         };
 
         var results = await Task.WhenAll(
             first.PreparePatchAsync(bundle, options),
-            second.PreparePatchAsync(bundle, options));
+            second.PreparePatchAsync(bundle, options with { ReplayScope = "state-b" }));
 
-        var accepted = Assert.Single(results, static result => result.Succeeded);
-        Assert.Equal(LuaPatchAcceptanceStatus.Accepted, accepted.Acceptance!.Status);
-        var replay = Assert.Single(results, static result =>
-            result.Status == LuaPatchPrepareStatus.AcceptanceRejected);
-        Assert.Null(replay.PreparedPatch);
-        Assert.Equal(LuaPatchAcceptanceStatus.ReplayDetected, replay.Acceptance!.Status);
-        Assert.All(replay.Modules, static module =>
-            Assert.Equal(LuaPatchPrepareStatus.AcceptanceRejected, module.Status));
-        Assert.Equal(1, store.AcceptedCount);
+        Assert.All(results, static result => Assert.True(result.Succeeded));
+        Assert.All(results, static result =>
+            Assert.Equal(LuaPatchAcceptanceStatus.Accepted, result.Acceptance!.Status));
+        Assert.Equal(2, store.AcceptedCount);
     }
 
     [Fact]
@@ -74,6 +70,7 @@ public sealed class LuaPatchOperationalTests
                 RuntimeAbi = "lunil-0.12",
             },
             ReplayStore = store,
+            ReplayScope = "state-a",
             TimeProvider = new FixedTimeProvider(new DateTimeOffset(
                 2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
         });
@@ -105,6 +102,13 @@ public sealed class LuaPatchOperationalTests
         Assert.Throws<ArgumentException>(() => host.PreparePatch(
             bundle,
             new LuaPatchPrepareOptions { ReplayStore = new AtomicReplayStore() }));
+        Assert.Throws<ArgumentException>(() => host.PreparePatch(
+            bundle,
+            new LuaPatchPrepareOptions
+            {
+                AcceptancePolicy = policy,
+                ReplayStore = new AtomicReplayStore(),
+            }));
     }
 
     [Fact]
@@ -127,6 +131,7 @@ public sealed class LuaPatchOperationalTests
                     AllowedChannels = ["test"],
                 },
                 ReplayStore = store,
+                ReplayScope = "state-a",
                 TimeProvider = new FixedTimeProvider(new DateTimeOffset(
                     2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
             });
@@ -134,6 +139,68 @@ public sealed class LuaPatchOperationalTests
         Assert.Equal(LuaPatchPrepareStatus.ModuleNotLoaded, result.Status);
         Assert.Null(result.Acceptance);
         Assert.Equal(0, store.AcceptedCount);
+    }
+
+    [Fact]
+    public void PreparedReservationResumesAfterRestartAndBecomesTerminalAtCommit()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Load(host, "require('a')");
+        var bundle = CreateBundle(Entry("a", "return {value=2}"));
+        var store = new AtomicReplayStore();
+        var options = AcceptanceOptions(store, "state-a");
+
+        var prepared = host.PreparePatch(bundle, options);
+        var resumed = host.PreparePatch(bundle, options);
+
+        Assert.True(prepared.Succeeded);
+        Assert.True(resumed.Succeeded);
+        Assert.Equal(
+            prepared.Acceptance!.ReplayReservation,
+            resumed.Acceptance!.ReplayReservation);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded);
+        LuaPatchCommitResult committed;
+        using (opened.Window!)
+        {
+            committed = host.CommitPatch(resumed.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.True(committed.Succeeded);
+        var replay = host.PreparePatch(bundle, options);
+        Assert.Equal(LuaPatchPrepareStatus.AcceptanceRejected, replay.Status);
+        Assert.Equal(LuaPatchAcceptanceStatus.ReplayDetected, replay.Acceptance!.Status);
+    }
+
+    [Fact]
+    public void FailedCommitReleasesReservationForSafeRetry()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Load(host, "require('a')");
+        var bundle = CreateBundle(Entry("a", "error('boom')"));
+        var store = new AtomicReplayStore();
+        var options = AcceptanceOptions(store, "state-a");
+        var prepared = host.PreparePatch(bundle, options);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded);
+        LuaPatchCommitResult failed;
+        using (opened.Window!)
+        {
+            failed = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.Equal(LuaPatchCommitStatus.ExecutionFailed, failed.Status);
+        var retry = host.PreparePatch(bundle, options);
+        Assert.True(retry.Succeeded);
+        Assert.Equal(
+            prepared.Acceptance!.ReplayReservation,
+            retry.Acceptance!.ReplayReservation);
     }
 
     [Fact]
@@ -399,17 +466,86 @@ public sealed class LuaPatchOperationalTests
 
     private sealed class AtomicReplayStore : ILuaPatchReplayStore
     {
-        private readonly ConcurrentDictionary<string, byte> _accepted =
+        private readonly ConcurrentDictionary<string, LuaPatchReplayReservation> _accepted =
             new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> _committed = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, byte> _leased = new(StringComparer.Ordinal);
 
         public int AcceptedCount => _accepted.Count;
 
-        public bool TryAccept(string patchId, string nonce, DateTimeOffset acceptedAt) =>
-            _accepted.TryAdd(patchId + "\0" + nonce, 0);
+        public LuaPatchReplayReservationResult TryReserve(
+            string scope,
+            string patchId,
+            string nonce,
+            DateTimeOffset reservedAt)
+        {
+            var key = scope + "\0" + patchId + "\0" + nonce;
+            if (_committed.ContainsKey(key))
+            {
+                return new LuaPatchReplayReservationResult(
+                    LuaPatchReplayReservationStatus.ReplayDetected, null, "replay");
+            }
+
+            var reservation = _accepted.GetOrAdd(key, _ => new LuaPatchReplayReservation(
+                scope, patchId, nonce, Guid.NewGuid().ToString("N"), reservedAt));
+            return new LuaPatchReplayReservationResult(
+                LuaPatchReplayReservationStatus.Reserved, reservation, null);
+        }
+
+        public ILuaPatchReplayCommitLease? TryAcquireCommit(
+            LuaPatchReplayReservation reservation,
+            DateTimeOffset acquiredAt)
+        {
+            var key = reservation.Scope + "\0" + reservation.PatchId + "\0" + reservation.Nonce;
+            return _committed.ContainsKey(key) || !_leased.TryAdd(key, 0)
+                ? null
+                : new Lease(this, reservation, key);
+        }
+
+        private sealed class Lease(
+            AtomicReplayStore owner,
+            LuaPatchReplayReservation reservation,
+            string key) : ILuaPatchReplayCommitLease
+        {
+            public LuaPatchReplayReservation Reservation => reservation;
+
+            public bool IsCompleted { get; private set; }
+
+            public void Complete(DateTimeOffset committedAt)
+            {
+                owner._committed[key] = 0;
+                IsCompleted = true;
+            }
+
+            public void Reopen(DateTimeOffset reopenedAt)
+            {
+                owner._committed.TryRemove(key, out _);
+                IsCompleted = false;
+            }
+
+            public void Dispose() => owner._leased.TryRemove(key, out _);
+        }
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => value;
     }
+
+    private static LuaPatchPrepareOptions AcceptanceOptions(
+        ILuaPatchReplayStore store,
+        string scope) => new()
+        {
+            AcceptancePolicy = new LuaPatchAcceptancePolicy
+            {
+                TargetBuild = "build-2",
+                CurrentRevision = "build-1",
+                RuntimeAbi = "lunil-0.12",
+                AllowedChannels = ["test"],
+            },
+            ReplayStore = store,
+            ReplayScope = scope,
+            TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
+        };
 }

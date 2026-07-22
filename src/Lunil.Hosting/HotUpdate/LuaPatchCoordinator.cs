@@ -64,6 +64,7 @@ public enum LuaPatchRingCommitStatus : byte
     PublishFailed,
     HealthRejected,
     JournalFailed,
+    ReplayFailed,
 }
 
 public sealed record LuaPatchTargetCommitResult(
@@ -408,6 +409,25 @@ public sealed class LuaPatchCoordinator
                 }
             }
 
+            try
+            {
+                var committedAt = options.TimeProvider.GetUtcNow();
+                foreach (var pair in sessions)
+                {
+                    pair.Session.CompleteReplayAcceptance(committedAt);
+                }
+            }
+            catch (Exception exception) when (IsRecoverable(exception))
+            {
+                targetResults.Clear();
+                RollbackSessions(sessions, targetResults, exception.Message);
+                _ = TryJournal(
+                    options,
+                    Entry(LuaPatchJournalPhase.RolledBack, exception.Message),
+                    out _);
+                return Result(LuaPatchRingCommitStatus.ReplayFailed, exception.Message);
+            }
+
             if (!TryJournal(options, Entry(LuaPatchJournalPhase.Committed), out journalError))
             {
                 targetResults.Clear();
@@ -642,6 +662,15 @@ public sealed class LuaPatchCoordinator
             {
                 throw new ArgumentException(
                     $"Prepared patch for target '{target.TargetId}' belongs to another host.",
+                    nameof(ring));
+            }
+
+            if (target.PreparedPatch.ReplayScope is { } replayScope &&
+                !string.Equals(replayScope, target.TargetId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Prepared patch replay scope '{replayScope}' does not match target " +
+                    $"'{target.TargetId}'.",
                     nameof(ring));
             }
 
