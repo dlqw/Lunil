@@ -153,7 +153,7 @@ public sealed class LuaPatchBundleTests
     }
 
     [Fact]
-    public void AcceptancePolicyRejectsWrongBaseRevisionAndReplay()
+    public void AcceptancePolicyRejectsWrongBaseRevisionReplayAndExpiry()
     {
         var manifest = CreateManifest();
         var wrongRevision = new LuaPatchAcceptancePolicy
@@ -175,6 +175,15 @@ public sealed class LuaPatchBundleTests
                 patchId == "hotfix-42" && nonce == "release-42",
         }.Evaluate(manifest, manifest.CreatedAt);
         Assert.Equal(LuaPatchAcceptanceStatus.ReplayDetected, replay.Status);
+
+        var expired = new LuaPatchAcceptancePolicy
+        {
+            TargetBuild = "game-100",
+            CurrentRevision = "build-99",
+            RuntimeAbi = "lunil-0.12",
+            AllowedChannels = ["production"],
+        }.Evaluate(manifest, manifest.ExpiresAt);
+        Assert.Equal(LuaPatchAcceptanceStatus.Expired, expired.Status);
     }
 
     private static LuaPatchBundle CreateBundle(ILuaPatchSigner signer)

@@ -533,7 +533,8 @@ namespace Lunil.Hosting
         ChannelNotAllowed = 4,
         CreatedInFuture = 5,
         CreatedBeforeMinimum = 6,
-        ReplayDetected = 7
+        ReplayDetected = 7,
+        Expired = 8
     }
 
     public sealed class LuaPatchBundle
@@ -608,7 +609,8 @@ namespace Lunil.Hosting
         MigrationFailed = 5,
         CachePolicyFailed = 6,
         PublicationFailed = 7,
-        BarrierAborted = 8
+        BarrierAborted = 8,
+        Expired = 9
     }
 
     public sealed class LuaPatchCoordinator

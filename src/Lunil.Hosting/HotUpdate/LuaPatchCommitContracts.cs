@@ -216,6 +216,7 @@ public enum LuaPatchCommitStatus : byte
     CachePolicyFailed,
     PublicationFailed,
     BarrierAborted,
+    Expired,
 }
 
 public enum LuaPatchModuleCommitStatus : byte

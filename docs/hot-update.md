@@ -12,7 +12,10 @@ version, runtime ABI, channel, expiry, nonce, dependencies, and SHA-256 payload 
 explicit `LuaPatchEcdsaTrustStore`. It rejects untrusted keys, expired or non-canonical manifests,
 unsafe paths, duplicate modules, missing required dependencies, trailing data, and size-limit
 violations. `LuaPatchAcceptancePolicy` additionally binds a verified bundle to the current build,
-runtime ABI, revision, channel, and host replay record.
+runtime ABI, revision, channel, expiry, and host replay record. Because a prepared patch may wait for
+a later game-loop safe point, commit checks the signed manifest expiry again before constructing or
+executing any candidate. An expired commit returns `LuaPatchCommitStatus.Expired` without changing
+live state; coordinated ring commits apply the same check during barrier preparation.
 
 ## Dependency and compilation preflight
 

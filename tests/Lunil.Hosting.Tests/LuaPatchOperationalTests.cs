@@ -236,7 +236,7 @@ public sealed class LuaPatchOperationalTests
                 LanguageVersion = LuaLanguageVersion.Lua54,
                 RuntimeAbi = "lunil-0.12",
                 CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
-                ExpiresAt = new DateTimeOffset(2026, 8, 22, 0, 0, 0, TimeSpan.Zero),
+                ExpiresAt = new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero),
                 Nonce = "operational-test",
             },
             entries.ToImmutableArray(),

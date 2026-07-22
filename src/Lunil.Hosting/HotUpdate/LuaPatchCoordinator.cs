@@ -282,7 +282,8 @@ public sealed class LuaPatchCoordinator
                     pair.Target.PreparedPatch,
                     pair.Window,
                     options.Commit,
-                    cancellationToken);
+                    cancellationToken,
+                    options.TimeProvider);
                 if (preparation.Failure is not null)
                 {
                     targetResults[pair.Target.TargetId] = preparation.Failure;
