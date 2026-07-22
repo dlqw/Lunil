@@ -246,6 +246,68 @@ namespace Lunil.Syntax.Lexing
 }
 namespace Lunil.Syntax.Parsing
 {
+    public sealed class LuaBlockSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaSyntaxNode Node { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
+    public sealed class LuaCallExpressionSyntax : Lunil.Syntax.Parsing.LuaExpressionSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaExpressionSyntax? Callee { get => throw null; }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Syntax.Parsing.LuaExpressionSyntax> Arguments { get => throw null; }
+        public bool IsMethodCall { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
+    public class LuaExpressionSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaSyntaxNode Node { get => throw null; }
+        public Lunil.Syntax.Parsing.LuaSyntaxKind Kind { get => throw null; }
+        public Lunil.Core.Text.TextSpan Span { get => throw null; }
+        public bool IsComplete { get => throw null; }
+        public bool TryGetIdentifierToken([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Lunil.Syntax.Lexing.LuaSyntaxToken? token) => throw null;
+        public bool TryGetConstantString(out string value) => throw null;
+    }
+
+    public sealed class LuaFunctionDeclarationSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaSyntaxNode Node { get => throw null; }
+        public Lunil.Syntax.Parsing.LuaFunctionNameSyntax? Name { get => throw null; }
+        public Lunil.Syntax.Parsing.LuaParameterListSyntax? Parameters { get => throw null; }
+        public Lunil.Syntax.Parsing.LuaBlockSyntax? Body { get => throw null; }
+        public bool IsLocal { get => throw null; }
+        public bool IsGlobal { get => throw null; }
+        public bool IsExpression { get => throw null; }
+        public bool HasImplicitSelf { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
+    public sealed class LuaFunctionNameSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaSyntaxNode Node { get => throw null; }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Syntax.Lexing.LuaSyntaxToken> Segments { get => throw null; }
+        public bool HasImplicitSelf { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
+    public sealed class LuaMemberAccessExpressionSyntax : Lunil.Syntax.Parsing.LuaExpressionSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaExpressionSyntax? Receiver { get => throw null; }
+        public Lunil.Syntax.Lexing.LuaSyntaxToken? MemberName { get => throw null; }
+        public bool IsColonAccess { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
+    public sealed class LuaParameterListSyntax
+    {
+        public Lunil.Syntax.Parsing.LuaSyntaxNode Node { get => throw null; }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Syntax.Lexing.LuaSyntaxToken> Parameters { get => throw null; }
+        public bool HasVarArg { get => throw null; }
+        public Lunil.Syntax.Lexing.LuaSyntaxToken? VarArgName { get => throw null; }
+        public bool IsComplete { get => throw null; }
+    }
+
     public sealed class LuaParseResult : System.IEquatable<Lunil.Syntax.Parsing.LuaParseResult>
     {
         public Lunil.Core.Text.SourceText Source { get => throw null; init { } }
@@ -361,5 +423,35 @@ namespace Lunil.Syntax.Parsing
         public System.Collections.Generic.IEnumerable<Lunil.Syntax.Lexing.LuaSyntaxToken> ChildTokens() => throw null;
         public System.Collections.Generic.IEnumerable<Lunil.Syntax.Parsing.LuaSyntaxNode> DescendantNodes() => throw null;
         public System.Collections.Generic.IEnumerable<Lunil.Syntax.Lexing.LuaSyntaxToken> DescendantTokens() => throw null;
+    }
+
+    public abstract class LuaSyntaxVisitor<TResult>
+    {
+        public virtual TResult Visit(Lunil.Syntax.Parsing.LuaSyntaxNode? node) => throw null;
+        public virtual TResult VisitCallExpression(Lunil.Syntax.Parsing.LuaCallExpressionSyntax node) => throw null;
+        public virtual TResult VisitFunctionDeclaration(Lunil.Syntax.Parsing.LuaFunctionDeclarationSyntax node) => throw null;
+        public virtual TResult VisitMemberAccessExpression(Lunil.Syntax.Parsing.LuaMemberAccessExpressionSyntax node) => throw null;
+        public virtual TResult VisitExpression(Lunil.Syntax.Parsing.LuaExpressionSyntax node) => throw null;
+        public virtual TResult DefaultVisit(Lunil.Syntax.Parsing.LuaSyntaxNode node) => throw null;
+    }
+
+    public abstract class LuaSyntaxWalker
+    {
+        public virtual void Visit(Lunil.Syntax.Parsing.LuaSyntaxNode? node) { }
+        public virtual void VisitCallExpression(Lunil.Syntax.Parsing.LuaCallExpressionSyntax node) { }
+        public virtual void VisitFunctionDeclaration(Lunil.Syntax.Parsing.LuaFunctionDeclarationSyntax node) { }
+        public virtual void VisitMemberAccessExpression(Lunil.Syntax.Parsing.LuaMemberAccessExpressionSyntax node) { }
+        public virtual void VisitExpression(Lunil.Syntax.Parsing.LuaExpressionSyntax node) { }
+        public virtual void DefaultVisit(Lunil.Syntax.Parsing.LuaSyntaxNode node) { }
+    }
+
+    public static class LuaTypedSyntaxExtensions
+    {
+        public static string GetText(this Lunil.Syntax.Lexing.LuaSyntaxToken token, Lunil.Core.Text.SourceText source) => throw null;
+        public static bool TryGetCallExpression(this Lunil.Syntax.Parsing.LuaSyntaxNode node, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Lunil.Syntax.Parsing.LuaCallExpressionSyntax? call) => throw null;
+        public static bool TryGetMemberAccessExpression(this Lunil.Syntax.Parsing.LuaSyntaxNode node, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Lunil.Syntax.Parsing.LuaMemberAccessExpressionSyntax? member) => throw null;
+        public static bool TryGetFunctionDeclaration(this Lunil.Syntax.Parsing.LuaSyntaxNode node, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Lunil.Syntax.Parsing.LuaFunctionDeclarationSyntax? function) => throw null;
+        public static bool TryGetExpression(this Lunil.Syntax.Parsing.LuaSyntaxNode node, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Lunil.Syntax.Parsing.LuaExpressionSyntax? expression) => throw null;
+        public static bool TryGetConstantString(this Lunil.Syntax.Parsing.LuaSyntaxNode node, out string value) => throw null;
     }
 }

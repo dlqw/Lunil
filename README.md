@@ -32,7 +32,7 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.2` hot-update preview; it is not the stable package
+> The current source tree is the `0.12.0-alpha.3` hot-update preview; it is not the stable package
 > line.
 
 ## Performance
@@ -80,6 +80,8 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
 - **Verified compiler pipeline** — byte-oriented source text, lossless syntax, binding, type and
   flow analysis, workspace analysis, canonical lowering, and independent IR verification.
+- **Typed analysis embedding** — the 0.12 preview adds call, member, function, parameter, and block
+  facades plus extensible visitors while preserving the lossless tree as an escape hatch.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
 - **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
@@ -126,6 +128,38 @@ separate allowlists and preserve Lua state ownership. See the [CLR interoperatio
 for conversion, overload, NativeAOT, trimming, and deployment details.
 
 Native Lua C modules are not supported because Lunil does not expose the Lua C ABI.
+
+## Typed syntax analysis in 0.12 preview
+
+Typed facades remove grammar-shape and child-order assumptions from common source analysis. The
+walker below finds constant UTF-8 `require` requests, including parenthesized and shorthand string
+calls. `IsComplete` is false when a facade contains recovery nodes or missing tokens; `Node` always
+provides the underlying lossless syntax for advanced handling.
+
+```csharp
+using Lunil.Core.Text;
+using Lunil.Syntax.Parsing;
+
+var syntax = LuaParser.Parse(SourceText.FromUtf8("local m = require 'game.player'"));
+var walker = new RequireWalker(syntax.Source);
+walker.Visit(syntax.Root);
+
+sealed class RequireWalker(SourceText source) : LuaSyntaxWalker
+{
+    public override void VisitCallExpression(LuaCallExpressionSyntax call)
+    {
+        if (!call.IsMethodCall &&
+            call.Callee?.TryGetIdentifierToken(out var identifier) == true &&
+            identifier.GetText(source) == "require" &&
+            call.Arguments.FirstOrDefault()?.TryGetConstantString(out var module) == true)
+        {
+            Console.WriteLine(module);
+        }
+
+        base.VisitCallExpression(call);
+    }
+}
+```
 
 ## Quick start
 
@@ -237,7 +271,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
 - Stable line: `0.11.x` (current release `0.11.0`); `0.10.x` remains compatible for existing hosts.
-- Preview source line: `0.12.0-alpha.2`; its reviewed API snapshot may grow before the stable
+- Preview source line: `0.12.0-alpha.3`; its reviewed API snapshot may grow before the stable
   `0.12.0` freeze.
 
 Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).

@@ -23,6 +23,23 @@ public sealed class LuaWorkspaceTests
     }
 
     [Fact]
+    public async Task TypedDependencyWalkPreservesShorthandAndExcludesMethodCalls()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "local object = { require = function() end }\n" +
+                "object:require('ignored')\nreturn require 'dep'"),
+            Document("dep", "return 42"),
+        ]);
+
+        var dependency = Assert.Single(result.Graph.Dependencies);
+        Assert.Equal(LuaModuleDependencyKind.Static, dependency.Kind);
+        Assert.Equal("dep", dependency.Target?.Name);
+    }
+
+    [Fact]
     public async Task AnyModuleExportRemainsConservativeAcrossRequire()
     {
         using var workspace = new LuaWorkspace();

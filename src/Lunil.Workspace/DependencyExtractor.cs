@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
-using System.Text;
 using Lunil.Compiler;
 using Lunil.Semantics.Binding;
-using Lunil.Syntax.Lexing;
 using Lunil.Syntax.Parsing;
 
 namespace Lunil.Workspace;
@@ -15,40 +13,7 @@ internal static class DependencyExtractor
             .GroupBy(static reference => reference.Span)
             .ToDictionary(static group => group.Key, static group => group.Last());
         var dependencies = ImmutableArray.CreateBuilder<DiscoveredDependency>();
-        foreach (var call in compilation.Syntax.Root.DescendantNodes().Prepend(compilation.Syntax.Root)
-                     .Where(static node => node.Kind == LuaSyntaxKind.CallExpression))
-        {
-            var callee = call.ChildNodes().FirstOrDefault();
-            if (callee?.Kind != LuaSyntaxKind.IdentifierExpression)
-            {
-                continue;
-            }
-
-            var token = callee.ChildTokens().SingleOrDefault(static item =>
-                item.Kind == LuaTokenKind.Identifier && !item.IsMissing);
-            if (token is null || !references.TryGetValue(token.Span, out var reference) ||
-                reference.ResolutionKind != LuaNameResolutionKind.Global ||
-                !string.Equals(reference.Name, "require", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var argument = GetCallArguments(call).FirstOrDefault();
-            if (argument is not null && TryGetStringLiteral(argument, out var requestedName))
-            {
-                dependencies.Add(new DiscoveredDependency(
-                    requestedName,
-                    LuaModuleDependencyKind.Static,
-                    call.Span));
-            }
-            else
-            {
-                dependencies.Add(new DiscoveredDependency(
-                    "<dynamic>",
-                    LuaModuleDependencyKind.Dynamic,
-                    call.Span));
-            }
-        }
+        new RequireCallWalker(references, dependencies).Visit(compilation.Syntax.Root);
 
         return dependencies
             .OrderBy(static dependency => dependency.Span.Start)
@@ -56,38 +21,38 @@ internal static class DependencyExtractor
             .ToImmutableArray();
     }
 
-    private static IEnumerable<LuaSyntaxNode> GetCallArguments(LuaSyntaxNode expression)
+    private sealed class RequireCallWalker(
+        IReadOnlyDictionary<Lunil.Core.Text.TextSpan, LuaNameReference> references,
+        ImmutableArray<DiscoveredDependency>.Builder dependencies) : LuaSyntaxWalker
     {
-        var argumentList = expression.ChildNodes().FirstOrDefault(static node =>
-            node.Kind == LuaSyntaxKind.ArgumentList);
-        if (argumentList is null)
+        public override void VisitCallExpression(LuaCallExpressionSyntax node)
         {
-            return [];
+            if (!node.IsMethodCall &&
+                node.Callee?.TryGetIdentifierToken(out var token) == true &&
+                references.TryGetValue(token.Span, out var reference) &&
+                reference.ResolutionKind == LuaNameResolutionKind.Global &&
+                string.Equals(reference.Name, "require", StringComparison.Ordinal))
+            {
+                var argument = node.Arguments.FirstOrDefault();
+                if (argument?.TryGetConstantString(out var requestedName) == true &&
+                    !string.IsNullOrWhiteSpace(requestedName))
+                {
+                    dependencies.Add(new DiscoveredDependency(
+                        requestedName,
+                        LuaModuleDependencyKind.Static,
+                        node.Span));
+                }
+                else
+                {
+                    dependencies.Add(new DiscoveredDependency(
+                        "<dynamic>",
+                        LuaModuleDependencyKind.Dynamic,
+                        node.Span));
+                }
+            }
+
+            base.VisitCallExpression(node);
         }
-
-        var expressionList = argumentList.ChildNodes().FirstOrDefault(static node =>
-            node.Kind == LuaSyntaxKind.ExpressionList);
-        return expressionList is not null
-            ? expressionList.ChildNodes()
-            : argumentList.ChildNodes();
-    }
-
-    private static bool TryGetStringLiteral(LuaSyntaxNode expression, out string value)
-    {
-        value = string.Empty;
-        if (expression.Kind != LuaSyntaxKind.StringLiteralExpression)
-        {
-            return false;
-        }
-
-        var token = expression.ChildTokens().SingleOrDefault();
-        if (token?.Value is not LuaStringTokenValue text)
-        {
-            return false;
-        }
-
-        value = Encoding.UTF8.GetString(text.Bytes.AsSpan());
-        return !string.IsNullOrWhiteSpace(value);
     }
 }
 
