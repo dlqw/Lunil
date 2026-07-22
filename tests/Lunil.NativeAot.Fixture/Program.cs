@@ -143,7 +143,9 @@ public static class Program
     }
 
     [DynamicDependency(
-        DynamicallyAccessedMemberTypes.PublicConstructors,
+        DynamicallyAccessedMemberTypes.PublicConstructors |
+        DynamicallyAccessedMemberTypes.PublicMethods |
+        DynamicallyAccessedMemberTypes.PublicProperties,
         typeof(ClrFixtureValue))]
     private static bool VerifyClrInterop()
     {
@@ -153,9 +155,11 @@ public static class Program
             ExecutionBackend = LuaHostExecutionBackend.Interpreter,
             Clr = new LuaClrOptions
             {
-                Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
+                Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction |
+                    LuaClrCapabilities.MemberAccess,
                 AllowedAssemblyNames = [typeof(ClrFixtureValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                AllowedMemberNames = ["Value", "Add"],
                 InstallGlobalModule = true,
             },
         });
@@ -163,11 +167,14 @@ public static class Program
         var info = host.ClrBridge.ResolveType(typeName);
         var userdata = host.ClrBridge.CreateInstance(typeName, [LuaValue.FromInteger(42)]);
         var payload = userdata.GetPayload<LuaClrObject>();
-        var luaResult = host.RunUtf8($"return type(clr.new('{typeName}', 43))");
+        var luaResult = host.RunUtf8(
+            $"local value=clr.new('{typeName}', 43); return type(value),value.Value,value:Add(1)");
         return info.IsConstructible &&
             payload.Instance is ClrFixtureValue { Value: 42 } &&
             luaResult.Succeeded &&
-            luaResult.Execution!.Values[0].AsString().ToString() == "userdata";
+            luaResult.Execution!.Values[0].AsString().ToString() == "userdata" &&
+            luaResult.Execution.Values[1].AsInteger() == 43 &&
+            luaResult.Execution.Values[2].AsInteger() == 44;
     }
 
     public sealed class ClrFixtureValue
@@ -178,5 +185,7 @@ public static class Program
         }
 
         public long Value { get; }
+
+        public long Add(long amount) => Value + amount;
     }
 }

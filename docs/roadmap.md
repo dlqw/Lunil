@@ -85,3 +85,6 @@ The 0.12.0 line targets safe live updates for long-running hosts:
 
 An update never changes the meaning of an already-published Lua version or leaves an active frame
 with an invalid code or value identity.
+
+
+The 0.11.0 milestones are complete in the stable release.

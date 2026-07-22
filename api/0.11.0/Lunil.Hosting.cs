@@ -15,15 +15,42 @@ namespace Lunil.Hosting
         public void Clear() { }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2067", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2070", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2072", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2080", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Exact allowlisted types are rooted by the host; delegate expressions use the interpreter on AOT runtimes.")]
     public sealed class LuaClrBridge
     {
         public Lunil.Runtime.LuaState State { get => throw null; }
         public Lunil.Hosting.LuaClrOptions Options { get => throw null; }
         public bool IsEnabled { get => throw null; }
+        public int OwnerThreadId { get => throw null; }
         public LuaClrBridge(Lunil.Runtime.LuaState state, Lunil.Hosting.LuaClrOptions? options = null) { }
         public Lunil.Hosting.LuaClrTypeInfo ResolveType(string typeName) => throw null;
         public Lunil.Runtime.Values.LuaUserdata CreateInstance(string typeName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaClrMemberInfo> ResolveMembers(string typeName) => throw null;
+        public Lunil.Runtime.Values.LuaValue GetMember(Lunil.Runtime.Values.LuaValue target, string memberName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> indexArguments = null) => throw null;
+        public void SetMember(Lunil.Runtime.Values.LuaValue target, string memberName, Lunil.Runtime.Values.LuaValue value) { }
+        public Lunil.Hosting.LuaClrInvocationResult InvokeMember(Lunil.Runtime.Values.LuaValue target, string memberName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null, System.ReadOnlySpan<Lunil.Hosting.LuaClrNamedArgument> namedArguments = null) => throw null;
+        public Lunil.Hosting.LuaClrInvocationResult InvokeStatic(string typeName, string memberName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null, System.ReadOnlySpan<Lunil.Hosting.LuaClrNamedArgument> namedArguments = null) => throw null;
+        public System.Delegate CreateDelegate(Lunil.Runtime.Values.LuaValue function, string delegateTypeName) => throw null;
+        public Lunil.Hosting.LuaClrSubscription Subscribe(Lunil.Runtime.Values.LuaValue target, string eventName, Lunil.Runtime.Values.LuaValue callback) => throw null;
+        public Lunil.Runtime.Values.LuaValue Await(Lunil.Runtime.Values.LuaValue value) => throw null;
+        public Lunil.Runtime.Values.LuaUserdata CreateCancellation() => throw null;
+        public void Cancel(Lunil.Runtime.Values.LuaValue value) { }
+        public void DisposeValue(Lunil.Runtime.Values.LuaValue value) { }
         public void InstallGlobalModule() { }
+    }
+
+    public sealed class LuaClrCancellation : System.IDisposable
+    {
+        public System.Threading.CancellationToken Token { get => throw null; }
+        public bool IsCancellationRequested { get => throw null; }
+        public void Cancel() { }
+        public void Dispose() { }
     }
 
     [System.Flags]
@@ -31,7 +58,12 @@ namespace Lunil.Hosting
     {
         None = 0,
         TypeDiscovery = 1,
-        Construction = 2
+        Construction = 2,
+        MemberAccess = 4,
+        DelegateConversion = 8,
+        EventSubscription = 16,
+        Async = 32,
+        Disposal = 64
     }
 
     public sealed class LuaClrConstructorInfo : System.IEquatable<Lunil.Hosting.LuaClrConstructorInfo>
@@ -56,7 +88,16 @@ namespace Lunil.Hosting
         AmbiguousType = 4,
         TypeNotConstructible = 5,
         NoMatchingConstructor = 6,
-        ConstructionFailed = 7
+        ConstructionFailed = 7,
+        MemberNotAllowed = 8,
+        MemberNotFound = 9,
+        NoMatchingMember = 10,
+        InvocationFailed = 11,
+        InvalidDelegate = 12,
+        SubscriptionClosed = 13,
+        AsyncFailed = 14,
+        ThreadDenied = 15,
+        InvalidRefOut = 16
     }
 
     public sealed class LuaClrException : System.Exception
@@ -64,6 +105,63 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrErrorCode Code { get => throw null; }
         public LuaClrException(Lunil.Hosting.LuaClrErrorCode code, string message) { }
         public LuaClrException(Lunil.Hosting.LuaClrErrorCode code, string message, System.Exception innerException) { }
+    }
+
+    public sealed class LuaClrInvocationResult : System.IEquatable<Lunil.Hosting.LuaClrInvocationResult>
+    {
+        public Lunil.Runtime.Values.LuaValue ReturnValue { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Runtime.Values.LuaValue> RefOutValues { get => throw null; init { } }
+        public LuaClrInvocationResult(Lunil.Runtime.Values.LuaValue ReturnValue, System.Collections.Immutable.ImmutableArray<Lunil.Runtime.Values.LuaValue> RefOutValues) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaClrInvocationResult? left, Lunil.Hosting.LuaClrInvocationResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaClrInvocationResult? left, Lunil.Hosting.LuaClrInvocationResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaClrInvocationResult? other) => throw null;
+        public void Deconstruct(out Lunil.Runtime.Values.LuaValue ReturnValue, out System.Collections.Immutable.ImmutableArray<Lunil.Runtime.Values.LuaValue> RefOutValues) => throw null;
+    }
+
+    public sealed class LuaClrMemberInfo : System.IEquatable<Lunil.Hosting.LuaClrMemberInfo>
+    {
+        public string Name { get => throw null; init { } }
+        public Lunil.Hosting.LuaClrMemberKind Kind { get => throw null; init { } }
+        public bool IsStatic { get => throw null; init { } }
+        public bool CanRead { get => throw null; init { } }
+        public bool CanWrite { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> ParameterTypeNames { get => throw null; init { } }
+        public string ReturnTypeName { get => throw null; init { } }
+        public LuaClrMemberInfo(string Name, Lunil.Hosting.LuaClrMemberKind Kind, bool IsStatic, bool CanRead, bool CanWrite, System.Collections.Immutable.ImmutableArray<string> ParameterTypeNames, string ReturnTypeName) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaClrMemberInfo? left, Lunil.Hosting.LuaClrMemberInfo? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaClrMemberInfo? left, Lunil.Hosting.LuaClrMemberInfo? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaClrMemberInfo? other) => throw null;
+        public void Deconstruct(out string Name, out Lunil.Hosting.LuaClrMemberKind Kind, out bool IsStatic, out bool CanRead, out bool CanWrite, out System.Collections.Immutable.ImmutableArray<string> ParameterTypeNames, out string ReturnTypeName) => throw null;
+    }
+
+    public enum LuaClrMemberKind
+    {
+        Method = 0,
+        Property = 1,
+        Field = 2,
+        Indexer = 3,
+        Operator = 4,
+        Event = 5
+    }
+
+    public readonly struct LuaClrNamedArgument : System.IEquatable<Lunil.Hosting.LuaClrNamedArgument>
+    {
+        public string Name { get => throw null; init { } }
+        public Lunil.Runtime.Values.LuaValue Value { get => throw null; init { } }
+        public LuaClrNamedArgument(string Name, Lunil.Runtime.Values.LuaValue Value) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaClrNamedArgument left, Lunil.Hosting.LuaClrNamedArgument right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaClrNamedArgument left, Lunil.Hosting.LuaClrNamedArgument right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaClrNamedArgument other) => throw null;
+        public void Deconstruct(out string Name, out Lunil.Runtime.Values.LuaValue Value) => throw null;
     }
 
     public sealed class LuaClrObject : System.IDisposable
@@ -82,15 +180,43 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrCapabilities Capabilities { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> AllowedAssemblyNames { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> AllowedTypeNames { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> AllowedMemberNames { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> AllowedDelegateTypeNames { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> AllowedEventNames { get => throw null; init { } }
         public bool InstallGlobalModule { get => throw null; init { } }
         public int MaximumTypeNameLength { get => throw null; init { } }
         public bool OwnConstructedObjects { get => throw null; init { } }
+        public Lunil.Hosting.LuaClrThreadPolicy ThreadPolicy { get => throw null; init { } }
+        public bool IncludeExceptionMessages { get => throw null; init { } }
+        public int MaximumCachedMembers { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaClrOptions? left, Lunil.Hosting.LuaClrOptions? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaClrOptions? left, Lunil.Hosting.LuaClrOptions? right) => throw null;
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaClrOptions? other) => throw null;
+    }
+
+    public sealed class LuaClrSubscription : System.IDisposable
+    {
+        public Lunil.Runtime.Values.LuaValue Callback { get => throw null; }
+        public bool IsDisposed { get => throw null; }
+        public void Dispose() { }
+    }
+
+    public sealed class LuaClrTask : System.IDisposable
+    {
+        public System.Threading.Tasks.Task Task { get => throw null; }
+        public Lunil.Hosting.LuaClrBridge Bridge { get => throw null; }
+        public bool IsCompleted { get => throw null; }
+        public bool IsFaulted { get => throw null; }
+        public void Dispose() { }
+    }
+
+    public enum LuaClrThreadPolicy
+    {
+        OwnerThreadOnly = 0,
+        AnyThreadWhenIdle = 1
     }
 
     public sealed class LuaClrTypeInfo : System.IEquatable<Lunil.Hosting.LuaClrTypeInfo>

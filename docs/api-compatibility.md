@@ -1,7 +1,7 @@
 # Versioned API and package compatibility
 
 Lunil keeps compatibility data by pre-1.0 minor line. Historical stable data is immutable. The
-active `0.11` prerelease line uses reviewed public-API and package snapshots without rewriting the
+stable `0.11` line uses reviewed public-API and package snapshots without rewriting the
 stable `0.7`, `0.8`, `0.9`, or `0.10` declarations.
 
 ## Compatibility lines
