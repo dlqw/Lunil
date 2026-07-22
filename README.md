@@ -5,7 +5,8 @@
 <h1 align="center">Lunil</h1>
 
 <p align="center">
-  A correctness-first Lua 5.4 compiler and managed runtime for modern .NET.
+  A correctness-first, versioned Lua compiler and managed runtime for modern .NET, with
+  capability-controlled CLR interoperation.
 </p>
 
 <p align="center">

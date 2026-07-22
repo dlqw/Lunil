@@ -5,7 +5,7 @@
 <h1 align="center">Lunil</h1>
 
 <p align="center">
-  面向现代 .NET、正确性优先的 Lua 5.4 编译器与托管运行时。
+  面向现代 .NET、正确性优先的版本化 Lua 编译器与托管运行时，并提供受能力控制的 CLR 互操作。
 </p>
 
 <p align="center">
