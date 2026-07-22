@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -590,14 +592,47 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         }
 
         var directory = System.IO.Path.GetDirectoryName(_path)!;
-        using var handle = File.OpenHandle(
-            directory,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete,
-            FileOptions.None);
-        RandomAccess.FlushToDisk(handle);
+        var descriptor = UnixOpen(directory, 0);
+        if (descriptor < 0)
+        {
+            throw NativeIoException("open", directory);
+        }
+
+        try
+        {
+            if (UnixFsync(descriptor) != 0)
+            {
+                throw NativeIoException("fsync", directory);
+            }
+        }
+        finally
+        {
+            _ = UnixClose(descriptor);
+        }
     }
+
+    private static IOException NativeIoException(string operation, string path)
+    {
+        var error = Marshal.GetLastPInvokeError();
+        return new IOException(
+            $"Unix {operation} failed for journal directory '{path}'.",
+            new Win32Exception(error));
+    }
+
+#pragma warning disable CA2101 // The Unix open ABI requires an explicitly marshalled UTF-8 path.
+#pragma warning disable SYSLIB1054 // DllImport avoids enabling unsafe code for three libc calls.
+    [DllImport("libc", EntryPoint = "open", SetLastError = true, ExactSpelling = true)]
+    private static extern int UnixOpen(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int flags);
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true, ExactSpelling = true)]
+    private static extern int UnixFsync(int descriptor);
+
+    [DllImport("libc", EntryPoint = "close", ExactSpelling = true)]
+    private static extern int UnixClose(int descriptor);
+#pragma warning restore SYSLIB1054
+#pragma warning restore CA2101
 
     private void EnsureWriterOwnership()
     {
