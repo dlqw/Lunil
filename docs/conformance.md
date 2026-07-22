@@ -1,28 +1,19 @@
 # Lua conformance and differential testing
 
-Lunil separates embedded semantic fixtures, official PUC Lua oracle comparisons, and
-cross-runtime performance measurements. These gates have different trust and availability
-contracts and must not be described as interchangeable.
+This guide distinguishes semantic conformance from performance comparison and shows how to reproduce a PUC Lua differential run.
 
-## Default CI gates
+## What is compared
 
-The main CI workflow runs two multi-version correctness layers:
+Lunil validates supported Lua language profiles with two complementary sources:
 
-1. `PucMultiVersionConformanceHarnessTests` validates pinned official-suite archives for Lua 5.1,
-   5.2, and 5.5. It also executes checked-in semantic fixtures for Lua 5.3 and 5.4 with typed result
-   assertions. The semantic fixtures cover integer division, bitwise operators, goto, and the Lua
-   5.4 to-be-closed protocol; they are not presented as upstream PUC suites.
-2. `puc-multi-version-differential` downloads the official Lua 5.1.5, 5.2.4, 5.3.6, 5.4.8, and
-   5.5.0 source archives, verifies pinned SHA-256 hashes, builds `lua` and `luac`, and runs the
-   versioned source/imported-chunk/produced-chunk comparisons in `Lunil.Runtime.Tests`.
+1. checked-in semantic fixtures exercise version-specific behavior such as integer division, bitwise operations, `goto`, and Lua 5.4 to-be-closed variables;
+2. differential comparisons run the same source and binary-chunk cases against the matching official PUC Lua interpreter and compiler.
 
-The existing six-RID conformance evidence continues to execute the selected official Lua 5.4.8
-user-mode suite and deterministic stability corpus. The five-version PUC differential job is a
-separate required Linux job because its purpose is semantic comparison, not platform coverage.
+A differential result is meaningful only when the source, selected Lua version, and chunk format match. Performance data and cross-runtime timing are not semantic assertions.
 
-## Local PUC Lua comparisons
+## Configure local PUC Lua tools
 
-The versioned differential tests read these environment variables:
+The differential harness reads these variables:
 
 | Version | Interpreter | Compiler |
 | --- | --- | --- |
@@ -32,17 +23,8 @@ The versioned differential tests read these environment variables:
 | 5.4 | `LUNIL_PUC_LUA54` | `LUNIL_PUC_LUAC54` |
 | 5.5 | `LUNIL_PUC_LUA55` | `LUNIL_PUC_LUAC55` |
 
-Without a matching executable, the external-oracle portion of a local test is a no-op. Use
-`scripts/Install-PucLuaOracles.ps1` on Unix to reproduce the CI configuration; it never accepts an
-unverified archive.
+Install matching tools from verified official source archives. On Unix, `scripts/Install-PucLuaOracles.ps1` provisions the pinned archives and their hashes. If a matching executable is not configured, the external-oracle portion of a local run is skipped; that is not a conformance result.
 
-## Cross-runtime measurements
+## Cross-runtime comparison
 
-The `cross-runtime-performance.yml` workflow and `benchmarks/cross-runtime/semantic-matrix.json`
-describe performance workloads and semantic compatibility groups. NeoLua, UniLua, Luau, Wasmoon,
-and GopherLua entries are optional benchmark engines. Their absence does not count as correctness
-evidence, and timing rows are never semantic assertions.
-
-Only result comparisons implemented as tests are correctness gates. The semantic matrix records
-which comparisons would be meaningful when an engine is provisioned; it does not claim that every
-listed engine runs in default CI.
+`benchmarks/cross-runtime/semantic-matrix.json` identifies the Lua dialect or semantic group for each optional comparison engine. Compare results only within a compatible group, and treat absent optional engines as unavailable data rather than success or failure. Use the [performance guide](performance.md) for the measurement protocol.
