@@ -107,6 +107,7 @@ namespace Lunil.Analysis
         public System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaFunctionAnalysis> Functions { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Core.Diagnostics.Diagnostic> Diagnostics { get => throw null; init { } }
         public Lunil.Analysis.LuaAnalysisBudgetUsage BudgetUsage { get => throw null; init { } }
+        public Lunil.Analysis.LuaCallGraph CallGraph { get => throw null; init { } }
         public LuaAnalysisResult(Lunil.Semantics.Binding.LuaSemanticModel SemanticModel, Lunil.EmmyLua.LuaAnnotationDocument Annotations, System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaTypeDeclaration> TypeDeclarations, System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaSymbolTypeInfo> Symbols, System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaExpressionTypeInfo> Expressions, System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaFunctionAnalysis> Functions, System.Collections.Immutable.ImmutableArray<Lunil.Core.Diagnostics.Diagnostic> Diagnostics, Lunil.Analysis.LuaAnalysisBudgetUsage BudgetUsage) { }
         public static Lunil.Analysis.LuaAnalysisResult Empty(Lunil.Semantics.Binding.LuaSemanticModel semanticModel, Lunil.EmmyLua.LuaAnnotationDocument annotations) => throw null;
         public override string ToString() => throw null;
@@ -150,6 +151,69 @@ namespace Lunil.Analysis
         public sealed override bool Equals(Lunil.Analysis.LuaLiteralType? other) => throw null;
         public bool Equals(Lunil.Analysis.LuaBooleanLiteralType? other) => throw null;
         public void Deconstruct(out bool Value) => throw null;
+    }
+
+    public sealed class LuaCallGraph : System.IEquatable<Lunil.Analysis.LuaCallGraph>
+    {
+        public System.Collections.Immutable.ImmutableArray<int> FunctionIds { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaCallSite> Edges { get => throw null; init { } }
+        public static Lunil.Analysis.LuaCallGraph Empty { get => throw null; }
+        public LuaCallGraph(System.Collections.Immutable.ImmutableArray<int> FunctionIds, System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaCallSite> Edges) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Analysis.LuaCallGraph? left, Lunil.Analysis.LuaCallGraph? right) => throw null;
+        public static bool operator ==(Lunil.Analysis.LuaCallGraph? left, Lunil.Analysis.LuaCallGraph? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Analysis.LuaCallGraph? other) => throw null;
+        public void Deconstruct(out System.Collections.Immutable.ImmutableArray<int> FunctionIds, out System.Collections.Immutable.ImmutableArray<Lunil.Analysis.LuaCallSite> Edges) => throw null;
+    }
+
+    public enum LuaCallKind
+    {
+        Direct = 0,
+        Member = 1,
+        Method = 2,
+        Callable = 3,
+        Dynamic = 4
+    }
+
+    public enum LuaCallResolutionStatus
+    {
+        Resolved = 0,
+        Dynamic = 1,
+        Unresolved = 2
+    }
+
+    public sealed class LuaCallSite : System.IEquatable<Lunil.Analysis.LuaCallSite>
+    {
+        public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public int ContainingFunctionId { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan CalleeSpan { get => throw null; init { } }
+        public Lunil.Analysis.LuaCallKind Kind { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbol? DirectSymbol { get => throw null; init { } }
+        public string? DirectName { get => throw null; init { } }
+        public Lunil.Analysis.LuaType CalleeType { get => throw null; init { } }
+        public Lunil.Analysis.LuaMemberTarget? MemberTarget { get => throw null; init { } }
+        public string? ModuleRequest { get => throw null; init { } }
+        public int? TargetFunctionId { get => throw null; init { } }
+        public Lunil.Analysis.LuaCallResolutionStatus ResolutionStatus { get => throw null; init { } }
+        public string? UnresolvedReason { get => throw null; init { } }
+        public LuaCallSite(Lunil.Core.Text.TextSpan Span, int ContainingFunctionId, Lunil.Core.Text.TextSpan CalleeSpan, Lunil.Analysis.LuaCallKind Kind, Lunil.Semantics.Binding.LuaSymbol? DirectSymbol, string? DirectName, Lunil.Analysis.LuaType CalleeType, Lunil.Analysis.LuaMemberTarget? MemberTarget, string? ModuleRequest, int? TargetFunctionId, Lunil.Analysis.LuaCallResolutionStatus ResolutionStatus, string? UnresolvedReason) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Analysis.LuaCallSite? left, Lunil.Analysis.LuaCallSite? right) => throw null;
+        public static bool operator ==(Lunil.Analysis.LuaCallSite? left, Lunil.Analysis.LuaCallSite? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Analysis.LuaCallSite? other) => throw null;
+        public void Deconstruct(out Lunil.Core.Text.TextSpan Span, out int ContainingFunctionId, out Lunil.Core.Text.TextSpan CalleeSpan, out Lunil.Analysis.LuaCallKind Kind, out Lunil.Semantics.Binding.LuaSymbol? DirectSymbol, out string? DirectName, out Lunil.Analysis.LuaType CalleeType, out Lunil.Analysis.LuaMemberTarget? MemberTarget, out string? ModuleRequest, out int? TargetFunctionId, out Lunil.Analysis.LuaCallResolutionStatus ResolutionStatus, out string? UnresolvedReason) => throw null;
+    }
+
+    public static class LuaCallUnresolvedReasons
+    {
+        public const string CalleeSignatureIsDynamic = "callee-signature-is-dynamic";
+        public const string ModuleRequestIsDynamic = "module-request-is-dynamic";
+        public const string CalleeIsNotCallable = "callee-is-not-callable";
+        public const string CallWasNotAnalyzed = "call-was-not-analyzed";
     }
 
     public sealed class LuaCallableType : Lunil.Analysis.LuaType, System.IEquatable<Lunil.Analysis.LuaCallableType>
@@ -517,6 +581,21 @@ namespace Lunil.Analysis
         public sealed override bool Equals(Lunil.Analysis.LuaType? other) => throw null;
         public bool Equals(Lunil.Analysis.LuaMapType? other) => throw null;
         public void Deconstruct(out Lunil.Analysis.LuaType KeyType, out Lunil.Analysis.LuaType ValueType) => throw null;
+    }
+
+    public sealed class LuaMemberTarget : System.IEquatable<Lunil.Analysis.LuaMemberTarget>
+    {
+        public Lunil.Core.Text.TextSpan ReceiverSpan { get => throw null; init { } }
+        public string Name { get => throw null; init { } }
+        public Lunil.Analysis.LuaType ReceiverType { get => throw null; init { } }
+        public LuaMemberTarget(Lunil.Core.Text.TextSpan ReceiverSpan, string Name, Lunil.Analysis.LuaType ReceiverType) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Analysis.LuaMemberTarget? left, Lunil.Analysis.LuaMemberTarget? right) => throw null;
+        public static bool operator ==(Lunil.Analysis.LuaMemberTarget? left, Lunil.Analysis.LuaMemberTarget? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Analysis.LuaMemberTarget? other) => throw null;
+        public void Deconstruct(out Lunil.Core.Text.TextSpan ReceiverSpan, out string Name, out Lunil.Analysis.LuaType ReceiverType) => throw null;
     }
 
     public sealed class LuaOverloadType : Lunil.Analysis.LuaType, System.IEquatable<Lunil.Analysis.LuaOverloadType>

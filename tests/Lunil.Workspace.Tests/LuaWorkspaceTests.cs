@@ -88,6 +88,110 @@ public sealed class LuaWorkspaceTests
     }
 
     [Fact]
+    public async Task WorkspaceReferenceIndexUsesStableTargetsAndContainingFunctions()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "local value = 1\n" +
+                "local function read() return value end\n" +
+                "return value, read()"),
+            Document("other", "return missing_global"),
+        ]);
+        var app = result.GetModule("app")!;
+        var value = Assert.Single(app.Compilation.SemanticModel.Symbols, symbol =>
+            symbol.Name == "value");
+        var key = app.Compilation.SemanticModel.GetSymbolKey(value, app.Identity);
+
+        var references = result.FindReferences(key);
+        Assert.Equal(2, references.Length);
+        Assert.All(references, reference => Assert.Equal(key, reference.TargetKey));
+        Assert.Equal(2, references.Select(static reference => reference.ContainingFunctionId).Distinct().Count());
+        Assert.All(references, static reference =>
+            Assert.False(string.IsNullOrWhiteSpace(reference.ContainingFunctionKey.Value)));
+
+        var globals = result.FindGlobalReferences("missing_global");
+        var global = Assert.Single(globals);
+        Assert.Equal("other", global.Module.Name);
+        Assert.Null(global.TargetKey);
+        Assert.Equal(Lunil.Semantics.Binding.LuaNameResolutionKind.Global, global.ResolutionKind);
+    }
+
+    [Fact]
+    public async Task WorkspaceCallGraphProjectsModuleAliasesExportsAndStableFunctions()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document(
+                "app",
+                "local dep = require('dep')\n" +
+                "dep.run()\n" +
+                "require('dep').run()\n" +
+                "local function local_target() return 1 end\n" +
+                "return local_target()"),
+            Document("dep", "return { run = function() return 42 end }"),
+        ];
+        var first = await workspace.AnalyzeAsync(documents);
+        var second = await workspace.AnalyzeAsync(documents);
+
+        var graph = first.GetCallGraph();
+        var moduleCalls = graph.Edges.Where(static edge =>
+            edge.TargetModule?.Name == "dep").ToArray();
+        Assert.Equal(4, moduleCalls.Length);
+        Assert.Equal(
+            2,
+            moduleCalls.Count(static edge => edge.TargetExportName == "run"));
+        Assert.Contains(moduleCalls, static edge => edge.Site.ModuleRequest == "dep");
+
+        var localCall = Assert.Single(graph.Edges, edge =>
+            edge.Site.DirectSymbol?.Name == "local_target");
+        Assert.NotNull(localCall.TargetFunctionKey);
+        Assert.Equal("app", localCall.Module.Name);
+        Assert.Null(localCall.TargetModule);
+        var cachedGraph = second.GetCallGraph();
+        Assert.Equal(
+            graph.Functions.Select(static function =>
+                (function.Module.Name, function.FunctionId, function.FunctionKey.Value)),
+            cachedGraph.Functions.Select(static function =>
+                (function.Module.Name, function.FunctionId, function.FunctionKey.Value)));
+        Assert.Equal(
+            graph.Edges.Select(static edge =>
+                (edge.Module.Name,
+                 edge.Site.Span,
+                 edge.Site.ResolutionStatus,
+                 TargetModule: edge.TargetModule?.Name,
+                 edge.TargetExportName,
+                 TargetFunction: edge.TargetFunctionKey?.Value)),
+            cachedGraph.Edges.Select(static edge =>
+                (edge.Module.Name,
+                 edge.Site.Span,
+                 edge.Site.ResolutionStatus,
+                 TargetModule: edge.TargetModule?.Name,
+                 edge.TargetExportName,
+                 TargetFunction: edge.TargetFunctionKey?.Value)));
+    }
+
+    [Fact]
+    public async Task ReassignedModuleAliasDoesNotProduceAFalseMemberTarget()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "local dep = require('dep')\n" +
+                "dep = {}\n" +
+                "return dep.run()"),
+            Document("dep", "return { run = function() return 42 end }"),
+        ]);
+
+        var member = Assert.Single(result.GetCallGraph().Edges, edge =>
+            edge.Site.MemberTarget?.Name == "run");
+        Assert.Null(member.TargetModule);
+        Assert.Null(member.TargetExportName);
+    }
+
+    [Fact]
     public async Task AnyModuleExportRemainsConservativeAcrossRequire()
     {
         using var workspace = new LuaWorkspace();

@@ -41,6 +41,9 @@ public sealed record LuaAnalysisResult(
     ImmutableArray<Diagnostic> Diagnostics,
     LuaAnalysisBudgetUsage BudgetUsage)
 {
+    /// <summary>Gets the typed call graph for this analysis snapshot.</summary>
+    public LuaCallGraph CallGraph { get; init; } = LuaCallGraph.Empty;
+
     public static LuaAnalysisResult Empty(
         LuaSemanticModel semanticModel,
         LuaAnnotationDocument annotations)

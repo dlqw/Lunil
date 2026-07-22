@@ -149,6 +149,46 @@ namespace Lunil.Workspace
         public void Dispose() { }
     }
 
+    public sealed class LuaWorkspaceCallGraph : System.IEquatable<Lunil.Workspace.LuaWorkspaceCallGraph>
+    {
+        public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceFunction> Functions { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceCallSite> Edges { get => throw null; init { } }
+        public LuaWorkspaceCallGraph(System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceFunction> Functions, System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceCallSite> Edges) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Workspace.LuaWorkspaceCallGraph? left, Lunil.Workspace.LuaWorkspaceCallGraph? right) => throw null;
+        public static bool operator ==(Lunil.Workspace.LuaWorkspaceCallGraph? left, Lunil.Workspace.LuaWorkspaceCallGraph? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Workspace.LuaWorkspaceCallGraph? other) => throw null;
+        public void Deconstruct(out System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceFunction> Functions, out System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceCallSite> Edges) => throw null;
+    }
+
+    public sealed class LuaWorkspaceCallSite : System.IEquatable<Lunil.Workspace.LuaWorkspaceCallSite>
+    {
+        public Lunil.Workspace.LuaModuleIdentity Module { get => throw null; init { } }
+        public string SourceIdentity { get => throw null; init { } }
+        public Lunil.Analysis.LuaCallSite Site { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbolKey? TargetFunctionKey { get => throw null; init { } }
+        public Lunil.Workspace.LuaModuleIdentity? TargetModule { get => throw null; init { } }
+        public string? TargetExportName { get => throw null; init { } }
+        public LuaWorkspaceCallSite(Lunil.Workspace.LuaModuleIdentity Module, string SourceIdentity, Lunil.Analysis.LuaCallSite Site, Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey, Lunil.Semantics.Binding.LuaSymbolKey? TargetFunctionKey, Lunil.Workspace.LuaModuleIdentity? TargetModule, string? TargetExportName) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Workspace.LuaWorkspaceCallSite? left, Lunil.Workspace.LuaWorkspaceCallSite? right) => throw null;
+        public static bool operator ==(Lunil.Workspace.LuaWorkspaceCallSite? left, Lunil.Workspace.LuaWorkspaceCallSite? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Workspace.LuaWorkspaceCallSite? other) => throw null;
+        public void Deconstruct(out Lunil.Workspace.LuaModuleIdentity Module, out string SourceIdentity, out Lunil.Analysis.LuaCallSite Site, out Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey, out Lunil.Semantics.Binding.LuaSymbolKey? TargetFunctionKey, out Lunil.Workspace.LuaModuleIdentity? TargetModule, out string? TargetExportName) => throw null;
+    }
+
+    public static class LuaWorkspaceCodeIndex
+    {
+        public static System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindReferences(this Lunil.Workspace.LuaWorkspaceResult workspace, Lunil.Semantics.Binding.LuaSymbolKey key) => throw null;
+        public static System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindGlobalReferences(this Lunil.Workspace.LuaWorkspaceResult workspace, string name) => throw null;
+        public static Lunil.Workspace.LuaWorkspaceCallGraph GetCallGraph(this Lunil.Workspace.LuaWorkspaceResult workspace) => throw null;
+    }
+
     public sealed class LuaWorkspaceDiagnostic : System.IEquatable<Lunil.Workspace.LuaWorkspaceDiagnostic>
     {
         public Lunil.Workspace.LuaWorkspaceDiagnosticPhase Phase { get => throw null; init { } }
@@ -192,6 +232,22 @@ namespace Lunil.Workspace
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Workspace.LuaWorkspaceDocument? other) => throw null;
+    }
+
+    public sealed class LuaWorkspaceFunction : System.IEquatable<Lunil.Workspace.LuaWorkspaceFunction>
+    {
+        public Lunil.Workspace.LuaModuleIdentity Module { get => throw null; init { } }
+        public string SourceIdentity { get => throw null; init { } }
+        public int FunctionId { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbolKey FunctionKey { get => throw null; init { } }
+        public LuaWorkspaceFunction(Lunil.Workspace.LuaModuleIdentity Module, string SourceIdentity, int FunctionId, Lunil.Semantics.Binding.LuaSymbolKey FunctionKey) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Workspace.LuaWorkspaceFunction? left, Lunil.Workspace.LuaWorkspaceFunction? right) => throw null;
+        public static bool operator ==(Lunil.Workspace.LuaWorkspaceFunction? left, Lunil.Workspace.LuaWorkspaceFunction? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Workspace.LuaWorkspaceFunction? other) => throw null;
+        public void Deconstruct(out Lunil.Workspace.LuaModuleIdentity Module, out string SourceIdentity, out int FunctionId, out Lunil.Semantics.Binding.LuaSymbolKey FunctionKey) => throw null;
     }
 
     public sealed class LuaWorkspaceMetrics : System.IEquatable<Lunil.Workspace.LuaWorkspaceMetrics>
@@ -257,6 +313,27 @@ namespace Lunil.Workspace
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Workspace.LuaWorkspaceOptions? other) => throw null;
+    }
+
+    public sealed class LuaWorkspaceReference : System.IEquatable<Lunil.Workspace.LuaWorkspaceReference>
+    {
+        public Lunil.Workspace.LuaModuleIdentity Module { get => throw null; init { } }
+        public string SourceIdentity { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public int ContainingFunctionId { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey { get => throw null; init { } }
+        public string Name { get => throw null; init { } }
+        public bool IsWrite { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaNameResolutionKind ResolutionKind { get => throw null; init { } }
+        public Lunil.Semantics.Binding.LuaSymbolKey? TargetKey { get => throw null; init { } }
+        public LuaWorkspaceReference(Lunil.Workspace.LuaModuleIdentity Module, string SourceIdentity, Lunil.Core.Text.TextSpan Span, int ContainingFunctionId, Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey, string Name, bool IsWrite, Lunil.Semantics.Binding.LuaNameResolutionKind ResolutionKind, Lunil.Semantics.Binding.LuaSymbolKey? TargetKey) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Workspace.LuaWorkspaceReference? left, Lunil.Workspace.LuaWorkspaceReference? right) => throw null;
+        public static bool operator ==(Lunil.Workspace.LuaWorkspaceReference? left, Lunil.Workspace.LuaWorkspaceReference? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Workspace.LuaWorkspaceReference? other) => throw null;
+        public void Deconstruct(out Lunil.Workspace.LuaModuleIdentity Module, out string SourceIdentity, out Lunil.Core.Text.TextSpan Span, out int ContainingFunctionId, out Lunil.Semantics.Binding.LuaSymbolKey ContainingFunctionKey, out string Name, out bool IsWrite, out Lunil.Semantics.Binding.LuaNameResolutionKind ResolutionKind, out Lunil.Semantics.Binding.LuaSymbolKey? TargetKey) => throw null;
     }
 
     public sealed class LuaWorkspaceResult : System.IEquatable<Lunil.Workspace.LuaWorkspaceResult>
