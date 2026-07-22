@@ -67,10 +67,9 @@ row identifies its semantic group so comparisons stay within compatible language
 
 ![Lunil 0.10.0 Auto JIT by workload](assets/performance/0.10.0-auto-workloads.svg)
 
-The default Auto JIT reaches `1.980x` PUC Lua 5.4.8 on the `string_build` workload. Detailed
-methodology, pinned reference versions, and reproduction commands are in
-[Performance](docs/performance.md). Exact release values are also available in the
-[machine-readable dataset](benchmarks/results/0.10.0-performance.json).
+The default Auto JIT reaches `1.980x` PUC Lua 5.4.8 on the `string_build` workload. The reviewed
+release values, benchmark environment, pinned reference versions, and commands are preserved in
+the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
 
 ## Highlights
 
@@ -227,8 +226,7 @@ flowchart LR
 ```
 
 All execution paths share canonical program counters, exact instruction accounting, resource
-budgets, safe points, debug behavior, invalidation, and fallback semantics. See
-[Compiler design](docs/compiler-design.md) for the complete architecture.
+budgets, safe points, debug behavior, invalidation, and fallback semantics.
 
 ## Compatibility
 
@@ -249,14 +247,11 @@ Compatibility changes and deployment notes are documented in the [0.11.0 migrati
 
 | Document | Purpose |
 | --- | --- |
-| [Performance](docs/performance.md) | Current benchmark data, charts, methodology, and reproduction |
-| [Roadmap](docs/roadmap.md) | Lua version compatibility, runtime comparisons, CLR interoperation, and hot updates |
 | [CLR interoperation](docs/clr-interop.md) | Allowlist configuration, construction, conversion, ownership, and deployment |
 | [Signed patch bundles](docs/hot-update.md) | Patch trust, game-loop safe points, multi-State ring rollout, durable recovery journals, and CLI workflows |
-| [Compiler design](docs/compiler-design.md) | Compiler, IR, runtime, and execution architecture |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
-| [API compatibility](docs/api-compatibility.md) | Versioned public API and package baselines |
-| [Versioning](docs/versioning.md) | Compatibility lines and release channels |
+| [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md) | Host integration, trimming annotations, and publish verification |
+| [PUC Lua prototype import](docs/puc-prototype-import.md) | Importing validated PUC Lua 5.4 binary prototypes |
 | [Changelogs](changelogs/) | Community-facing release notes by version |
 
 ## Contributing
@@ -264,7 +259,7 @@ Compatibility changes and deployment notes are documented in the [0.11.0 migrati
 Issues and focused pull requests are welcome. Work on a `feature/*`, `perf/*`, `fix/*`, or `docs/*`
 branch,
 add tests appropriate to the impact, and run build, tests, formatting, and relevant documentation
-checks before requesting review. See [Branch management](docs/branching.md).
+checks before requesting review.
 
 ## Security
 
