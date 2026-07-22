@@ -130,6 +130,16 @@ namespace Lunil.Workspace
         public void Deconstruct(out int Id, out System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaModuleIdentity> Modules, out bool IsCyclic) => throw null;
     }
 
+    public static class LuaSymbolKeyWorkspaceExtensions
+    {
+        public static Lunil.Semantics.Binding.LuaSymbolKey GetSymbolKey(this Lunil.Semantics.Binding.LuaSemanticModel model, Lunil.Semantics.Binding.LuaSymbol symbol, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbolKey GetFunctionKey(this Lunil.Semantics.Binding.LuaSemanticModel model, Lunil.Semantics.Binding.LuaFunctionInfo function, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbol? ResolveSymbolKey(this Lunil.Semantics.Binding.LuaSemanticModel model, Lunil.Semantics.Binding.LuaSymbolKey key, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+        public static Lunil.Semantics.Binding.LuaFunctionInfo? ResolveFunctionKey(this Lunil.Semantics.Binding.LuaSemanticModel model, Lunil.Semantics.Binding.LuaSymbolKey key, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbolKey GetAnnotationKey(this Lunil.Compiler.LuaCompilationResult compilation, Lunil.EmmyLua.LuaAnnotationSyntax annotation, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+        public static Lunil.EmmyLua.LuaAnnotationSyntax? ResolveAnnotationKey(this Lunil.Compiler.LuaCompilationResult compilation, Lunil.Semantics.Binding.LuaSymbolKey key, Lunil.Workspace.LuaModuleIdentity module) => throw null;
+    }
+
     public sealed class LuaWorkspace : System.IDisposable
     {
         public Lunil.Workspace.LuaWorkspaceOptions Options { get => throw null; }

@@ -81,6 +81,10 @@ namespace Lunil.Semantics.Binding
         public System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaFunctionInfo> Functions { get => throw null; init { } }
         public Lunil.Core.LuaLanguageVersion LanguageVersion { get => throw null; }
         public LuaSemanticModel(Lunil.Syntax.Parsing.LuaParseResult Syntax, System.Collections.Immutable.ImmutableArray<Lunil.Core.Diagnostics.Diagnostic> Diagnostics, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaSymbol> Symbols, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaNameReference> References, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaFunctionInfo> Functions) { }
+        public Lunil.Semantics.Binding.LuaSymbolKey GetSymbolKey(Lunil.Semantics.Binding.LuaSymbol symbol, string moduleIdentity) => throw null;
+        public Lunil.Semantics.Binding.LuaSymbolKey GetFunctionKey(Lunil.Semantics.Binding.LuaFunctionInfo function, string moduleIdentity) => throw null;
+        public Lunil.Semantics.Binding.LuaSymbol? ResolveSymbolKey(Lunil.Semantics.Binding.LuaSymbolKey key, string moduleIdentity) => throw null;
+        public Lunil.Semantics.Binding.LuaFunctionInfo? ResolveFunctionKey(Lunil.Semantics.Binding.LuaSymbolKey key, string moduleIdentity) => throw null;
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Semantics.Binding.LuaSemanticModel? left, Lunil.Semantics.Binding.LuaSemanticModel? right) => throw null;
         public static bool operator ==(Lunil.Semantics.Binding.LuaSemanticModel? left, Lunil.Semantics.Binding.LuaSemanticModel? right) => throw null;
@@ -101,6 +105,22 @@ namespace Lunil.Semantics.Binding
         public int ScopeDepth { get => throw null; }
         public bool IsReadOnly { get => throw null; }
         public bool IsCaptured { get => throw null; }
+    }
+
+    public readonly struct LuaSymbolKey : System.IEquatable<Lunil.Semantics.Binding.LuaSymbolKey>
+    {
+        public string Value { get => throw null; }
+        public LuaSymbolKey(string value) { }
+        public static bool TryParse(string? value, out Lunil.Semantics.Binding.LuaSymbolKey key) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbolKey CreateSymbol(string moduleIdentity, Lunil.Semantics.Binding.LuaSymbolKind declarationKind, string lexicalOwner, string normalizedName, int ambiguityOrdinal = 0) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbolKey CreateFunction(string moduleIdentity, string declarationKind, string lexicalOwner, string normalizedName, int ambiguityOrdinal = 0) => throw null;
+        public static Lunil.Semantics.Binding.LuaSymbolKey CreateAnnotation(string moduleIdentity, string annotationKind, string normalizedName, int ambiguityOrdinal = 0) => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Semantics.Binding.LuaSymbolKey left, Lunil.Semantics.Binding.LuaSymbolKey right) => throw null;
+        public static bool operator ==(Lunil.Semantics.Binding.LuaSymbolKey left, Lunil.Semantics.Binding.LuaSymbolKey right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object obj) => throw null;
+        public bool Equals(Lunil.Semantics.Binding.LuaSymbolKey other) => throw null;
     }
 
     public enum LuaSymbolKind

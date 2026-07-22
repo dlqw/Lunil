@@ -3,6 +3,12 @@
 
 namespace Lunil.Compiler
 {
+    public static class LuaAnnotationSymbolKeyExtensions
+    {
+        public static Lunil.Semantics.Binding.LuaSymbolKey GetAnnotationKey(this Lunil.Compiler.LuaCompilationResult compilation, Lunil.EmmyLua.LuaAnnotationSyntax annotation, string moduleIdentity) => throw null;
+        public static Lunil.EmmyLua.LuaAnnotationSyntax? ResolveAnnotationKey(this Lunil.Compiler.LuaCompilationResult compilation, Lunil.Semantics.Binding.LuaSymbolKey key, string moduleIdentity) => throw null;
+    }
+
     public sealed class LuaCompilationDiagnostic : System.IEquatable<Lunil.Compiler.LuaCompilationDiagnostic>
     {
         public Lunil.Compiler.LuaCompilationPhase Phase { get => throw null; init { } }

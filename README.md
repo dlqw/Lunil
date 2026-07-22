@@ -32,7 +32,7 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.3` hot-update preview; it is not the stable package
+> The current source tree is the `0.12.0-alpha.4` hot-update preview; it is not the stable package
 > line.
 
 ## Performance
@@ -82,6 +82,8 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   flow analysis, workspace analysis, canonical lowering, and independent IR verification.
 - **Typed analysis embedding** — the 0.12 preview adds call, member, function, parameter, and block
   facades plus extensible visitors while preserving the lossless tree as an escape hatch.
+- **Stable symbol identities** — the 0.12 preview exposes serialized keys for symbols and functions
+  across compilation and workspace snapshots without using source offsets or transient IDs.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
 - **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
@@ -159,6 +161,31 @@ sealed class RequireWalker(SourceText source) : LuaSyntaxWalker
         base.VisitCallExpression(call);
     }
 }
+```
+
+
+## Stable symbol keys in 0.12 preview
+
+Use a logical module name—not an absolute host path—when persisting symbol or function keys. The
+serialized value can be stored and reconstructed in a later snapshot. Whitespace, comments, and
+unrelated declarations do not change named keys; renames, module changes, and lexical-owner changes
+are allowed to produce new keys. Annotation declarations use the same canonical format through
+`LuaCompilationResult.GetAnnotationKey`.
+
+```csharp
+using System.Linq;
+using Lunil.Compiler;
+using Lunil.Semantics.Binding;
+
+var moduleName = "game/player";
+var compilation = new LuaCompiler().CompileUtf8(
+    "local health = 100",
+    sourceName: "game/player.lua");
+var semanticModel = compilation.SemanticModel;
+var symbol = semanticModel.Symbols.Single(symbol => symbol.Name == "health");
+var key = semanticModel.GetSymbolKey(symbol, moduleName);
+var persisted = new LuaSymbolKey(key.Value);
+var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
 ```
 
 ## Quick start
@@ -271,7 +298,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
 - Stable line: `0.11.x` (current release `0.11.0`); `0.10.x` remains compatible for existing hosts.
-- Preview source line: `0.12.0-alpha.3`; its reviewed API snapshot may grow before the stable
+- Preview source line: `0.12.0-alpha.4`; its reviewed API snapshot may grow before the stable
   `0.12.0` freeze.
 
 Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).
