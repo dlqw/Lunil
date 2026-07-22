@@ -32,7 +32,7 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.4` hot-update preview; it is not the stable package
+> The current source tree is the `0.12.0-alpha.5` hot-update preview; it is not the stable package
 > line.
 
 ## Performance
@@ -84,6 +84,8 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   facades plus extensible visitors while preserving the lossless tree as an escape hatch.
 - **Stable symbol identities** — the 0.12 preview exposes serialized keys for symbols and functions
   across compilation and workspace snapshots without using source offsets or transient IDs.
+- **Code intelligence indexes** — typed call sites, unresolved call retention, reference queries,
+  and compilation/workspace call graphs are available without reinterpreting the generic AST.
 - **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
   protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
 - **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
@@ -187,6 +189,31 @@ var key = semanticModel.GetSymbolKey(symbol, moduleName);
 var persisted = new LuaSymbolKey(key.Value);
 var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
 ```
+
+## Call graph and reference queries in 0.12 preview
+
+`LuaAnalysisResult.CallGraph` retains resolved, dynamic, unresolved, and unreachable call sites.
+Each edge includes its containing function, callee and receiver types, direct symbol/name, optional
+module request, and a statically resolved function target when one exists. Reference queries preserve
+local/upvalue identity and provide a separate name-based path for implicit `_ENV` globals.
+
+```csharp
+using System.Linq;
+using Lunil.Compiler;
+
+var compilation = new LuaCompiler().CompileUtf8("""
+    local function tick() return 1 end
+    return tick()
+    """);
+var tick = compilation.SemanticModel.Symbols.Single(symbol => symbol.Name == "tick");
+var references = compilation.SemanticModel.FindReferences(tick);
+var call = compilation.Analysis.CallGraph.Edges.Single();
+```
+
+For a completed `LuaWorkspaceResult`, `FindReferences(LuaSymbolKey)`,
+`FindGlobalReferences(string)`, and `GetCallGraph()` add module/source identities, stable function
+keys, and conservative module-export targets. Reassigned module aliases are not reported as static
+module targets.
 
 ## Quick start
 
@@ -298,7 +325,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
 - Stable line: `0.11.x` (current release `0.11.0`); `0.10.x` remains compatible for existing hosts.
-- Preview source line: `0.12.0-alpha.4`; its reviewed API snapshot may grow before the stable
+- Preview source line: `0.12.0-alpha.5`; its reviewed API snapshot may grow before the stable
   `0.12.0` freeze.
 
 Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).

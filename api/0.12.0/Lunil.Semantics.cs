@@ -80,6 +80,8 @@ namespace Lunil.Semantics.Binding
         public System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaNameReference> References { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaFunctionInfo> Functions { get => throw null; init { } }
         public Lunil.Core.LuaLanguageVersion LanguageVersion { get => throw null; }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaNameReference> FindReferences(Lunil.Semantics.Binding.LuaSymbol symbol) => throw null;
+        public System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaNameReference> FindGlobalReferences(string name) => throw null;
         public LuaSemanticModel(Lunil.Syntax.Parsing.LuaParseResult Syntax, System.Collections.Immutable.ImmutableArray<Lunil.Core.Diagnostics.Diagnostic> Diagnostics, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaSymbol> Symbols, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaNameReference> References, System.Collections.Immutable.ImmutableArray<Lunil.Semantics.Binding.LuaFunctionInfo> Functions) { }
         public Lunil.Semantics.Binding.LuaSymbolKey GetSymbolKey(Lunil.Semantics.Binding.LuaSymbol symbol, string moduleIdentity) => throw null;
         public Lunil.Semantics.Binding.LuaSymbolKey GetFunctionKey(Lunil.Semantics.Binding.LuaFunctionInfo function, string moduleIdentity) => throw null;

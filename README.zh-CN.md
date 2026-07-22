@@ -30,7 +30,7 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.4` 热更新预览，不是稳定 package 版本线。
+> 当前源码树为 `0.12.0-alpha.5` 热更新预览，不是稳定 package 版本线。
 
 ## 性能
 
@@ -77,6 +77,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
   visitor，同时保留无损语法树作为高级场景的 escape hatch。
 - **稳定符号身份**：0.12 预览版提供跨 compilation 与 workspace snapshot 的可序列化 symbol/function
   key，不依赖源码 offset 或瞬时 ID。
+- **代码智能索引**：直接提供 typed call site、未解析调用保留、reference 查询以及
+  compilation/workspace call graph，无需宿主重新解释 generic AST。
 - **托管运行时**：显式 Lua value、table、closure、thread、upvalue、资源预算、protected error、
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
 - **自适应执行**：动态代码可用时，默认 Auto JIT 选择经过验证的编译路径；否则使用参考解释器。
@@ -174,6 +176,30 @@ var key = semanticModel.GetSymbolKey(symbol, moduleName);
 var persisted = new LuaSymbolKey(key.Value);
 var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
 ```
+
+## 0.12 预览版 call graph 与 reference 查询
+
+`LuaAnalysisResult.CallGraph` 会保留 resolved、dynamic、unresolved 和 unreachable call site。
+每条 edge 都包含 containing function、callee/receiver type、direct symbol/name、可选 module request，
+以及存在时的静态 function target。Reference 查询保留 local/upvalue 身份，并为隐式 `_ENV` global
+提供按名称查询的独立入口。
+
+```csharp
+using System.Linq;
+using Lunil.Compiler;
+
+var compilation = new LuaCompiler().CompileUtf8("""
+    local function tick() return 1 end
+    return tick()
+    """);
+var tick = compilation.SemanticModel.Symbols.Single(symbol => symbol.Name == "tick");
+var references = compilation.SemanticModel.FindReferences(tick);
+var call = compilation.Analysis.CallGraph.Edges.Single();
+```
+
+对完成的 `LuaWorkspaceResult`，`FindReferences(LuaSymbolKey)`、`FindGlobalReferences(string)` 与
+`GetCallGraph()` 会补充 module/source identity、稳定 function key 和保守的 module export target；
+发生重新赋值的 module alias 不会被误报为静态 module target。
 
 ## 快速开始
 
@@ -281,7 +307,7 @@ flowchart LR
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
 - 稳定线：`0.11.x`（当前版本 `0.11.0`）；`0.10.x` 仍兼容既有 Host。
-- 预览源码线：`0.12.0-alpha.4`；其 reviewed API snapshot 在稳定版 `0.12.0` freeze 前仍可扩展。
+- 预览源码线：`0.12.0-alpha.5`；其 reviewed API snapshot 在稳定版 `0.12.0` freeze 前仍可扩展。
 
 兼容性变更和部署说明见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
 [.NET NativeAOT 与 trimming（简体中文）](docs/nativeaot-build-integration.zh-CN.md)。

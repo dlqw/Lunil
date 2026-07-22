@@ -423,30 +423,85 @@ internal sealed partial class AnalysisEngine
 
     private LuaTypePack InferCall(LuaSyntaxNode expression, FlowState state)
     {
-        if (TryGetCalledGlobalIdentifier(expression, out var calledName))
+        var nodes = expression.ChildNodes().ToArray();
+        LuaSyntaxNode? calleeNode;
+        LuaSyntaxNode? receiver = null;
+        LuaType? receiverType = null;
+        string? memberName = null;
+        LuaType callee = LuaTypes.Unknown;
+        var arguments = GetCallArguments(expression).ToList();
+        if (expression.Kind == LuaSyntaxKind.MethodCallExpression)
+        {
+            receiver = nodes.FirstOrDefault(static node => node.Kind != LuaSyntaxKind.ArgumentList);
+            calleeNode = receiver;
+            var methodToken = expression.ChildTokens().LastOrDefault(static token =>
+                token.Kind == LuaTokenKind.Identifier);
+            if (receiver is not null)
+            {
+                receiverType = InferExpression(receiver, state);
+                arguments.Insert(0, receiver);
+            }
+
+            if (receiverType is not null && methodToken is not null && !methodToken.IsMissing)
+            {
+                memberName = GetTokenText(methodToken);
+                callee = InferMemberType(receiverType, memberName, methodToken.Span);
+            }
+        }
+        else
+        {
+            calleeNode = nodes.FirstOrDefault(static node => node.Kind != LuaSyntaxKind.ArgumentList);
+            if (calleeNode is not null)
+            {
+                callee = InferExpression(calleeNode, state);
+                if (calleeNode.Kind == LuaSyntaxKind.MemberAccessExpression)
+                {
+                    receiver = calleeNode.ChildNodes().FirstOrDefault();
+                    receiverType = receiver is not null &&
+                        _expressionInferences.TryGetValue(receiver.Span, out var inferredReceiver)
+                            ? inferredReceiver
+                            : LuaTypes.Unknown;
+                    var memberToken = calleeNode.ChildTokens().LastOrDefault(static token =>
+                        token.Kind == LuaTokenKind.Identifier);
+                    if (memberToken is not null && !memberToken.IsMissing)
+                    {
+                        memberName = GetTokenText(memberToken);
+                    }
+                }
+            }
+        }
+
+        var isGlobalCall = TryGetCalledGlobalIdentifier(expression, out var calledName);
+        if (isGlobalCall)
         {
             var special = InferSpecialCall(expression, calledName, state);
             if (special is not null)
             {
+                var specialSignatures = GetCallSignatures(callee);
+                var status = specialSignatures.IsEmpty
+                    ? LuaCallResolutionStatus.Dynamic
+                    : LuaCallResolutionStatus.Resolved;
+                string? reason = specialSignatures.IsEmpty
+                    ? LuaCallUnresolvedReasons.CalleeSignatureIsDynamic
+                    : null;
+                if (string.Equals(calledName, "require", StringComparison.Ordinal) &&
+                    !TryGetStaticModuleRequest(expression, out _))
+                {
+                    status = LuaCallResolutionStatus.Dynamic;
+                    reason = LuaCallUnresolvedReasons.ModuleRequestIsDynamic;
+                }
+
+                RecordCallSite(
+                    expression,
+                    calleeNode,
+                    callee,
+                    receiver,
+                    receiverType,
+                    memberName,
+                    status,
+                    reason);
                 return special;
             }
-        }
-
-        var nodes = expression.ChildNodes().ToArray();
-        LuaType callee;
-        var arguments = GetCallArguments(expression).ToList();
-        if (expression.Kind == LuaSyntaxKind.MethodCallExpression)
-        {
-            var receiver = nodes[0];
-            var receiverType = InferExpression(receiver, state);
-            var methodToken = expression.ChildTokens().Last(static token =>
-                token.Kind == LuaTokenKind.Identifier);
-            callee = InferMemberType(receiverType, GetTokenText(methodToken), methodToken.Span);
-            arguments.Insert(0, receiver);
-        }
-        else
-        {
-            callee = InferExpression(nodes[0], state);
         }
 
         var argumentTypes = arguments.Select(argument => InferExpression(argument, state)).ToImmutableArray();
@@ -455,6 +510,15 @@ internal sealed partial class AnalysisEngine
         {
             if (callee.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown or LuaTypeKind.Function)
             {
+                RecordCallSite(
+                    expression,
+                    calleeNode,
+                    callee,
+                    receiver,
+                    receiverType,
+                    memberName,
+                    LuaCallResolutionStatus.Dynamic,
+                    LuaCallUnresolvedReasons.CalleeSignatureIsDynamic);
                 return new LuaTypePack([], LuaTypes.Any);
             }
 
@@ -462,6 +526,15 @@ internal sealed partial class AnalysisEngine
                 "LUA6004",
                 expression.Span,
                 $"Value of type '{callee.DisplayName}' is not callable.");
+            RecordCallSite(
+                expression,
+                calleeNode,
+                callee,
+                receiver,
+                receiverType,
+                memberName,
+                LuaCallResolutionStatus.Unresolved,
+                LuaCallUnresolvedReasons.CalleeIsNotCallable);
             return new LuaTypePack([LuaTypes.Unknown]);
         }
 
@@ -471,6 +544,15 @@ internal sealed partial class AnalysisEngine
         var selected = instantiated.FirstOrDefault(signature =>
             IsCallCompatible(signature, argumentTypes)) ?? instantiated[0];
         CheckCall(selected, argumentTypes, expression.Span);
+        RecordCallSite(
+            expression,
+            calleeNode,
+            callee,
+            receiver,
+            receiverType,
+            memberName,
+            LuaCallResolutionStatus.Resolved,
+            unresolvedReason: null);
         return selected.Returns;
     }
 

@@ -56,6 +56,7 @@ internal sealed partial class AnalysisEngine
             .GroupBy(static symbol => symbol.DeclaringSpan)
             .ToDictionary(static group => group.Key, static group => group.Last());
         (_functionSyntax, _functionIdsByOwnerSpan) = BuildFunctionIndex();
+        BuildFunctionTargetIndex();
         _attachedAnnotations = AttachAnnotations();
         InstallBuiltIns();
     }
@@ -69,6 +70,7 @@ internal sealed partial class AnalysisEngine
         }
 
         ReportUnreachableCode();
+        CompleteCallSiteProjection();
         var symbols = _semantics.Symbols
             .Where(static symbol => symbol.Kind != LuaSymbolKind.Environment)
             .Select(symbol =>
@@ -103,7 +105,10 @@ internal sealed partial class AnalysisEngine
                 _annotations,
                 _context.GetDiagnostics(),
                 _context.Options),
-            _context.GetBudgetUsage());
+            _context.GetBudgetUsage())
+        {
+            CallGraph = BuildCallGraph(),
+        };
     }
 
     private LuaType AnalyzeFunction(
