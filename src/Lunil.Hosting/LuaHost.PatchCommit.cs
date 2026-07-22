@@ -102,6 +102,7 @@ public sealed partial class LuaHost
                 migrationSchema,
                 options,
                 cancellationToken);
+            result = ApplyPatchAcceptance(result, options);
             var duration = Stopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, result.Status.ToString(), result.Message);
             LuaPatchTelemetry.RecordPreparation(result.Status.ToString(), duration);
@@ -803,6 +804,14 @@ public sealed partial class LuaHost
     private static LuaPatchPrepareOptions SnapshotPrepareOptions(LuaPatchPrepareOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(options.TimeProvider);
+        if ((options.AcceptancePolicy is null) != (options.ReplayStore is null))
+        {
+            throw new ArgumentException(
+                "AcceptancePolicy and ReplayStore must be configured together.",
+                nameof(options));
+        }
+
         return options with
         {
             ModuleOptions = options.ModuleOptions?.ToDictionary(
@@ -817,6 +826,39 @@ public sealed partial class LuaHost
                 options.ResourceMigrationAdapters,
                 static adapter => adapter.AdapterId,
                 nameof(options.ResourceMigrationAdapters)),
+        };
+    }
+
+    private static LuaPatchPrepareResult ApplyPatchAcceptance(
+        LuaPatchPrepareResult result,
+        LuaPatchPrepareOptions options)
+    {
+        if (!result.Succeeded || options.AcceptancePolicy is null)
+        {
+            return result;
+        }
+
+        var acceptance = options.AcceptancePolicy.TryAccept(
+            result.Preflight.Manifest,
+            options.ReplayStore!,
+            options.TimeProvider.GetUtcNow());
+        if (acceptance.Accepted)
+        {
+            return result with { Acceptance = acceptance };
+        }
+
+        var modules = result.Modules.Select(module => module with
+        {
+            Status = LuaPatchPrepareStatus.AcceptanceRejected,
+            Message = acceptance.Message,
+        }).ToImmutableArray();
+        return result with
+        {
+            Status = LuaPatchPrepareStatus.AcceptanceRejected,
+            PreparedPatch = null,
+            Modules = modules,
+            Message = acceptance.Message,
+            Acceptance = acceptance,
         };
     }
 
