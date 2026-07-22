@@ -30,7 +30,7 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.5` 热更新预览，不是稳定 package 版本线。
+> 当前源码树为 `0.12.0-alpha.6` 热更新预览，不是稳定 package 版本线。
 
 ## 性能
 
@@ -79,6 +79,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
   key，不依赖源码 offset 或瞬时 ID。
 - **代码智能索引**：直接提供 typed call site、未解析调用保留、reference 查询以及
   compilation/workspace call graph，无需宿主重新解释 generic AST。
+- **可运行分析嵌入**：由 CI 实际执行的 sample 覆盖 compiler、semantics、annotation、CFG、
+  call/reference index、循环 workspace、稳定身份与 cache 失效。
 - **托管运行时**：显式 Lua value、table、closure、thread、upvalue、资源预算、protected error、
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
 - **自适应执行**：动态代码可用时，默认 Auto JIT 选择经过验证的编译路径；否则使用参考解释器。
@@ -200,6 +202,11 @@ var call = compilation.Analysis.CallGraph.Edges.Single();
 对完成的 `LuaWorkspaceResult`，`FindReferences(LuaSymbolKey)`、`FindGlobalReferences(string)` 与
 `GetCallGraph()` 会补充 module/source identity、稳定 function key 和保守的 module export target；
 发生重新赋值的 module alias 不会被误报为静态 module target。
+
+[静态分析嵌入指南](docs/static-analysis-embedding.zh-CN.md)及其
+[可执行 sample](samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)覆盖 UTF-8 byte span 与
+UTF-16 编辑器位置、诊断 phase、稳定 snapshot identity、CFG、workspace cycle、cache 失效、
+生命周期、并发和生产预算。
 
 ## 快速开始
 

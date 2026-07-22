@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\samples\Lunil.StaticAnalysis.Embedding\Lunil.StaticAnalysis.Embedding.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Workspace\Lunil.Workspace.csproj" />
   </ItemGroup>
 

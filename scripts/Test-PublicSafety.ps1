@@ -21,6 +21,7 @@ $publicRoots = @(
     'Lunil.sln',
     'README.md',
     'README.zh-CN.md',
+    'samples',
     'scripts',
     'src',
     'tests'
