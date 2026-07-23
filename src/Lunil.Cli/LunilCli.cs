@@ -288,6 +288,8 @@ patch actions:
   inspect <bundle> --public-key <pem> --key-id <id>
   dry-run <bundle> --public-key <pem> --key-id <id>
   diff <base-bundle> <target-bundle> --public-key <pem> --key-id <id>
+
+  For verification actions, --trust-store <json> replaces --public-key and --key-id.
 """,
             _ => global,
         };

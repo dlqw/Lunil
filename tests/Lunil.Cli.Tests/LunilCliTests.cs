@@ -16,6 +16,21 @@ public sealed class LunilCliTests
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var privateKey = fixture.Write("private.pem", key.ExportECPrivateKeyPem());
         var publicKey = fixture.Write("public.pem", key.ExportSubjectPublicKeyInfoPem());
+        var trustStore = fixture.Write(
+            "patch-trust.json",
+            """
+            {
+              "schema": "lunil.patch-trust.v1",
+              "keys": [
+                {
+                  "keyId": "qa-1",
+                  "publicKey": "public.pem",
+                  "validFrom": "2026-01-01T00:00:00Z",
+                  "validUntil": "2099-01-01T00:00:00Z"
+                }
+              ]
+            }
+            """);
         fixture.Write(Path.Combine("payload", "modules", "main.lua"), "return 42");
         var manifest = new LuaPatchManifest
         {
@@ -48,9 +63,9 @@ public sealed class LunilCliTests
         var verify = await fixture.RunAsync(
             "patch", "verify", bundle, "--public-key", publicKey, "--key-id", "qa-1");
         var inspect = await fixture.RunAsync(
-            "patch", "inspect", bundle, "--public-key", publicKey, "--key-id", "qa-1");
+            "patch", "inspect", bundle, "--trust-store", trustStore);
         var dryRun = await fixture.RunAsync(
-            "patch", "dry-run", bundle, "--public-key", publicKey, "--key-id", "qa-1");
+            "patch", "dry-run", bundle, "--trust-store", trustStore);
 
         fixture.Write(Path.Combine("payload", "modules", "main.lua"), "return 43");
         var nextManifest = manifest with
@@ -70,7 +85,7 @@ public sealed class LunilCliTests
             "--output", nextBundle, "--private-key", privateKey, "--key-id", "qa-1")).ExitCode);
         var diff = await fixture.RunAsync(
             "patch", "diff", bundle, nextBundle,
-            "--public-key", publicKey, "--key-id", "qa-1");
+            "--trust-store", trustStore);
 
         Assert.Equal(0, pack.ExitCode);
         Assert.True(File.Exists(bundle));
@@ -83,6 +98,91 @@ public sealed class LunilCliTests
         Assert.Equal(0, diff.ExitCode);
         Assert.Contains("lunil.patch.diff.v1", diff.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("game.main", diff.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PatchVerifyFailsClosedForARevokedTrustStoreKey()
+    {
+        using var fixture = new CliFixture();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var privateKey = fixture.Write("private.pem", key.ExportECPrivateKeyPem());
+        _ = fixture.Write("public.pem", key.ExportSubjectPublicKeyInfoPem());
+        fixture.Write(Path.Combine("payload", "main.lua"), "return 42");
+        var manifest = new LuaPatchManifest
+        {
+            PatchId = "revoked-hotfix",
+            Channel = "production",
+            TargetBuild = "game-2",
+            BaseRevision = "game-1",
+            TargetRevision = "game-2",
+            LanguageVersion = LuaLanguageVersion.Lua54,
+            RuntimeAbi = "lunil-0.12",
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(1),
+            Nonce = "revoked-1",
+            Entries = [new LuaPatchEntryManifest
+            {
+                Name = "main.lua",
+                ModuleName = "main",
+                Kind = LuaPatchEntryKind.Source,
+                ContentHash = new string('0', 64),
+                Length = 0,
+            }],
+        };
+        var manifestPath = Path.Combine(fixture.Root, "manifest.json");
+        await File.WriteAllBytesAsync(manifestPath, LuaPatchManifestSerializer.Serialize(manifest));
+        var bundle = Path.Combine(fixture.Root, "revoked.lpatch");
+        Assert.Equal(0, (await fixture.RunAsync(
+            "patch", "pack", manifestPath, Path.Combine(fixture.Root, "payload"),
+            "--output", bundle, "--private-key", privateKey, "--key-id", "release-revoked")).ExitCode);
+        var trustStore = fixture.Write(
+            "revoked-trust.json",
+            """
+            {
+              "schema": "lunil.patch-trust.v1",
+              "keys": [
+                {
+                  "keyId": "release-revoked",
+                  "publicKey": "public.pem",
+                  "revokedAt": "2020-01-01T00:00:00Z"
+                }
+              ]
+            }
+            """);
+
+        var result = await fixture.RunAsync(
+            "patch", "verify", bundle, "--trust-store", trustStore);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("revoked", result.StandardError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PatchTrustStoreRejectsUnknownPolicyProperties()
+    {
+        using var fixture = new CliFixture();
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        _ = fixture.Write("public.pem", key.ExportSubjectPublicKeyInfoPem());
+        var trustStore = fixture.Write(
+            "invalid-trust.json",
+            """
+            {
+              "schema": "lunil.patch-trust.v1",
+              "keys": [
+                {
+                  "keyId": "release-1",
+                  "publicKey": "public.pem",
+                  "typo": true
+                }
+              ]
+            }
+            """);
+
+        var result = await fixture.RunAsync(
+            "patch", "verify", "missing.lpatch", "--trust-store", trustStore);
+
+        Assert.Equal(3, result.ExitCode);
+        Assert.Contains("typo", result.StandardError, StringComparison.Ordinal);
     }
 
     [Fact]

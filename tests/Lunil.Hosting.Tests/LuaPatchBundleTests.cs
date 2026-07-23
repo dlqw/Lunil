@@ -65,6 +65,117 @@ public sealed class LuaPatchBundleTests
     }
 
     [Fact]
+    public void ReaderEnforcesSigningKeyActivationExpiryAndRevocationAtOneInstant()
+    {
+        var now = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var bytes = Write(CreateBundle(new LuaPatchEcdsaSigner("release-1", key)));
+
+        AssertTrustFailure(
+            bytes,
+            new LuaPatchTrustedEcdsaKey("release-1", key.ExportSubjectPublicKeyInfo())
+            {
+                ValidFrom = now.AddSeconds(1),
+            },
+            now,
+            LuaPatchErrorCode.SigningKeyNotYetValid);
+        AssertTrustFailure(
+            bytes,
+            new LuaPatchTrustedEcdsaKey("release-1", key.ExportSubjectPublicKeyInfo())
+            {
+                ValidUntil = now,
+            },
+            now,
+            LuaPatchErrorCode.SigningKeyExpired);
+        AssertTrustFailure(
+            bytes,
+            new LuaPatchTrustedEcdsaKey("release-1", key.ExportSubjectPublicKeyInfo())
+            {
+                ValidFrom = now.AddDays(-1),
+                ValidUntil = now.AddDays(1),
+                RevokedAt = now,
+            },
+            now,
+            LuaPatchErrorCode.SigningKeyRevoked);
+    }
+
+    [Fact]
+    public void TrustStoreSupportsOverlappingRotationWindows()
+    {
+        var rotation = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+        using var oldKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var nextKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var trust = new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("release-old", oldKey.ExportSubjectPublicKeyInfo())
+            {
+                ValidUntil = rotation.AddMinutes(5),
+            },
+            new LuaPatchTrustedEcdsaKey("release-next", nextKey.ExportSubjectPublicKeyInfo())
+            {
+                ValidFrom = rotation.AddMinutes(-5),
+            },
+        ]);
+
+        var before = trust.EvaluateTrust(
+            LuaPatchEcdsaSigner.AlgorithmName,
+            "release-old",
+            rotation);
+        var nextBefore = trust.EvaluateTrust(
+            LuaPatchEcdsaSigner.AlgorithmName,
+            "release-next",
+            rotation);
+        var oldAfter = trust.EvaluateTrust(
+            LuaPatchEcdsaSigner.AlgorithmName,
+            "release-old",
+            rotation.AddMinutes(5));
+
+        Assert.True(before.Trusted);
+        Assert.True(nextBefore.Trusted);
+        Assert.Equal(LuaPatchSignatureTrustStatus.Expired, oldAfter.Status);
+    }
+
+    [Fact]
+    public void ReaderUsesTheSameConfiguredInstantForTrustAndVerification()
+    {
+        var now = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero);
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var stream = new MemoryStream(Write(
+            CreateBundle(new LuaPatchEcdsaSigner("release-1", key))));
+        var trust = new CapturingTrustPolicy();
+
+        _ = LuaPatchBundle.Read(
+            stream,
+            trust,
+            new LuaPatchBundleReadOptions { UtcNow = now });
+
+        Assert.Equal(now, trust.EvaluationTime);
+        Assert.Equal(now, trust.VerificationTime);
+        Assert.Equal(0, trust.LegacyCallCount);
+    }
+
+    [Fact]
+    public void TrustStoreRejectsInvalidKeysAndValidityWindowsAtConstruction()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        using var wrongCurve = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.Throws<ArgumentException>(() => new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("bad", new byte[] { 1, 2, 3 }),
+        ]));
+        Assert.Throws<ArgumentException>(() => new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("wrong-curve", wrongCurve.ExportSubjectPublicKeyInfo()),
+        ]));
+        Assert.Throws<ArgumentException>(() => new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("release-1", key.ExportSubjectPublicKeyInfo())
+            {
+                ValidFrom = now,
+                ValidUntil = now,
+            },
+        ]));
+    }
+
+    [Fact]
     public void BuilderRejectsUnsafeOrDuplicateEntryNames()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -259,6 +370,20 @@ public sealed class LuaPatchBundleTests
         return stream.ToArray();
     }
 
+    private static void AssertTrustFailure(
+        byte[] bundleBytes,
+        LuaPatchTrustedEcdsaKey trustedKey,
+        DateTimeOffset verificationTime,
+        LuaPatchErrorCode expectedCode)
+    {
+        using var stream = new MemoryStream(bundleBytes);
+        var exception = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Read(
+            stream,
+            new LuaPatchEcdsaTrustStore([trustedKey]),
+            new LuaPatchBundleReadOptions { UtcNow = verificationTime }));
+        Assert.Equal(expectedCode, exception.Code);
+    }
+
     private sealed class AtomicReplayStore : ILuaPatchReplayStore
     {
         private readonly object _gate = new();
@@ -340,6 +465,51 @@ public sealed class LuaPatchBundleTests
                     owner._leased = false;
                 }
             }
+        }
+    }
+
+    private sealed class CapturingTrustPolicy : ILuaPatchSignatureTrustPolicy
+    {
+        public DateTimeOffset? EvaluationTime { get; private set; }
+
+        public DateTimeOffset? VerificationTime { get; private set; }
+
+        public int LegacyCallCount { get; private set; }
+
+        public LuaPatchSignatureTrustResult EvaluateTrust(
+            string algorithm,
+            string keyId,
+            DateTimeOffset verificationTime)
+        {
+            EvaluationTime = verificationTime;
+            return new LuaPatchSignatureTrustResult(LuaPatchSignatureTrustStatus.Trusted, null);
+        }
+
+        public bool VerifyDigest(
+            string algorithm,
+            string keyId,
+            ReadOnlySpan<byte> digest,
+            ReadOnlySpan<byte> signature,
+            DateTimeOffset verificationTime)
+        {
+            VerificationTime = verificationTime;
+            return true;
+        }
+
+        public bool IsTrusted(string algorithm, string keyId)
+        {
+            LegacyCallCount++;
+            return false;
+        }
+
+        public bool VerifyDigest(
+            string algorithm,
+            string keyId,
+            ReadOnlySpan<byte> digest,
+            ReadOnlySpan<byte> signature)
+        {
+            LegacyCallCount++;
+            return false;
         }
     }
 }

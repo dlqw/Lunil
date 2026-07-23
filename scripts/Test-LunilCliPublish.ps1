@@ -82,6 +82,72 @@ foreach ($mode in $Modes) {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath 'app.luac' -PathType Leaf)) {
             throw "$mode CLI build smoke failed."
         }
+
+        New-Item -ItemType Directory -Path 'patch-payload' -Force | Out-Null
+        Set-Content -LiteralPath 'patch-payload/main.lua' -Encoding utf8NoBOM -Value "return 42"
+        Set-Content -LiteralPath 'patch-manifest.json' -Encoding utf8NoBOM -Value @'
+{
+  "formatVersion": 1,
+  "patchId": "publish-smoke",
+  "channel": "ci",
+  "targetBuild": "publish-smoke",
+  "baseRevision": "1",
+  "targetRevision": "2",
+  "languageVersion": 84,
+  "runtimeAbi": "lunil-0.12",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "expiresAt": "2099-01-01T00:00:00Z",
+  "nonce": "publish-smoke-1",
+  "entries": [
+    {
+      "name": "main.lua",
+      "moduleName": "main",
+      "kind": "Source",
+      "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "length": 0,
+      "dependencies": []
+    }
+  ]
+}
+'@
+        $patchKey = [System.Security.Cryptography.ECDsa]::Create(
+            [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+        try {
+            [System.IO.File]::WriteAllText(
+                (Join-Path $outputDirectory 'patch-private.pem'),
+                $patchKey.ExportECPrivateKeyPem())
+            [System.IO.File]::WriteAllText(
+                (Join-Path $outputDirectory 'patch-public.pem'),
+                $patchKey.ExportSubjectPublicKeyInfoPem())
+        }
+        finally {
+            $patchKey.Dispose()
+        }
+        Set-Content -LiteralPath 'patch-trust.json' -Encoding utf8NoBOM -Value @'
+{
+  "schema": "lunil.patch-trust.v1",
+  "keys": [
+    {
+      "keyId": "publish-smoke",
+      "publicKey": "patch-public.pem",
+      "validFrom": "2020-01-01T00:00:00Z",
+      "validUntil": "2099-01-01T00:00:00Z"
+    }
+  ]
+}
+'@
+        & $executable patch pack patch-manifest.json patch-payload `
+            --output patch.lpatch --private-key patch-private.pem --key-id publish-smoke |
+            Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath 'patch.lpatch' -PathType Leaf)) {
+            throw "$mode CLI patch pack smoke failed."
+        }
+
+        $patchOutput = (& $executable patch verify patch.lpatch `
+            --trust-store patch-trust.json | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $patchOutput -ne 'verified publish-smoke 2') {
+            throw "$mode CLI trust-store verification smoke failed: $patchOutput"
+        }
     }
     finally {
         Pop-Location

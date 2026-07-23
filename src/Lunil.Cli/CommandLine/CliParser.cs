@@ -37,6 +37,7 @@ internal static class CliParser
         string? patchKeyId = null;
         string? patchPrivateKeyPath = null;
         string? patchPublicKeyPath = null;
+        string? patchTrustStorePath = null;
         var showHelp = false;
         var showVersion = false;
         var afterSeparator = false;
@@ -112,6 +113,9 @@ internal static class CliParser
                     break;
                 case "--public-key":
                     patchPublicKeyPath = ReadValue(arguments, ref index, name, inlineValue);
+                    break;
+                case "--trust-store":
+                    patchTrustStorePath = ReadValue(arguments, ref index, name, inlineValue);
                     break;
                 case "--module-root":
                     moduleRoots.Add(ReadValue(arguments, ref index, name, inlineValue));
@@ -255,6 +259,7 @@ internal static class CliParser
             PatchKeyId = patchKeyId,
             PatchPrivateKeyPath = patchPrivateKeyPath,
             PatchPublicKeyPath = patchPublicKeyPath,
+            PatchTrustStorePath = patchTrustStorePath,
             WarningsAsErrors = warningsAsErrors,
             StripDebug = stripDebug,
             ShowHelp = showHelp,
