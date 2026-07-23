@@ -39,6 +39,8 @@ public sealed class LunilCliTests
             TargetBuild = "game-2",
             BaseRevision = "game-1",
             TargetRevision = "game-2",
+            UpdateIntent = LuaPatchUpdateIntent.Rollback,
+            RequiredCapabilities = ["game.inventory-v2", "game.world-write"],
             LanguageVersion = LuaLanguageVersion.Lua54,
             RuntimeAbi = "lunil-0.12",
             CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
@@ -93,6 +95,18 @@ public sealed class LunilCliTests
         Assert.Contains("verified cli-hotfix game-2", verify.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, inspect.ExitCode);
         Assert.Contains("lunil.patch.inspect.v1", inspect.StandardOutput, StringComparison.Ordinal);
+        using (var inspection = JsonDocument.Parse(inspect.StandardOutput))
+        {
+            Assert.Equal(
+                "Rollback",
+                inspection.RootElement.GetProperty("updateIntent").GetString());
+            Assert.Equal(
+                ["game.inventory-v2", "game.world-write"],
+                inspection.RootElement.GetProperty("requiredCapabilities")
+                    .EnumerateArray()
+                    .Select(static item => item.GetString()!)
+                    .ToArray());
+        }
         Assert.Equal(0, dryRun.ExitCode);
         Assert.Contains("\"preflight\": \"Ready\"", dryRun.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(0, diff.ExitCode);

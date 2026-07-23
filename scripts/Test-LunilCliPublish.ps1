@@ -93,11 +93,13 @@ foreach ($mode in $Modes) {
   "targetBuild": "publish-smoke",
   "baseRevision": "1",
   "targetRevision": "2",
+  "updateIntent": "Forward",
   "languageVersion": 84,
   "runtimeAbi": "lunil-0.12",
   "createdAt": "2026-01-01T00:00:00Z",
   "expiresAt": "2099-01-01T00:00:00Z",
   "nonce": "publish-smoke-1",
+  "requiredCapabilities": [],
   "entries": [
     {
       "name": "main.lua",

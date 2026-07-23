@@ -39,7 +39,7 @@ public sealed class LuaPatchBundle
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(signer);
-        ValidateManifestHeader(manifest);
+        ValidateManifestHeader(manifest, LuaPatchBundleReadOptions.Default, false);
 
         var normalizedEntries = NormalizeEntries(entries);
         var descriptors = normalizedEntries.Select(static entry => new LuaPatchEntryManifest
@@ -51,7 +51,11 @@ public sealed class LuaPatchBundle
             Length = entry.Content.Length,
             Dependencies = NormalizeDependencies(entry.Dependencies),
         }).ToImmutableArray();
-        var completeManifest = manifest with { Entries = descriptors };
+        var completeManifest = manifest with
+        {
+            Entries = descriptors,
+            RequiredCapabilities = NormalizeCapabilities(manifest.RequiredCapabilities),
+        };
         _ = LuaPatchDependencyPlan.Create(normalizedEntries);
         var manifestBytes = SerializeManifest(completeManifest);
         var digest = SHA256.HashData(manifestBytes);
@@ -119,7 +123,7 @@ public sealed class LuaPatchBundle
                 exception);
         }
 
-        ValidateManifestHeader(manifest);
+        ValidateManifestHeader(manifest, options, true);
         var canonicalManifest = SerializeManifest(manifest);
         if (!manifestBytes.AsSpan().SequenceEqual(canonicalManifest))
         {
@@ -357,7 +361,10 @@ public sealed class LuaPatchBundle
         }
     }
 
-    private static void ValidateManifestHeader(LuaPatchManifest manifest)
+    private static void ValidateManifestHeader(
+        LuaPatchManifest manifest,
+        LuaPatchBundleReadOptions options,
+        bool requireCanonicalCapabilities)
     {
         if (manifest.FormatVersion != LuaPatchFormat.CurrentVersion)
         {
@@ -372,11 +379,18 @@ public sealed class LuaPatchBundle
             string.IsNullOrWhiteSpace(manifest.RuntimeAbi) ||
             string.IsNullOrWhiteSpace(manifest.Nonce) ||
             !LuaLanguageVersions.IsKnown(manifest.LanguageVersion) ||
+            !Enum.IsDefined(manifest.UpdateIntent) ||
             manifest.CreatedAt == default ||
             manifest.ExpiresAt is { } expiresAt && expiresAt <= manifest.CreatedAt)
         {
             throw Format(LuaPatchErrorCode.InvalidManifest, "The patch manifest header is invalid.");
         }
+
+        ValidateCapabilities(
+            manifest.RequiredCapabilities,
+            options.MaximumCapabilityCount,
+            options.MaximumCapabilityNameBytes,
+            requireCanonicalCapabilities);
 
         if (!manifest.Entries.IsDefault && !manifest.Entries.IsEmpty)
         {
@@ -424,7 +438,8 @@ public sealed class LuaPatchBundle
         if (options.MaximumBundleBytes <= 0 || options.MaximumManifestBytes <= 0 ||
             options.MaximumEntryCount <= 0 || options.MaximumEntryBytes <= 0 ||
             options.MaximumTotalEntryBytes <= 0 || options.MaximumNameBytes <= 0 ||
-            options.MaximumSignatureBytes <= 0)
+            options.MaximumSignatureBytes <= 0 || options.MaximumCapabilityCount <= 0 ||
+            options.MaximumCapabilityNameBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Patch read limits must be positive.");
         }
@@ -432,6 +447,73 @@ public sealed class LuaPatchBundle
 
     private static LuaPatchFormatException Format(LuaPatchErrorCode code, string message) =>
         new(code, message);
+
+    private static ImmutableArray<string> NormalizeCapabilities(
+        ImmutableArray<string> capabilities)
+    {
+        if (capabilities.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var normalized = capabilities.Order(StringComparer.Ordinal).ToImmutableArray();
+        ValidateCapabilities(
+            normalized,
+            LuaPatchBundleReadOptions.Default.MaximumCapabilityCount,
+            LuaPatchBundleReadOptions.Default.MaximumCapabilityNameBytes,
+            true);
+        return normalized;
+    }
+
+    private static void ValidateCapabilities(
+        ImmutableArray<string> capabilities,
+        int maximumCount,
+        int maximumNameBytes,
+        bool requireCanonicalOrder)
+    {
+        if (capabilities.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        if (capabilities.Length > maximumCount)
+        {
+            throw Format(
+                LuaPatchErrorCode.ResourceLimitExceeded,
+                "The patch capability count exceeds its configured limit.");
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        string? previous = null;
+        foreach (var capability in capabilities)
+        {
+            if (string.IsNullOrWhiteSpace(capability) ||
+                !string.Equals(capability, capability.Trim(), StringComparison.Ordinal))
+            {
+                throw Format(
+                    LuaPatchErrorCode.InvalidManifest,
+                    "Patch capabilities must be unique, canonical, non-blank names.");
+            }
+
+            if (Encoding.UTF8.GetByteCount(capability) > maximumNameBytes)
+            {
+                throw Format(
+                    LuaPatchErrorCode.ResourceLimitExceeded,
+                    "A patch capability name exceeds its configured limit.");
+            }
+
+            if (!names.Add(capability) ||
+                requireCanonicalOrder && previous is not null &&
+                    string.CompareOrdinal(previous, capability) >= 0)
+            {
+                throw Format(
+                    LuaPatchErrorCode.InvalidManifest,
+                    "Patch capabilities must be unique, canonical, non-blank names.");
+            }
+
+            previous = capability;
+        }
+    }
 
     private static LuaPatchErrorCode MapTrustError(LuaPatchSignatureTrustStatus status) => status switch
     {

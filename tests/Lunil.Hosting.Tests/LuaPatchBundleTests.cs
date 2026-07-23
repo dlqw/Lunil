@@ -33,6 +33,80 @@ public sealed class LuaPatchBundleTests
     }
 
     [Fact]
+    public void SignedManifestCanonicalizesIntentAndCapabilityRequests()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signer = new LuaPatchEcdsaSigner("rollback-1", key);
+        var bundle = LuaPatchBundle.Create(
+            CreateManifest() with
+            {
+                UpdateIntent = LuaPatchUpdateIntent.Rollback,
+                RequiredCapabilities = ["game.world-write", "game.inventory-v2"],
+            },
+            [Entry("main", [])],
+            signer);
+        var trust = new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("rollback-1", key.ExportSubjectPublicKeyInfo()),
+        ]);
+
+        using var stream = new MemoryStream(Write(bundle));
+        var restored = LuaPatchBundle.Read(
+            stream,
+            trust,
+            new LuaPatchBundleReadOptions { UtcNow = bundle.Manifest.CreatedAt });
+        using var limitedStream = new MemoryStream(Write(bundle));
+        var limited = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Read(
+            limitedStream,
+            trust,
+            new LuaPatchBundleReadOptions
+            {
+                UtcNow = bundle.Manifest.CreatedAt,
+                MaximumCapabilityCount = 1,
+            }));
+
+        Assert.Equal(LuaPatchUpdateIntent.Rollback, restored.Manifest.UpdateIntent);
+        Assert.Equal<string>(
+            ["game.inventory-v2", "game.world-write"],
+            restored.Manifest.RequiredCapabilities);
+        Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, limited.Code);
+    }
+
+    [Fact]
+    public void BuilderRejectsDuplicateInvalidAndExcessiveCapabilityRequests()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signer = new LuaPatchEcdsaSigner("release-1", key);
+        var entry = Entry("main", []);
+
+        var duplicate = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with { RequiredCapabilities = ["game.write", "game.write"] },
+            [entry],
+            signer));
+        var invalid = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with { RequiredCapabilities = [" game.write"] },
+            [entry],
+            signer));
+        var excessive = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with
+            {
+                RequiredCapabilities = Enumerable.Range(0, 129)
+                    .Select(static index => $"game.capability-{index:D3}")
+                    .ToImmutableArray(),
+            },
+            [entry],
+            signer));
+        var oversizedName = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with { RequiredCapabilities = [new string('x', 257)] },
+            [entry],
+            signer));
+
+        Assert.Equal(LuaPatchErrorCode.InvalidManifest, duplicate.Code);
+        Assert.Equal(LuaPatchErrorCode.InvalidManifest, invalid.Code);
+        Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, excessive.Code);
+        Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, oversizedName.Code);
+    }
+
+    [Fact]
     public void TamperedPayloadIsRejectedBeforeUse()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -295,6 +369,56 @@ public sealed class LuaPatchBundleTests
             AllowedChannels = ["production"],
         }.Evaluate(manifest, manifest.ExpiresAt);
         Assert.Equal(LuaPatchAcceptanceStatus.Expired, expired.Status);
+    }
+
+    [Fact]
+    public void AcceptancePolicyRequiresCapabilitiesAndExplicitRollbackAuthorization()
+    {
+        var manifest = CreateManifest() with
+        {
+            TargetRevision = "build-98",
+            UpdateIntent = LuaPatchUpdateIntent.Rollback,
+            RequiredCapabilities = ["game.inventory-v2"],
+        };
+        var signer = new LuaPatchSignerIdentity(
+            LuaPatchEcdsaSigner.AlgorithmName,
+            "rollback-1");
+        var policy = new LuaPatchAcceptancePolicy
+        {
+            TargetBuild = "game-100",
+            CurrentRevision = "build-99",
+            RuntimeAbi = "lunil-0.12",
+            AllowedChannels = ["production"],
+            RevisionClassifier = static (_, _) => LuaPatchUpdateIntent.Rollback,
+        };
+
+        var unauthorized = policy.Evaluate(manifest, signer, manifest.CreatedAt);
+        var unsignedRollback = (policy with
+        {
+            RollbackAuthorizer = static (_, _) => true,
+        }).Evaluate(manifest, manifest.CreatedAt);
+        var capabilityDenied = (policy with
+        {
+            RollbackAuthorizer = static (_, identity) => identity.KeyId == "rollback-1",
+        }).Evaluate(manifest, signer, manifest.CreatedAt);
+        var accepted = (policy with
+        {
+            GrantedCapabilities = ["game.inventory-v2", "game.world-write"],
+            RollbackAuthorizer = static (patch, identity) =>
+                identity.KeyId == "rollback-1" && patch.TargetRevision == "build-98",
+        }).Evaluate(manifest, signer, manifest.CreatedAt);
+        var mismatch = (policy with
+        {
+            GrantedCapabilities = ["game.inventory-v2"],
+            RevisionClassifier = static (_, _) => LuaPatchUpdateIntent.Forward,
+            RollbackAuthorizer = static (_, _) => true,
+        }).Evaluate(manifest, signer, manifest.CreatedAt);
+
+        Assert.Equal(LuaPatchAcceptanceStatus.RollbackNotAuthorized, unauthorized.Status);
+        Assert.Equal(LuaPatchAcceptanceStatus.RollbackNotAuthorized, unsignedRollback.Status);
+        Assert.Equal(LuaPatchAcceptanceStatus.CapabilityDenied, capabilityDenied.Status);
+        Assert.True(accepted.Accepted);
+        Assert.Equal(LuaPatchAcceptanceStatus.UpdateIntentMismatch, mismatch.Status);
     }
 
     [Fact]

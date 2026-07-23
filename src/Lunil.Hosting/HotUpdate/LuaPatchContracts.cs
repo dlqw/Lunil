@@ -25,6 +25,13 @@ public enum LuaPatchDependencyKind : byte
     Optional,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<LuaPatchUpdateIntent>))]
+public enum LuaPatchUpdateIntent : byte
+{
+    Forward,
+    Rollback,
+}
+
 public enum LuaPatchErrorCode : byte
 {
     InvalidHeader,
@@ -107,6 +114,12 @@ public sealed record LuaPatchManifest
 
     public required string TargetRevision { get; init; }
 
+    /// <summary>
+    /// Signed declaration of the revision transition. Rollback intent never grants authorization;
+    /// an acceptance policy must independently classify and authorize it.
+    /// </summary>
+    public LuaPatchUpdateIntent UpdateIntent { get; init; }
+
     public required LuaLanguageVersion LanguageVersion { get; init; }
 
     public required string RuntimeAbi { get; init; }
@@ -116,6 +129,12 @@ public sealed record LuaPatchManifest
     public DateTimeOffset? ExpiresAt { get; init; }
 
     public required string Nonce { get; init; }
+
+    /// <summary>
+    /// Signed, case-sensitive capability names required by this patch. These are admission claims
+    /// only and never expand the host's runtime permissions.
+    /// </summary>
+    public ImmutableArray<string> RequiredCapabilities { get; init; } = [];
 
     public ImmutableArray<LuaPatchEntryManifest> Entries { get; init; } = [];
 }
@@ -142,6 +161,10 @@ public sealed record LuaPatchBundleReadOptions
     public int MaximumNameBytes { get; init; } = 4096;
 
     public int MaximumSignatureBytes { get; init; } = 16 * 1024;
+
+    public int MaximumCapabilityCount { get; init; } = 128;
+
+    public int MaximumCapabilityNameBytes { get; init; } = 256;
 
     public bool RequireSignature { get; init; } = true;
 
