@@ -517,11 +517,16 @@ namespace Lunil.Hosting
         public required string CurrentRevision { get => throw null; init { } }
         public required string RuntimeAbi { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> AllowedChannels { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> GrantedCapabilities { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchRevisionClassifier? RevisionClassifier { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchRollbackAuthorizer? RollbackAuthorizer { get => throw null; init { } }
         public System.DateTimeOffset? MinimumCreatedAt { get => throw null; init { } }
         public System.TimeSpan MaximumFutureSkew { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchReplayLookup? ReplayLookup { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptanceResult Evaluate(Lunil.Hosting.LuaPatchManifest manifest, System.DateTimeOffset? utcNow = null) => throw null;
+        public Lunil.Hosting.LuaPatchAcceptanceResult Evaluate(Lunil.Hosting.LuaPatchManifest manifest, Lunil.Hosting.LuaPatchSignerIdentity verifiedSigner, System.DateTimeOffset? utcNow) => throw null;
         public Lunil.Hosting.LuaPatchAcceptanceResult TryReserve(Lunil.Hosting.LuaPatchManifest manifest, string scope, Lunil.Hosting.ILuaPatchReplayStore replayStore, System.DateTimeOffset? utcNow = null) => throw null;
+        public Lunil.Hosting.LuaPatchAcceptanceResult TryReserve(Lunil.Hosting.LuaPatchManifest manifest, Lunil.Hosting.LuaPatchSignerIdentity verifiedSigner, string scope, Lunil.Hosting.ILuaPatchReplayStore replayStore, System.DateTimeOffset? utcNow = null) => throw null;
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaPatchAcceptancePolicy? left, Lunil.Hosting.LuaPatchAcceptancePolicy? right) => throw null;
@@ -556,7 +561,10 @@ namespace Lunil.Hosting
         CreatedInFuture = 5,
         CreatedBeforeMinimum = 6,
         ReplayDetected = 7,
-        Expired = 8
+        Expired = 8,
+        UpdateIntentMismatch = 9,
+        RollbackNotAuthorized = 10,
+        CapabilityDenied = 11
     }
 
     public sealed class LuaPatchBundle
@@ -579,6 +587,8 @@ namespace Lunil.Hosting
         public long MaximumTotalEntryBytes { get => throw null; init { } }
         public int MaximumNameBytes { get => throw null; init { } }
         public int MaximumSignatureBytes { get => throw null; init { } }
+        public int MaximumCapabilityCount { get => throw null; init { } }
+        public int MaximumCapabilityNameBytes { get => throw null; init { } }
         public bool RequireSignature { get => throw null; init { } }
         public bool AllowExpired { get => throw null; init { } }
         public System.DateTimeOffset? UtcNow { get => throw null; init { } }
@@ -973,11 +983,13 @@ namespace Lunil.Hosting
         public required string TargetBuild { get => throw null; init { } }
         public required string BaseRevision { get => throw null; init { } }
         public required string TargetRevision { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchUpdateIntent UpdateIntent { get => throw null; init { } }
         public required Lunil.Core.LuaLanguageVersion LanguageVersion { get => throw null; init { } }
         public required string RuntimeAbi { get => throw null; init { } }
         public required System.DateTimeOffset CreatedAt { get => throw null; init { } }
         public System.DateTimeOffset? ExpiresAt { get => throw null; init { } }
         public required string Nonce { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> RequiredCapabilities { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchEntryManifest> Entries { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchManifest? left, Lunil.Hosting.LuaPatchManifest? right) => throw null;
@@ -1418,6 +1430,8 @@ namespace Lunil.Hosting
         public bool Equals(Lunil.Hosting.LuaPatchResourceRule? other) => throw null;
     }
 
+    public delegate Lunil.Hosting.LuaPatchUpdateIntent LuaPatchRevisionClassifier(string baseRevision, string targetRevision);
+
     public sealed class LuaPatchRingCommitResult : System.IEquatable<Lunil.Hosting.LuaPatchRingCommitResult>
     {
         public string RolloutId { get => throw null; init { } }
@@ -1471,6 +1485,8 @@ namespace Lunil.Hosting
         Accept = 0,
         Rollback = 1
     }
+
+    public delegate bool LuaPatchRollbackAuthorizer(Lunil.Hosting.LuaPatchManifest manifest, Lunil.Hosting.LuaPatchSignerIdentity signer);
 
     public sealed class LuaPatchRolloutPlan : System.IEquatable<Lunil.Hosting.LuaPatchRolloutPlan>
     {
@@ -1551,6 +1567,20 @@ namespace Lunil.Hosting
         Revoked = 5
     }
 
+    public sealed class LuaPatchSignerIdentity : System.IEquatable<Lunil.Hosting.LuaPatchSignerIdentity>
+    {
+        public string Algorithm { get => throw null; init { } }
+        public string KeyId { get => throw null; init { } }
+        public LuaPatchSignerIdentity(string Algorithm, string KeyId) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchSignerIdentity? left, Lunil.Hosting.LuaPatchSignerIdentity? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchSignerIdentity? left, Lunil.Hosting.LuaPatchSignerIdentity? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchSignerIdentity? other) => throw null;
+        public void Deconstruct(out string Algorithm, out string KeyId) => throw null;
+    }
+
     public sealed class LuaPatchStateMigrationContext : System.IEquatable<Lunil.Hosting.LuaPatchStateMigrationContext>
     {
         public string ModuleName { get => throw null; init { } }
@@ -1625,6 +1655,13 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchTrustedEcdsaKey? other) => throw null;
         public void Deconstruct(out string KeyId, out System.ReadOnlyMemory<byte> SubjectPublicKeyInfo) => throw null;
+    }
+
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<Lunil.Hosting.LuaPatchUpdateIntent>))]
+    public enum LuaPatchUpdateIntent
+    {
+        Forward = 0,
+        Rollback = 1
     }
 
     public sealed class LuaPatchUpdateWindow : System.IDisposable

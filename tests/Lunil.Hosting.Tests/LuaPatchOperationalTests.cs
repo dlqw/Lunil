@@ -82,6 +82,78 @@ public sealed class LuaPatchOperationalTests
     }
 
     [Fact]
+    public void PreparationAuthorizesRollbackFromTheVerifiedBundleSigner()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=2}",
+        });
+        Load(host, "require('a')");
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var bundle = LuaPatchBundle.Create(
+            new LuaPatchManifest
+            {
+                PatchId = "rollback-patch",
+                Channel = "production",
+                TargetBuild = "build-2",
+                BaseRevision = "build-2",
+                TargetRevision = "build-1",
+                UpdateIntent = LuaPatchUpdateIntent.Rollback,
+                RequiredCapabilities = ["game.state-write"],
+                LanguageVersion = LuaLanguageVersion.Lua54,
+                RuntimeAbi = "lunil-0.12",
+                CreatedAt = new DateTimeOffset(2026, 7, 23, 0, 0, 0, TimeSpan.Zero),
+                ExpiresAt = new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero),
+                Nonce = "rollback-operational",
+            },
+            [Entry("a", "return {value=1}")],
+            new LuaPatchEcdsaSigner("rollback-key", key));
+        var store = new AtomicReplayStore();
+        var options = new LuaPatchPrepareOptions
+        {
+            AcceptancePolicy = new LuaPatchAcceptancePolicy
+            {
+                TargetBuild = "build-2",
+                CurrentRevision = "build-2",
+                RuntimeAbi = "lunil-0.12",
+                AllowedChannels = ["production"],
+                GrantedCapabilities = ["game.state-write"],
+                RevisionClassifier = static (current, target) =>
+                    current == "build-2" && target == "build-1"
+                        ? LuaPatchUpdateIntent.Rollback
+                        : LuaPatchUpdateIntent.Forward,
+                RollbackAuthorizer = static (patch, signer) =>
+                    signer.Algorithm == LuaPatchEcdsaSigner.AlgorithmName &&
+                    signer.KeyId == "rollback-key" && patch.TargetRevision == "build-1",
+            },
+            ReplayStore = store,
+            ReplayScope = "state-a",
+            TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                2026, 7, 23, 1, 0, 0, TimeSpan.Zero)),
+        };
+
+        var accepted = host.PreparePatch(bundle, options);
+        var deniedStore = new AtomicReplayStore();
+        var denied = host.PreparePatch(bundle, options with
+        {
+            AcceptancePolicy = options.AcceptancePolicy! with
+            {
+                RollbackAuthorizer = static (_, signer) => signer.KeyId == "another-key",
+            },
+            ReplayStore = deniedStore,
+        });
+
+        Assert.True(accepted.Succeeded, accepted.Message);
+        Assert.Equal(LuaPatchAcceptanceStatus.Accepted, accepted.Acceptance!.Status);
+        Assert.Equal(1, store.AcceptedCount);
+        Assert.Equal(LuaPatchPrepareStatus.AcceptanceRejected, denied.Status);
+        Assert.Equal(
+            LuaPatchAcceptanceStatus.RollbackNotAuthorized,
+            denied.Acceptance!.Status);
+        Assert.Equal(0, deniedStore.AcceptedCount);
+    }
+
+    [Fact]
     public void PreparationRequiresAcceptancePolicyAndReplayStoreTogether()
     {
         using var host = CreateHost(new Dictionary<string, string>

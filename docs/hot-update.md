@@ -3,8 +3,28 @@
 [简体中文](hot-update.zh-CN.md)
 
 Lunil patch bundles package Lua module replacements for validation before a host publishes them.
-The versioned canonical manifest records the target build, base and target revisions, Lua language
-version, runtime ABI, channel, expiry, nonce, dependencies, and SHA-256 payload identities.
+The versioned canonical manifest records the target build, base and target revisions, signed update
+intent, requested admission capabilities, Lua language version, runtime ABI, channel, expiry, nonce,
+dependencies, and SHA-256 payload identities.
+
+## Signed update intent and admission capabilities
+
+A release pipeline declares whether a revision transition is forward or rollback and lists the
+host-policy capabilities it needs:
+
+```json
+{
+  "baseRevision": "build-102",
+  "targetRevision": "build-101",
+  "updateIntent": "Rollback",
+  "requiredCapabilities": ["game.inventory-v2", "game.world-write"]
+}
+```
+
+`LuaPatchBundle.Create` sorts capability names before signing. Names are case-sensitive, must be
+unique and trimmed, and are bounded by `MaximumCapabilityCount` and
+`MaximumCapabilityNameBytes` when reading. A capability request is only an admission claim: matching
+it never grants a Lua, CLR, filesystem, network, or other runtime permission.
 
 ## Trust and resource boundaries
 
@@ -12,10 +32,11 @@ version, runtime ABI, channel, expiry, nonce, dependencies, and SHA-256 payload 
 explicit `LuaPatchEcdsaTrustStore`. It rejects untrusted keys, expired or non-canonical manifests,
 unsafe paths, duplicate modules, missing required dependencies, trailing data, and size-limit
 violations. `LuaPatchAcceptancePolicy` additionally binds a verified bundle to the current build,
-runtime ABI, revision, channel, expiry, and host replay record. Because a prepared patch may wait for
-a later game-loop safe point, commit checks the signed manifest expiry again before constructing or
-executing any candidate. An expired commit returns `LuaPatchCommitStatus.Expired` without changing
-live state; coordinated ring commits apply the same check during barrier preparation.
+runtime ABI, revision, channel, signed update intent, requested capabilities, verified signer, expiry,
+and host replay record. Because a prepared patch may wait for a later game-loop safe point, commit
+checks the signed manifest expiry again before constructing or executing any candidate. An expired
+commit returns `LuaPatchCommitStatus.Expired` without changing live state; coordinated ring commits
+apply the same check during barrier preparation.
 
 Trusted keys can have an activation instant, an exclusive expiration instant, and an independent
 revocation instant. The store validates and copies every P-256 public key at construction. Bundle
@@ -58,11 +79,24 @@ var prepareOptions = new LuaPatchPrepareOptions
         CurrentRevision = currentRevision,
         RuntimeAbi = "lunil-0.12",
         AllowedChannels = ["production"],
+        GrantedCapabilities = hostPatchCapabilities,
+        RevisionClassifier = releaseLedger.Classify,
+        RollbackAuthorizer = (manifest, signer) =>
+            signer.Algorithm == LuaPatchEcdsaSigner.AlgorithmName &&
+            rollbackKeyIds.Contains(signer.KeyId) &&
+            approvedRollbackTargets.Contains(manifest.TargetRevision),
     },
     ReplayStore = replayStore,
     ReplayScope = "state-a", // Stable target id; equals TargetId in coordinator rollouts.
 };
 ```
+
+`RevisionClassifier` adapts the host's release ledger; Lunil does not order application-defined
+revision strings. Its classification must match the signed `UpdateIntent`. Every rollback also
+requires a verified signer identity and an explicit `RollbackAuthorizer` decision, which lets a host
+separate ordinary release keys from rollback keys. `LuaHost.PreparePatch` derives that identity from
+the verified bundle signature rather than any manifest field. A denied capability, mismatched intent,
+or unauthorized rollback fails before a replay reservation is written.
 
 Preparation requires `AcceptancePolicy`, `ReplayStore`, and `ReplayScope` together. The scope is a
 stable deployment-target identity, not a process id. The same signed patch can therefore be reserved

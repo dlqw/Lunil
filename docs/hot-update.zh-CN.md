@@ -3,18 +3,36 @@
 [English](hot-update.md)
 
 Lunil Patch Bundle 用于封装 Lua module 替换内容，并在 host 发布前完成验证。带版本的 canonical
-manifest 记录目标 build、base/target revision、Lua 语言版本、runtime ABI、channel、过期时间、
-nonce、依赖以及 payload 的 SHA-256 identity。
+manifest 记录目标 build、base/target revision、签名 update intent、请求的准入 capability、Lua 语言
+版本、runtime ABI、channel、过期时间、nonce、依赖以及 payload 的 SHA-256 identity。
+
+## 签名更新意图与准入 Capability
+
+发布流水线需要声明 revision 迁移是 forward 还是 rollback，并列出所需的 host policy capability：
+
+```json
+{
+  "baseRevision": "build-102",
+  "targetRevision": "build-101",
+  "updateIntent": "Rollback",
+  "requiredCapabilities": ["game.inventory-v2", "game.world-write"]
+}
+```
+
+`LuaPatchBundle.Create` 会在签名前排序 capability name。名称大小写敏感，必须唯一且不能带首尾空白；
+读取时还受 `MaximumCapabilityCount` 与 `MaximumCapabilityNameBytes` 限制。Capability request 只是
+准入声明：匹配成功不会授予或扩大 Lua、CLR、文件系统、网络或其他 runtime 权限。
 
 ## 信任与资源边界
 
 `LuaPatchBundle.Read` 会验证每个 payload hash，并通过显式 `LuaPatchEcdsaTrustStore` 校验 ECDSA
 P-256/SHA-256 签名。未受信 key、过期或非 canonical manifest、不安全路径、重复 module、缺少
 required dependency、尾随数据及超过大小限制的 bundle 均会被拒绝。`LuaPatchAcceptancePolicy`
-还会将已验证 bundle 绑定到当前 build、runtime ABI、revision、channel、expiry 和 host replay
-记录。prepared patch 可能等待到后续游戏循环安全点，因此 commit 会在构建或执行任何 candidate
-前再次检查已签名 manifest 的 expiry。过期 commit 返回 `LuaPatchCommitStatus.Expired`，且不修改
-live state；协调式 ring commit 也会在 barrier preparation 阶段执行相同检查。
+还会将已验证 bundle 绑定到当前 build、runtime ABI、revision、channel、签名 update intent、请求的
+capability、已验证 signer、expiry 和 host replay 记录。prepared patch 可能等待到后续游戏循环安全点，
+因此 commit 会在构建或执行任何 candidate 前再次检查已签名 manifest 的 expiry。过期 commit 返回
+`LuaPatchCommitStatus.Expired`，且不修改 live state；协调式 ring commit 也会在 barrier preparation
+阶段执行相同检查。
 
 受信 key 可以分别设置生效时间、exclusive 失效时间和独立撤销时间。Trust store 会在构造时校验并
 复制每个 P-256 公钥。Bundle 验证只获取一次 `UtcNow`，并将同一时间同时用于 key 生命周期判断与
@@ -55,11 +73,23 @@ var prepareOptions = new LuaPatchPrepareOptions
         CurrentRevision = currentRevision,
         RuntimeAbi = "lunil-0.12",
         AllowedChannels = ["production"],
+        GrantedCapabilities = hostPatchCapabilities,
+        RevisionClassifier = releaseLedger.Classify,
+        RollbackAuthorizer = (manifest, signer) =>
+            signer.Algorithm == LuaPatchEcdsaSigner.AlgorithmName &&
+            rollbackKeyIds.Contains(signer.KeyId) &&
+            approvedRollbackTargets.Contains(manifest.TargetRevision),
     },
     ReplayStore = replayStore,
     ReplayScope = "state-a", // 稳定 target id；coordinator rollout 中应等于 TargetId。
 };
 ```
+
+`RevisionClassifier` 用于适配 host 自己的 release ledger；Lunil 不会对应用自定义 revision string
+定义顺序。分类结果必须与已签名 `UpdateIntent` 一致。每次 rollback 还必须提供已验证 signer identity，
+并由 `RollbackAuthorizer` 显式授权，因此 host 可以区分普通 release key 与 rollback key。
+`LuaHost.PreparePatch` 从已验证 bundle signature 获取 identity，不信任 manifest 自报字段。Capability
+被拒绝、intent 不匹配或 rollback 未授权时，不会写入 replay reservation。
 
 Prepare 要求同时配置 `AcceptancePolicy`、`ReplayStore` 与 `ReplayScope`。Scope 是稳定的部署目标
 identity，不是进程 id。同一个签名 patch 因而可以分别为 rollout 中的每个 target 建立 reservation；

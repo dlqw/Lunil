@@ -13,6 +13,9 @@ public enum LuaPatchAcceptanceStatus : byte
     CreatedBeforeMinimum,
     ReplayDetected,
     Expired,
+    UpdateIntentMismatch,
+    RollbackNotAuthorized,
+    CapabilityDenied,
 }
 
 public sealed record LuaPatchAcceptanceResult(
@@ -25,6 +28,16 @@ public sealed record LuaPatchAcceptanceResult(
 }
 
 public delegate bool LuaPatchReplayLookup(string patchId, string nonce);
+
+public sealed record LuaPatchSignerIdentity(string Algorithm, string KeyId);
+
+public delegate LuaPatchUpdateIntent LuaPatchRevisionClassifier(
+    string baseRevision,
+    string targetRevision);
+
+public delegate bool LuaPatchRollbackAuthorizer(
+    LuaPatchManifest manifest,
+    LuaPatchSignerIdentity signer);
 
 /// <summary>
 /// Atomically reserves scoped patch identities and serializes their commit attempts. A durable
@@ -93,6 +106,24 @@ public sealed record LuaPatchAcceptancePolicy
 
     public ImmutableArray<string> AllowedChannels { get; init; } = [];
 
+    /// <summary>
+    /// Case-sensitive capabilities already granted by deployment policy. Matching a request only
+    /// admits the patch; it does not alter the host's runtime capability configuration.
+    /// </summary>
+    public ImmutableArray<string> GrantedCapabilities { get; init; } = [];
+
+    /// <summary>
+    /// Optional host revision-ledger classifier. When present, its result must match the signed
+    /// manifest intent, preventing a downgrade from being labelled as a forward update.
+    /// </summary>
+    public LuaPatchRevisionClassifier? RevisionClassifier { get; init; }
+
+    /// <summary>
+    /// Explicit authorization required for every rollback. It receives the verified bundle signer
+    /// identity so hosts can enforce separate release and rollback key roles.
+    /// </summary>
+    public LuaPatchRollbackAuthorizer? RollbackAuthorizer { get; init; }
+
     public DateTimeOffset? MinimumCreatedAt { get; init; }
 
     public TimeSpan MaximumFutureSkew { get; init; } = TimeSpan.FromMinutes(5);
@@ -102,6 +133,21 @@ public sealed record LuaPatchAcceptancePolicy
     public LuaPatchAcceptanceResult Evaluate(
         LuaPatchManifest manifest,
         DateTimeOffset? utcNow = null)
+        => EvaluateCore(manifest, null, utcNow);
+
+    public LuaPatchAcceptanceResult Evaluate(
+        LuaPatchManifest manifest,
+        LuaPatchSignerIdentity verifiedSigner,
+        DateTimeOffset? utcNow)
+    {
+        ArgumentNullException.ThrowIfNull(verifiedSigner);
+        return EvaluateCore(manifest, verifiedSigner, utcNow);
+    }
+
+    private LuaPatchAcceptanceResult EvaluateCore(
+        LuaPatchManifest manifest,
+        LuaPatchSignerIdentity? verifiedSigner,
+        DateTimeOffset? utcNow)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentException.ThrowIfNullOrWhiteSpace(TargetBuild);
@@ -111,6 +157,13 @@ public sealed record LuaPatchAcceptancePolicy
         {
             throw new InvalidOperationException("MaximumFutureSkew cannot be negative.");
         }
+
+        if (!Enum.IsDefined(manifest.UpdateIntent))
+        {
+            throw new ArgumentException("The patch update intent is invalid.", nameof(manifest));
+        }
+
+        var grantedCapabilities = ValidateGrantedCapabilities();
 
         if (!string.Equals(manifest.TargetBuild, TargetBuild, StringComparison.Ordinal))
         {
@@ -139,6 +192,48 @@ public sealed record LuaPatchAcceptancePolicy
             return Rejected(
                 LuaPatchAcceptanceStatus.ChannelNotAllowed,
                 "The patch channel is not allowed by this host.");
+        }
+
+        if (RevisionClassifier is not null)
+        {
+            var classifiedIntent = RevisionClassifier(
+                manifest.BaseRevision,
+                manifest.TargetRevision);
+            if (!Enum.IsDefined(classifiedIntent))
+            {
+                throw new InvalidOperationException(
+                    "RevisionClassifier returned an invalid update intent.");
+            }
+
+            if (classifiedIntent != manifest.UpdateIntent)
+            {
+                return Rejected(
+                    LuaPatchAcceptanceStatus.UpdateIntentMismatch,
+                    "The signed patch intent does not match the host revision ledger.");
+            }
+        }
+
+        if (manifest.UpdateIntent == LuaPatchUpdateIntent.Rollback &&
+            (verifiedSigner is null || string.IsNullOrWhiteSpace(verifiedSigner.Algorithm) ||
+                string.IsNullOrWhiteSpace(verifiedSigner.KeyId) ||
+                RollbackAuthorizer?.Invoke(manifest, verifiedSigner) != true))
+        {
+            return Rejected(
+                LuaPatchAcceptanceStatus.RollbackNotAuthorized,
+                "The rollback is not authorized for the verified patch signer and target revision.");
+        }
+
+        if (!manifest.RequiredCapabilities.IsDefaultOrEmpty)
+        {
+            foreach (var capability in manifest.RequiredCapabilities)
+            {
+                if (!grantedCapabilities.Contains(capability))
+                {
+                    return Rejected(
+                        LuaPatchAcceptanceStatus.CapabilityDenied,
+                        $"Required patch capability '{capability}' is not granted by the host policy.");
+                }
+            }
         }
 
         var now = utcNow ?? DateTimeOffset.UtcNow;
@@ -183,6 +278,25 @@ public sealed record LuaPatchAcceptancePolicy
         string scope,
         ILuaPatchReplayStore replayStore,
         DateTimeOffset? utcNow = null)
+        => TryReserveCore(manifest, null, scope, replayStore, utcNow);
+
+    public LuaPatchAcceptanceResult TryReserve(
+        LuaPatchManifest manifest,
+        LuaPatchSignerIdentity verifiedSigner,
+        string scope,
+        ILuaPatchReplayStore replayStore,
+        DateTimeOffset? utcNow = null)
+    {
+        ArgumentNullException.ThrowIfNull(verifiedSigner);
+        return TryReserveCore(manifest, verifiedSigner, scope, replayStore, utcNow);
+    }
+
+    private LuaPatchAcceptanceResult TryReserveCore(
+        LuaPatchManifest manifest,
+        LuaPatchSignerIdentity? verifiedSigner,
+        string scope,
+        ILuaPatchReplayStore replayStore,
+        DateTimeOffset? utcNow)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
         ArgumentNullException.ThrowIfNull(replayStore);
@@ -190,8 +304,11 @@ public sealed record LuaPatchAcceptancePolicy
         // The durable store owns replay state for this path. A legacy lookup is intentionally
         // excluded so an incomplete reservation can be rebound after a process restart.
         var evaluation = ReplayLookup is null
-            ? Evaluate(manifest, now)
-            : (this with { ReplayLookup = null }).Evaluate(manifest, now);
+            ? EvaluateForSigner(manifest, verifiedSigner, now)
+            : (this with { ReplayLookup = null }).EvaluateForSigner(
+                manifest,
+                verifiedSigner,
+                now);
         if (!evaluation.Accepted)
         {
             return evaluation;
@@ -238,4 +355,33 @@ public sealed record LuaPatchAcceptancePolicy
     private static LuaPatchAcceptanceResult Rejected(
         LuaPatchAcceptanceStatus status,
         string message) => new(status, message);
+
+    private LuaPatchAcceptanceResult EvaluateForSigner(
+        LuaPatchManifest manifest,
+        LuaPatchSignerIdentity? verifiedSigner,
+        DateTimeOffset utcNow) => verifiedSigner is null
+            ? Evaluate(manifest, utcNow)
+            : Evaluate(manifest, verifiedSigner, utcNow);
+
+    private HashSet<string> ValidateGrantedCapabilities()
+    {
+        var granted = new HashSet<string>(StringComparer.Ordinal);
+        if (GrantedCapabilities.IsDefaultOrEmpty)
+        {
+            return granted;
+        }
+
+        foreach (var capability in GrantedCapabilities)
+        {
+            if (string.IsNullOrWhiteSpace(capability) ||
+                !string.Equals(capability, capability.Trim(), StringComparison.Ordinal) ||
+                !granted.Add(capability))
+            {
+                throw new InvalidOperationException(
+                    "GrantedCapabilities must contain unique, non-blank canonical names.");
+            }
+        }
+
+        return granted;
+    }
 }

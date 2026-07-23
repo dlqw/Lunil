@@ -6,6 +6,7 @@ Signed update bundles are available through `lunil patch pack`, `verify`, `inspe
 `dry-run`. Verification actions accept either one `--public-key`/`--key-id` pair or a versioned
 multi-key `--trust-store` with rotation and revocation windows. See the
 [signed patch bundle guide](hot-update.md) for trust and resource boundaries.
+`patch inspect` reports the signed `updateIntent` and canonical `requiredCapabilities` claims.
 
 ## Commands
 

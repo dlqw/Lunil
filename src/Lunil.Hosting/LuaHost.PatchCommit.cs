@@ -102,7 +102,7 @@ public sealed partial class LuaHost
                 migrationSchema,
                 options,
                 cancellationToken);
-            result = ApplyPatchAcceptance(result, options);
+            result = ApplyPatchAcceptance(result, bundle.Signature, options);
             var duration = Stopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, result.Status.ToString(), result.Message);
             LuaPatchTelemetry.RecordPreparation(result.Status.ToString(), duration);
@@ -858,6 +858,7 @@ public sealed partial class LuaHost
 
     private static LuaPatchPrepareResult ApplyPatchAcceptance(
         LuaPatchPrepareResult result,
+        LuaPatchSignature signature,
         LuaPatchPrepareOptions options)
     {
         if (!result.Succeeded || options.AcceptancePolicy is null)
@@ -867,6 +868,7 @@ public sealed partial class LuaHost
 
         var acceptance = options.AcceptancePolicy.TryReserve(
             result.Preflight.Manifest,
+            new LuaPatchSignerIdentity(signature.Algorithm, signature.KeyId),
             options.ReplayScope!,
             options.ReplayStore!,
             options.TimeProvider.GetUtcNow());

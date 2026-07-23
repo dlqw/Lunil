@@ -229,9 +229,16 @@ internal static class PatchCommand
         writer.WriteString("targetBuild", bundle.Manifest.TargetBuild);
         writer.WriteString("baseRevision", bundle.Manifest.BaseRevision);
         writer.WriteString("targetRevision", bundle.Manifest.TargetRevision);
+        writer.WriteString("updateIntent", bundle.Manifest.UpdateIntent.ToString());
         writer.WriteString("luaVersion", bundle.Manifest.LanguageVersion.ToString());
         writer.WriteString("runtimeAbi", bundle.Manifest.RuntimeAbi);
         writer.WriteString("signingKey", bundle.Signature.KeyId);
+        writer.WriteStartArray("requiredCapabilities");
+        foreach (var capability in bundle.Manifest.RequiredCapabilities)
+        {
+            writer.WriteStringValue(capability);
+        }
+        writer.WriteEndArray();
         writer.WriteStartArray("modules");
         foreach (var entry in bundle.Entries.Where(static entry => entry.ModuleName is not null))
         {
