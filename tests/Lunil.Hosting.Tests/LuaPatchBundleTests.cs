@@ -187,7 +187,7 @@ public sealed class LuaPatchBundleTests
     }
 
     [Fact]
-    public void AcceptancePolicyUsesAtomicReplayStoreForCheckAndRecord()
+    public void AcceptancePolicyResumesReservationUntilCommitThenRejectsReplay()
     {
         var manifest = CreateManifest();
         var policy = new LuaPatchAcceptancePolicy
@@ -199,12 +199,19 @@ public sealed class LuaPatchBundleTests
         };
         var store = new AtomicReplayStore();
 
-        var first = policy.TryAccept(manifest, store, manifest.CreatedAt);
-        var replay = policy.TryAccept(manifest, store, manifest.CreatedAt);
+        var first = policy.TryReserve(manifest, "state-a", store, manifest.CreatedAt);
+        var resumed = policy.TryReserve(manifest, "state-a", store, manifest.CreatedAt);
+        using (var lease = store.TryAcquireCommit(first.ReplayReservation!, manifest.CreatedAt)!)
+        {
+            lease.Complete(manifest.CreatedAt.AddSeconds(1));
+        }
+        var replay = policy.TryReserve(manifest, "state-a", store, manifest.CreatedAt);
 
         Assert.True(first.Accepted);
+        Assert.True(resumed.Accepted);
+        Assert.Equal(first.ReplayReservation, resumed.ReplayReservation);
         Assert.Equal(LuaPatchAcceptanceStatus.ReplayDetected, replay.Status);
-        Assert.Equal(2, store.AttemptCount);
+        Assert.Equal(3, store.AttemptCount);
     }
 
     private static LuaPatchBundle CreateBundle(ILuaPatchSigner signer)
@@ -254,16 +261,84 @@ public sealed class LuaPatchBundleTests
 
     private sealed class AtomicReplayStore : ILuaPatchReplayStore
     {
-        private readonly HashSet<string> _accepted = new(StringComparer.Ordinal);
+        private readonly object _gate = new();
+        private LuaPatchReplayReservation? _reservation;
+        private bool _committed;
+        private bool _leased;
 
         public int AttemptCount { get; private set; }
 
-        public bool TryAccept(string patchId, string nonce, DateTimeOffset acceptedAt)
+        public LuaPatchReplayReservationResult TryReserve(
+            string scope,
+            string patchId,
+            string nonce,
+            DateTimeOffset reservedAt)
         {
-            lock (_accepted)
+            lock (_gate)
             {
                 AttemptCount++;
-                return _accepted.Add(patchId + "\0" + nonce);
+                _reservation ??= new LuaPatchReplayReservation(
+                    scope, patchId, nonce, "reservation", reservedAt);
+                if (_committed || _reservation.Scope != scope ||
+                    _reservation.PatchId != patchId || _reservation.Nonce != nonce)
+                {
+                    return new LuaPatchReplayReservationResult(
+                        LuaPatchReplayReservationStatus.ReplayDetected, null, "replay");
+                }
+
+                return new LuaPatchReplayReservationResult(
+                    LuaPatchReplayReservationStatus.Reserved, _reservation, null);
+            }
+        }
+
+        public ILuaPatchReplayCommitLease? TryAcquireCommit(
+            LuaPatchReplayReservation reservation,
+            DateTimeOffset acquiredAt)
+        {
+            lock (_gate)
+            {
+                if (_committed || _leased || reservation != _reservation)
+                {
+                    return null;
+                }
+
+                _leased = true;
+                return new Lease(this, reservation);
+            }
+        }
+
+        private sealed class Lease(
+            AtomicReplayStore owner,
+            LuaPatchReplayReservation reservation) : ILuaPatchReplayCommitLease
+        {
+            public LuaPatchReplayReservation Reservation => reservation;
+
+            public bool IsCompleted { get; private set; }
+
+            public void Complete(DateTimeOffset committedAt)
+            {
+                lock (owner._gate)
+                {
+                    owner._committed = true;
+                    IsCompleted = true;
+                }
+            }
+
+            public void Reopen(DateTimeOffset reopenedAt)
+            {
+                lock (owner._gate)
+                {
+                    owner._committed = false;
+                    IsCompleted = false;
+                }
+            }
+
+            public void Dispose()
+            {
+                lock (owner._gate)
+                {
+                    owner._leased = false;
+                }
             }
         }
     }

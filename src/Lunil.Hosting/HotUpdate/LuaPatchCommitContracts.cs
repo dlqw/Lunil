@@ -56,12 +56,18 @@ public sealed record LuaPatchPrepareOptions
 
     /// <summary>
     /// Optional deployment acceptance policy. It must be configured together with
-    /// <see cref="ReplayStore"/> so preparation cannot rely on a non-atomic replay lookup.
+    /// <see cref="ReplayStore"/> and <see cref="ReplayScope"/>.
     /// </summary>
     public LuaPatchAcceptancePolicy? AcceptancePolicy { get; init; }
 
     /// <summary>Atomic, durable replay store paired with <see cref="AcceptancePolicy"/>.</summary>
     public ILuaPatchReplayStore? ReplayStore { get; init; }
+
+    /// <summary>
+    /// Stable deployment-target identity inside the replay store. It must be configured with
+    /// <see cref="ReplayStore"/> and must equal the coordinator target id for barrier rollouts.
+    /// </summary>
+    public string? ReplayScope { get; init; }
 
     /// <summary>Clock used for acceptance timestamps and time-based policy checks.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
@@ -81,7 +87,9 @@ public sealed class LuaPreparedPatch
         LuaPatchMigrationSchema? migrationSchema,
         string? expectedStateSchemaVersion,
         IReadOnlyDictionary<string, ILuaPatchStateMigrationAdapter> stateMigrationAdapters,
-        IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceMigrationAdapters)
+        IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceMigrationAdapters,
+        ILuaPatchReplayStore? replayStore = null,
+        LuaPatchReplayReservation? replayReservation = null)
     {
         Owner = owner;
         Manifest = manifest;
@@ -91,6 +99,8 @@ public sealed class LuaPreparedPatch
         ExpectedStateSchemaVersion = expectedStateSchemaVersion;
         StateMigrationAdapters = stateMigrationAdapters;
         ResourceMigrationAdapters = resourceMigrationAdapters;
+        ReplayStore = replayStore;
+        ReplayReservation = replayReservation;
     }
 
     public LuaPatchManifest Manifest { get; }
@@ -103,6 +113,9 @@ public sealed class LuaPreparedPatch
 
     public string? ExpectedStateSchemaVersion { get; }
 
+    /// <summary>The stable replay scope when deployment acceptance was enabled.</summary>
+    public string? ReplayScope => ReplayReservation?.Scope;
+
     internal LuaHost Owner { get; }
 
     internal IReadOnlyDictionary<string, ILuaPatchStateMigrationAdapter>
@@ -112,6 +125,24 @@ public sealed class LuaPreparedPatch
     internal IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter>
     ResourceMigrationAdapters
     { get; }
+
+    internal ILuaPatchReplayStore? ReplayStore { get; }
+
+    internal LuaPatchReplayReservation? ReplayReservation { get; }
+
+    internal LuaPreparedPatch WithReplayReservation(
+        ILuaPatchReplayStore replayStore,
+        LuaPatchReplayReservation replayReservation) => new(
+            Owner,
+            Manifest,
+            DependencyPlan,
+            Modules,
+            MigrationSchema,
+            ExpectedStateSchemaVersion,
+            StateMigrationAdapters,
+            ResourceMigrationAdapters,
+            replayStore,
+            replayReservation);
 }
 
 /// <summary>One precompiled module and the live revision against which it was prepared.</summary>
@@ -233,6 +264,7 @@ public enum LuaPatchCommitStatus : byte
     PublicationFailed,
     BarrierAborted,
     Expired,
+    ReplayRejected,
 }
 
 public enum LuaPatchModuleCommitStatus : byte

@@ -282,6 +282,7 @@ public sealed partial class LuaHost
         try
         {
             session.FinalizePublication();
+            session.CompleteReplayAcceptance(TimeProvider.System.GetUtcNow());
             return session.BuildCommittedResult();
         }
         catch (Exception exception) when (IsRecoverablePatchException(exception))
@@ -414,6 +415,22 @@ public sealed partial class LuaHost
                 started));
         }
 
+        ILuaPatchReplayCommitLease? replayLease = null;
+        if (preparedPatch.ReplayReservation is { } replayReservation)
+        {
+            replayLease = preparedPatch.ReplayStore!.TryAcquireCommit(
+                replayReservation,
+                (timeProvider ?? TimeProvider.System).GetUtcNow());
+            if (replayLease is null)
+            {
+                return PatchCommitSessionPreparation.FromFailure(EmptyCommitResult(
+                    preparedPatch,
+                    LuaPatchCommitStatus.ReplayRejected,
+                    "The scoped patch reservation is committed or another commit owns it.",
+                    started));
+            }
+        }
+
         var transactions = new List<PatchModuleTransaction>(preparedPatch.Modules.Length);
         var transferred = false;
         try
@@ -543,7 +560,9 @@ public sealed partial class LuaHost
                 updateWindow,
                 options,
                 started,
-                transactions);
+                transactions,
+                replayLease,
+                timeProvider ?? TimeProvider.System);
             transferred = true;
             return PatchCommitSessionPreparation.FromSession(session);
         }
@@ -566,6 +585,7 @@ public sealed partial class LuaHost
         {
             if (!transferred)
             {
+                replayLease?.Dispose();
                 foreach (var transaction in transactions)
                 {
                     transaction.Dispose();
@@ -805,11 +825,18 @@ public sealed partial class LuaHost
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
-        if ((options.AcceptancePolicy is null) != (options.ReplayStore is null))
+        var acceptanceConfigured = options.AcceptancePolicy is not null;
+        if (acceptanceConfigured != (options.ReplayStore is not null) ||
+            acceptanceConfigured != (options.ReplayScope is not null))
         {
             throw new ArgumentException(
-                "AcceptancePolicy and ReplayStore must be configured together.",
+                "AcceptancePolicy, ReplayStore, and ReplayScope must be configured together.",
                 nameof(options));
+        }
+
+        if (options.ReplayScope is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(options.ReplayScope);
         }
 
         return options with
@@ -838,13 +865,20 @@ public sealed partial class LuaHost
             return result;
         }
 
-        var acceptance = options.AcceptancePolicy.TryAccept(
+        var acceptance = options.AcceptancePolicy.TryReserve(
             result.Preflight.Manifest,
+            options.ReplayScope!,
             options.ReplayStore!,
             options.TimeProvider.GetUtcNow());
         if (acceptance.Accepted)
         {
-            return result with { Acceptance = acceptance };
+            return result with
+            {
+                PreparedPatch = result.PreparedPatch!.WithReplayReservation(
+                    options.ReplayStore!,
+                    acceptance.ReplayReservation!),
+                Acceptance = acceptance,
+            };
         }
 
         var modules = result.Modules.Select(module => module with
@@ -1072,6 +1106,8 @@ public sealed partial class LuaHost
         private readonly LuaPatchCommitOptions _options;
         private readonly long _started;
         private readonly List<PatchModuleTransaction> _transactions;
+        private readonly ILuaPatchReplayCommitLease? _replayLease;
+        private readonly TimeProvider _timeProvider;
         private bool _schemaPublished;
         private bool _disposed;
 
@@ -1081,7 +1117,9 @@ public sealed partial class LuaHost
             LuaPatchUpdateWindow window,
             LuaPatchCommitOptions options,
             long started,
-            List<PatchModuleTransaction> transactions)
+            List<PatchModuleTransaction> transactions,
+            ILuaPatchReplayCommitLease? replayLease,
+            TimeProvider timeProvider)
         {
             _host = host;
             _patch = patch;
@@ -1089,6 +1127,8 @@ public sealed partial class LuaHost
             _options = options;
             _started = started;
             _transactions = transactions;
+            _replayLease = replayLease;
+            _timeProvider = timeProvider;
         }
 
         public LuaHost Host => _host;
@@ -1168,6 +1208,12 @@ public sealed partial class LuaHost
             }
         }
 
+        public void CompleteReplayAcceptance(DateTimeOffset committedAt)
+        {
+            ThrowIfDisposed();
+            _replayLease?.Complete(committedAt);
+        }
+
         public LuaPatchCommitResult BuildCommittedResult()
         {
             ThrowIfDisposed();
@@ -1196,6 +1242,11 @@ public sealed partial class LuaHost
                 _schemaPublished = false;
             }
 
+            if (_replayLease?.IsCompleted == true)
+            {
+                _replayLease.Reopen(_timeProvider.GetUtcNow());
+            }
+
             return BuildFailedCommit(
                 _patch,
                 _transactions,
@@ -1213,6 +1264,7 @@ public sealed partial class LuaHost
             }
 
             _disposed = true;
+            _replayLease?.Dispose();
             foreach (var transaction in _transactions)
             {
                 transaction.Dispose();

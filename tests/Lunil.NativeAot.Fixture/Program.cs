@@ -110,6 +110,12 @@ public static class Program
             return 6;
         }
 
+        if (!VerifyReplayStore())
+        {
+            Console.Error.WriteLine("The NativeAOT replay-store contract is invalid.");
+            return 7;
+        }
+
         Console.WriteLine("LUNIL_NATIVEAOT_OK");
         return 0;
     }
@@ -175,6 +181,43 @@ public static class Program
             luaResult.Execution!.Values[0].AsString().ToString() == "userdata" &&
             luaResult.Execution.Values[1].AsInteger() == 43 &&
             luaResult.Execution.Values[2].AsInteger() == 44;
+    }
+
+    private static bool VerifyReplayStore()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "lunil-nativeaot-replay",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new LuaPatchFileReplayStore(Path.Combine(directory, "replay.ndjson"));
+            var at = new DateTimeOffset(2026, 7, 23, 0, 0, 0, TimeSpan.Zero);
+            var reserved = store.TryReserve("state-a", "patch-1", "nonce-1", at);
+            if (!reserved.Reserved)
+            {
+                return false;
+            }
+
+            using var lease = store.TryAcquireCommit(reserved.Reservation!, at);
+            if (lease is null)
+            {
+                return false;
+            }
+
+            lease.Complete(at);
+            return store.ReadAll().Select(static record => record.State).SequenceEqual([
+                LuaPatchReplayRecordState.Reserved,
+                LuaPatchReplayRecordState.Committed,
+            ]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     public sealed class ClrFixtureValue
