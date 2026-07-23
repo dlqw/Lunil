@@ -397,7 +397,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         {
             exception = caught as IOException ?? new IOException(caught.Message, caught);
             contention = caught is IOException ioException &&
-                (ioException.HResult & 0xFFFF) is 32 or 33;
+                (ioException.HResult & 0xFFFF) is 11 or 32 or 33 or 35;
             return null;
         }
     }
