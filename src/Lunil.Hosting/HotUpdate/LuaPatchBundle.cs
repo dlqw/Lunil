@@ -80,6 +80,7 @@ public sealed class LuaPatchBundle
         ArgumentNullException.ThrowIfNull(signatureVerifier);
         options ??= LuaPatchBundleReadOptions.Default;
         ValidateOptions(options);
+        var verificationTime = options.UtcNow ?? DateTimeOffset.UtcNow;
 
         var reader = new BoundedReader(stream, options.MaximumBundleBytes);
         Span<byte> magic = stackalloc byte[8];
@@ -145,7 +146,15 @@ public sealed class LuaPatchBundle
             throw Format(LuaPatchErrorCode.SignatureRequired, "A trusted patch signature is required.");
         }
 
-        if (!signatureVerifier.IsTrusted(algorithm, keyId))
+        if (signatureVerifier is ILuaPatchSignatureTrustPolicy trustPolicy)
+        {
+            var trust = trustPolicy.EvaluateTrust(algorithm, keyId, verificationTime);
+            if (!trust.Trusted)
+            {
+                throw Format(MapTrustError(trust.Status), trust.Message ?? "The patch signing key is not trusted.");
+            }
+        }
+        else if (!signatureVerifier.IsTrusted(algorithm, keyId))
         {
             throw Format(LuaPatchErrorCode.UntrustedSigningKey, "The patch signing key is not trusted.");
         }
@@ -197,13 +206,21 @@ public sealed class LuaPatchBundle
         }
 
         if (!options.AllowExpired && manifest.ExpiresAt is { } expiresAt &&
-            expiresAt <= (options.UtcNow ?? DateTimeOffset.UtcNow))
+            expiresAt <= verificationTime)
         {
             throw Format(LuaPatchErrorCode.Expired, "The patch bundle has expired.");
         }
 
         var digest = SHA256.HashData(manifestBytes);
-        if (!signatureVerifier.VerifyDigest(algorithm, keyId, digest, signatureBytes))
+        var signatureValid = signatureVerifier is ILuaPatchSignatureTrustPolicy timedTrustPolicy
+            ? timedTrustPolicy.VerifyDigest(
+                algorithm,
+                keyId,
+                digest,
+                signatureBytes,
+                verificationTime)
+            : signatureVerifier.VerifyDigest(algorithm, keyId, digest, signatureBytes);
+        if (!signatureValid)
         {
             throw Format(LuaPatchErrorCode.InvalidSignature, "The patch signature is invalid.");
         }
@@ -415,6 +432,14 @@ public sealed class LuaPatchBundle
 
     private static LuaPatchFormatException Format(LuaPatchErrorCode code, string message) =>
         new(code, message);
+
+    private static LuaPatchErrorCode MapTrustError(LuaPatchSignatureTrustStatus status) => status switch
+    {
+        LuaPatchSignatureTrustStatus.NotYetValid => LuaPatchErrorCode.SigningKeyNotYetValid,
+        LuaPatchSignatureTrustStatus.Expired => LuaPatchErrorCode.SigningKeyExpired,
+        LuaPatchSignatureTrustStatus.Revoked => LuaPatchErrorCode.SigningKeyRevoked,
+        _ => LuaPatchErrorCode.UntrustedSigningKey,
+    };
 
     private sealed class BoundedReader(Stream stream, long maximumBytes)
     {

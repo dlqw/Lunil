@@ -44,6 +44,9 @@ public enum LuaPatchErrorCode : byte
     ContentHashMismatch,
     MissingDependency,
     TrailingData,
+    SigningKeyNotYetValid,
+    SigningKeyExpired,
+    SigningKeyRevoked,
 }
 
 public sealed class LuaPatchFormatException : Exception

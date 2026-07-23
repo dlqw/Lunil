@@ -46,6 +46,12 @@ namespace Lunil.Hosting
         void Rollback();
     }
 
+    public interface ILuaPatchSignatureTrustPolicy : Lunil.Hosting.ILuaPatchSignatureVerifier
+    {
+        Lunil.Hosting.LuaPatchSignatureTrustResult EvaluateTrust(string algorithm, string keyId, System.DateTimeOffset verificationTime);
+        bool VerifyDigest(string algorithm, string keyId, System.ReadOnlySpan<byte> digest, System.ReadOnlySpan<byte> signature, System.DateTimeOffset verificationTime);
+    }
+
     public interface ILuaPatchSignatureVerifier
     {
         bool IsTrusted(string algorithm, string keyId);
@@ -727,10 +733,12 @@ namespace Lunil.Hosting
         public byte[] SignDigest(System.ReadOnlySpan<byte> digest) => throw null;
     }
 
-    public sealed class LuaPatchEcdsaTrustStore : Lunil.Hosting.ILuaPatchSignatureVerifier
+    public sealed class LuaPatchEcdsaTrustStore : Lunil.Hosting.ILuaPatchSignatureTrustPolicy, Lunil.Hosting.ILuaPatchSignatureVerifier
     {
         public LuaPatchEcdsaTrustStore(System.Collections.Generic.IEnumerable<Lunil.Hosting.LuaPatchTrustedEcdsaKey> keys) { }
         public bool IsTrusted(string algorithm, string keyId) => throw null;
+        public Lunil.Hosting.LuaPatchSignatureTrustResult EvaluateTrust(string algorithm, string keyId, System.DateTimeOffset verificationTime) => throw null;
+        public bool VerifyDigest(string algorithm, string keyId, System.ReadOnlySpan<byte> digest, System.ReadOnlySpan<byte> signature, System.DateTimeOffset verificationTime) => throw null;
         public bool VerifyDigest(string algorithm, string keyId, System.ReadOnlySpan<byte> digest, System.ReadOnlySpan<byte> signature) => throw null;
     }
 
@@ -794,7 +802,10 @@ namespace Lunil.Hosting
         EntryMetadataMismatch = 13,
         ContentHashMismatch = 14,
         MissingDependency = 15,
-        TrailingData = 16
+        TrailingData = 16,
+        SigningKeyNotYetValid = 17,
+        SigningKeyExpired = 18,
+        SigningKeyRevoked = 19
     }
 
     public sealed class LuaPatchFileJournal : Lunil.Hosting.ILuaPatchDeploymentJournal, System.IDisposable
@@ -1515,6 +1526,31 @@ namespace Lunil.Hosting
         public void Deconstruct(out string Algorithm, out string KeyId, out System.Collections.Immutable.ImmutableArray<byte> Value) => throw null;
     }
 
+    public sealed class LuaPatchSignatureTrustResult : System.IEquatable<Lunil.Hosting.LuaPatchSignatureTrustResult>
+    {
+        public Lunil.Hosting.LuaPatchSignatureTrustStatus Status { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Trusted { get => throw null; }
+        public LuaPatchSignatureTrustResult(Lunil.Hosting.LuaPatchSignatureTrustStatus Status, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchSignatureTrustResult? left, Lunil.Hosting.LuaPatchSignatureTrustResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchSignatureTrustResult? left, Lunil.Hosting.LuaPatchSignatureTrustResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchSignatureTrustResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchSignatureTrustStatus Status, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchSignatureTrustStatus
+    {
+        Trusted = 0,
+        UnsupportedAlgorithm = 1,
+        UnknownKey = 2,
+        NotYetValid = 3,
+        Expired = 4,
+        Revoked = 5
+    }
+
     public sealed class LuaPatchStateMigrationContext : System.IEquatable<Lunil.Hosting.LuaPatchStateMigrationContext>
     {
         public string ModuleName { get => throw null; init { } }
@@ -1578,6 +1614,9 @@ namespace Lunil.Hosting
     {
         public string KeyId { get => throw null; init { } }
         public System.ReadOnlyMemory<byte> SubjectPublicKeyInfo { get => throw null; init { } }
+        public System.DateTimeOffset? ValidFrom { get => throw null; init { } }
+        public System.DateTimeOffset? ValidUntil { get => throw null; init { } }
+        public System.DateTimeOffset? RevokedAt { get => throw null; init { } }
         public LuaPatchTrustedEcdsaKey(string KeyId, System.ReadOnlyMemory<byte> SubjectPublicKeyInfo) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchTrustedEcdsaKey? left, Lunil.Hosting.LuaPatchTrustedEcdsaKey? right) => throw null;

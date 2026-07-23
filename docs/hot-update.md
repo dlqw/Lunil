@@ -17,6 +17,35 @@ a later game-loop safe point, commit checks the signed manifest expiry again bef
 executing any candidate. An expired commit returns `LuaPatchCommitStatus.Expired` without changing
 live state; coordinated ring commits apply the same check during barrier preparation.
 
+Trusted keys can have an activation instant, an exclusive expiration instant, and an independent
+revocation instant. The store validates and copies every P-256 public key at construction. Bundle
+verification takes one `UtcNow` snapshot and applies it to both lifecycle evaluation and signature
+verification, so a key cannot cross a rotation boundary between the two checks. Revocation takes
+precedence over the scheduled window and fails with `SigningKeyRevoked`; inactive and retired keys
+fail with `SigningKeyNotYetValid` and `SigningKeyExpired`.
+
+```csharp
+var trustStore = new LuaPatchEcdsaTrustStore([
+    new LuaPatchTrustedEcdsaKey("release-2026-q3", q3PublicKey)
+    {
+        ValidFrom = new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero),
+        ValidUntil = new DateTimeOffset(2026, 10, 8, 0, 0, 0, TimeSpan.Zero),
+    },
+    new LuaPatchTrustedEcdsaKey("release-2026-q4", q4PublicKey)
+    {
+        ValidFrom = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
+    },
+]);
+
+using var stream = File.OpenRead("update.lpatch");
+var bundle = LuaPatchBundle.Read(stream, trustStore);
+```
+
+The overlap permits a controlled rotation. Set `RevokedAt` to the incident cutoff on a compromised
+key and distribute the updated trust configuration before accepting more patches. Lifecycle checks
+use the verifier's current time, not the manifest's signer-controlled `CreatedAt`, so backdating a
+new bundle cannot bypass retirement or revocation.
+
 Production preparation should perform policy validation and replay recording as one host operation:
 
 ```csharp
@@ -349,5 +378,34 @@ lunil patch dry-run update.lpatch --public-key public.pem --key-id release-2026
 lunil patch diff base.lpatch update.lpatch --public-key public.pem --key-id release-2026
 ```
 
-Private keys are read only by `pack`; verification and preflight use a public key. The CLI does not
-download patches, manage a CDN, or store signing keys.
+For production rotation, replace `--public-key` and `--key-id` on every verification action with a
+bounded trust-store file. Public-key paths are relative to that file:
+
+```json
+{
+  "schema": "lunil.patch-trust.v1",
+  "keys": [
+    {
+      "keyId": "release-2026-q3",
+      "publicKey": "keys/release-2026-q3.pem",
+      "validFrom": "2026-07-01T00:00:00Z",
+      "validUntil": "2026-10-08T00:00:00Z"
+    },
+    {
+      "keyId": "release-2026-q4",
+      "publicKey": "keys/release-2026-q4.pem",
+      "validFrom": "2026-10-01T00:00:00Z",
+      "revokedAt": null
+    }
+  ]
+}
+```
+
+```text
+lunil patch verify update.lpatch --trust-store patch-trust.json
+lunil patch dry-run update.lpatch --trust-store patch-trust.json
+```
+
+The schema rejects unknown properties, duplicate key ids, malformed/non-P-256 keys, empty validity
+windows, and more than 1,024 keys. Private keys are read only by `pack`; verification and preflight
+use public keys. The CLI does not download patches, manage a CDN, or store signing keys.

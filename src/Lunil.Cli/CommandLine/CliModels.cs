@@ -103,6 +103,8 @@ internal sealed record CliOptions
 
     public string? PatchPublicKeyPath { get; init; }
 
+    public string? PatchTrustStorePath { get; init; }
+
     public bool WarningsAsErrors { get; init; }
 
     public bool StripDebug { get; init; }
