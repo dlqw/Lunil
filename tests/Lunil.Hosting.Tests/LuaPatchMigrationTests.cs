@@ -1222,6 +1222,7 @@ public sealed class LuaPatchMigrationTests
     [InlineData(LuaPatchResourceKind.Timer)]
     [InlineData(LuaPatchResourceKind.EventSubscription)]
     [InlineData(LuaPatchResourceKind.Task)]
+    [InlineData(LuaPatchResourceKind.HostResource)]
     public void HostResourceDispositionIsReversibleAcrossAtomicFailure(
         LuaPatchResourceKind kind)
     {
@@ -1270,6 +1271,409 @@ public sealed class LuaPatchMigrationTests
         Assert.False(resource.Cancelled);
         Assert.Equal(1, resource.ApplyCount);
         Assert.Equal(1, resource.RollbackCount);
+    }
+
+    [Fact]
+    public void StableHostResourceContinuePreservesUserdataIdentityAndOwnership()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+        });
+        var oldResource = new CountingResource();
+        var oldHandle = new LuaPatchStableResourceHandle("world-session", oldResource);
+        var oldUserdata = host.State.CreateUserdata(oldHandle);
+        host.State.SetGlobal("old_resource", LuaValue.FromUserdata(oldUserdata));
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false,value=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        var migrated = host.RunUtf8("return require('a').resource")
+            .Execution!.Values[0].AsUserdata();
+        Assert.Same(oldUserdata, migrated);
+        Assert.Same(oldResource, oldHandle.Resource);
+        Assert.False(oldHandle.IsDisposed);
+        Assert.Equal(0, oldHandle.ActiveLeaseCount);
+        Assert.Equal(0, oldResource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceContinueRollsBackWhenALaterModuleFails()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+            ["mods/b.lua"] = "return {value=1}",
+        });
+        var resource = new CountingResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+        var userdata = host.State.CreateUserdata(handle);
+        host.State.SetGlobal("old_resource", LuaValue.FromUserdata(userdata));
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; require('a'); require('b')").Succeeded);
+        var schema = Schema(
+            new LuaPatchModuleMigrationSchema
+            {
+                ModuleName = "a",
+                Resources =
+                [
+                    new LuaPatchResourceRule
+                    {
+                        ResourceId = "world-session",
+                        Kind = LuaPatchResourceKind.HostResource,
+                        Disposition = LuaPatchResourceDisposition.Continue,
+                        StatePath = "/resource",
+                    },
+                ],
+            },
+            new LuaPatchModuleMigrationSchema { ModuleName = "b" });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false}"),
+            Entry("b", "error('stop transaction')", "a")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.ExecutionFailed, commit.Status);
+        Assert.Same(userdata, host.RunUtf8("return require('a').resource")
+            .Execution!.Values[0].AsUserdata());
+        Assert.Same(resource, handle.Resource);
+        Assert.False(handle.IsDisposed);
+    }
+
+    [Fact]
+    public void StableHostResourceLeaseSpansHealthDecisionAndHealthRollback()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+        });
+        var resource = new CountingResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+        var userdata = host.State.CreateUserdata(handle);
+        host.State.SetGlobal("old_resource", LuaValue.FromUserdata(userdata));
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "stable-resource-health-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    Assert.Equal(1, handle.ActiveLeaseCount);
+                    Assert.Same(userdata, host.RunUtf8("return require('a').resource")
+                        .Execution!.Values[0].AsUserdata());
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.Equal(0, handle.ActiveLeaseCount);
+        Assert.Same(userdata, host.RunUtf8("return require('a').resource")
+            .Execution!.Values[0].AsUserdata());
+        Assert.Same(resource, handle.Resource);
+        Assert.Equal(0, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceRejectIfActiveUsesExplicitLeases()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+        });
+        var handle = new LuaPatchStableResourceHandle("world-session", new CountingResource());
+        host.State.SetGlobal(
+            "old_resource",
+            LuaValue.FromUserdata(host.State.CreateUserdata(handle)));
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.RejectIfActive,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        using var lease = handle.AcquireLease();
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+        Assert.Equal(1, handle.ActiveLeaseCount);
+        Assert.False(handle.IsDisposed);
+    }
+
+    [Fact]
+    public void StableHostResourceRequiresMatchingIdentityAndStatePath()
+    {
+        var missingPath = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                },
+            ],
+        });
+        var schemaError = Assert.Throws<LuaPatchMigrationSchemaException>(() =>
+            LuaPatchMigrationSchemaSerializer.Serialize(missingPath));
+        Assert.Equal(LuaPatchMigrationSchemaErrorCode.InvalidSchema, schemaError.Code);
+
+        var adapterRequired = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Cancel,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var adapterError = Assert.Throws<LuaPatchMigrationSchemaException>(() =>
+            LuaPatchMigrationSchemaSerializer.Serialize(adapterRequired));
+        Assert.Equal(LuaPatchMigrationSchemaErrorCode.AdapterRequired, adapterError.Code);
+
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+        });
+        host.State.SetGlobal(
+            "old_resource",
+            LuaValue.FromUserdata(host.State.CreateUserdata(
+                new LuaPatchStableResourceHandle("different-session", new CountingResource()))));
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+    }
+
+    [Fact]
+    public void StableHostResourceRejectsADisposedMigrationInput()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {resource=old_resource}",
+        });
+        var resource = new CountingResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+        host.State.SetGlobal(
+            "old_resource",
+            LuaValue.FromUserdata(host.State.CreateUserdata(handle)));
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "world-session",
+                    Kind = LuaPatchResourceKind.HostResource,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/resource",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {resource=false}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        handle.Dispose();
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceDefersOwnedDisposalUntilEveryLeaseCloses()
+    {
+        var resource = new CountingResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+        var first = handle.AcquireLease();
+        var second = handle.AcquireLease();
+
+        handle.Dispose();
+        first.Dispose();
+        first.Dispose();
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, handle.ActiveLeaseCount);
+        Assert.Equal(0, resource.DisposeCount);
+        Assert.True(first.IsDisposed);
+        Assert.Throws<ObjectDisposedException>(() => _ = first.Resource);
+        Assert.Throws<ObjectDisposedException>(() => _ = handle.Resource);
+        Assert.Throws<ObjectDisposedException>(() => handle.AcquireLease());
+
+        second.Dispose();
+        handle.Dispose();
+
+        Assert.Equal(0, handle.ActiveLeaseCount);
+        Assert.Equal(1, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceValidatesIdentityAndHonorsNonOwningHandles()
+    {
+        var resource = new CountingResource();
+        Assert.Throws<ArgumentException>(() =>
+            new LuaPatchStableResourceHandle(" ", resource));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new LuaPatchStableResourceHandle("bad\0identity", resource));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new LuaPatchStableResourceHandle(new string('x', 4097), resource));
+
+        var handle = new LuaPatchStableResourceHandle(
+            "world-session",
+            resource,
+            ownsResource: false);
+        Assert.Same(resource, handle.GetResource<CountingResource>());
+        Assert.Throws<InvalidCastException>(() => handle.GetResource<MemoryStream>());
+
+        handle.Dispose();
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(0, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceDisposesExactlyOnceAcrossConcurrentLeaseClosure()
+    {
+        var resource = new CountingResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+        var anchor = handle.AcquireLease();
+
+        Parallel.For(0, 512, index =>
+        {
+            if ((index & 1) == 0)
+            {
+                try
+                {
+                    using var lease = handle.AcquireLease();
+                    Assert.Same(resource, lease.Resource);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Disposal wins the race and closes admission for later work.
+                }
+            }
+            else
+            {
+                handle.Dispose();
+            }
+        });
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, handle.ActiveLeaseCount);
+        Assert.Equal(0, resource.DisposeCount);
+
+        anchor.Dispose();
+        anchor.Dispose();
+
+        Assert.Equal(0, handle.ActiveLeaseCount);
+        Assert.Equal(1, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableHostResourceReleasesAsyncDisposableOwnershipOnce()
+    {
+        var resource = new CountingAsyncResource();
+        var handle = new LuaPatchStableResourceHandle("world-session", resource);
+
+        handle.Dispose();
+        handle.Dispose();
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, resource.DisposeCount);
     }
 
     [Fact]
@@ -1607,6 +2011,24 @@ public sealed class LuaPatchMigrationTests
     private sealed class MutablePayload
     {
         public int Value { get; set; }
+    }
+
+    private sealed class CountingResource : IDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class CountingAsyncResource : IAsyncDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class PayloadMigrationAdapter : ILuaPatchStateMigrationAdapter

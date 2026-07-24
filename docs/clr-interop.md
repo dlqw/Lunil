@@ -140,6 +140,29 @@ the same state path, so the next tick uses the candidate callback and scheduling
 set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions,
 tasks, and timers belong to one `LuaState` and cannot be transferred to another state.
 
+Use a stable resource handle when a host or native object must keep one identity and one owner across
+patch generations:
+
+```csharp
+var userdata = host.ClrBridge.CreateStableResource(
+    "world-session",
+    worldSession,
+    ownsResource: true);
+host.State.SetGlobal("world_session", LuaValue.FromUserdata(userdata));
+```
+
+With `MemberAccess` enabled, the resource's exact runtime type, assembly, and accessed members must
+still be allowlisted. Host-side in-flight work can call
+`LuaPatchStableResourceHandle.AcquireLease()`; CLR member calls acquire a lease for the invocation,
+and event subscriptions retain one until unsubscribe. Disposing the handle rejects new access. An
+owned `IDisposable` or `IAsyncDisposable` resource is released after its final lease closes; a
+non-owning handle only closes access. The userdata remains bound to its original `LuaState`.
+
+To carry this identity through a patch, declare a `HostResource + Continue` rule for its module-cache
+path. The candidate module should put only a placeholder at that path, not construct a second native
+resource. See [Production hot update](hot-update.md#state-schema-and-resource-migration) for migration,
+rollback, and `RejectIfActive` behavior.
+
 Trimming and NativeAOT applications must preserve public constructors, members, and delegate
 signatures for every allowlisted type with linker metadata such as `DynamicDependency`. Missing
 metadata fails closed with a stable bridge diagnostic. Interpreter and dynamic JIT share the same

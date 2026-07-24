@@ -198,6 +198,134 @@ public sealed class LuaHostTests
     }
 
     [Fact]
+    public void ClrBridgeExposesStablePatchResourcesThroughTheExactMemberAllowlist()
+    {
+        var typeName = typeof(MemberValue).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.MemberAccess,
+                AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                AllowedMemberNames = ["Value", "Add"],
+            },
+        });
+        var resource = new MemberValue(40);
+        var userdata = host.ClrBridge.CreateStableResource(
+            "world-session",
+            resource,
+            ownsResource: false);
+        host.State.SetGlobal("stable", LuaValue.FromUserdata(userdata));
+
+        var result = host.RunUtf8("return stable.Value,stable:Add(2)");
+
+        Assert.True(result.Succeeded, result.Execution?.ToString());
+        Assert.Equal(40, result.Execution!.Values[0].AsInteger());
+        Assert.Equal(42, result.Execution.Values[1].AsInteger());
+        var handle = Assert.IsType<LuaPatchStableResourceHandle>(userdata.Payload);
+        Assert.Same(resource, handle.Resource);
+        Assert.False(handle.OwnsResource);
+    }
+
+    [Fact]
+    public void StableClrResourceUserdataOwnsItsPayloadExactlyOnce()
+    {
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+        });
+        var resource = new CountingDisposable();
+        var userdata = host.ClrBridge.CreateStableResource("world-session", resource);
+        var handle = Assert.IsType<LuaPatchStableResourceHandle>(userdata.Payload);
+
+        userdata.DisposePayload();
+        userdata.DisposePayload();
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, resource.DisposeCount);
+    }
+
+    [Fact]
+    public void StableClrResourceLeaseDefersDisposalThroughTheCurrentInvocation()
+    {
+        var typeName = typeof(LeaseAwareResource).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.MemberAccess,
+                AllowedAssemblyNames = [typeof(LeaseAwareResource).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                AllowedMemberNames = ["DisposeOwnerAndReadCount"],
+            },
+        });
+        var resource = new LeaseAwareResource();
+        var userdata = host.ClrBridge.CreateStableResource("world-session", resource);
+        var handle = Assert.IsType<LuaPatchStableResourceHandle>(userdata.Payload);
+        resource.Owner = handle;
+        host.State.SetGlobal("stable", LuaValue.FromUserdata(userdata));
+
+        var invocation = host.RunUtf8("return stable:DisposeOwnerAndReadCount()");
+
+        Assert.True(invocation.Succeeded, invocation.Execution?.ToString());
+        Assert.Equal(0, invocation.Execution!.Values[0].AsInteger());
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, resource.DisposeCount);
+        var stale = Assert.Throws<LuaClrException>(() =>
+            host.RunUtf8("return stable:DisposeOwnerAndReadCount()"));
+        Assert.Equal(LuaClrErrorCode.InvocationFailed, stale.Code);
+        Assert.Contains("disposed", stale.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void StableClrResourceSubscriptionRetainsItsLeaseUntilUnsubscribe()
+    {
+        var typeName = typeof(MemberValue).FullName!;
+        var delegateName = typeof(IntCallback).FullName!;
+        using var host = new LuaHost(new LuaHostOptions
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.MemberAccess |
+                    LuaClrCapabilities.DelegateConversion |
+                    LuaClrCapabilities.EventSubscription,
+                AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName, delegateName],
+                AllowedMemberNames = ["Changed"],
+                AllowedEventNames = ["Changed"],
+                AllowedDelegateTypeNames = [delegateName],
+                InstallGlobalModule = true,
+            },
+        });
+        var resource = new MemberValue(1);
+        var userdata = host.ClrBridge.CreateStableResource(
+            "world-session",
+            resource,
+            ownsResource: false);
+        var handle = Assert.IsType<LuaPatchStableResourceHandle>(userdata.Payload);
+        host.State.SetGlobal("stable", LuaValue.FromUserdata(userdata));
+        var subscribed = host.RunUtf8(
+            "stable_seen=0; stable_subscription=clr.on(stable,'Changed'," +
+            "function(value) stable_seen=value end)");
+        Assert.True(subscribed.Succeeded, subscribed.Execution?.ToString());
+        Assert.Equal(1, handle.ActiveLeaseCount);
+
+        handle.Dispose();
+        resource.Raise(9);
+
+        Assert.True(handle.IsDisposed);
+        Assert.Equal(1, handle.ActiveLeaseCount);
+        Assert.Equal(9, host.State.GetGlobal("stable_seen").AsInteger());
+        var subscription = Assert.IsType<LuaClrSubscription>(
+            host.State.GetGlobal("stable_subscription").AsUserdata().Payload);
+        subscription.Dispose();
+        subscription.Dispose();
+        Assert.Equal(0, handle.ActiveLeaseCount);
+    }
+
+    [Fact]
     public void ClrBridgeConstructsImplicitDefaultValueTypes()
     {
         var typeName = typeof(SampleStruct).FullName!;
@@ -1101,6 +1229,21 @@ public sealed class LuaHostTests
         public event IntCallback? Changed;
 
         public void Raise(int value) => Changed?.Invoke(value);
+    }
+
+    public sealed class LeaseAwareResource : IDisposable
+    {
+        public LuaPatchStableResourceHandle Owner { get; set; } = null!;
+
+        public int DisposeCount { get; private set; }
+
+        public int DisposeOwnerAndReadCount()
+        {
+            Owner.Dispose();
+            return DisposeCount;
+        }
+
+        public void Dispose() => DisposeCount++;
     }
 
     public delegate void IntCallback(int value);

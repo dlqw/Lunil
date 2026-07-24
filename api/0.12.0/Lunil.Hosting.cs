@@ -134,6 +134,7 @@ namespace Lunil.Hosting
         public LuaClrBridge(Lunil.Runtime.LuaState state, Lunil.Hosting.LuaClrOptions? options = null) { }
         public Lunil.Hosting.LuaClrTypeInfo ResolveType(string typeName) => throw null;
         public Lunil.Runtime.Values.LuaUserdata CreateInstance(string typeName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
+        public Lunil.Runtime.Values.LuaUserdata CreateStableResource(string resourceId, object resource, bool ownsResource = true) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaClrMemberInfo> ResolveMembers(string typeName) => throw null;
         public Lunil.Runtime.Values.LuaValue GetMember(Lunil.Runtime.Values.LuaValue target, string memberName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> indexArguments = null) => throw null;
         public void SetMember(Lunil.Runtime.Values.LuaValue target, string memberName, Lunil.Runtime.Values.LuaValue value) { }
@@ -1629,7 +1630,8 @@ namespace Lunil.Hosting
         Coroutine = 0,
         Timer = 1,
         EventSubscription = 2,
-        Task = 3
+        Task = 3,
+        HostResource = 4
     }
 
     public sealed class LuaPatchResourceLimitException : System.Exception
@@ -1845,6 +1847,28 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchSignerIdentity? other) => throw null;
         public void Deconstruct(out string Algorithm, out string KeyId) => throw null;
+    }
+
+    public sealed class LuaPatchStableResourceHandle : System.IDisposable
+    {
+        public string ResourceId { get => throw null; }
+        public bool OwnsResource { get => throw null; }
+        public bool IsDisposed { get => throw null; }
+        public int ActiveLeaseCount { get => throw null; }
+        public bool IsActive { get => throw null; }
+        public object Resource { get => throw null; }
+        public LuaPatchStableResourceHandle(string resourceId, object resource, bool ownsResource = true) { }
+        public T GetResource<T>() where T : class => throw null;
+        public Lunil.Hosting.LuaPatchStableResourceLease AcquireLease() => throw null;
+        public void Dispose() { }
+    }
+
+    public sealed class LuaPatchStableResourceLease : System.IDisposable
+    {
+        public bool IsDisposed { get => throw null; }
+        public object Resource { get => throw null; }
+        public T GetResource<T>() where T : class => throw null;
+        public void Dispose() { }
     }
 
     public sealed class LuaPatchStateMigrationContext : System.IEquatable<Lunil.Hosting.LuaPatchStateMigrationContext>

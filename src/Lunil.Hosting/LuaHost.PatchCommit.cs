@@ -1469,6 +1469,7 @@ public sealed partial class LuaHost
         private readonly List<LuaTablePatch> _stateTablePatches = [];
         private readonly List<ILuaPatchStateMigrationOperation> _stateMigrationOperations = [];
         private readonly List<ILuaPatchResourceMigrationOperation> _resourceMigrationOperations = [];
+        private readonly List<LuaPatchStableResourceLease> _stableResourceLeases = [];
         private LuaHandle? _candidateValue;
         private LuaHandle? _committedValue;
         private LuaTablePatch? _tablePatch;
@@ -1759,7 +1760,7 @@ public sealed partial class LuaHost
                 }
 
                 if (rule.Kind is not (LuaPatchResourceKind.Coroutine or
-                    LuaPatchResourceKind.Timer))
+                    LuaPatchResourceKind.Timer or LuaPatchResourceKind.HostResource))
                 {
                     if (rule.Disposition != LuaPatchResourceDisposition.Continue)
                     {
@@ -1810,6 +1811,54 @@ public sealed partial class LuaHost
                         generationUpdate.TransferCoroutine(value.AsThread(), Module.Module);
                     }
 
+                    continue;
+                }
+
+                if (rule.Kind == LuaPatchResourceKind.HostResource)
+                {
+                    if (value.Kind != LuaValueKind.Userdata ||
+                        value.AsUserdata().Payload is not LuaPatchStableResourceHandle handle ||
+                        !string.Equals(handle.ResourceId, rule.ResourceId, StringComparison.Ordinal))
+                    {
+                        throw new LuaPatchMigrationSchemaException(
+                            LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                            $"Host resource '{rule.ResourceId}' does not resolve to its live stable handle.");
+                    }
+
+                    if (rule.Disposition == LuaPatchResourceDisposition.RejectIfActive)
+                    {
+                        if (handle.IsDisposed)
+                        {
+                            throw new LuaPatchMigrationSchemaException(
+                                LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                                $"Host resource '{rule.ResourceId}' does not resolve to its live stable handle.");
+                        }
+
+                        if (handle.IsActive)
+                        {
+                            throw new LuaPatchMigrationSchemaException(
+                                LuaPatchMigrationSchemaErrorCode.ResourceActive,
+                                $"Host resource '{rule.ResourceId}' is still active.");
+                        }
+
+                        continue;
+                    }
+
+                    LuaPatchStableResourceLease migrationLease;
+                    try
+                    {
+                        migrationLease = handle.AcquireLease();
+                    }
+                    catch (ObjectDisposedException exception)
+                    {
+                        throw new LuaPatchMigrationSchemaException(
+                            LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                            $"Host resource '{rule.ResourceId}' does not resolve to its live stable handle.",
+                            exception);
+                    }
+
+                    _stableResourceLeases.Add(migrationLease);
+                    SetCandidatePath(path, value);
                     continue;
                 }
 
@@ -1988,6 +2037,11 @@ public sealed partial class LuaHost
             foreach (var operation in _resourceMigrationOperations)
             {
                 Attempt(operation.Dispose);
+            }
+
+            foreach (var lease in _stableResourceLeases)
+            {
+                Attempt(lease.Dispose);
             }
 
             foreach (var operation in _stateMigrationOperations)
