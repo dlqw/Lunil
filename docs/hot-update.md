@@ -236,8 +236,11 @@ are published together. A publication failure, cancellation, or elapsed pause bu
 target-module records, cache values, table contents, loader upvalues, and closure slots.
 
 Suspended frames retain the immutable function generation captured on entry. Calls made after a
-successful commit read the new closure-slot generation. This makes a frame/tick boundary a safe
-default for games without rewriting frames that are already suspended.
+successful commit read the new closure-slot generation. Module-owned coroutine entry is additionally
+generation-fenced: an undeclared old coroutine cannot resume after publication. Use an explicit
+runtime-owned `Coroutine`/`Continue` resource rule when a suspended coroutine must finish on its old
+frames; ordinary in-flight frames that are not retained as resumable coroutines still complete on
+the immutable generation they captured.
 
 `ReplaceCache` and `PatchExistingTable` are supported by atomic patch commits. An opaque `Custom`
 cache callback and a source-path override are rejected during preparation because their effects
@@ -287,12 +290,34 @@ payload mutation.
 Resource rules cover `Coroutine`, `Timer`, `EventSubscription`, and `Task`, with `Continue`, `Cancel`,
 `Restart`, `Drain`, or `RejectIfActive` dispositions. For a runtime-owned coroutine, `Continue`
 installs the previous thread at the same candidate state path, preserving its identity and suspended
-execution state; `RejectIfActive` rejects a non-terminal thread at that path. Reversible cancellation,
+execution state. This includes resumable native `Yielded` and `CallLua` activations: the descriptor,
+invocation state, callback frame, and immutable Lua function versions remain isolated in the old
+activation while the thread is admitted into the candidate generation. Without `Continue`, an old
+module-owned thread becomes stale and `LuaInterpreter.Start`/`Resume` fail before entering the
+scheduler. `RejectIfActive` rejects a non-terminal thread at that path. Reversible cancellation,
 restart, and drain—and all
 host-owned timer, subscription, and task lifecycle changes—use a named
 `ILuaPatchResourceMigrationAdapter`. Missing adapters fail preparation, before the update window.
 Adapter `Prepare` methods must not mutate state; `Apply` must be exactly reversible by `Rollback`, and
 operation disposal only releases journal resources.
+
+```csharp
+new LuaPatchResourceRule
+{
+    ResourceId = "match-loop",
+    Kind = LuaPatchResourceKind.Coroutine,
+    Disposition = LuaPatchResourceDisposition.Continue,
+    StatePath = "/workers/matchLoop",
+}
+```
+
+Candidate coroutines remain pending until the full barrier publishes. Execution, migration, barrier,
+or health rollback restores the previous coroutine generation and makes candidate coroutines stale.
+`LuaThread.IsPatchGenerationActive` provides per-thread admission state; monitor
+`LuaHost.ActiveNativeContinuationCount`, `PendingNativeContinuationCount`,
+`QuiescedNativeContinuationCount`, and `StaleNativeContinuationCount` for suspended native work.
+Threads whose entry closure and creator are both outside a module generation are not fenced or
+included in those gauges. Stale threads may still be closed so their Lua cleanup can run.
 
 CLR delegates and event subscriptions created from module-owned Lua closures also participate in the
 host transaction without a schema adapter. Publication makes previous-generation delegates stale,

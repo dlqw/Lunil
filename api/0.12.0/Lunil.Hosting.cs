@@ -373,6 +373,10 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrBridge ClrBridge { get => throw null; }
         public Lunil.StandardLibrary.LuaStandardLibraryOptions? StandardLibraryOptions { get => throw null; }
         public Lunil.Hosting.LuaBufferedConsole? BufferedConsole { get => throw null; }
+        public int ActiveNativeContinuationCount { get => throw null; }
+        public int PendingNativeContinuationCount { get => throw null; }
+        public int QuiescedNativeContinuationCount { get => throw null; }
+        public int StaleNativeContinuationCount { get => throw null; }
         public LuaHost(Lunil.Hosting.LuaHostOptions? options = null) { }
         public Lunil.Compiler.LuaCompilationResult Compile(Lunil.Compiler.LuaSourceDocument source, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public Lunil.Compiler.LuaCompilationResult CompileUtf8(string source, string? sourceName = null, System.Threading.CancellationToken cancellationToken = null) => throw null;

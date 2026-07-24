@@ -218,8 +218,10 @@ module generation 会作为一个事务发布。发布失败、取消或 pause b
 的 record、cache value、table 内容、loader upvalue 和 closure slot。
 
 已挂起 frame 会继续持有进入时捕获的 immutable function generation；成功 commit 后发起的新调用
-会读取 closure slot 的新 generation。因此游戏可默认把 frame/tick 边界作为安全点，无需重写已经
-挂起的 frame。
+会读取 closure slot 的新 generation。Module-owned coroutine 入口还会接受 generation fencing：未声明
+迁移的旧 coroutine 在发布后不能恢复。必须让挂起 coroutine 在旧 frame 上继续完成时，使用显式的
+runtime-owned `Coroutine`/`Continue` resource rule；不作为 resumable coroutine 保留的普通 in-flight
+frame 仍会在其进入时捕获的 immutable generation 上完成。
 
 原子 patch commit 支持 `ReplaceCache` 和 `PatchExistingTable`。由于不透明 `Custom` cache callback
 和 source-path override 的效果无法纳入 module transaction journal，prepare 阶段会拒绝它们。
@@ -264,12 +266,34 @@ module 失败时会同时恢复 Lua graph 与 host payload 变更。
 
 Resource rule 覆盖 `Coroutine`、`Timer`、`EventSubscription` 和 `Task`，disposition 包括
 `Continue`、`Cancel`、`Restart`、`Drain` 与 `RejectIfActive`。对于 runtime-owned coroutine，
-`Continue` 会把旧 thread 安装到 candidate 的相同 state path，保留 thread identity 与当前挂起点；
-`RejectIfActive` 会拒绝该路径上的非终止 thread。可逆 cancel/restart/drain，以及全部 host-owned
+`Continue` 会把旧 thread 安装到 candidate 的相同 state path，保留 thread identity 与当前挂起点。
+这也覆盖 resumable native `Yielded` 和 `CallLua` activation：descriptor、invocation state、callback
+frame 与 immutable Lua function version 保持在旧 activation 内隔离，而 thread 会被准入 candidate
+generation。没有 `Continue` 时，旧 module-owned thread 会变为 stale，`LuaInterpreter.Start`/`Resume`
+会在进入 scheduler 前失败。`RejectIfActive` 会拒绝该路径上的非终止 thread。可逆
+cancel/restart/drain，以及全部 host-owned
 timer、subscription 和 task 生命周期变更，使用指定的 `ILuaPatchResourceMigrationAdapter`；
 缺少 adapter 会在进入 update window 前使 prepare 失败。
 Adapter 的 `Prepare` 不得修改状态；`Apply` 必须能由 `Rollback` 完整逆转，operation dispose 只能
 释放 journal 资源。
+
+```csharp
+new LuaPatchResourceRule
+{
+    ResourceId = "match-loop",
+    Kind = LuaPatchResourceKind.Coroutine,
+    Disposition = LuaPatchResourceDisposition.Continue,
+    StatePath = "/workers/matchLoop",
+}
+```
+
+Candidate coroutine 在完整 barrier 发布前保持 pending。Execution、migration、barrier 或 health rollback
+会恢复旧 coroutine generation，并把 candidate coroutine 标记为 stale。单个 thread 可通过
+`LuaThread.IsPatchGenerationActive` 观察准入状态；挂起 native 工作应监控
+`LuaHost.ActiveNativeContinuationCount`、`PendingNativeContinuationCount`、
+`QuiescedNativeContinuationCount` 与 `StaleNativeContinuationCount`。Entry closure 与 creator 都不属于
+module generation 的 thread 不参与 fencing，也不计入这些 gauge。Stale thread 仍可 close，以执行 Lua
+cleanup。
 
 从 module-owned Lua closure 创建的 CLR delegate 与 event subscription 无需 schema adapter，也会
 加入 host transaction。发布会把旧 generation delegate 标记为 stale、激活 candidate delegate，并

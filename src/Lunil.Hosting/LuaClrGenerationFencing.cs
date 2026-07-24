@@ -1,4 +1,5 @@
 using Lunil.IR.Canonical;
+using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 
 namespace Lunil.Hosting;
@@ -374,6 +375,7 @@ public sealed partial class LuaClrBridge
             throw new InvalidOperationException("The CLR generation update is not active.");
         }
 
+        update.StopTrackingThreads();
         _generationUpdate = null;
         PruneGenerationRegistrations();
     }
@@ -413,6 +415,12 @@ public sealed partial class LuaClrBridge
         private readonly List<LuaClrCallbackRegistration> _retired = [];
         private readonly List<LuaClrTaskRegistration> _pendingTasks = [];
         private readonly List<LuaClrTaskRegistration> _retiredTasks = [];
+        private readonly HashSet<LuaThread> _pendingThreads =
+            new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<LuaThread> _retiredThreads =
+            new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<LuaThread, LuaIrModule> _transferredThreads =
+            new(ReferenceEqualityComparer.Instance);
         private bool _applied;
         private bool _completed;
 
@@ -428,6 +436,7 @@ public sealed partial class LuaClrBridge
             _candidateModules = new HashSet<LuaIrModule>(
                 candidateModules,
                 ReferenceEqualityComparer.Instance);
+            _bridge._state.ThreadCreated += TrackCreatedThread;
         }
 
         public bool IsCandidateModule(LuaIrModule module) => _candidateModules.Contains(module);
@@ -445,6 +454,46 @@ public sealed partial class LuaClrBridge
             if (registration.State == LuaClrGenerationState.Pending)
             {
                 _pendingTasks.Add(registration);
+            }
+        }
+
+        public void TransferCoroutine(LuaThread thread, LuaIrModule candidateModule)
+        {
+            ArgumentNullException.ThrowIfNull(thread);
+            ArgumentNullException.ThrowIfNull(candidateModule);
+            lock (_bridge._callbackGate)
+            {
+                ThrowIfCompleted();
+                if (!_candidateModules.Contains(candidateModule))
+                {
+                    throw new InvalidOperationException(
+                        "A coroutine can be transferred only to a candidate module.");
+                }
+
+                if (thread.Status is LuaThreadStatus.Dead or LuaThreadStatus.Error)
+                {
+                    return;
+                }
+
+                if (_transferredThreads.ContainsKey(thread) &&
+                    thread.PatchGenerationState == LuaThreadPatchGenerationState.Pending &&
+                    ReferenceEquals(thread.PatchGenerationOwnerModule, candidateModule))
+                {
+                    return;
+                }
+
+                if (!_retiredThreads.Contains(thread) ||
+                    thread.PatchGenerationState != LuaThreadPatchGenerationState.Quiesced ||
+                    thread.PatchGenerationOwnerModule is not { } previousModule)
+                {
+                    throw new InvalidOperationException(
+                        "The coroutine does not belong to the quiesced previous generation.");
+                }
+
+                _transferredThreads.Add(thread, previousModule);
+                thread.PatchGenerationOwnerModule = candidateModule;
+                thread.PatchGenerationState = LuaThreadPatchGenerationState.Pending;
+                _pendingThreads.Add(thread);
             }
         }
 
@@ -471,6 +520,11 @@ public sealed partial class LuaClrBridge
                     registration.State = LuaClrGenerationState.Quiesced;
                     _retiredTasks.Add(registration);
                 }
+            }
+
+            foreach (var thread in _bridge._state.Heap.Objects.OfType<LuaThread>())
+            {
+                StageThread(thread);
             }
         }
 
@@ -513,6 +567,22 @@ public sealed partial class LuaClrBridge
                     if (registration.State == LuaClrGenerationState.Quiesced)
                     {
                         registration.State = LuaClrGenerationState.Stale;
+                    }
+                }
+
+                foreach (var thread in _pendingThreads)
+                {
+                    if (thread.PatchGenerationState == LuaThreadPatchGenerationState.Pending)
+                    {
+                        thread.PatchGenerationState = LuaThreadPatchGenerationState.Active;
+                    }
+                }
+
+                foreach (var thread in _retiredThreads)
+                {
+                    if (thread.PatchGenerationState == LuaThreadPatchGenerationState.Quiesced)
+                    {
+                        thread.PatchGenerationState = LuaThreadPatchGenerationState.Stale;
                     }
                 }
 
@@ -591,6 +661,29 @@ public sealed partial class LuaClrBridge
                     }
                 }
 
+                foreach (var thread in _pendingThreads)
+                {
+                    if (_transferredThreads.TryGetValue(thread, out var previousModule))
+                    {
+                        thread.PatchGenerationOwnerModule = previousModule;
+                        thread.PatchGenerationState = LuaThreadPatchGenerationState.Active;
+                    }
+                    else if (thread.PatchGenerationState != LuaThreadPatchGenerationState.Stale)
+                    {
+                        thread.PatchGenerationState = LuaThreadPatchGenerationState.Stale;
+                    }
+                }
+
+                foreach (var thread in _retiredThreads)
+                {
+                    if (!_transferredThreads.ContainsKey(thread) &&
+                        thread.PatchGenerationState is LuaThreadPatchGenerationState.Quiesced or
+                            LuaThreadPatchGenerationState.Stale)
+                    {
+                        thread.PatchGenerationState = LuaThreadPatchGenerationState.Active;
+                    }
+                }
+
                 _completed = true;
                 _bridge.EndGenerationUpdate(this);
                 if (failure is not null)
@@ -636,6 +729,47 @@ public sealed partial class LuaClrBridge
         }
 
         private void ThrowIfCompleted() => ObjectDisposedException.ThrowIf(_completed, this);
+
+        public void StopTrackingThreads() =>
+            _bridge._state.ThreadCreated -= TrackCreatedThread;
+
+        private void TrackCreatedThread(LuaThread thread)
+        {
+            lock (_bridge._callbackGate)
+            {
+                if (_completed)
+                {
+                    return;
+                }
+
+                StageThread(thread);
+            }
+        }
+
+        private void StageThread(LuaThread thread)
+        {
+            if (thread.Status is LuaThreadStatus.Dead or LuaThreadStatus.Error ||
+                thread.PatchGenerationOwnerModule is not { } module)
+            {
+                return;
+            }
+
+            if (_candidateModules.Contains(module) &&
+                thread.PatchGenerationState == LuaThreadPatchGenerationState.Unmanaged)
+            {
+                thread.PatchGenerationState = LuaThreadPatchGenerationState.Pending;
+                _pendingThreads.Add(thread);
+                return;
+            }
+
+            if (_previousModules.Contains(module) &&
+                thread.PatchGenerationState is LuaThreadPatchGenerationState.Unmanaged or
+                    LuaThreadPatchGenerationState.Active)
+            {
+                thread.PatchGenerationState = LuaThreadPatchGenerationState.Quiesced;
+                _retiredThreads.Add(thread);
+            }
+        }
 
         internal static bool IsRecoverable(Exception exception) => exception is not
             OutOfMemoryException and not StackOverflowException and not AccessViolationException;

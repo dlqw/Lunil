@@ -119,6 +119,11 @@ public sealed class LuaState
     {
         var thread = new LuaThread(Heap, initialStackCapacity);
         thread.Initialize(entry);
+        thread.PatchGenerationOwnerModule = entry.TryGetClosure()?.Module ??
+            (RunningThread is { Frames.Count: > 0 }
+                ? RunningThread.Frames[^1].FunctionVersion.Module
+                : null);
+        ThreadCreated?.Invoke(thread);
         return thread;
     }
 
@@ -129,6 +134,8 @@ public sealed class LuaState
         LuaNativeFunction descriptor,
         ReadOnlySpan<LuaValue> captures = default) =>
         new(Heap, descriptor, captures);
+
+    internal event Action<LuaThread>? ThreadCreated;
 
     public LuaHandle CreateHandle(LuaValue value) => Heap.CreateHandle(value);
 

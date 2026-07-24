@@ -883,6 +883,7 @@ internal sealed class LuaExecutionEngine
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments)
     {
+        thread.EnsurePatchGenerationAdmission(state);
         if (thread.Status == LuaThreadStatus.New)
         {
             thread.Started = true;
