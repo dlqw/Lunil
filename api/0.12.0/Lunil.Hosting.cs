@@ -1497,6 +1497,7 @@ namespace Lunil.Hosting
         public int MaximumMigrationModules { get => throw null; init { } }
         public int MaximumStateMigrationRules { get => throw null; init { } }
         public int MaximumResourceMigrationRules { get => throw null; init { } }
+        public int MaximumTablePatchEntryCount { get => throw null; init { } }
         public int MaximumRingsPerRollout { get => throw null; init { } }
         public int MaximumTargetsPerRing { get => throw null; init { } }
         public int MaximumTargetsPerRollout { get => throw null; init { } }
@@ -1729,7 +1730,8 @@ namespace Lunil.Hosting
     {
         Preserve = 0,
         Drop = 1,
-        HostAdapter = 2
+        HostAdapter = 2,
+        PatchTable = 3
     }
 
     public sealed class LuaPatchTargetCommitResult : System.IEquatable<Lunil.Hosting.LuaPatchTargetCommitResult>

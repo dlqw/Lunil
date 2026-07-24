@@ -544,6 +544,8 @@ public sealed partial class LuaHost
         }
 
         var transactions = new List<PatchModuleTransaction>(preparedPatch.Modules.Length);
+        var tablePatchBudget = new LuaTablePatchJournalBudget(
+            preparedPatch.ResourceLimits.MaximumTablePatchEntryCount);
         LuaClrBridge.LuaClrGenerationUpdate? generationUpdate = null;
         var transferred = false;
         try
@@ -553,7 +555,8 @@ public sealed partial class LuaHost
                 transactions.Add(new PatchModuleTransaction(
                     this,
                     module,
-                    observed[module.ModuleName]));
+                    observed[module.ModuleName],
+                    tablePatchBudget));
             }
 
             generationUpdate = ClrBridge.BeginGenerationUpdate(
@@ -928,7 +931,8 @@ public sealed partial class LuaHost
                 options.StateMigrationAdapters ??
                     new Dictionary<string, ILuaPatchStateMigrationAdapter>(StringComparer.Ordinal),
                 options.ResourceMigrationAdapters ??
-                    new Dictionary<string, ILuaPatchResourceMigrationAdapter>(StringComparer.Ordinal));
+                    new Dictionary<string, ILuaPatchResourceMigrationAdapter>(StringComparer.Ordinal),
+                options.ResourceLimits);
             return new LuaPatchPrepareResult(
                 LuaPatchPrepareStatus.Ready,
                 patch,
@@ -1459,8 +1463,10 @@ public sealed partial class LuaHost
         private readonly LuaHandle _previousLoaderData;
         private readonly LuaHandle _previousCache;
         private readonly LuaHandle _candidateLoader;
+        private readonly LuaTablePatchJournalBudget _tablePatchBudget;
         private readonly List<LuaHandle> _upvalueRoots;
         private readonly List<StatePathMutation> _statePathMutations = [];
+        private readonly List<LuaTablePatch> _stateTablePatches = [];
         private readonly List<ILuaPatchStateMigrationOperation> _stateMigrationOperations = [];
         private readonly List<ILuaPatchResourceMigrationOperation> _resourceMigrationOperations = [];
         private LuaHandle? _candidateValue;
@@ -1476,9 +1482,11 @@ public sealed partial class LuaHost
         public PatchModuleTransaction(
             LuaHost host,
             LuaPreparedPatchModule module,
-            LuaModuleRecord previousRecord)
+            LuaModuleRecord previousRecord,
+            LuaTablePatchJournalBudget tablePatchBudget)
         {
             _host = host;
+            _tablePatchBudget = tablePatchBudget;
             Module = module;
             PreviousRecord = previousRecord;
             _previousLoader = host.State.CreateHandle(previousRecord.Loader);
@@ -1609,6 +1617,11 @@ public sealed partial class LuaHost
                     }
 
                     committed = PreviousCache;
+                    _tablePatch = LuaTablePatch.Prepare(
+                        _host.State,
+                        PreviousCache.AsTable(),
+                        CandidateValue.AsTable(),
+                        _tablePatchBudget);
                     break;
                 default:
                     throw new InvalidOperationException(
@@ -1620,7 +1633,8 @@ public sealed partial class LuaHost
                 PreviousCache,
                 PreviousRecord.Module,
                 CandidateValue,
-                Module.Module);
+                Module.Module,
+                _stateTablePatches.Select(static patch => patch.ReplacementValue));
         }
 
         public void ApplyMigrations(
@@ -1683,6 +1697,28 @@ public sealed partial class LuaHost
                         _stateMigrationOperations.Add(operation);
                         operation.Apply();
                         SetCandidatePath(targetPath, operation.ResultValue);
+                        break;
+                    case LuaPatchStateRuleKind.PatchTable:
+                        if (!sourceFound || !candidateFound)
+                        {
+                            break;
+                        }
+
+                        if (previousValue.Kind != LuaValueKind.Table ||
+                            candidateValue.Kind != LuaValueKind.Table)
+                        {
+                            throw new LuaPatchMigrationSchemaException(
+                                LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                                $"PatchTable rule '{rule.TargetPath}' requires source and candidate tables.");
+                        }
+
+                        var tablePatch = LuaTablePatch.Prepare(
+                            _host.State,
+                            previousValue.AsTable(),
+                            candidateValue.AsTable(),
+                            _tablePatchBudget);
+                        _stateTablePatches.Add(tablePatch);
+                        SetCandidatePath(targetPath, previousValue);
                         break;
                     default:
                         throw new InvalidOperationException("The state migration rule is invalid.");
@@ -1821,12 +1857,12 @@ public sealed partial class LuaHost
 
         public void Publish()
         {
-            if (Module.ReloadOptions.CachePolicy == LuaModuleReloadCachePolicy.PatchExistingTable)
+            foreach (var tablePatch in _stateTablePatches)
             {
-                _tablePatch = LuaTablePatch.Apply(
-                    PreviousCache.AsTable(),
-                    CandidateValue.AsTable());
+                tablePatch.Publish();
             }
+
+            _tablePatch?.Publish();
 
             _host.State.SetLoadedModuleCacheValue(Module.ModuleName, CommittedValue);
             CurrentRecord = _host.State.RegisterLoadedModule(
@@ -1868,6 +1904,12 @@ public sealed partial class LuaHost
             if (_tablePatch is not null)
             {
                 Attempt(_tablePatch.Rollback);
+            }
+
+            for (var index = _stateTablePatches.Count - 1; index >= 0; index--)
+            {
+                var tablePatch = _stateTablePatches[index];
+                Attempt(tablePatch.Rollback);
             }
 
             Attempt(() => _host.State.RestoreLoadedModule(RootedPreviousRecord));
@@ -1956,6 +1998,16 @@ public sealed partial class LuaHost
             foreach (var mutation in _statePathMutations)
             {
                 Attempt(mutation.Dispose);
+            }
+
+            foreach (var tablePatch in _stateTablePatches)
+            {
+                Attempt(tablePatch.Dispose);
+            }
+
+            if (_tablePatch is not null)
+            {
+                Attempt(_tablePatch.Dispose);
             }
 
             if (_committedValue is not null)

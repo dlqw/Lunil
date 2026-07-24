@@ -662,6 +662,7 @@ public sealed class LuaHostTests
         Assert.True(host.RunUtf8(
             "package.path='mods/?.lua'; original=require('value')").Succeeded);
         files.Set("mods/value.lua", "return {keep=3,added=4}");
+        var handleCount = host.State.Heap.HandleCount;
 
         var reload = host.ReloadModule("value", new LuaModuleReloadOptions
         {
@@ -678,6 +679,7 @@ public sealed class LuaHostTests
         Assert.Equal(3, current.Execution.Values[1].AsInteger());
         Assert.True(current.Execution.Values[2].IsNil);
         Assert.Equal(4, current.Execution.Values[3].AsInteger());
+        Assert.Equal(handleCount, host.State.Heap.HandleCount);
     }
 
     [Fact]

@@ -12,6 +12,609 @@ namespace Lunil.Hosting.Tests;
 public sealed class LuaPatchMigrationTests
 {
     [Fact]
+    public void PatchTablePreservesIdentityAndAdoptsCandidateEntriesAndMetatable()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local mt={__index=function(_,key) if key=='version' then return 'old' end end}; " +
+                "return {legacy=1,state=setmetatable({keep=1,remove=2},mt)}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original_module=require('a'); " +
+            "original_state=original_module.state").Succeeded);
+        var originalModule = host.State.GetGlobal("original_module").AsTable();
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(
+            CreateBundle(
+                schema,
+                Entry(
+                    "a",
+                    "local mt={__index=function(_,key) if key=='version' then return 'new' end end}; " +
+                    "return {release=2,state=setmetatable({keep=3,added=4},mt)}")),
+            new LuaPatchPrepareOptions
+            {
+                ModuleOptions = new Dictionary<string, LuaModuleReloadOptions>
+                {
+                    ["a"] = new()
+                    {
+                        CachePolicy = LuaModuleReloadCachePolicy.PatchExistingTable,
+                    },
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var handleCount = host.State.Heap.HandleCount;
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        Assert.Equal(handleCount, host.State.Heap.HandleCount);
+        var currentModule = host.RunUtf8("return require('a')").Execution!.Values[0].AsTable();
+        Assert.Same(originalModule, currentModule);
+        var current = currentModule.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("state"u8))).AsTable();
+        Assert.Same(original, current);
+        var values = host.RunUtf8(
+            "local a=require('a'); local s=a.state; " +
+            "return a.legacy,a.release,s.keep,s.remove,s.added,s.version")
+            .Execution!.Values;
+        Assert.True(values[0].IsNil);
+        Assert.Equal(2, values[1].AsInteger());
+        Assert.Equal(3, values[2].AsInteger());
+        Assert.True(values[3].IsNil);
+        Assert.Equal(4, values[4].AsInteger());
+        Assert.Equal("new", values[5].AsString().ToString());
+    }
+
+    [Fact]
+    public void PatchTablePreservesWeakValueSemanticsOnTheRetainedTable()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {state={}}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original_state=require('a').state").Succeeded);
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {state=setmetatable({}, {__mode='v'})}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        Assert.True(Commit(host, prepared.PreparedPatch!).Succeeded);
+
+        var itemKey = LuaValue.FromString(host.State.Strings.GetOrCreate("item"u8));
+        var weakValue = host.State.CreateTable();
+        original.Set(itemKey, LuaValue.FromTable(weakValue));
+        host.State.Heap.CollectFull();
+
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a').state").Execution!.Values[0].AsTable());
+        Assert.False(weakValue.IsAlive);
+        Assert.True(original.Get(itemKey).IsNil);
+    }
+
+    [Fact]
+    public void PatchTableCanMoveAFormerStatePathWithoutChangingItsIdentity()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {oldState={value=1,removed=2}}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original_state=require('a').oldState").Succeeded);
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    SourcePath = "/oldState",
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {state={value=3,added=4}}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a').state").Execution!.Values[0].AsTable());
+        var values = host.RunUtf8(
+            "local s=require('a').state; return s.value,s.removed,s.added")
+            .Execution!.Values;
+        Assert.Equal(3, values[0].AsInteger());
+        Assert.True(values[1].IsNil);
+        Assert.Equal(4, values[2].AsInteger());
+    }
+
+    [Fact]
+    public void RootPatchTablePreservesTheModuleCacheIdentity()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {old=1}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original=require('a')").Succeeded);
+        var original = host.State.GetGlobal("original").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {added=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a')").Execution!.Values[0].AsTable());
+        var values = host.RunUtf8("local a=require('a'); return a.old,a.added")
+            .Execution!.Values;
+        Assert.True(values[0].IsNil);
+        Assert.Equal(2, values[1].AsInteger());
+    }
+
+    [Fact]
+    public void PatchTableHealthRollbackKeepsDetachedGraphAliveThroughLuaCollection()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local mt={marker={value='old-meta'}}; " +
+                "return {state=setmetatable({old={value=1}},mt)}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original_state=require('a').state").Succeeded);
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var oldValue = original.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("old"u8))).AsTable();
+        var oldMetatable = original.Metatable!;
+        var oldMetatableValue = oldMetatable.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("marker"u8))).AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry(
+                "a",
+                "local mt={marker={value='new-meta'}}; " +
+                "return {state=setmetatable({added=2},mt)}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var handleCount = host.State.Heap.HandleCount;
+        var healthChecked = false;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "patch-table-gc-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    host.State.Heap.CollectFull();
+                    Assert.True(oldValue.IsAlive);
+                    Assert.True(oldMetatable.IsAlive);
+                    Assert.True(oldMetatableValue.IsAlive);
+                    Assert.True(original.Get(LuaValue.FromString(
+                        host.State.Strings.GetOrCreate("old"u8))).IsNil);
+                    healthChecked = true;
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(healthChecked);
+        Assert.Equal(handleCount, host.State.Heap.HandleCount);
+        var current = host.RunUtf8("return require('a').state").Execution!.Values[0].AsTable();
+        Assert.Same(original, current);
+        Assert.Same(oldValue, current.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("old"u8))).AsTable());
+        Assert.Same(oldMetatable, current.Metatable);
+        Assert.True(current.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("added"u8))).IsNil);
+    }
+
+    [Fact]
+    public void PatchTableMigratesDetachedMetatableAndFinalizerFunctionsAndRollsThemBack()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function read() return 'old' end; " +
+                "local function finalize() return 'old-finalizer' end; " +
+                "return {state=setmetatable({}, {__index=read,__gc=finalize})}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; local s=require('a').state; " +
+            "original_state=s; saved_index=getmetatable(s).__index; " +
+            "saved_finalizer=getmetatable(s).__gc").Succeeded);
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var originalMetatable = original.Metatable;
+        var saved = host.State.GetGlobal("saved_index").TryGetClosure()!;
+        var originalVersion = saved.FunctionVersion;
+        var savedFinalizer = host.State.GetGlobal("saved_finalizer").TryGetClosure()!;
+        var originalFinalizerVersion = savedFinalizer.FunctionVersion;
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry(
+                "a",
+                "local function read() return 'new' end; " +
+                "local function finalize() return 'new-finalizer' end; " +
+                "return {state=setmetatable({}, {__index=read,__gc=finalize})}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var healthChecked = false;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "patch-table-function-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    var values = host.RunUtf8(
+                        "local mt=getmetatable(require('a').state); " +
+                        "return saved_index(),require('a').state.version," +
+                        "saved_finalizer(),mt.__gc()")
+                        .Execution!.Values;
+                    Assert.Equal("new", values[0].AsString().ToString());
+                    Assert.Equal("new", values[1].AsString().ToString());
+                    Assert.Equal("new-finalizer", values[2].AsString().ToString());
+                    Assert.Equal("new-finalizer", values[3].AsString().ToString());
+                    Assert.NotSame(originalVersion, saved.FunctionVersion);
+                    Assert.NotSame(
+                        originalFinalizerVersion,
+                        savedFinalizer.FunctionVersion);
+                    healthChecked = true;
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(healthChecked);
+        Assert.Same(originalVersion, saved.FunctionVersion);
+        Assert.Same(originalFinalizerVersion, savedFinalizer.FunctionVersion);
+        Assert.Same(originalMetatable, original.Metatable);
+        var restored = host.RunUtf8(
+            "local mt=getmetatable(require('a').state); " +
+            "return saved_index(),require('a').state.version,saved_finalizer(),mt.__gc()")
+            .Execution!.Values;
+        Assert.Equal("old", restored[0].AsString().ToString());
+        Assert.Equal("old", restored[1].AsString().ToString());
+        Assert.Equal("old-finalizer", restored[2].AsString().ToString());
+        Assert.Equal("old-finalizer", restored[3].AsString().ToString());
+    }
+
+    [Fact]
+    public void PatchTableRequiresTablesAndRestoresTheOldModuleOnMismatch()
+    {
+        static LuaPatchMigrationSchema PatchSchema() => Schema(
+            new LuaPatchModuleMigrationSchema
+            {
+                ModuleName = "a",
+                State =
+                [
+                    new LuaPatchStateRule
+                    {
+                        TargetPath = "/state",
+                        Kind = LuaPatchStateRuleKind.PatchTable,
+                    },
+                ],
+            });
+
+        using var oldMismatch = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {state=41}",
+        });
+        Assert.True(oldMismatch.RunUtf8(
+            "package.path='mods/?.lua'; require('a')").Succeeded);
+        var preparedOld = oldMismatch.PreparePatch(CreateBundle(
+            PatchSchema(),
+            Entry("a", "return {state={value=2}}")));
+        Assert.True(preparedOld.Succeeded, preparedOld.Message);
+        var oldResult = Commit(oldMismatch, preparedOld.PreparedPatch!);
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, oldResult.Status);
+        Assert.Contains("requires source and candidate tables", oldResult.Message);
+        Assert.Equal(41, oldMismatch.RunUtf8("return require('a').state")
+            .Execution!.Values[0].AsInteger());
+
+        using var candidateMismatch = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {state={value=1}}",
+        });
+        Assert.True(candidateMismatch.RunUtf8(
+            "package.path='mods/?.lua'; require('a')").Succeeded);
+        var preparedCandidate = candidateMismatch.PreparePatch(CreateBundle(
+            PatchSchema(),
+            Entry("a", "return {state=false}")));
+        Assert.True(preparedCandidate.Succeeded, preparedCandidate.Message);
+        var candidateResult = Commit(candidateMismatch, preparedCandidate.PreparedPatch!);
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, candidateResult.Status);
+        Assert.Equal(1, candidateMismatch.RunUtf8("return require('a').state.value")
+            .Execution!.Values[0].AsInteger());
+    }
+
+    [Fact]
+    public void OptionalPatchTableDoesNothingWhenEitherPathIsAbsent()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {legacy=1}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; require('a')").Succeeded);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                    Required = false,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {release=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        var values = host.RunUtf8("local a=require('a'); return a.legacy,a.release,a.state")
+            .Execution!.Values;
+        Assert.True(values[0].IsNil);
+        Assert.Equal(2, values[1].AsInteger());
+        Assert.True(values[2].IsNil);
+    }
+
+    [Fact]
+    public void PatchTableJournalLimitFailsClosedBeforePublication()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {state={old=1}}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original_state=require('a').state").Succeeded);
+        var original = host.State.GetGlobal("original_state").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(
+            CreateBundle(schema, Entry("a", "return {state={added=2}}")),
+            new LuaPatchPrepareOptions
+            {
+                ResourceLimits = LuaPatchResourceLimits.Default with
+                {
+                    MaximumTablePatchEntryCount = 1,
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+        Assert.Contains(
+            nameof(LuaPatchResourceLimits.MaximumTablePatchEntryCount),
+            commit.Message,
+            StringComparison.Ordinal);
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a').state").Execution!.Values[0].AsTable());
+        Assert.Equal(1, host.RunUtf8("return require('a').state.old")
+            .Execution!.Values[0].AsInteger());
+    }
+
+    [Fact]
+    public void PatchTableAndAtomicCacheShareOneAggregateJournalLimit()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {state={old=1},legacy=1}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original=require('a'); " +
+            "original_state=original.state").Succeeded);
+        var original = host.State.GetGlobal("original").AsTable();
+        var originalState = host.State.GetGlobal("original_state").AsTable();
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(
+            CreateBundle(
+                schema,
+                Entry("a", "return {state={added=2},release=2}")),
+            new LuaPatchPrepareOptions
+            {
+                ModuleOptions = new Dictionary<string, LuaModuleReloadOptions>
+                {
+                    ["a"] = new()
+                    {
+                        CachePolicy = LuaModuleReloadCachePolicy.PatchExistingTable,
+                    },
+                },
+                ResourceLimits = LuaPatchResourceLimits.Default with
+                {
+                    // The nested table reserves two entries and the root needs four more.
+                    MaximumTablePatchEntryCount = 5,
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.CachePolicyFailed, commit.Status);
+        Assert.Contains(
+            nameof(LuaPatchResourceLimits.MaximumTablePatchEntryCount),
+            commit.Message,
+            StringComparison.Ordinal);
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a')").Execution!.Values[0].AsTable());
+        Assert.Same(
+            originalState,
+            host.RunUtf8("return require('a').state").Execution!.Values[0].AsTable());
+        var values = host.RunUtf8(
+            "local a=require('a'); return a.legacy,a.release,a.state.old,a.state.added")
+            .Execution!.Values;
+        Assert.Equal(1, values[0].AsInteger());
+        Assert.True(values[1].IsNil);
+        Assert.Equal(1, values[2].AsInteger());
+        Assert.True(values[3].IsNil);
+    }
+
+    [Fact]
+    public void StateSchemaRejectsAncestorAndDescendantTargets()
+    {
+        var nested = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state/value",
+                    Kind = LuaPatchStateRuleKind.Preserve,
+                },
+            ],
+        });
+        var nestedError = Assert.Throws<LuaPatchMigrationSchemaException>(() =>
+            LuaPatchMigrationSchemaSerializer.Serialize(nested));
+        Assert.Equal(LuaPatchMigrationSchemaErrorCode.DuplicateRule, nestedError.Code);
+
+        var root = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            State =
+            [
+                new LuaPatchStateRule
+                {
+                    TargetPath = "",
+                    Kind = LuaPatchStateRuleKind.PatchTable,
+                },
+                new LuaPatchStateRule
+                {
+                    TargetPath = "/state",
+                    Kind = LuaPatchStateRuleKind.Preserve,
+                },
+            ],
+        });
+        var rootError = Assert.Throws<LuaPatchMigrationSchemaException>(() =>
+            LuaPatchMigrationSchemaSerializer.Serialize(root));
+        Assert.Equal(LuaPatchMigrationSchemaErrorCode.DuplicateRule, rootError.Code);
+    }
+
+    [Fact]
     public void CanonicalSignedSchemaPreservesSelectedStateIntoReplacementModule()
     {
         using var host = CreateHost(new Dictionary<string, string>

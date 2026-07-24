@@ -287,6 +287,32 @@ State paths use RFC 6901 JSON Pointer escaping and address string-keyed tables b
 engine also journals every path write, so a later module failure restores both the Lua graph and host
 payload mutation.
 
+`PatchTable` retains the previous table object at the target path while atomically replacing its raw
+entries and metatable with the candidate table's contents:
+
+```csharp
+new LuaPatchStateRule
+{
+    TargetPath = "/match/state",
+    Kind = LuaPatchStateRuleKind.PatchTable,
+}
+```
+
+Both source and candidate values must be tables. The retained identity remains valid for game-engine
+registries, userdata references, and aliases outside `package.loaded`; removed entries disappear,
+candidate entries and weak-table mode take effect, and compatible functions reachable only through
+the detached candidate table or its metatable participate in function-version migration. The
+transaction roots previous and candidate keys, values, metatables, and the detached candidate table
+with Lua handles until publication or rollback is final. A health check may therefore run a full Lua
+collection without losing the graph needed for exact rollback. Candidate weak entries retained by
+that journal become collectible after the transaction finishes.
+
+State-rule target paths must be disjoint: duplicate paths and ancestor/descendant pairs are rejected
+when the canonical schema is serialized or read. Use one rule for an owning table rather than
+separate rules for both that table and one of its descendants. `PatchTable` can be combined with the
+module-level `PatchExistingTable` cache policy to preserve both the module cache table and selected
+nested table identities.
+
 Resource rules cover `Coroutine`, `Timer`, `EventSubscription`, and `Task`, with `Continue`, `Cancel`,
 `Restart`, `Drain`, or `RejectIfActive` dispositions. For a runtime-owned coroutine, `Continue`
 installs the previous thread at the same candidate state path, preserving its identity and suspended
@@ -533,11 +559,14 @@ restore it before returning a terminal resolution.
 Verified input remains bounded after bundle decoding. `LuaPatchPrepareOptions.ResourceLimits` and
 `LuaPatchCoordinatorOptions.ResourceLimits` accept a `LuaPatchResourceLimits` value. The defaults
 allow at most 512 patch modules, a 1 MiB migration schema, 512 migration modules, 8,192 state rules,
-8,192 resource rules, 16 rings, 256 targets per ring, and 1,024 targets per rollout. Exceeding a
-limit throws `LuaPatchResourceLimitException` before candidate execution or update-window
-acquisition. Bundle byte/entry limits, migration limits, update-window and commit pause deadlines,
-journal byte/line/entry limits, and the normal Lua execution budget form separate layers; increasing
-one does not disable the others.
+8,192 resource rules, 65,536 aggregate table-patch journal entries, 16 rings, 256 targets per ring,
+and 1,024 targets per rollout. Static bundle, schema, ring, and rollout limit violations throw
+`LuaPatchResourceLimitException` before candidate execution or update-window acquisition. The table
+journal bound is checked after candidate tables exist but before publication; it is shared by
+`PatchTable` state rules and module-level `PatchExistingTable`, and an over-limit commit fails closed
+with `MigrationFailed` or `CachePolicyFailed` while retaining the old graph. Bundle byte/entry limits,
+migration limits, update-window and commit pause deadlines, journal byte/line/entry limits, and the
+normal Lua execution budget form separate layers; increasing one does not disable the others.
 
 Hot-update diagnostics use the stable `LuaPatchTelemetry.ActivitySourceName` and
 `LuaPatchTelemetry.MeterName`, both `Lunil.Hosting.HotUpdate`. Activities are emitted for:

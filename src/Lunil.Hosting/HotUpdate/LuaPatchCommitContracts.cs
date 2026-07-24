@@ -106,6 +106,7 @@ public sealed class LuaPreparedPatch
         string? expectedStateSchemaVersion,
         IReadOnlyDictionary<string, ILuaPatchStateMigrationAdapter> stateMigrationAdapters,
         IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceMigrationAdapters,
+        LuaPatchResourceLimits resourceLimits,
         ILuaPatchReplayStore? replayStore = null,
         LuaPatchReplayReservation? replayReservation = null)
     {
@@ -117,6 +118,7 @@ public sealed class LuaPreparedPatch
         ExpectedStateSchemaVersion = expectedStateSchemaVersion;
         StateMigrationAdapters = stateMigrationAdapters;
         ResourceMigrationAdapters = resourceMigrationAdapters;
+        ResourceLimits = resourceLimits;
         ReplayStore = replayStore;
         ReplayReservation = replayReservation;
     }
@@ -141,8 +143,10 @@ public sealed class LuaPreparedPatch
     { get; }
 
     internal IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter>
-    ResourceMigrationAdapters
+        ResourceMigrationAdapters
     { get; }
+
+    internal LuaPatchResourceLimits ResourceLimits { get; }
 
     internal ILuaPatchReplayStore? ReplayStore { get; }
 
@@ -159,6 +163,7 @@ public sealed class LuaPreparedPatch
             ExpectedStateSchemaVersion,
             StateMigrationAdapters,
             ResourceMigrationAdapters,
+            ResourceLimits,
             replayStore,
             replayReservation);
 }
