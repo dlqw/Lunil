@@ -96,6 +96,9 @@ public enum LuaClrErrorCode : byte
 
     /// <summary>The supplied ref/out arguments are invalid.</summary>
     InvalidRefOut,
+
+    /// <summary>A task belongs to an inactive hot-update generation.</summary>
+    AsyncGenerationClosed,
 }
 
 /// <summary>An exception with a stable CLR bridge error category.</summary>
@@ -207,12 +210,14 @@ public sealed record LuaClrInvocationResult(LuaValue ReturnValue, ImmutableArray
 public sealed class LuaClrTask : IDisposable
 {
     private readonly Task _task;
+    private readonly LuaClrTaskRegistration _registration;
     private int _disposed;
 
     internal LuaClrTask(Task task, LuaClrBridge bridge)
     {
         _task = task;
         Bridge = bridge;
+        _registration = bridge.CreateTaskRegistration();
     }
 
     /// <summary>Gets the underlying task for host integration.</summary>
@@ -227,18 +232,31 @@ public sealed class LuaClrTask : IDisposable
     /// <summary>Gets whether the task faulted.</summary>
     public bool IsFaulted => _task.IsFaulted;
 
-    /// <summary>Waits for completion and releases the wrapper.</summary>
+    /// <summary>Gets whether the wrapper has been disposed.</summary>
+    public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    /// <summary>Gets whether the task result is admitted by the live patch generation.</summary>
+    public bool IsActive => !IsDisposed && Bridge.IsTaskActive(_registration);
+
+    /// <summary>Releases the wrapper without cancelling the underlying task.</summary>
     public void Dispose()
     {
-        Interlocked.Exchange(ref _disposed, 1);
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            Bridge.CloseTaskRegistration(_registration);
+        }
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Task result metadata is preserved by the consuming application.")]
     internal object? GetResult()
     {
+        EnsureConsumable();
         _task.GetAwaiter().GetResult();
+        EnsureConsumable();
         return _task.GetType().GetProperty("Result")?.GetValue(_task);
     }
+
+    internal void EnsureConsumable() => Bridge.EnsureTaskConsumable(_registration);
 }
 
 /// <summary>Bridge-owned cancellation source passed to allowlisted CLR calls.</summary>
@@ -273,15 +291,18 @@ public sealed class LuaClrCancellation : IDisposable
 /// <summary>Disposable event/delegate subscription owned by one Lua state.</summary>
 public sealed class LuaClrSubscription : IDisposable
 {
+    private readonly LuaClrBridge _bridge;
     private readonly LuaClrCallbackRegistration _registration;
     private LuaHandle? _callbackHandle;
     private int _disposed;
 
     internal LuaClrSubscription(
+        LuaClrBridge bridge,
         LuaClrCallbackRegistration registration,
         LuaValue callback,
         LuaHandle callbackHandle)
     {
+        _bridge = bridge;
         _registration = registration;
         Callback = callback;
         _callbackHandle = callbackHandle;
@@ -294,7 +315,7 @@ public sealed class LuaClrSubscription : IDisposable
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     /// <summary>Gets whether the callback is attached and admitted by the live patch generation.</summary>
-    public bool IsActive => !IsDisposed && _registration.IsSubscriptionActive;
+    public bool IsActive => !IsDisposed && _bridge.IsCallbackActive(_registration);
 
     /// <summary>Unsubscribes at most once.</summary>
     public void Dispose()
@@ -303,7 +324,7 @@ public sealed class LuaClrSubscription : IDisposable
         {
             try
             {
-                _registration.Close();
+                _bridge.CloseCallbackRegistration(_registration);
             }
             finally
             {
@@ -753,13 +774,14 @@ public sealed partial class LuaClrBridge
                 () => eventInfo.AddEventHandler(instance, handler),
                 () => eventInfo.RemoveEventHandler(instance, handler));
             return new LuaClrSubscription(
+                this,
                 registration,
                 callback,
                 handle);
         }
         catch
         {
-            registration.Close();
+            CloseCallbackRegistration(registration);
             handle.Dispose();
             throw;
         }
@@ -774,9 +796,26 @@ public sealed partial class LuaClrBridge
             throw new LuaClrException(LuaClrErrorCode.AsyncFailed, "A CLR task userdata is required.");
         }
 
+        if (!ReferenceEquals(task.Bridge, this))
+        {
+            throw new LuaClrException(
+                LuaClrErrorCode.AsyncFailed,
+                "The CLR task belongs to a different Lua state.");
+        }
+
         try
         {
-            return ToLuaValue(task.GetResult());
+            var result = task.GetResult();
+            lock (_callbackGate)
+            {
+                task.EnsureConsumable();
+                return ToLuaValue(result);
+            }
+        }
+        catch (LuaClrException exception) when (
+            exception.Code == LuaClrErrorCode.AsyncGenerationClosed)
+        {
+            throw;
         }
         catch (Exception exception)
         {

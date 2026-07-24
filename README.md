@@ -32,9 +32,9 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.16` hot-update preview; it adds coordinated target
-> isolation, bounded preparation backpressure, and atomic CLR callback generation fencing and is
-> not the stable package line.
+> The current source tree is the `0.12.0-alpha.17` hot-update preview; it adds coordinated target
+> isolation, bounded preparation backpressure, and atomic CLR callback/task generation fencing and
+> is not the stable package line.
 
 ## Performance
 

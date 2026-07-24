@@ -114,6 +114,10 @@ namespace Lunil.Hosting
         public int PendingCallbackCount { get => throw null; }
         public int QuiescedCallbackCount { get => throw null; }
         public int StaleCallbackCount { get => throw null; }
+        public int ActiveTaskCount { get => throw null; }
+        public int PendingTaskCount { get => throw null; }
+        public int QuiescedTaskCount { get => throw null; }
+        public int StaleTaskCount { get => throw null; }
         public Lunil.Runtime.LuaState State { get => throw null; }
         public Lunil.Hosting.LuaClrOptions Options { get => throw null; }
         public bool IsEnabled { get => throw null; }
@@ -187,7 +191,8 @@ namespace Lunil.Hosting
         SubscriptionClosed = 13,
         AsyncFailed = 14,
         ThreadDenied = 15,
-        InvalidRefOut = 16
+        InvalidRefOut = 16,
+        AsyncGenerationClosed = 17
     }
 
     public sealed class LuaClrException : System.Exception
@@ -301,6 +306,8 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrBridge Bridge { get => throw null; }
         public bool IsCompleted { get => throw null; }
         public bool IsFaulted { get => throw null; }
+        public bool IsDisposed { get => throw null; }
+        public bool IsActive { get => throw null; }
         public void Dispose() { }
     }
 

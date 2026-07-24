@@ -73,6 +73,14 @@ rollback 时重新订阅；失败 candidate 的 handler 会被解除。可通过
 检查生命周期，并将 `LuaClrBridge` 的 `ActiveCallbackCount`、`PendingCallbackCount`、
 `QuiescedCallbackCount` 和 `StaleCallbackCount` 导出为 gauge。
 
+Module frame 调用 CLR code 时创建的 `LuaClrTask` wrapper 使用同一 generation barrier。
+`clr.await` 会在等待前和结果转换前分别检查 admission：发布后旧 task 变为 stale，candidate task
+在发布前对外保持 pending，但所属 candidate loader 可在 staging 时等待自己的 task；rollback 只恢复
+旧 generation。其他 inactive wrapper 以 `AsyncGenerationClosed` fail closed；底层 CLR `Task` 不会被自动取消。没有运行中 module frame
+的 host-side CLR call 仍属于 host，不参与 fencing。Host integration 直接消费 `Task` 前应检查
+`LuaClrTask.IsActive`，并监控 bridge 的 `ActiveTaskCount`、`PendingTaskCount`、
+`QuiescedTaskCount` 与 `StaleTaskCount` gauge。
+
 ## Ownership 与部署
 
 `LuaClrObject` 默认拥有构造出的 `IDisposable` instance，并且最多转发一次 `Dispose`；Host 自己拥有
