@@ -99,6 +99,7 @@ public sealed partial class LuaHost : IDisposable
         {
             Interpreter = Options.Execution,
         });
+        ClrBridge.SetTimerExecutionOptions(Options.Execution);
 
         if (Options.InstallStandardLibrary)
         {
@@ -226,6 +227,26 @@ public sealed partial class LuaHost : IDisposable
         CancellationToken cancellationToken = default) =>
         Workspace.AnalyzeAsync(roots, cancellationToken);
 
+    /// <summary>Dispatches due CLR timers while holding the host execution boundary.</summary>
+    public int DispatchClrTimers()
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return ClrBridge.DispatchTimers();
+        }
+    }
+
+    /// <summary>Dispatches at most <paramref name="maximumCallbacks"/> due CLR timers.</summary>
+    public int DispatchClrTimers(int maximumCallbacks)
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return ClrBridge.DispatchTimers(maximumCallbacks);
+        }
+    }
+
     public void Dispose()
     {
         lock (_executionGate)
@@ -243,6 +264,7 @@ public sealed partial class LuaHost : IDisposable
             }
 
             jit?.Dispose();
+            ClrBridge.DisposeTimers();
             Workspace.Dispose();
         }
     }

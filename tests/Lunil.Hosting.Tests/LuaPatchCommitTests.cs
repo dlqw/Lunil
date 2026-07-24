@@ -492,6 +492,207 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
+    public void CommittedPatchPausesOldTimerAndPublishesCandidateTimer()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateClrTimerHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function() timer_result='old' end,100)}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        LuaClrTimer? candidateTimer = null;
+        (int Active, int Pending, int Quiesced, int Stale)? staged = null;
+        host.State.SetGlobal(
+            "capture_timer",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_timer",
+                (_, arguments) =>
+                {
+                    candidateTimer = TimerPayload(arguments[0]);
+                    Assert.False(candidateTimer.IsScheduled);
+                    Assert.Equal(
+                        LuaClrErrorCode.TimerGenerationClosed,
+                        Assert.Throws<LuaClrException>(oldTimer.Cancel).Code);
+                    Assert.False(oldTimer.IsDisposed);
+                    staged = (
+                        host.ClrBridge.ActiveTimerCount,
+                        host.ClrBridge.PendingTimerCount,
+                        host.ClrBridge.QuiescedTimerCount,
+                        host.ClrBridge.StaleTimerCount);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local timer=clr.timer(function() timer_result='new' end,100); " +
+            "capture_timer(timer); return {timer=timer}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+        using (opened.Window!)
+        {
+            Assert.True(host.CommitPatch(prepared.PreparedPatch!, opened.Window!).Succeeded);
+        }
+
+        Assert.Equal((0, 1, 1, 0), staged);
+        Assert.False(oldTimer.IsActive);
+        Assert.False(oldTimer.IsScheduled);
+        Assert.True(candidateTimer!.IsActive);
+        Assert.Equal(1, host.ClrBridge.ActiveTimerCount);
+        Assert.Equal(1, host.ClrBridge.StaleTimerCount);
+        time.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("new", host.State.GetGlobal("timer_result").AsString().ToString());
+    }
+
+    [Fact]
+    public void FailedPatchRestoresOldTimerAndRejectsCandidateTimer()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateClrTimerHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function() timer_result='old' end,100)}",
+            ["mods/b.lua"] = "return {value=1}",
+        }, time);
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; require('a'); require('b')").Succeeded);
+        var oldTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        LuaClrTimer? candidateTimer = null;
+        host.State.SetGlobal(
+            "capture_timer",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_timer",
+                (_, arguments) =>
+                {
+                    candidateTimer = TimerPayload(arguments[0]);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(
+            Entry(
+                "a",
+                "local timer=clr.timer(function() timer_result='new' end,100); " +
+                "capture_timer(timer); return {timer=timer}"),
+            Entry("b", "error('rollback')", "a")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+        LuaPatchCommitResult commit;
+        using (opened.Window!)
+        {
+            commit = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.Equal(LuaPatchCommitStatus.ExecutionFailed, commit.Status);
+        Assert.True(oldTimer.IsActive);
+        Assert.True(oldTimer.IsScheduled);
+        Assert.False(candidateTimer!.IsActive);
+        Assert.False(candidateTimer.IsScheduled);
+        time.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("old", host.State.GetGlobal("timer_result").AsString().ToString());
+    }
+
+    [Fact]
+    public void HealthRollbackRestoresPreviousTimerGeneration()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateClrTimerHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function() timer_result='old' end,100)}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        LuaClrTimer? candidateTimer = null;
+        host.State.SetGlobal(
+            "capture_timer",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_timer",
+                (_, arguments) =>
+                {
+                    candidateTimer = TimerPayload(arguments[0]);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local timer=clr.timer(function() timer_result='new' end,100); " +
+            "capture_timer(timer); return {timer=timer}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "timer-health-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    Assert.False(oldTimer.IsActive);
+                    Assert.True(candidateTimer!.IsActive);
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(oldTimer.IsActive);
+        Assert.True(oldTimer.IsScheduled);
+        Assert.False(candidateTimer!.IsActive);
+        Assert.False(candidateTimer.IsScheduled);
+        time.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("old", host.State.GetGlobal("timer_result").AsString().ToString());
+    }
+
+    [Fact]
+    public void HostOwnedTimerIsNotFencedByModulePatch()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateClrTimerHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var callback = host.RunUtf8(
+            "return function() host_timer_result='host' end",
+            "host-owned-timer")
+            .Execution!.Values[0];
+        using var timer = host.ClrBridge.ScheduleTimer(
+            callback,
+            new LuaClrTimerOptions { DueTime = TimeSpan.FromMilliseconds(100) });
+        var prepared = host.PreparePatch(CreateBundle(Entry("a", "return {value=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+        using (opened.Window!)
+        {
+            Assert.True(host.CommitPatch(prepared.PreparedPatch!, opened.Window!).Succeeded);
+        }
+
+        Assert.True(timer.IsActive);
+        Assert.True(timer.IsScheduled);
+        time.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("host", host.State.GetGlobal("host_timer_result").AsString().ToString());
+    }
+
+    [Fact]
     public void FailedPatchRestoresOldClrTasksAndRejectsCandidateTasks()
     {
         var typeName = typeof(PatchTaskSource).FullName!;
@@ -1122,8 +1323,46 @@ public sealed class LuaPatchCommitTests
         });
     }
 
+    private static LuaHost CreateClrTimerHost(
+        IReadOnlyDictionary<string, string> files,
+        ManualTimeProvider timeProvider) => new(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            StandardLibrary = LuaHostCapabilityProfiles.Create(LuaHostProfile.Restricted) with
+            {
+                FileSystem = new MutableMemoryFileSystem(files),
+            },
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.Timers,
+                InstallGlobalModule = true,
+                TimeProvider = timeProvider,
+            },
+        });
+
     private static LuaClrTask TaskPayload(LuaValue value) =>
         Assert.IsType<LuaClrTask>(value.AsUserdata().Payload);
+
+    private static LuaClrTimer TimerPayload(LuaValue value) =>
+        Assert.IsType<LuaClrTimer>(value.AsUserdata().Payload);
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 7, 24, 0, 0, 0, TimeSpan.Zero);
+        private long _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan value)
+        {
+            _now += value;
+            _timestamp += value.Ticks;
+        }
+    }
 
     public sealed class CallbackEventSource
     {

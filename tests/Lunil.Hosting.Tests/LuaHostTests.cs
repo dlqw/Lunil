@@ -277,7 +277,8 @@ public sealed class LuaHostTests
             state,
             new LuaClrOptions
             {
-                Capabilities = (LuaClrCapabilities)128,
+                Capabilities = LuaClrCapabilities.Timers,
+                MaximumTimerCount = 0,
             }));
         Assert.Throws<ArgumentOutOfRangeException>(() => new LuaClrBridge(
             state,

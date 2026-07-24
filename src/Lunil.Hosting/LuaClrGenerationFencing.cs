@@ -415,6 +415,8 @@ public sealed partial class LuaClrBridge
         private readonly List<LuaClrCallbackRegistration> _retired = [];
         private readonly List<LuaClrTaskRegistration> _pendingTasks = [];
         private readonly List<LuaClrTaskRegistration> _retiredTasks = [];
+        private readonly List<LuaClrTimerRegistration> _pendingTimers = [];
+        private readonly List<LuaClrTimerRegistration> _retiredTimers = [];
         private readonly HashSet<LuaThread> _pendingThreads =
             new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<LuaThread> _retiredThreads =
@@ -454,6 +456,50 @@ public sealed partial class LuaClrBridge
             if (registration.State == LuaClrGenerationState.Pending)
             {
                 _pendingTasks.Add(registration);
+            }
+        }
+
+        public void Track(LuaClrTimerRegistration registration)
+        {
+            if (registration.State == LuaClrGenerationState.Pending)
+            {
+                _pendingTimers.Add(registration);
+            }
+        }
+
+        public void TransferTimerSchedule(
+            LuaClrTimer previousTimer,
+            LuaClrTimer candidateTimer,
+            LuaIrModule candidateModule)
+        {
+            ArgumentNullException.ThrowIfNull(previousTimer);
+            ArgumentNullException.ThrowIfNull(candidateTimer);
+            ArgumentNullException.ThrowIfNull(candidateModule);
+            lock (_bridge._callbackGate)
+            {
+                ThrowIfCompleted();
+                if (!ReferenceEquals(previousTimer.Bridge, _bridge) ||
+                    !ReferenceEquals(candidateTimer.Bridge, _bridge) ||
+                    !_candidateModules.Contains(candidateModule))
+                {
+                    throw new InvalidOperationException(
+                        "A timer schedule can be transferred only within its owning state.");
+                }
+
+                var previous = previousTimer.Registration;
+                var candidate = candidateTimer.Registration;
+                if (!_retiredTimers.Contains(previous) ||
+                    previous.State != LuaClrGenerationState.Quiesced ||
+                    !_pendingTimers.Contains(candidate) ||
+                    candidate.State != LuaClrGenerationState.Pending ||
+                    !ReferenceEquals(candidate.Module, candidateModule))
+                {
+                    throw new InvalidOperationException(
+                        "Timer migration requires quiesced previous and pending candidate timers.");
+                }
+
+                candidateTimer.AdoptScheduleForMigration(
+                    previousTimer.CaptureScheduleForMigration());
             }
         }
 
@@ -522,6 +568,18 @@ public sealed partial class LuaClrBridge
                 }
             }
 
+            var now = _bridge._options.TimeProvider.GetTimestamp();
+            foreach (var registration in _bridge._timerRegistrations)
+            {
+                if (registration.State == LuaClrGenerationState.Active &&
+                    registration.Module is { } module && _previousModules.Contains(module))
+                {
+                    registration.Timer.Suspend(now, _bridge._options.TimeProvider);
+                    registration.State = LuaClrGenerationState.Quiesced;
+                    _retiredTimers.Add(registration);
+                }
+            }
+
             foreach (var thread in _bridge._state.Heap.Objects.OfType<LuaThread>())
             {
                 StageThread(thread);
@@ -567,6 +625,25 @@ public sealed partial class LuaClrBridge
                     if (registration.State == LuaClrGenerationState.Quiesced)
                     {
                         registration.State = LuaClrGenerationState.Stale;
+                    }
+                }
+
+                var now = _bridge._options.TimeProvider.GetTimestamp();
+                foreach (var registration in _pendingTimers)
+                {
+                    if (registration.State == LuaClrGenerationState.Pending)
+                    {
+                        registration.State = LuaClrGenerationState.Active;
+                        registration.Timer.Activate(now, _bridge._options.TimeProvider);
+                    }
+                }
+
+                foreach (var registration in _retiredTimers)
+                {
+                    if (registration.State == LuaClrGenerationState.Quiesced)
+                    {
+                        registration.State = LuaClrGenerationState.Stale;
+                        registration.Timer.Retire();
                     }
                 }
 
@@ -658,6 +735,26 @@ public sealed partial class LuaClrBridge
                         LuaClrGenerationState.Stale)
                     {
                         registration.State = LuaClrGenerationState.Active;
+                    }
+                }
+
+                var now = _bridge._options.TimeProvider.GetTimestamp();
+                foreach (var registration in _pendingTimers)
+                {
+                    if (registration.State != LuaClrGenerationState.Closed)
+                    {
+                        registration.State = LuaClrGenerationState.Stale;
+                        registration.Timer.Retire();
+                    }
+                }
+
+                foreach (var registration in _retiredTimers)
+                {
+                    if (registration.State is LuaClrGenerationState.Quiesced or
+                            LuaClrGenerationState.Stale)
+                    {
+                        registration.State = LuaClrGenerationState.Active;
+                        registration.Timer.Activate(now, _bridge._options.TimeProvider);
                     }
                 }
 

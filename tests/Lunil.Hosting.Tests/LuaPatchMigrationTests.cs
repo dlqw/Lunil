@@ -670,6 +670,158 @@ public sealed class LuaPatchMigrationTests
     }
 
     [Fact]
+    public void RuntimeTimerContinuePreservesRemainingDelayAndUsesCandidateCallback()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function(tick) timer_result='old'..tick end,0,100)}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var previousTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("old1", host.State.GetGlobal("timer_result").AsString().ToString());
+        time.Advance(TimeSpan.FromMilliseconds(40));
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "heartbeat",
+                    Kind = LuaPatchResourceKind.Timer,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/timer",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry(
+                "a",
+                "return {timer=clr.timer(function(tick) timer_result='new'..tick end,999,100)}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.True(commit.Succeeded, commit.Message);
+        var candidateTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        Assert.NotSame(previousTimer, candidateTimer);
+        Assert.False(previousTimer.IsActive);
+        Assert.True(candidateTimer.IsActive);
+        time.Advance(TimeSpan.FromMilliseconds(59));
+        Assert.Equal(0, host.DispatchClrTimers());
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("new2", host.State.GetGlobal("timer_result").AsString().ToString());
+    }
+
+    [Fact]
+    public void RuntimeTimerRejectIfActiveAbortsAndRestoresPreviousSchedule()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function() timer_result='old' end,100)}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var previousTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        time.Advance(TimeSpan.FromMilliseconds(25));
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "heartbeat",
+                    Kind = LuaPatchResourceKind.Timer,
+                    Disposition = LuaPatchResourceDisposition.RejectIfActive,
+                    StatePath = "/timer",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry(
+                "a",
+                "return {timer=clr.timer(function() timer_result='new' end,100)}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+        Assert.True(previousTimer.IsActive);
+        Assert.True(previousTimer.IsScheduled);
+        time.Advance(TimeSpan.FromMilliseconds(74));
+        Assert.Equal(0, host.DispatchClrTimers());
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal(1, host.DispatchClrTimers());
+        Assert.Equal("old", host.State.GetGlobal("timer_result").AsString().ToString());
+    }
+
+    [Fact]
+    public void RuntimeTimerContinueRequiresStatePathAndCandidateReplacement()
+    {
+        var missingPath = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "heartbeat",
+                    Kind = LuaPatchResourceKind.Timer,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                },
+            ],
+        });
+        var schemaError = Assert.Throws<LuaPatchMigrationSchemaException>(() =>
+            LuaPatchMigrationSchemaSerializer.Serialize(missingPath));
+        Assert.Equal(LuaPatchMigrationSchemaErrorCode.InvalidSchema, schemaError.Code);
+
+        var time = new ManualTimeProvider();
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "return {timer=clr.timer(function() timer_result='old' end,100)}",
+        }, time);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var previousTimer = TimerPayload(host.RunUtf8("return require('a').timer")
+            .Execution!.Values[0]);
+        var schema = Schema(new LuaPatchModuleMigrationSchema
+        {
+            ModuleName = "a",
+            Resources =
+            [
+                new LuaPatchResourceRule
+                {
+                    ResourceId = "heartbeat",
+                    Kind = LuaPatchResourceKind.Timer,
+                    Disposition = LuaPatchResourceDisposition.Continue,
+                    StatePath = "/timer",
+                },
+            ],
+        });
+        var prepared = host.PreparePatch(CreateBundle(
+            schema,
+            Entry("a", "return {timer=false}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var commit = Commit(host, prepared.PreparedPatch!);
+
+        Assert.Equal(LuaPatchCommitStatus.MigrationFailed, commit.Status);
+        Assert.True(previousTimer.IsActive);
+        Assert.True(previousTimer.IsScheduled);
+    }
+
+    [Fact]
     public void AdapterDisposeFailureDoesNotReplaceACommittedResultOrSkipCleanup()
     {
         using var host = CreateHost(new Dictionary<string, string>
@@ -789,7 +941,9 @@ public sealed class LuaPatchMigrationTests
         return bundle;
     }
 
-    private static LuaHost CreateHost(IReadOnlyDictionary<string, string> files)
+    private static LuaHost CreateHost(
+        IReadOnlyDictionary<string, string> files,
+        ManualTimeProvider? timeProvider = null)
     {
         var host = new LuaHost(LuaHostOptions.Default with
         {
@@ -798,9 +952,38 @@ public sealed class LuaPatchMigrationTests
             {
                 FileSystem = new MemoryFileSystem(files),
             },
+            Clr = timeProvider is null
+                ? LuaClrOptions.Disabled
+                : new LuaClrOptions
+                {
+                    Capabilities = LuaClrCapabilities.Timers,
+                    InstallGlobalModule = true,
+                    TimeProvider = timeProvider,
+                },
         });
         host.SetPatchStateSchemaVersion("game-state", "2");
         return host;
+    }
+
+    private static LuaClrTimer TimerPayload(LuaValue value) =>
+        Assert.IsType<LuaClrTimer>(value.AsUserdata().Payload);
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 7, 24, 0, 0, 0, TimeSpan.Zero);
+        private long _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan value)
+        {
+            _now += value;
+            _timestamp += value.Ticks;
+        }
     }
 
     private sealed class MemoryFileSystem(IReadOnlyDictionary<string, string> files)

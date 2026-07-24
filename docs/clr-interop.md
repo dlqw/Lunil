@@ -41,6 +41,8 @@ When installed, the global `clr` table contains:
 - `clr.on(target, event, callback)` — disposable event subscription.
 - `clr.await(task)` — waits for a `Task`/`ValueTask` userdata and converts its result.
 - `clr.cancellation()`, `clr.cancel(value)` — create and signal a bridge-owned cancellation token source.
+- `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])` — create a host-polled timer.
+- `clr.cancel_timer(timer)` — cancel a timer without requiring the general disposal capability.
 - `clr.dispose(value)` — idempotent disposal of bridge userdata or subscriptions.
 
 Constructed userdata also supports allowlisted properties, fields, methods, indexers, and CLR
@@ -89,11 +91,54 @@ and are not fenced. Use `LuaClrTask.IsActive` and the bridge's `ActiveTaskCount`
 `PendingTaskCount`, `QuiescedTaskCount`, and `StaleTaskCount` gauges before consuming `Task` directly
 from host integration code.
 
+## Game-loop timers
+
+Grant `Timers` to create `LuaClrTimer` instances. Timers do not own a worker and never enter Lua from
+a thread-pool callback. The game loop advances them explicitly while the state is idle:
+
+```csharp
+var options = LuaHostOptions.Restricted with
+{
+    Clr = new LuaClrOptions
+    {
+        Capabilities = LuaClrCapabilities.Timers,
+        InstallGlobalModule = true,
+        TimeProvider = TimeProvider.System,
+        MaximumTimerCount = 4096,
+        MaximumTimerDispatchCount = 256,
+    },
+};
+using var host = new LuaHost(options);
+host.RunUtf8("heartbeat=clr.timer(function(tick,missed) last_tick=tick; missed_ticks=missed end,0,50,'coalesce')");
+
+while (running)
+{
+    host.DispatchClrTimers(256);
+    RunGameFrame();
+}
+```
+
+The callback receives its one-based dispatched tick and the number of elapsed ticks omitted by that
+dispatch. `skip` schedules the next period from the poll time, `coalesce` preserves the original
+phase and reports omitted ticks, and `catch_up` dispatches elapsed ticks individually up to
+`MaximumCatchUpTicks` per poll. One-shot timers omit `periodMs`. Timer count, per-poll dispatch,
+duration, and catch-up bounds are validated before scheduling. Scheduling uses the configured
+`TimeProvider` monotonic timestamp, so wall-clock corrections do not move due ticks. Dispatch from a
+busy state or a non-owner thread fails closed; callback execution uses the host's interpreter budgets.
+
+Module-owned timers join the patch generation barrier. Previous timers are paused with their
+remaining delay, candidate timers are unscheduled while pending, publication makes only candidates
+active, and execution/migration/barrier/health rollback restores only previous timers. A quiesced
+timer cannot be cancelled before the outcome is known. Monitor `LuaClrTimer.IsActive` together with
+`ActiveTimerCount`, `PendingTimerCount`, `QuiescedTimerCount`, and `StaleTimerCount`. A signed
+`Timer + Continue` migration rule transfers remaining delay and counters to the candidate timer at
+the same state path, so the next tick uses the candidate callback and scheduling policy.
+
 ## Ownership and deployment
 
 `LuaClrObject` owns constructed `IDisposable` instances by default and forwards `Dispose` at most once;
-set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions, and
-tasks belong to one `LuaState` and cannot be transferred to another state.
+set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions,
+tasks, and timers belong to one `LuaState` and cannot be transferred to another state.
 
 Trimming and NativeAOT applications must preserve public constructors, members, and delegate
 signatures for every allowlisted type with linker metadata such as `DynamicDependency`. Missing

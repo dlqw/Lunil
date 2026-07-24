@@ -124,7 +124,7 @@ public sealed record LuaPatchResourceRule
 
     public required LuaPatchResourceDisposition Disposition { get; init; }
 
-    /// <summary>Module-cache path for a runtime-owned resource such as a Lua coroutine.</summary>
+    /// <summary>Module-cache path for a runtime-owned coroutine or CLR timer.</summary>
     public string? StatePath { get; init; }
 
     /// <summary>Host adapter used for timers, subscriptions, tasks, or reversible coroutine actions.</summary>
@@ -444,16 +444,29 @@ public static class LuaPatchMigrationSchemaSerializer
                     _ = LuaPatchStatePath.Parse(resource.StatePath);
                 }
 
-                if (resource.Kind == LuaPatchResourceKind.Coroutine &&
+                if (resource.Kind is (LuaPatchResourceKind.Coroutine or
+                        LuaPatchResourceKind.Timer) &&
                     string.IsNullOrWhiteSpace(resource.AdapterId) &&
                     resource.StatePath is null)
                 {
                     throw Error(
                         LuaPatchMigrationSchemaErrorCode.InvalidSchema,
-                        "A runtime-managed coroutine rule requires a state path.");
+                        "A runtime-managed coroutine or timer rule requires a state path.");
                 }
 
-                if (resource.Kind != LuaPatchResourceKind.Coroutine &&
+                if (resource.Kind is (LuaPatchResourceKind.Coroutine or
+                        LuaPatchResourceKind.Timer) &&
+                    resource.Disposition is not (LuaPatchResourceDisposition.Continue or
+                        LuaPatchResourceDisposition.RejectIfActive) &&
+                    string.IsNullOrWhiteSpace(resource.AdapterId))
+                {
+                    throw Error(
+                        LuaPatchMigrationSchemaErrorCode.AdapterRequired,
+                        $"Resource '{resource.ResourceId}' requires a host adapter.");
+                }
+
+                if (resource.Kind is not (LuaPatchResourceKind.Coroutine or
+                        LuaPatchResourceKind.Timer) &&
                     resource.Disposition != LuaPatchResourceDisposition.Continue &&
                     string.IsNullOrWhiteSpace(resource.AdapterId))
                 {

@@ -41,6 +41,9 @@ public enum LuaClrCapabilities : byte
 
     /// <summary>Allows CLR disposal and explicit resource release.</summary>
     Disposal = 64,
+
+    /// <summary>Allows bounded host-polled timers that dispatch on the Lua owner thread.</summary>
+    Timers = 128,
 }
 
 /// <summary>Stable error categories reported by CLR discovery and construction operations.</summary>
@@ -99,6 +102,9 @@ public enum LuaClrErrorCode : byte
 
     /// <summary>A task belongs to an inactive hot-update generation.</summary>
     AsyncGenerationClosed,
+
+    /// <summary>A timer belongs to an inactive or patch-quiesced generation.</summary>
+    TimerGenerationClosed,
 }
 
 /// <summary>An exception with a stable CLR bridge error category.</summary>
@@ -167,6 +173,15 @@ public sealed record LuaClrOptions
 
     /// <summary>Gets the maximum number of members cached for one type.</summary>
     public int MaximumCachedMembers { get; init; } = 256;
+
+    /// <summary>Gets the clock used by host-polled CLR timers.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>Gets the maximum number of simultaneously live CLR timers.</summary>
+    public int MaximumTimerCount { get; init; } = 4096;
+
+    /// <summary>Gets the maximum callbacks accepted by one timer dispatch call.</summary>
+    public int MaximumTimerDispatchCount { get; init; } = 1024;
 }
 
 /// <summary>Controls CLR callback thread admission.</summary>
@@ -409,6 +424,7 @@ public sealed partial class LuaClrBridge
     private readonly ConcurrentDictionary<Type, ImmutableArray<MemberInfo>> _memberCache = [];
     private readonly object _callbackGate = new();
     private readonly int _ownerThreadId;
+    private LuaInterpreterOptions _timerExecutionOptions = LuaInterpreterOptions.Default;
 
     /// <summary>Creates a bridge for one Lua state.</summary>
     public LuaClrBridge(LuaState state, LuaClrOptions? options = null)
@@ -420,7 +436,7 @@ public sealed partial class LuaClrBridge
             LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction |
             LuaClrCapabilities.MemberAccess | LuaClrCapabilities.DelegateConversion |
             LuaClrCapabilities.EventSubscription | LuaClrCapabilities.Async |
-            LuaClrCapabilities.Disposal;
+            LuaClrCapabilities.Disposal | LuaClrCapabilities.Timers;
         if ((_options.Capabilities & ~knownCapabilities) != LuaClrCapabilities.None)
         {
             throw new ArgumentOutOfRangeException(
@@ -446,6 +462,31 @@ public sealed partial class LuaClrBridge
         {
             throw new ArgumentOutOfRangeException(nameof(options), _options.MaximumCachedMembers,
                 "The CLR member cache bound must be between 1 and 16384.");
+        }
+
+        ArgumentNullException.ThrowIfNull(_options.TimeProvider);
+        if (_options.TimeProvider.TimestampFrequency <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                _options.TimeProvider.TimestampFrequency,
+                "The CLR timer time provider must expose a positive timestamp frequency.");
+        }
+
+        if (_options.MaximumTimerCount is < 1 or > 1_000_000)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                _options.MaximumTimerCount,
+                "The CLR timer count bound must be between 1 and 1000000.");
+        }
+
+        if (_options.MaximumTimerDispatchCount is < 1 or > 1_000_000)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                _options.MaximumTimerDispatchCount,
+                "The CLR timer dispatch bound must be between 1 and 1000000.");
         }
         if ((_options.Capabilities & (LuaClrCapabilities.TypeDiscovery |
                 LuaClrCapabilities.Construction)) != LuaClrCapabilities.None &&
@@ -484,6 +525,15 @@ public sealed partial class LuaClrBridge
 
     /// <summary>Gets the managed thread that created this bridge.</summary>
     public int OwnerThreadId => _ownerThreadId;
+
+    internal void SetTimerExecutionOptions(LuaInterpreterOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        lock (_callbackGate)
+        {
+            _timerExecutionOptions = options;
+        }
+    }
 
     /// <summary>Returns a description of an allowed type in an already loaded assembly.</summary>
     public LuaClrTypeInfo ResolveType(string typeName)
@@ -872,7 +922,7 @@ public sealed partial class LuaClrBridge
                 "The CLR bridge is disabled for this host.");
         }
 
-        var module = _state.CreateTable(0, 12);
+        var module = _state.CreateTable(0, 14);
         var capture = LuaValue.FromLightUserdata(new LuaLightUserdata(this));
         AddModuleFunction(module, "type", new LuaNativeFunction("clr.type", TypeBody), capture);
         AddModuleFunction(module, "new", new LuaNativeFunction("clr.new", NewBody), capture);
@@ -885,6 +935,12 @@ public sealed partial class LuaClrBridge
         AddModuleFunction(module, "cancellation", new LuaNativeFunction("clr.cancellation", CancellationBody), capture);
         AddModuleFunction(module, "cancel", new LuaNativeFunction("clr.cancel", CancelBody), capture);
         AddModuleFunction(module, "dispose", new LuaNativeFunction("clr.dispose", DisposeBody), capture);
+        AddModuleFunction(module, "timer", new LuaNativeFunction("clr.timer", TimerBody), capture);
+        AddModuleFunction(
+            module,
+            "cancel_timer",
+            new LuaNativeFunction("clr.cancel_timer", CancelTimerBody),
+            capture);
         _state.SetGlobal("clr", LuaValue.FromTable(module));
     }
 
@@ -925,6 +981,8 @@ public sealed partial class LuaClrBridge
             "cancellation" => CancellationBody(context.State, combined),
             "cancel" => CancelBody(context.State, combined),
             "dispose" => DisposeBody(context.State, combined),
+            "timer" => TimerBody(context.State, combined),
+            "cancel_timer" => CancelTimerBody(context.State, combined),
             _ => throw new LuaClrException(LuaClrErrorCode.MemberNotFound, "Unknown CLR module function."),
         };
         return LuaNativeStep.Completed(result);
@@ -1129,6 +1187,113 @@ public sealed partial class LuaClrBridge
         {
             throw CreateLuaError(exception);
         }
+    }
+
+    private static LuaValue[] TimerBody(LuaState state, ReadOnlySpan<LuaValue> values)
+    {
+        var bridge = GetBridge(state, values);
+        try
+        {
+            var callback = Required(values, 1, "clr.timer");
+            var dueTime = TimeSpan.FromMilliseconds(CheckNonNegativeInteger(
+                values,
+                2,
+                "clr.timer"));
+            var period = values.Length <= 3 || values[3].IsNil
+                ? Timeout.InfiniteTimeSpan
+                : TimeSpan.FromMilliseconds(CheckPositiveInteger(values, 3, "clr.timer"));
+            var policy = values.Length <= 4 || values[4].IsNil
+                ? LuaClrTimerCatchUpPolicy.Coalesce
+                : ParseTimerCatchUpPolicy(CheckString(state, values, 4, "clr.timer"));
+            var maximumCatchUpTicks = values.Length <= 5 || values[5].IsNil
+                ? 8
+                : CheckBoundedPositiveInteger(values, 5, "clr.timer", 10_000);
+            var timer = bridge.ScheduleTimer(callback, new LuaClrTimerOptions
+            {
+                DueTime = dueTime,
+                Period = period,
+                CatchUpPolicy = policy,
+                MaximumCatchUpTicks = maximumCatchUpTicks,
+            });
+            var userdata = state.CreateUserdata(timer, 1, 96);
+            userdata.SetUserValue(0, callback);
+            return [LuaValue.FromUserdata(userdata)];
+        }
+        catch (LuaClrException exception)
+        {
+            throw CreateLuaError(exception);
+        }
+    }
+
+    private static LuaValue[] CancelTimerBody(LuaState state, ReadOnlySpan<LuaValue> values)
+    {
+        var bridge = GetBridge(state, values);
+        try
+        {
+            RequireTimer(Required(values, 1, "clr.cancel_timer"), bridge).Cancel();
+            return [];
+        }
+        catch (LuaClrException exception)
+        {
+            throw CreateLuaError(exception);
+        }
+    }
+
+    private static LuaClrTimerCatchUpPolicy ParseTimerCatchUpPolicy(string value) => value switch
+    {
+        "skip" => LuaClrTimerCatchUpPolicy.Skip,
+        "coalesce" => LuaClrTimerCatchUpPolicy.Coalesce,
+        "catch_up" => LuaClrTimerCatchUpPolicy.CatchUp,
+        _ => throw new LuaRuntimeException(
+            "bad argument #4 to 'clr.timer' (skip, coalesce, or catch_up expected)"),
+    };
+
+    private static long CheckNonNegativeInteger(
+        ReadOnlySpan<LuaValue> values,
+        int index,
+        string function)
+    {
+        if ((uint)index >= (uint)values.Length ||
+            !values[index].TryGetInteger(out var result) || result < 0 ||
+            result > (long)MaximumTimerDuration.TotalMilliseconds)
+        {
+            throw new LuaRuntimeException(
+                $"bad argument #{index} to '{function}' " +
+                "(bounded non-negative millisecond integer expected)");
+        }
+
+        return result;
+    }
+
+    private static long CheckPositiveInteger(
+        ReadOnlySpan<LuaValue> values,
+        int index,
+        string function)
+    {
+        var result = CheckNonNegativeInteger(values, index, function);
+        if (result == 0)
+        {
+            throw new LuaRuntimeException(
+                $"bad argument #{index} to '{function}' (positive integer expected)");
+        }
+
+        return result;
+    }
+
+    private static int CheckBoundedPositiveInteger(
+        ReadOnlySpan<LuaValue> values,
+        int index,
+        string function,
+        int maximum)
+    {
+        var result = CheckPositiveInteger(values, index, function);
+        if (result > maximum)
+        {
+            throw new LuaRuntimeException(
+                $"bad argument #{index} to '{function}' (integer no greater than {maximum} expected)");
+        }
+
+        return (int)result;
     }
 
     private static LuaRuntimeException CreateLuaError(LuaClrException exception) =>
@@ -1646,21 +1811,9 @@ public sealed partial class LuaClrBridge
             EnsureThread();
             var function = registration.GetActiveCallback();
             var luaArguments = arguments.Select(ToLuaValue).ToArray();
-            var closure = function.TryGetClosure() ??
-                throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "Lua callback is not a closure.");
-            var executor = new LuaExecutor(new LuaExecutorOptions
-            {
-                Interpreter = LuaInterpreterOptions.Default,
-            });
-            var callbackThread = _state.CreateThread(closure);
-            var result = executor.Start(_state, callbackThread, luaArguments);
-            if (result.Signal != LuaVmSignal.Completed)
-            {
-                throw new LuaClrException(LuaClrErrorCode.InvocationFailed,
-                    "Lua callback did not complete.");
-            }
+            var result = InvokeLuaCallback(function, luaArguments);
 
-            var value = result.Values.Length == 0 ? LuaValue.Nil : result.Values[0];
+            var value = result.Length == 0 ? LuaValue.Nil : result[0];
             if (returnType == typeof(void))
             {
                 return null;
@@ -1673,6 +1826,29 @@ public sealed partial class LuaClrBridge
             }
             return converted;
         }
+    }
+
+    private ImmutableArray<LuaValue> InvokeLuaCallback(
+        LuaValue function,
+        ReadOnlySpan<LuaValue> arguments,
+        LuaInterpreterOptions? interpreterOptions = null)
+    {
+        var closure = function.TryGetClosure() ??
+            throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "Lua callback is not a closure.");
+        var executor = new LuaExecutor(new LuaExecutorOptions
+        {
+            Interpreter = interpreterOptions ?? LuaInterpreterOptions.Default,
+        });
+        var callbackThread = _state.CreateThread(closure);
+        var result = executor.Start(_state, callbackThread, arguments);
+        if (result.Signal != LuaVmSignal.Completed)
+        {
+            throw new LuaClrException(
+                LuaClrErrorCode.InvocationFailed,
+                "Lua callback did not complete.");
+        }
+
+        return result.Values;
     }
 
     private LuaValue ToLuaValue(object? value)

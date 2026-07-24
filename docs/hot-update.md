@@ -295,8 +295,7 @@ invocation state, callback frame, and immutable Lua function versions remain iso
 activation while the thread is admitted into the candidate generation. Without `Continue`, an old
 module-owned thread becomes stale and `LuaInterpreter.Start`/`Resume` fail before entering the
 scheduler. `RejectIfActive` rejects a non-terminal thread at that path. Reversible cancellation,
-restart, and drain—and all
-host-owned timer, subscription, and task lifecycle changes—use a named
+restart, and drain—and all host-owned timer, subscription, and task lifecycle changes—use a named
 `ILuaPatchResourceMigrationAdapter`. Missing adapters fail preparation, before the update window.
 Adapter `Prepare` methods must not mutate state; `Apply` must be exactly reversible by `Rollback`, and
 operation disposal only releases journal resources.
@@ -308,6 +307,22 @@ new LuaPatchResourceRule
     Kind = LuaPatchResourceKind.Coroutine,
     Disposition = LuaPatchResourceDisposition.Continue,
     StatePath = "/workers/matchLoop",
+}
+```
+
+`LuaClrTimer` is also runtime-owned when stored as userdata at `StatePath`. For `Continue`, both module
+versions create their timer at that path; commit transfers the previous remaining delay and dispatch
+counters into the pending candidate timer. Publication then uses the candidate callback, period, and
+catch-up policy without restarting the delay. `RejectIfActive` aborts while the previous timer still
+has a scheduled tick. `Cancel`, `Restart`, and `Drain` continue to require a reversible adapter.
+
+```csharp
+new LuaPatchResourceRule
+{
+    ResourceId = "heartbeat",
+    Kind = LuaPatchResourceKind.Timer,
+    Disposition = LuaPatchResourceDisposition.Continue,
+    StatePath = "/timers/heartbeat",
 }
 ```
 
@@ -332,6 +347,12 @@ consumable only after the whole barrier publishes (the owning loader can consume
 and rollback restores the old task generation. This wrapper
 fencing does not cancel the underlying operation, so use cancellation tokens or a resource migration
 adapter when the external operation itself must stop, drain, or restart.
+
+Host-polled module timers use the same barrier: old timers pause with their remaining delay,
+candidate timers cannot dispatch before full publication, and rollback makes candidates stale while
+restoring old schedules. Monitor `ActiveTimerCount`, `PendingTimerCount`, `QuiescedTimerCount`, and
+`StaleTimerCount` on `LuaClrBridge`; dispatch due work through `LuaHost.DispatchClrTimers` only while
+the state is idle.
 
 Compatible closure slots and loader upvalues remain automatic: matching lexical identities and
 upvalue layouts publish a successor generation while suspended frames retain the previous immutable
