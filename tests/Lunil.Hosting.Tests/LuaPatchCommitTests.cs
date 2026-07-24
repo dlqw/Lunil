@@ -782,7 +782,7 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
-    public void SuspendedFrameKeepsOldGenerationWhileNewEntrantsUseCommittedGeneration()
+    public void SuspendedFrameWithoutCoroutineMigrationIsFencedAfterCommit()
     {
         using var host = CreateHost(new Dictionary<string, string>
         {
@@ -813,9 +813,14 @@ public sealed class LuaPatchCommitTests
         Assert.True(commit.Succeeded, commit.Message);
         Assert.NotSame(oldVersion, alias.FunctionVersion);
         Assert.Equal(oldVersion.Generation + 1, alias.FunctionVersion.Generation);
+        var thread = host.State.GetGlobal("co").AsThread();
+        Assert.False(thread.IsPatchGenerationActive);
         var resumed = host.RunUtf8("return coroutine.resume(co)").Execution!.Values;
-        Assert.True(resumed[0].AsBoolean());
-        Assert.Equal(1, resumed[1].AsInteger());
+        Assert.False(resumed[0].AsBoolean());
+        Assert.Contains(
+            "inactive patch generation",
+            resumed[1].AsString().ToString(),
+            StringComparison.Ordinal);
         var current = host.RunUtf8("return alias(),require('a').get()")
             .Execution!.Values;
         Assert.Equal(11, current[0].AsInteger());

@@ -481,6 +481,7 @@ namespace Lunil.Runtime.Execution
         public Lunil.Runtime.Execution.LuaThreadStatus Status { get => throw null; }
         public Lunil.Runtime.Values.LuaValue Entry { get => throw null; }
         public bool Started { get => throw null; }
+        public bool IsPatchGenerationActive { get => throw null; }
         public Lunil.Runtime.Values.LuaValue TerminalError { get => throw null; }
         public System.Collections.Generic.IReadOnlyList<Lunil.Runtime.Values.LuaValue> YieldedValues { get => throw null; }
         public System.Collections.Generic.IReadOnlyList<Lunil.Runtime.Values.LuaValue> ResumeValues { get => throw null; }

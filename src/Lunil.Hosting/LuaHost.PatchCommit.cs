@@ -14,6 +14,23 @@ public sealed partial class LuaHost
     private readonly Dictionary<string, string> _patchStateSchemaVersions =
         new(StringComparer.Ordinal);
 
+    /// <summary>Gets the number of admitted suspended module-owned native continuations.</summary>
+    public int ActiveNativeContinuationCount => CountNativeContinuations(
+        LuaThreadPatchGenerationState.Unmanaged,
+        LuaThreadPatchGenerationState.Active);
+
+    /// <summary>Gets the number of candidate native continuations awaiting publication.</summary>
+    public int PendingNativeContinuationCount => CountNativeContinuations(
+        LuaThreadPatchGenerationState.Pending);
+
+    /// <summary>Gets the number of previous native continuations blocked by a patch barrier.</summary>
+    public int QuiescedNativeContinuationCount => CountNativeContinuations(
+        LuaThreadPatchGenerationState.Quiesced);
+
+    /// <summary>Gets the number of still-referenced native continuations rejected as stale.</summary>
+    public int StaleNativeContinuationCount => CountNativeContinuations(
+        LuaThreadPatchGenerationState.Stale);
+
     /// <summary>Registers the live version for a host-owned state schema.</summary>
     public void SetPatchStateSchemaVersion(string schemaId, string version)
     {
@@ -601,7 +618,8 @@ public sealed partial class LuaHost
                 {
                     transaction.ApplyMigrations(
                         preparedPatch.StateMigrationAdapters,
-                        preparedPatch.ResourceMigrationAdapters);
+                        preparedPatch.ResourceMigrationAdapters,
+                        generationUpdate);
                 }
                 catch (Exception exception) when (IsRecoverablePatchException(exception))
                 {
@@ -1076,6 +1094,18 @@ public sealed partial class LuaHost
         not OutOfMemoryException and
         not StackOverflowException and
         not AccessViolationException;
+
+    private int CountNativeContinuations(params LuaThreadPatchGenerationState[] states)
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return State.Heap.Objects.OfType<LuaThread>().Count(thread =>
+                thread.PatchGenerationOwnerModule is not null &&
+                thread.HasNativeContinuation &&
+                states.Contains(thread.PatchGenerationState));
+        }
+    }
 
     private static void DisposePatchCommitResources(
         LuaClrBridge.LuaClrGenerationUpdate? generationUpdate,
@@ -1595,7 +1625,8 @@ public sealed partial class LuaHost
 
         public void ApplyMigrations(
             IReadOnlyDictionary<string, ILuaPatchStateMigrationAdapter> stateAdapters,
-            IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceAdapters)
+            IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceAdapters,
+            LuaClrBridge.LuaClrGenerationUpdate generationUpdate)
         {
             if (Module.MigrationSchema is null)
             {
@@ -1731,6 +1762,7 @@ public sealed partial class LuaHost
                 if (rule.Disposition == LuaPatchResourceDisposition.Continue)
                 {
                     SetCandidatePath(path, value);
+                    generationUpdate.TransferCoroutine(value.AsThread(), Module.Module);
                 }
             }
 

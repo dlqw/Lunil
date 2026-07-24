@@ -1,3 +1,4 @@
+using Lunil.IR.Canonical;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
 
@@ -13,6 +14,15 @@ public enum LuaThreadStatus : byte
     Error,
 }
 
+internal enum LuaThreadPatchGenerationState : byte
+{
+    Unmanaged,
+    Active,
+    Pending,
+    Quiesced,
+    Stale,
+}
+
 /// <summary>Owns the persistent Lua stack, logical frames, and identity map for open upvalues.</summary>
 public sealed class LuaThread : LuaGcObject
 {
@@ -26,6 +36,7 @@ public sealed class LuaThread : LuaGcObject
     private LuaValue _environment;
     private LuaDebugHookMask _debugHookMask;
     private bool _isRunningDebugHook;
+    private int _patchGenerationState;
 
     internal LuaThread(LuaHeap owner, int initialStackCapacity = 128)
         : base(owner, checked(128 + initialStackCapacity * 16L))
@@ -40,6 +51,13 @@ public sealed class LuaThread : LuaGcObject
     public LuaValue Entry { get; private set; }
 
     public bool Started { get; internal set; }
+
+    /// <summary>
+    /// Gets whether this coroutine may enter its patch generation. Runtime-only states that are
+    /// not managed by a <c>LuaHost</c> are always active.
+    /// </summary>
+    public bool IsPatchGenerationActive => PatchGenerationState is
+        LuaThreadPatchGenerationState.Unmanaged or LuaThreadPatchGenerationState.Active;
 
     public LuaValue TerminalError { get; internal set; }
 
@@ -154,6 +172,43 @@ public sealed class LuaThread : LuaGcObject
     internal LuaUnwindState? UnwindState { get; set; }
 
     internal LuaContinuation RootContinuation { get; } = new();
+
+    internal LuaIrModule? PatchGenerationOwnerModule { get; set; }
+
+    internal LuaThreadPatchGenerationState PatchGenerationState
+    {
+        get => (LuaThreadPatchGenerationState)Volatile.Read(ref _patchGenerationState);
+        set => Volatile.Write(ref _patchGenerationState, (int)value);
+    }
+
+    internal bool HasNativeContinuation =>
+        IsNativeContinuation(RootContinuation) ||
+        _frames.Any(static frame => IsNativeContinuation(frame.Continuation));
+
+    internal void EnsurePatchGenerationAdmission(LuaState state)
+    {
+        var generationState = PatchGenerationState;
+        if (generationState is LuaThreadPatchGenerationState.Unmanaged or
+            LuaThreadPatchGenerationState.Active)
+        {
+            return;
+        }
+
+        if (generationState == LuaThreadPatchGenerationState.Pending &&
+            PatchGenerationOwnerModule is { } ownerModule &&
+            (!Started && ReferenceEquals(Entry.TryGetClosure()?.Module, ownerModule) ||
+                state.RunningThread is { Frames.Count: > 0 } runningThread &&
+                ReferenceEquals(runningThread.Frames[^1].FunctionVersion.Module, ownerModule)))
+        {
+            return;
+        }
+
+        throw new LuaRuntimeException(
+            "Cannot resume a coroutine that belongs to an inactive patch generation.");
+    }
+
+    private static bool IsNativeContinuation(LuaContinuation continuation) =>
+        continuation.Kind is LuaContinuationKind.NativeCallLua or LuaContinuationKind.NativeYield;
 
     internal void PushFrame(LuaFrame frame)
     {
