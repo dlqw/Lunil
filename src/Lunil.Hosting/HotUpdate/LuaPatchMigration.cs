@@ -18,6 +18,7 @@ public enum LuaPatchStateRuleKind : byte
     Preserve,
     Drop,
     HostAdapter,
+    PatchTable,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<LuaPatchResourceKind>))]
@@ -383,10 +384,11 @@ public static class LuaPatchMigrationSchemaSerializer
             }
 
             var targets = new HashSet<string>(StringComparer.Ordinal);
+            var targetTrie = new StatePathTrie();
             string? previousTarget = null;
             foreach (var rule in module.State)
             {
-                _ = LuaPatchStatePath.Parse(rule.TargetPath);
+                var targetPath = LuaPatchStatePath.Parse(rule.TargetPath);
                 _ = LuaPatchStatePath.Parse(rule.SourcePath ?? rule.TargetPath);
                 if (!Enum.IsDefined(rule.Kind) || !targets.Add(rule.TargetPath))
                 {
@@ -404,6 +406,13 @@ public static class LuaPatchMigrationSchemaSerializer
                 }
 
                 previousTarget = rule.TargetPath;
+
+                if (!targetTrie.TryAdd(targetPath.Segments))
+                {
+                    throw Error(
+                        LuaPatchMigrationSchemaErrorCode.DuplicateRule,
+                        $"Module '{module.ModuleName}' has overlapping state target paths.");
+                }
 
                 if (rule.Kind == LuaPatchStateRuleKind.HostAdapter !=
                     !string.IsNullOrWhiteSpace(rule.AdapterId))
@@ -481,6 +490,41 @@ public static class LuaPatchMigrationSchemaSerializer
     private static LuaPatchMigrationSchemaException Error(
         LuaPatchMigrationSchemaErrorCode code,
         string message) => new(code, message);
+
+    private sealed class StatePathTrie
+    {
+        private readonly Dictionary<string, StatePathTrie> _children =
+            new(StringComparer.Ordinal);
+        private bool _terminal;
+
+        public bool TryAdd(ImmutableArray<string> segments)
+        {
+            var node = this;
+            foreach (var segment in segments)
+            {
+                if (node._terminal)
+                {
+                    return false;
+                }
+
+                if (!node._children.TryGetValue(segment, out var child))
+                {
+                    child = new StatePathTrie();
+                    node._children.Add(segment, child);
+                }
+
+                node = child;
+            }
+
+            if (node._terminal || node._children.Count != 0)
+            {
+                return false;
+            }
+
+            node._terminal = true;
+            return true;
+        }
+    }
 }
 
 internal readonly record struct LuaPatchStatePath(ImmutableArray<string> Segments)

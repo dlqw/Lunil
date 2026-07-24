@@ -18,6 +18,9 @@ public sealed record LuaPatchResourceLimits
 
     public int MaximumResourceMigrationRules { get; init; } = 8192;
 
+    /// <summary>Gets the maximum entries retained by table patch journals.</summary>
+    public int MaximumTablePatchEntryCount { get; init; } = 65_536;
+
     public int MaximumRingsPerRollout { get; init; } = 16;
 
     public int MaximumTargetsPerRing { get; init; } = 256;
@@ -28,7 +31,8 @@ public sealed record LuaPatchResourceLimits
     {
         if (MaximumPatchModules <= 0 || MaximumMigrationSchemaBytes <= 0 ||
             MaximumMigrationModules <= 0 || MaximumStateMigrationRules <= 0 ||
-            MaximumResourceMigrationRules <= 0 || MaximumRingsPerRollout <= 0 ||
+            MaximumResourceMigrationRules <= 0 || MaximumTablePatchEntryCount <= 0 ||
+            MaximumRingsPerRollout <= 0 ||
             MaximumTargetsPerRing <= 0 || MaximumTargetsPerRollout <= 0 ||
             MaximumTargetsPerRing > MaximumTargetsPerRollout)
         {

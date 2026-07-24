@@ -4,6 +4,7 @@ using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
+using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
 using Lunil.StandardLibrary;
 
@@ -215,6 +216,7 @@ public sealed partial class LuaHost
                     }
 
                     tablePatch = LuaTablePatch.Apply(
+                        State,
                         previousCache.AsTable(),
                         candidateValue.AsTable());
                     committedValue = previousCache;
@@ -284,6 +286,10 @@ public sealed partial class LuaHost
                 sideEffectsMayHaveOccurred: true,
                 reusedUpvalueCount: upvalues.Snapshots.Count,
                 upvalueMismatchCount: upvalues.MismatchCount);
+        }
+        finally
+        {
+            tablePatch?.Dispose();
         }
     }
 
@@ -396,71 +402,150 @@ public sealed partial class LuaHost
         }
     }
 
-    private sealed class LuaTablePatch
+    private sealed class LuaTablePatch : IDisposable
     {
-        private readonly LuaTable _target;
-        private readonly List<KeyValuePair<LuaValue, LuaValue>> _previousEntries;
-        private readonly LuaTable? _previousMetatable;
+        private readonly LuaHandle _targetRoot;
+        private readonly RootedTableSnapshot _previous;
+        private readonly RootedTableSnapshot _replacement;
+        private readonly LuaHandle _replacementRoot;
+        private bool _published;
+        private bool _disposed;
 
         private LuaTablePatch(
-            LuaTable target,
-            List<KeyValuePair<LuaValue, LuaValue>> previousEntries,
-            LuaTable? previousMetatable,
-            int patchedExportCount,
-            int removedExportCount)
+            LuaHandle targetRoot,
+            RootedTableSnapshot previous,
+            RootedTableSnapshot replacement,
+            LuaHandle replacementRoot)
         {
-            _target = target;
-            _previousEntries = previousEntries;
-            _previousMetatable = previousMetatable;
-            PatchedExportCount = patchedExportCount;
-            RemovedExportCount = removedExportCount;
+            _targetRoot = targetRoot;
+            _previous = previous;
+            _replacement = replacement;
+            _replacementRoot = replacementRoot;
+            PatchedExportCount = replacement.Count;
+            var replacementKeys = replacement.Entries
+                .Select(static entry => entry.Key.Value)
+                .ToHashSet();
+            RemovedExportCount = previous.Entries.Count(
+                entry => !replacementKeys.Contains(entry.Key.Value));
         }
 
         public int PatchedExportCount { get; }
 
         public int RemovedExportCount { get; }
 
-        public static LuaTablePatch Apply(LuaTable target, LuaTable replacement)
+        public LuaValue ReplacementValue => _replacementRoot.Value;
+
+        public static LuaTablePatch Apply(
+            LuaState state,
+            LuaTable target,
+            LuaTable replacement)
         {
-            var previousEntries = Snapshot(target);
-            var replacementEntries = Snapshot(replacement);
-            var patch = new LuaTablePatch(
+            var patch = Prepare(
+                state,
                 target,
-                previousEntries,
-                target.Metatable,
-                replacementEntries.Count,
-                previousEntries.Count(previous => !replacementEntries.Any(
-                    replacement => replacement.Key == previous.Key)));
+                replacement,
+                new LuaTablePatchJournalBudget(int.MaxValue));
             try
             {
-                Replace(target, replacementEntries, replacement.Metatable);
+                patch.Publish();
                 return patch;
             }
             catch
             {
-                patch.Rollback();
+                patch.Dispose();
                 throw;
             }
         }
 
-        public void Rollback() => Replace(_target, _previousEntries, _previousMetatable);
-
-        private static void Replace(
+        public static LuaTablePatch Prepare(
+            LuaState state,
             LuaTable target,
-            IReadOnlyList<KeyValuePair<LuaValue, LuaValue>> entries,
-            LuaTable? metatable)
+            LuaTable replacement,
+            LuaTablePatchJournalBudget budget)
+        {
+            LuaHandle? targetRoot = null;
+            LuaHandle? replacementRoot = null;
+            RootedTableSnapshot? previous = null;
+            RootedTableSnapshot? next = null;
+            try
+            {
+                targetRoot = state.CreateHandle(LuaValue.FromTable(target));
+                replacementRoot = state.CreateHandle(LuaValue.FromTable(replacement));
+                previous = RootedTableSnapshot.Capture(state, target, budget);
+                next = RootedTableSnapshot.Capture(state, replacement, budget);
+                return new LuaTablePatch(targetRoot, previous, next, replacementRoot);
+            }
+            catch
+            {
+                next?.Dispose();
+                previous?.Dispose();
+                replacementRoot?.Dispose();
+                targetRoot?.Dispose();
+                throw;
+            }
+        }
+
+        public void Publish()
+        {
+            if (_published)
+            {
+                return;
+            }
+
+            try
+            {
+                Replace(Target, _replacement);
+                _published = true;
+            }
+            catch
+            {
+                Replace(Target, _previous);
+                throw;
+            }
+        }
+
+        public void Rollback()
+        {
+            if (!_published)
+            {
+                return;
+            }
+
+            Replace(Target, _previous);
+            _published = false;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _replacement.Dispose();
+            _previous.Dispose();
+            _replacementRoot.Dispose();
+            _targetRoot.Dispose();
+        }
+
+        private LuaTable Target => _targetRoot.Value.AsTable();
+
+        private static void Replace(LuaTable target, RootedTableSnapshot snapshot)
         {
             foreach (var existing in Snapshot(target))
             {
                 target.Set(existing.Key, LuaValue.Nil);
             }
 
-            foreach (var entry in entries)
+            foreach (var entry in snapshot.Entries)
             {
-                target.Set(entry.Key, entry.Value);
+                target.Set(entry.Key.Value, entry.Value.Value);
             }
 
-            target.SetMetatable(metatable);
+            target.SetMetatable(snapshot.Metatable.Value.IsNil
+                ? null
+                : snapshot.Metatable.Value.AsTable());
         }
 
         private static List<KeyValuePair<LuaValue, LuaValue>> Snapshot(LuaTable table)
@@ -474,6 +559,111 @@ public sealed partial class LuaHost
             }
 
             return entries;
+        }
+
+        private sealed class RootedTableSnapshot : IDisposable
+        {
+            private RootedTableSnapshot(List<RootedEntry> entries, LuaHandle metatable)
+            {
+                Entries = entries;
+                Metatable = metatable;
+            }
+
+            public List<RootedEntry> Entries { get; }
+
+            public LuaHandle Metatable { get; }
+
+            public int Count => Entries.Count;
+
+            public static RootedTableSnapshot Capture(
+                LuaState state,
+                LuaTable table,
+                LuaTablePatchJournalBudget budget)
+            {
+                var entries = new List<RootedEntry>();
+                LuaHandle? metatableHandle = null;
+                try
+                {
+                    metatableHandle = state.CreateHandle(table.Metatable is null
+                        ? LuaValue.Nil
+                        : LuaValue.FromTable(table.Metatable));
+                    var key = LuaValue.Nil;
+                    while (table.Next(key, out var nextKey, out var value))
+                    {
+                        budget.Reserve(1);
+                        entries.Add(RootedEntry.Create(state, nextKey, value));
+                        key = nextKey;
+                    }
+
+                    return new RootedTableSnapshot(entries, metatableHandle);
+                }
+                catch
+                {
+                    metatableHandle?.Dispose();
+                    foreach (var entry in entries)
+                    {
+                        entry.Dispose();
+                    }
+
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                Metatable.Dispose();
+                foreach (var entry in Entries)
+                {
+                    entry.Dispose();
+                }
+            }
+        }
+
+        private sealed class RootedEntry : IDisposable
+        {
+            private RootedEntry(LuaHandle key, LuaHandle value)
+            {
+                Key = key;
+                Value = value;
+            }
+
+            public LuaHandle Key { get; }
+
+            public LuaHandle Value { get; }
+
+            public static RootedEntry Create(LuaState state, LuaValue key, LuaValue value)
+            {
+                var keyHandle = state.CreateHandle(key);
+                try
+                {
+                    return new RootedEntry(keyHandle, state.CreateHandle(value));
+                }
+                catch
+                {
+                    keyHandle.Dispose();
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                Value.Dispose();
+                Key.Dispose();
+            }
+        }
+    }
+
+    internal sealed class LuaTablePatchJournalBudget(int maximum)
+    {
+        private long _observed;
+
+        public void Reserve(int count)
+        {
+            _observed = checked(_observed + count);
+            LuaPatchResourceLimits.EnsureWithin(
+                nameof(LuaPatchResourceLimits.MaximumTablePatchEntryCount),
+                _observed,
+                maximum);
         }
     }
 
@@ -500,7 +690,8 @@ public sealed partial class LuaHost
             LuaValue previous,
             LuaIrModule? previousModule,
             LuaValue candidate,
-            LuaIrModule? candidateModule)
+            LuaIrModule? candidateModule,
+            IEnumerable<LuaValue>? additionalCandidates = null)
         {
             if (previousModule is null || candidateModule is null ||
                 ReferenceEquals(previousModule, candidateModule))
@@ -521,6 +712,18 @@ public sealed partial class LuaHost
                 candidateModule,
                 new HashSet<object>(ReferenceEqualityComparer.Instance),
                 candidateVersions);
+            if (additionalCandidates is not null)
+            {
+                var visitedCandidates = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                foreach (var additionalCandidate in additionalCandidates)
+                {
+                    CollectCandidates(
+                        additionalCandidate,
+                        candidateModule,
+                        visitedCandidates,
+                        candidateVersions);
+                }
+            }
 
             var prepared = new List<PreparedFunctionMigration>();
             var rejected = new List<LuaFunctionMigrationResult>();

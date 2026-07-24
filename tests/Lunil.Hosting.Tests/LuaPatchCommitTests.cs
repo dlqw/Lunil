@@ -983,6 +983,121 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
+    public void FunctionMigrationPreservesTheExistingLuaEnvCellAcrossHealthRollback()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local env={value=41}; local _ENV=env; " +
+                "local function read() return value end; return {read=read,env=env}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; alias=require('a').read").Succeeded);
+        var alias = host.State.GetGlobal("alias").TryGetClosure()!;
+        var oldVersion = alias.FunctionVersion;
+        var oldEnvironmentCell = alias.Upvalues.Single(static upvalue =>
+            upvalue.Value.Kind == LuaValueKind.Table);
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local env={value=99}; local _ENV=env; " +
+            "local function read() return value+1 end; return {read=read,env=env}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var healthChecked = false;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "lua-env-health-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    Assert.Equal(42, host.RunUtf8("return alias()")
+                        .Execution!.Values[0].AsInteger());
+                    Assert.Same(oldEnvironmentCell, alias.Upvalues.Single(static upvalue =>
+                        upvalue.Value.Kind == LuaValueKind.Table));
+                    Assert.NotSame(oldVersion, alias.FunctionVersion);
+                    healthChecked = true;
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(healthChecked);
+        Assert.Same(oldVersion, alias.FunctionVersion);
+        Assert.Same(oldEnvironmentCell, alias.Upvalues.Single(static upvalue =>
+            upvalue.Value.Kind == LuaValueKind.Table));
+        Assert.Equal(41, host.RunUtf8("return alias()")
+            .Execution!.Values[0].AsInteger());
+    }
+
+    [Fact]
+    public void FunctionMigrationPreservesLua51SetfenvAcrossHealthRollback()
+    {
+        using var host = CreateHost(
+            new Dictionary<string, string>
+            {
+                ["mods/a.lua"] =
+                    "local function read() return value end; return {read=read}",
+            },
+            LuaLanguageVersion.Lua51);
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; alias=require('a').read; " +
+            "custom_env={value=41}; setfenv(alias,custom_env)").Succeeded);
+        var alias = host.State.GetGlobal("alias").TryGetClosure()!;
+        var oldVersion = alias.FunctionVersion;
+        var prepared = host.PreparePatch(CreateBundle(
+            LuaLanguageVersion.Lua51,
+            Entry(
+                "a",
+                "local function read() return value+1 end; return {read=read}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var healthChecked = false;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "lua51-environment-health-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    var values = host.RunUtf8("return alias(),getfenv(alias)==custom_env")
+                        .Execution!.Values;
+                    Assert.Equal(42, values[0].AsFloat());
+                    Assert.True(values[1].AsBoolean());
+                    Assert.NotSame(oldVersion, alias.FunctionVersion);
+                    healthChecked = true;
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(healthChecked);
+        Assert.Same(oldVersion, alias.FunctionVersion);
+        var restored = host.RunUtf8("return alias(),getfenv(alias)==custom_env")
+            .Execution!.Values;
+        Assert.Equal(41, restored[0].AsFloat());
+        Assert.True(restored[1].AsBoolean());
+    }
+
+    [Fact]
     public void SuspendedFrameWithoutCoroutineMigrationIsFencedAfterCommit()
     {
         using var host = CreateHost(new Dictionary<string, string>
@@ -1100,8 +1215,19 @@ public sealed class LuaPatchCommitTests
                     release.Wait(TimeSpan.FromSeconds(5));
                     return [];
                 })));
-        var executing = Task.Run(() => host.RunUtf8("hold_frame()"));
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+        var executing = Task.Factory.StartNew(
+            () => host.RunUtf8("hold_frame()"),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        var executionEntered = entered.Wait(TimeSpan.FromSeconds(30));
+        if (!executionEntered)
+        {
+            release.Set();
+            _ = await executing.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        Assert.True(executionEntered);
 
         var opened = host.TryOpenPatchUpdateWindow();
         release.Set();
@@ -1203,6 +1329,128 @@ public sealed class LuaPatchCommitTests
         Assert.Null(unsupported.PreparedPatch);
     }
 
+    [Fact]
+    public void AtomicTableHealthRollbackKeepsRemovedGraphRootedAcrossLuaCollection()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local mt={marker={value='old-meta'}}; " +
+                "return setmetatable({old={value=1}},mt)",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original=require('a')").Succeeded);
+        var original = host.State.GetGlobal("original").AsTable();
+        var oldValue = original.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("old"u8))).AsTable();
+        var oldMetatable = original.Metatable!;
+        var oldMetatableValue = oldMetatable.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("marker"u8))).AsTable();
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry(
+                "a",
+                "local mt={marker={value='new-meta'}}; " +
+                "return setmetatable({added=2},mt)")),
+            new LuaPatchPrepareOptions
+            {
+                ModuleOptions = new Dictionary<string, LuaModuleReloadOptions>
+                {
+                    ["a"] = new()
+                    {
+                        CachePolicy = LuaModuleReloadCachePolicy.PatchExistingTable,
+                    },
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var healthChecked = false;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "atomic-table-gc-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    host.State.Heap.CollectFull();
+                    Assert.True(oldValue.IsAlive);
+                    Assert.True(oldMetatable.IsAlive);
+                    Assert.True(oldMetatableValue.IsAlive);
+                    Assert.True(original.Get(LuaValue.FromString(
+                        host.State.Strings.GetOrCreate("old"u8))).IsNil);
+                    healthChecked = true;
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.True(healthChecked);
+        var current = host.RunUtf8("return require('a')").Execution!.Values[0].AsTable();
+        Assert.Same(original, current);
+        Assert.Same(oldValue, current.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("old"u8))).AsTable());
+        Assert.Same(oldMetatable, current.Metatable);
+        Assert.True(current.Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("added"u8))).IsNil);
+    }
+
+    [Fact]
+    public void AtomicTablePolicyHonorsTheSharedJournalLimit()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {old=1}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; original=require('a')").Succeeded);
+        var original = host.State.GetGlobal("original").AsTable();
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry("a", "return {added=2}")),
+            new LuaPatchPrepareOptions
+            {
+                ModuleOptions = new Dictionary<string, LuaModuleReloadOptions>
+                {
+                    ["a"] = new()
+                    {
+                        CachePolicy = LuaModuleReloadCachePolicy.PatchExistingTable,
+                    },
+                },
+                ResourceLimits = LuaPatchResourceLimits.Default with
+                {
+                    MaximumTablePatchEntryCount = 1,
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+
+        LuaPatchCommitResult commit;
+        using (opened.Window!)
+        {
+            commit = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.Equal(LuaPatchCommitStatus.CachePolicyFailed, commit.Status);
+        Assert.Contains(
+            nameof(LuaPatchResourceLimits.MaximumTablePatchEntryCount),
+            commit.Message,
+            StringComparison.Ordinal);
+        Assert.Same(
+            original,
+            host.RunUtf8("return require('a')").Execution!.Values[0].AsTable());
+        Assert.Equal(1, host.RunUtf8("return require('a').old")
+            .Execution!.Values[0].AsInteger());
+    }
+
     private static LuaPatchEntry Entry(
         string moduleName,
         string source,
@@ -1217,10 +1465,25 @@ public sealed class LuaPatchCommitTests
 
     private static LuaPatchBundle CreateBundle(params LuaPatchEntry[] entries) =>
         CreateBundle(
+            LuaLanguageVersion.Lua54,
             new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero),
             entries);
 
     private static LuaPatchBundle CreateBundle(
+        LuaLanguageVersion languageVersion,
+        params LuaPatchEntry[] entries) =>
+        CreateBundle(
+            languageVersion,
+            new DateTimeOffset(2099, 8, 22, 0, 0, 0, TimeSpan.Zero),
+            entries);
+
+    private static LuaPatchBundle CreateBundle(
+        DateTimeOffset expiresAt,
+        params LuaPatchEntry[] entries) =>
+        CreateBundle(LuaLanguageVersion.Lua54, expiresAt, entries);
+
+    private static LuaPatchBundle CreateBundle(
+        LuaLanguageVersion languageVersion,
         DateTimeOffset expiresAt,
         params LuaPatchEntry[] entries)
     {
@@ -1233,7 +1496,7 @@ public sealed class LuaPatchCommitTests
                 TargetBuild = "test-2",
                 BaseRevision = "test-1",
                 TargetRevision = "test-2",
-                LanguageVersion = LuaLanguageVersion.Lua54,
+                LanguageVersion = languageVersion,
                 RuntimeAbi = "lunil-0.12",
                 CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
                 ExpiresAt = expiresAt,
@@ -1246,13 +1509,23 @@ public sealed class LuaPatchCommitTests
     private static LuaHost CreateHost(
         IReadOnlyDictionary<string, string> files,
         LuaHostExecutionBackend backend = LuaHostExecutionBackend.Interpreter) =>
-        CreateHost(new MutableMemoryFileSystem(files), backend);
+        CreateHost(new MutableMemoryFileSystem(files), backend, LuaLanguageVersion.Lua54);
+
+    private static LuaHost CreateHost(
+        IReadOnlyDictionary<string, string> files,
+        LuaLanguageVersion languageVersion) =>
+        CreateHost(
+            new MutableMemoryFileSystem(files),
+            LuaHostExecutionBackend.Interpreter,
+            languageVersion);
 
     private static LuaHost CreateHost(
         MutableMemoryFileSystem files,
-        LuaHostExecutionBackend backend = LuaHostExecutionBackend.Interpreter) => new(
+        LuaHostExecutionBackend backend = LuaHostExecutionBackend.Interpreter,
+        LuaLanguageVersion languageVersion = LuaLanguageVersion.Lua54) => new(
         LuaHostOptions.Default with
         {
+            LanguageVersion = languageVersion,
             ExecutionBackend = backend,
             Jit = LuaJitExecutorOptions.Default with
             {

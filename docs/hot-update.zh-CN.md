@@ -264,6 +264,30 @@ payload 或其他 host 自定义转换交给指定的 `ILuaPatchStateMigrationAd
 必须实现带 journal 的 `Apply` 与 `Rollback`；commit engine 也会记录每次 path 写入，因此后续
 module 失败时会同时恢复 Lua graph 与 host payload 变更。
 
+`PatchTable` 会保留 target path 上的旧 table 对象，同时以 candidate table 的 raw entry 与
+metatable 原子替换其内容：
+
+```csharp
+new LuaPatchStateRule
+{
+    TargetPath = "/match/state",
+    Kind = LuaPatchStateRuleKind.PatchTable,
+}
+```
+
+Source 与 candidate 值都必须是 table。保留的 identity 对游戏引擎 registry、userdata 引用和
+`package.loaded` 外部 alias 继续有效；旧 entry 会被移除，candidate entry 与 weak-table mode 会
+生效，仅能从 detached candidate table 或其 metatable 到达的兼容函数也会参与 function-version
+migration。Transaction 在 publication 或 rollback 最终确定之前，会用 Lua handle 保活新旧 key、
+value、metatable 与 detached candidate table，因此 health check 即使触发 full Lua collection，
+精确 rollback 所需的 graph 也不会丢失。Journal 中的 candidate weak entry 会在 transaction 结束后
+恢复为可回收状态。
+
+State rule 的 target path 必须互不重叠；canonical schema 在序列化或读取时会拒绝重复 path 和
+ancestor/descendant 组合。应对 owning table 使用一条 rule，而不是同时为该 table 及其 descendant
+配置 rule。`PatchTable` 可以与 module 级 `PatchExistingTable` cache policy 组合，同时保留 module
+cache table 与指定 nested table 的 identity。
+
 Resource rule 覆盖 `Coroutine`、`Timer`、`EventSubscription` 和 `Task`，disposition 包括
 `Continue`、`Cancel`、`Restart`、`Drain` 与 `RejectIfActive`。对于 runtime-owned coroutine，
 `Continue` 会把旧 thread 安装到 candidate 的相同 state path，保留 thread identity 与当前挂起点。
@@ -494,10 +518,13 @@ resource state。Handler 必须从应用自己的 durable state 判断 authorita
 Bundle 解码完成后，已验证输入仍受硬上限约束。`LuaPatchPrepareOptions.ResourceLimits` 与
 `LuaPatchCoordinatorOptions.ResourceLimits` 接受 `LuaPatchResourceLimits`。默认最多允许 512 个 patch
 module、1 MiB migration schema、512 个 migration module、8,192 条 state rule、8,192 条 resource
-rule、16 个 ring、每 ring 256 个 target，以及每 rollout 1,024 个 target。超过限制会在 candidate
-执行或 update-window 获取之前抛出 `LuaPatchResourceLimitException`。Bundle byte/entry limit、
-migration limit、update-window/commit pause deadline、journal byte/line/entry limit 与常规 Lua
-execution budget 是相互独立的防线；提高其中一个不会关闭其他限制。
+rule、合计 65,536 个 table-patch journal entry、16 个 ring、每 ring 256 个 target，以及每 rollout
+1,024 个 target。静态 bundle、schema、ring 与 rollout 超限会在 candidate 执行或 update-window
+获取前抛出 `LuaPatchResourceLimitException`。Table journal 上限在 candidate table 已生成、但尚未
+publication 时检查；它由 state rule 的 `PatchTable` 与 module 级 `PatchExistingTable` 共享。超限
+commit 会 fail closed，以 `MigrationFailed` 或 `CachePolicyFailed` 结束并保留旧 graph。Bundle
+byte/entry limit、migration limit、update-window/commit pause deadline、journal byte/line/entry
+limit 与常规 Lua execution budget 是相互独立的防线；提高其中一个不会关闭其他限制。
 
 热更新诊断使用稳定的 `LuaPatchTelemetry.ActivitySourceName` 与 `LuaPatchTelemetry.MeterName`，两者
 均为 `Lunil.Hosting.HotUpdate`。Activity 名称包括：
