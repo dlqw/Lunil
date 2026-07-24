@@ -219,7 +219,8 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         return entries.GroupBy(static entry => entry.TransactionId, StringComparer.Ordinal)
             .Select(static group => group.OrderBy(static entry => entry.Sequence).Last())
             .Where(static entry => entry.Phase is LuaPatchJournalPhase.Started or
-                LuaPatchJournalPhase.Prepared or LuaPatchJournalPhase.Publishing)
+                LuaPatchJournalPhase.Prepared or LuaPatchJournalPhase.Publishing or
+                LuaPatchJournalPhase.Restoring)
             .OrderBy(static entry => entry.Sequence)
             .Select(static entry => new LuaPatchRecoveryRecord(
                 entry.TransactionId,
@@ -1014,7 +1015,12 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                 LuaPatchJournalPhase.RecoveredRolledBack,
             LuaPatchJournalPhase.Publishing => entry.Phase is
                 LuaPatchJournalPhase.Committed or
+                LuaPatchJournalPhase.Restoring or
                 LuaPatchJournalPhase.RolledBack or
+                LuaPatchJournalPhase.RecoveredCommitted or
+                LuaPatchJournalPhase.RecoveredRolledBack,
+            LuaPatchJournalPhase.Restoring => entry.Phase is
+                LuaPatchJournalPhase.Committed or
                 LuaPatchJournalPhase.RecoveredCommitted or
                 LuaPatchJournalPhase.RecoveredRolledBack,
             _ => false,
@@ -1034,7 +1040,8 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
     private static bool IsIncomplete(LuaPatchJournalPhase phase) =>
         phase is LuaPatchJournalPhase.Started or
             LuaPatchJournalPhase.Prepared or
-            LuaPatchJournalPhase.Publishing;
+            LuaPatchJournalPhase.Publishing or
+            LuaPatchJournalPhase.Restoring;
 
     private static LuaPatchJournalEntry StoreEntry(
         LuaPatchJournalEntry entry,

@@ -248,11 +248,13 @@ successor generation，而挂起 frame 继续持有旧 immutable generation。St
 `LuaPatchCoordinator` 在单进程内协调多个 `LuaHost` state。Barrier ring 中的 target id 与 host
 instance 必须唯一，并且每个 target 都必须由同一份 canonical patch manifest prepare。Coordinator
 会先打开全部 update window，再 prepare 任一 commit session；全部 state prepare 成功后才发布完整
-ring。Window 获取、prepare、publish、finalize 或 health gate 任一步失败，都会回滚该 ring 的全部
-participant。Coordinator operation 在进程范围内串行化，避免不同 coordinator instance 形成冲突的
-锁顺序。
+ring。Target 配置 `ILuaPatchTargetLifecycle` 后，coordinator 会先停止新流量并等待 adapter 报告
+quiescence，再进入 host update window。隔离、quiescence、window 获取、prepare、publish、finalize
+或 health gate 任一步失败，都会回滚该 ring 的全部 participant。Coordinator operation 在进程范围内
+串行化，避免不同 coordinator instance 形成冲突的锁顺序。
 
-每个 prepared patch 都绑定各自 host，可据此构造 rollout：
+每个 prepared patch 都绑定各自 host，可据此构造 rollout。下例的 `targetLifecycles` 是应用持有的
+lifecycle adapter map，底层连接游戏 router 与 in-flight work tracker：
 
 ```csharp
 using var journal = new LuaPatchFileJournal("state/hot-update/deploy.ndjson");
@@ -266,7 +268,10 @@ var plan = new LuaPatchRolloutPlan
             Name = "canary",
             Targets =
             [
-                new("zone-canary", canaryHost, canaryPreparation.PreparedPatch!),
+                new("zone-canary", canaryHost, canaryPreparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-canary"],
+                },
             ],
         },
         new LuaPatchRolloutRing
@@ -274,8 +279,14 @@ var plan = new LuaPatchRolloutPlan
             Name = "production",
             Targets =
             [
-                new("zone-01", zone01Host, zone01Preparation.PreparedPatch!),
-                new("zone-02", zone02Host, zone02Preparation.PreparedPatch!),
+                new("zone-01", zone01Host, zone01Preparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-01"],
+                },
+                new("zone-02", zone02Host, zone02Preparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-02"],
+                },
             ],
         },
     ],
@@ -283,6 +294,13 @@ var plan = new LuaPatchRolloutPlan
 
 var result = new LuaPatchCoordinator().Deploy(plan, new LuaPatchCoordinatorOptions
 {
+    RequireTargetIsolation = true,
+    TargetLifecycle = new LuaPatchTargetLifecycleOptions
+    {
+        IsolationTimeout = TimeSpan.FromSeconds(5),
+        QuiescenceTimeout = TimeSpan.FromSeconds(30),
+        RestoreTimeout = TimeSpan.FromSeconds(5),
+    },
     UpdateWindow = new LuaPatchUpdateWindowOptions
     {
         WaitTimeout = TimeSpan.FromMilliseconds(2),
@@ -304,13 +322,28 @@ var result = new LuaPatchCoordinator().Deploy(plan, new LuaPatchCoordinatorOptio
 window 仍被持有时运行，可以检查刚发布的新状态。Callback 返回 `Rollback`、抛出异常、返回非法 enum
 值或递归进入 coordinator operation，都会拒绝并回滚该 ring。
 
+`ILuaPatchTargetLifecycle.TryIsolate` 必须在返回 `ILuaPatchTargetIsolation` 前停止新 routing/admission；
+随后 `WaitForQuiescence` 在传入的 timeout 内排空 in-flight request、tick、job 或 actor message。该
+timeout 是 adapter 必须协作遵守的预算：实现需要把它应用到自己的 router/work tracker，并观察
+cancellation token。`Restore` 按隔离的逆序执行，outcome 为 `Committed` 或 `RolledBack`；它接收
+`CancellationToken.None`，因此调用方取消不能跳过流量恢复。恢复操作必须以 `TransactionId` 保证
+幂等，`Dispose` 只能释放资源，不能改变 routing。
+
+生产环境应启用 `RequireTargetIsolation`，使缺少 adapter 的 target 在 journal 启动前被拒绝。
+`LuaPatchTargetCommitResult.Lifecycle` 提供最终 lifecycle 结果；若早期 isolation/quiescence 失败后
+cleanup 已恢复 target，则 `Status` 为 `Restored`，`Failure` 保留失败阶段。若 publish 完成后恢复失败，
+ring 返回 `RestoreFailed`，已 committed 的 module result 保持可观察，journal 停留在 `Restoring` 供
+crash recovery 使用；恢复完成前不得重新路由该 target。
+
 ## 持久部署 Journal 与恢复
 
 `LuaPatchFileJournal` 写入 canonical NDJSON record，使用连续 sequence 和 SHA-256 hash chain。每次
 append 使用一次 record write，并在返回前完成 write-through I/O 与 stable-storage flush。Reader 会拒绝
 torn record、非 canonical JSON、断裂的 sequence/hash link、非法 transaction phase transition、事务期间
 发生变化的 metadata，以及超过 byte、line 或 entry 上限的内容。Transaction phase 依次为 `Started`、
-`Prepared`、`Publishing`，最终进入 committed、rolled-back、failed 或 recovered terminal phase。
+`Prepared`、`Publishing`、可选的 `Restoring`，最终进入 committed、rolled-back、failed 或 recovered
+terminal phase。`Restoring` 表示 module publication 与 replay acceptance 已完成，但 target 流量恢复
+仍在进行。
 
 首次执行 `Append`、`RecoverIncomplete` 或 `Compact` mutation 时，会在 `<journal>.writer.lock` 获取
 OS 强制的 writer lock，并一直持有到 journal 被 dispose。竞争 writer 会收到
@@ -352,8 +385,8 @@ Hash chain 可以检测意外损坏和未锚定的局部改写，但不能认证
 lock sidecar 都应使用适当的 OS 文件权限；若威胁模型包含恶意 storage 修改，还应在外部锚定或复制
 terminal record。
 
-进程重启后，检查最后 durable phase 为 `Started`、`Prepared` 或 `Publishing` 的 transaction，结合
-host 自己的持久部署状态核对 target，并记录恢复结论：
+进程重启后，检查最后 durable phase 为 `Started`、`Prepared`、`Publishing` 或 `Restoring` 的
+transaction，结合 host 自己的持久部署状态和 routing 状态核对 target，并记录恢复结论：
 
 ```csharp
 using var journal = new LuaPatchFileJournal("state/hot-update/deploy.ndjson");

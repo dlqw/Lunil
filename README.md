@@ -32,8 +32,8 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.13` hot-update preview; it is not the stable package
-> line.
+> The current source tree is the `0.12.0-alpha.14` hot-update preview; it adds coordinated target
+> traffic isolation, quiescence, and restoration and is not the stable package line.
 
 ## Performance
 
@@ -344,7 +344,7 @@ Compatibility changes and deployment notes are documented in the [0.11.0 migrati
 | Document | Purpose |
 | --- | --- |
 | [CLR interoperation](docs/clr-interop.md) | Allowlist configuration, construction, conversion, ownership, and deployment |
-| [Signed patch bundles](docs/hot-update.md) | Patch trust, game-loop safe points, multi-State ring rollout, durable recovery journals, and CLI workflows |
+| [Signed patch bundles](docs/hot-update.md) | Patch trust, target isolation and quiescence, game-loop safe points, multi-State ring rollout, durable recovery journals, and CLI workflows |
 | [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
 | [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md) | Host integration, trimming annotations, and publish verification |
 | [PUC Lua prototype import](docs/puc-prototype-import.md) | Importing validated PUC Lua 5.4 binary prototypes |

@@ -270,12 +270,16 @@ state is visible to later modules in dependency order.
 `LuaPatchCoordinator` coordinates multiple `LuaHost` states in one process. Every target in a
 barrier ring must have a unique target id and host instance and must be prepared from the same
 canonical patch manifest. The coordinator opens every update window before it prepares any commit
-session, prepares every state before publication, and then publishes the complete ring. Failure in
-window acquisition, preparation, publication, finalization, or the health gate rolls back every
-participant in that ring. Coordinator operations are serialized process-wide to prevent conflicting
-lock orders across coordinator instances.
+session, prepares every state before publication, and then publishes the complete ring. When a
+target has an `ILuaPatchTargetLifecycle`, the coordinator first stops its new traffic, waits for the
+adapter to report quiescence, and only then enters host update windows. Failure in isolation,
+quiescence, window acquisition, preparation, publication, finalization, or the health gate rolls
+back every participant in that ring. Coordinator operations are serialized process-wide to prevent
+conflicting lock orders across coordinator instances.
 
-Build a rollout from separately prepared host-bound patches:
+Build a rollout from separately prepared host-bound patches. In this example,
+`targetLifecycles` is an application-owned map of lifecycle adapters backed by the game router and
+its in-flight work tracker:
 
 ```csharp
 using var journal = new LuaPatchFileJournal("state/hot-update/deploy.ndjson");
@@ -289,7 +293,10 @@ var plan = new LuaPatchRolloutPlan
             Name = "canary",
             Targets =
             [
-                new("zone-canary", canaryHost, canaryPreparation.PreparedPatch!),
+                new("zone-canary", canaryHost, canaryPreparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-canary"],
+                },
             ],
         },
         new LuaPatchRolloutRing
@@ -297,8 +304,14 @@ var plan = new LuaPatchRolloutPlan
             Name = "production",
             Targets =
             [
-                new("zone-01", zone01Host, zone01Preparation.PreparedPatch!),
-                new("zone-02", zone02Host, zone02Preparation.PreparedPatch!),
+                new("zone-01", zone01Host, zone01Preparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-01"],
+                },
+                new("zone-02", zone02Host, zone02Preparation.PreparedPatch!)
+                {
+                    Lifecycle = targetLifecycles["zone-02"],
+                },
             ],
         },
     ],
@@ -306,6 +319,13 @@ var plan = new LuaPatchRolloutPlan
 
 var result = new LuaPatchCoordinator().Deploy(plan, new LuaPatchCoordinatorOptions
 {
+    RequireTargetIsolation = true,
+    TargetLifecycle = new LuaPatchTargetLifecycleOptions
+    {
+        IsolationTimeout = TimeSpan.FromSeconds(5),
+        QuiescenceTimeout = TimeSpan.FromSeconds(30),
+        RestoreTimeout = TimeSpan.FromSeconds(5),
+    },
     UpdateWindow = new LuaPatchUpdateWindowOptions
     {
         WaitTimeout = TimeSpan.FromMilliseconds(2),
@@ -328,14 +348,31 @@ is rolled back. The synchronous health callback runs while all ring update windo
 and can inspect the newly published state. Returning `Rollback`, throwing, returning an invalid enum
 value, or recursively entering a coordinator operation rejects the ring.
 
+`ILuaPatchTargetLifecycle.TryIsolate` must stop new routing/admission before returning an
+`ILuaPatchTargetIsolation`. `WaitForQuiescence` then drains in-flight requests, ticks, jobs, or actor
+messages within the supplied timeout. The timeout is a cooperative adapter budget: implementations
+must apply it to their own router and work tracker and observe the cancellation token. `Restore` is
+called in reverse isolation order with `Committed` or `RolledBack`; it receives
+`CancellationToken.None` so caller cancellation cannot skip traffic recovery. Make restoration
+idempotent by `TransactionId`, and make `Dispose` release resources without changing routing.
+
+Set `RequireTargetIsolation` in production so a missing adapter is rejected before the journal is
+started. `LuaPatchTargetCommitResult.Lifecycle` reports the final lifecycle status. If cleanup
+restored a target after an earlier isolation or quiescence failure, `Status` is `Restored` and
+`Failure` retains the failed stage. If restoration fails after publication, the ring returns
+`RestoreFailed`, committed module results remain observable, and the journal remains at `Restoring`
+for crash recovery; do not route that target until recovery completes.
+
 ## Durable deployment journal and recovery
 
 `LuaPatchFileJournal` writes canonical NDJSON records with a contiguous sequence and SHA-256 hash
 chain. Each append uses one record write, write-through I/O, and a stable-storage flush before it
 returns. The reader rejects torn records, non-canonical JSON, broken sequence or hash links, invalid
 transaction phase transitions, changed transaction metadata, and configured byte, line, or entry
-limit violations. The transaction phases are `Started`, `Prepared`, `Publishing`, and a terminal
-committed, rolled-back, failed, or recovered phase.
+limit violations. The transaction phases are `Started`, `Prepared`, `Publishing`, optional
+`Restoring`, and a terminal committed, rolled-back, failed, or recovered phase. `Restoring` means
+module publication and replay acceptance completed while target traffic restoration is still
+pending.
 
 The first `Append`, `RecoverIncomplete`, or `Compact` mutation acquires an OS-enforced writer lock at
 `<journal>.writer.lock` and holds it until the journal is disposed. A competing writer receives
@@ -380,8 +417,9 @@ mechanism against an actor that can rewrite the entire file. Store the journal a
 appropriate OS permissions and externally anchor or replicate terminal records when hostile storage
 modification is in scope.
 
-After process restart, inspect transactions whose last durable phase is `Started`, `Prepared`, or
-`Publishing`, reconcile the named targets with host-owned deployment state, and record the result:
+After process restart, inspect transactions whose last durable phase is `Started`, `Prepared`,
+`Publishing`, or `Restoring`, reconcile the named targets with host-owned deployment state and
+routing state, and record the result:
 
 ```csharp
 using var journal = new LuaPatchFileJournal("state/hot-update/deploy.ndjson");
