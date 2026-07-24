@@ -160,6 +160,40 @@ host execution gate to capture an expected revision for every target module. Pre
 only when all target modules are already loaded, the language versions match, and every module has
 a rollback-safe cache policy. No candidate loader is executed during preparation.
 
+Isolated compilation can be CPU- and memory-intensive when a rollout fans out across many hosts.
+Share one `LuaPatchPreparationLimiter` across their prepare options to bound both active work and
+queued demand:
+
+```csharp
+// Keep this process-wide for the deployment service, not per target.
+var preparationLimiter = new LuaPatchPreparationLimiter(
+    maximumConcurrency: Math.Max(1, Environment.ProcessorCount / 2),
+    maximumQueueLength: 64);
+
+var prepareOptions = new LuaPatchPrepareOptions
+{
+    PreparationLimiter = preparationLimiter,
+    PreparationWaitTimeout = TimeSpan.FromMilliseconds(250),
+    // AcceptancePolicy, ReplayStore, ReplayScope, migration adapters, ...
+};
+
+var preparation = await host.PreparePatchAsync(bundle, prepareOptions, stoppingToken);
+if (preparation.Status == LuaPatchPrepareStatus.Deferred)
+{
+    ScheduleRetry(preparation.AdmissionStatus); // Saturated or TimedOut
+    return;
+}
+```
+
+`MaximumConcurrency` is the number of isolated preflights allowed at once;
+`MaximumQueueLength` bounds callers waiting behind them. A zero queue is fail-fast. The wait timeout
+may be zero, a finite value of at most `Int32.MaxValue` milliseconds, or
+`Timeout.InfiniteTimeSpan`. Queue overflow and elapsed waits return
+`Deferred` before preflight, live-state binding, or replay reservation; caller cancellation still
+cancels the operation. The same admission rules apply to `PreparePatch` and `PreparePatchAsync`.
+Export `ActiveCount` and `QueuedCount` as gauges, and keep retry jitter outside the limiter so a
+rollout controller can coordinate backoff across targets.
+
 ## Game-loop update windows and atomic commit
 
 Open an update window between ticks or frames and commit the prepared patch on the same thread:
