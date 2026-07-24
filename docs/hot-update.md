@@ -5,7 +5,7 @@
 Lunil patch bundles package Lua module replacements for validation before a host publishes them.
 The versioned canonical manifest records the target build, base and target revisions, signed update
 intent, requested admission capabilities, Lua language version, runtime ABI, channel, expiry, nonce,
-dependencies, and SHA-256 payload identities.
+required target labels, dependencies, and SHA-256 payload identities.
 
 ## Signed update intent and admission capabilities
 
@@ -17,7 +17,11 @@ host-policy capabilities it needs:
   "baseRevision": "build-102",
   "targetRevision": "build-101",
   "updateIntent": "Rollback",
-  "requiredCapabilities": ["game.inventory-v2", "game.world-write"]
+  "requiredCapabilities": ["game.inventory-v2", "game.world-write"],
+  "requiredTargetLabels": [
+    { "name": "environment", "value": "production" },
+    { "name": "shard", "value": "eu-2" }
+  ]
 }
 ```
 
@@ -26,16 +30,27 @@ unique and trimmed, and are bounded by `MaximumCapabilityCount` and
 `MaximumCapabilityNameBytes` when reading. A capability request is only an admission claim: matching
 it never grants a Lua, CLR, filesystem, network, or other runtime permission.
 
+Required target labels form a deterministic conjunction: every signed name/value pair must exactly
+match a label assigned locally by the deployment control plane. Names are unique, case-sensitive,
+sorted before signing, and bounded together with their values by the target-label read limits. This
+prevents a valid patch for one environment, region, shard, platform, or ring from being admitted on
+another target. It does not discover targets or grant permissions.
+
+Treat policy labels as a stable target-identity snapshot for the lifetime of a prepared patch. If a
+target changes environment, shard, platform, or ring before commit, discard the prepared patch and
+prepare it again with the new labels.
+
 ## Trust and resource boundaries
 
 `LuaPatchBundle.Read` verifies every payload hash and an ECDSA P-256/SHA-256 signature against an
 explicit `LuaPatchEcdsaTrustStore`. It rejects untrusted keys, expired or non-canonical manifests,
 unsafe paths, duplicate modules, missing required dependencies, trailing data, and size-limit
 violations. `LuaPatchAcceptancePolicy` additionally binds a verified bundle to the current build,
-runtime ABI, revision, channel, signed update intent, requested capabilities, verified signer, expiry,
-and host replay record. Because a prepared patch may wait for a later game-loop safe point, commit
-checks the signed manifest expiry again before constructing or executing any candidate. An expired
-commit returns `LuaPatchCommitStatus.Expired` without changing live state; coordinated ring commits
+runtime ABI, revision, channel, signed update intent, requested capabilities, required target labels,
+verified signer, expiry, and host replay record. Because a prepared patch may wait for a later
+game-loop safe point, commit checks the signed manifest expiry again before constructing or executing
+any candidate. An expired commit returns `LuaPatchCommitStatus.Expired` without changing live state;
+coordinated ring commits
 apply the same check during barrier preparation.
 
 Trusted keys can have an activation instant, an exclusive expiration instant, and an independent
@@ -80,6 +95,13 @@ var prepareOptions = new LuaPatchPrepareOptions
         RuntimeAbi = "lunil-0.12",
         AllowedChannels = ["production"],
         GrantedCapabilities = hostPatchCapabilities,
+        TargetLabels =
+        [
+            new("environment", deploymentEnvironment),
+            new("region", region),
+            new("shard", shardId),
+            new("ring", rolloutRing),
+        ],
         RevisionClassifier = releaseLedger.Classify,
         RollbackAuthorizer = (manifest, signer) =>
             signer.Algorithm == LuaPatchEcdsaSigner.AlgorithmName &&
@@ -96,7 +118,7 @@ revision strings. Its classification must match the signed `UpdateIntent`. Every
 requires a verified signer identity and an explicit `RollbackAuthorizer` decision, which lets a host
 separate ordinary release keys from rollback keys. `LuaHost.PreparePatch` derives that identity from
 the verified bundle signature rather than any manifest field. A denied capability, mismatched intent,
-or unauthorized rollback fails before a replay reservation is written.
+unauthorized rollback, or target-selector mismatch fails before a replay reservation is written.
 
 Preparation requires `AcceptancePolicy`, `ReplayStore`, and `ReplayScope` together. The scope is a
 stable deployment-target identity, not a process id. The same signed patch can therefore be reserved

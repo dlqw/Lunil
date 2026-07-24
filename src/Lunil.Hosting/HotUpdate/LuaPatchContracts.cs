@@ -32,6 +32,9 @@ public enum LuaPatchUpdateIntent : byte
     Rollback,
 }
 
+/// <summary>A case-sensitive deployment target label used by signed patch admission.</summary>
+public sealed record LuaPatchTargetLabel(string Name, string Value);
+
 public enum LuaPatchErrorCode : byte
 {
     InvalidHeader,
@@ -136,6 +139,11 @@ public sealed record LuaPatchManifest
     /// </summary>
     public ImmutableArray<string> RequiredCapabilities { get; init; } = [];
 
+    /// <summary>
+    /// Signed, case-sensitive target labels that must all match the local deployment target.
+    /// </summary>
+    public ImmutableArray<LuaPatchTargetLabel> RequiredTargetLabels { get; init; } = [];
+
     public ImmutableArray<LuaPatchEntryManifest> Entries { get; init; } = [];
 }
 
@@ -165,6 +173,12 @@ public sealed record LuaPatchBundleReadOptions
     public int MaximumCapabilityCount { get; init; } = 128;
 
     public int MaximumCapabilityNameBytes { get; init; } = 256;
+
+    public int MaximumTargetLabelCount { get; init; } = 64;
+
+    public int MaximumTargetLabelNameBytes { get; init; } = 128;
+
+    public int MaximumTargetLabelValueBytes { get; init; } = 512;
 
     public bool RequireSignature { get; init; } = true;
 

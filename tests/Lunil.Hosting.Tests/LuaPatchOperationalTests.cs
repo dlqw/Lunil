@@ -100,6 +100,7 @@ public sealed class LuaPatchOperationalTests
                 TargetRevision = "build-1",
                 UpdateIntent = LuaPatchUpdateIntent.Rollback,
                 RequiredCapabilities = ["game.state-write"],
+                RequiredTargetLabels = [new("environment", "production"), new("shard", "eu-2")],
                 LanguageVersion = LuaLanguageVersion.Lua54,
                 RuntimeAbi = "lunil-0.12",
                 CreatedAt = new DateTimeOffset(2026, 7, 23, 0, 0, 0, TimeSpan.Zero),
@@ -118,6 +119,7 @@ public sealed class LuaPatchOperationalTests
                 RuntimeAbi = "lunil-0.12",
                 AllowedChannels = ["production"],
                 GrantedCapabilities = ["game.state-write"],
+                TargetLabels = [new("environment", "production"), new("shard", "eu-2")],
                 RevisionClassifier = static (current, target) =>
                     current == "build-2" && target == "build-1"
                         ? LuaPatchUpdateIntent.Rollback
@@ -142,6 +144,15 @@ public sealed class LuaPatchOperationalTests
             },
             ReplayStore = deniedStore,
         });
+        var wrongTargetStore = new AtomicReplayStore();
+        var wrongTarget = host.PreparePatch(bundle, options with
+        {
+            AcceptancePolicy = options.AcceptancePolicy! with
+            {
+                TargetLabels = [new("environment", "production"), new("shard", "us-1")],
+            },
+            ReplayStore = wrongTargetStore,
+        });
 
         Assert.True(accepted.Succeeded, accepted.Message);
         Assert.Equal(LuaPatchAcceptanceStatus.Accepted, accepted.Acceptance!.Status);
@@ -151,6 +162,11 @@ public sealed class LuaPatchOperationalTests
             LuaPatchAcceptanceStatus.RollbackNotAuthorized,
             denied.Acceptance!.Status);
         Assert.Equal(0, deniedStore.AcceptedCount);
+        Assert.Equal(LuaPatchPrepareStatus.AcceptanceRejected, wrongTarget.Status);
+        Assert.Equal(
+            LuaPatchAcceptanceStatus.TargetSelectorMismatch,
+            wrongTarget.Acceptance!.Status);
+        Assert.Equal(0, wrongTargetStore.AcceptedCount);
     }
 
     [Fact]

@@ -518,6 +518,7 @@ namespace Lunil.Hosting
         public required string RuntimeAbi { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> AllowedChannels { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> GrantedCapabilities { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchTargetLabel> TargetLabels { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRevisionClassifier? RevisionClassifier { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRollbackAuthorizer? RollbackAuthorizer { get => throw null; init { } }
         public System.DateTimeOffset? MinimumCreatedAt { get => throw null; init { } }
@@ -564,7 +565,8 @@ namespace Lunil.Hosting
         Expired = 8,
         UpdateIntentMismatch = 9,
         RollbackNotAuthorized = 10,
-        CapabilityDenied = 11
+        CapabilityDenied = 11,
+        TargetSelectorMismatch = 12
     }
 
     public sealed class LuaPatchBundle
@@ -589,6 +591,9 @@ namespace Lunil.Hosting
         public int MaximumSignatureBytes { get => throw null; init { } }
         public int MaximumCapabilityCount { get => throw null; init { } }
         public int MaximumCapabilityNameBytes { get => throw null; init { } }
+        public int MaximumTargetLabelCount { get => throw null; init { } }
+        public int MaximumTargetLabelNameBytes { get => throw null; init { } }
+        public int MaximumTargetLabelValueBytes { get => throw null; init { } }
         public bool RequireSignature { get => throw null; init { } }
         public bool AllowExpired { get => throw null; init { } }
         public System.DateTimeOffset? UtcNow { get => throw null; init { } }
@@ -990,6 +995,7 @@ namespace Lunil.Hosting
         public System.DateTimeOffset? ExpiresAt { get => throw null; init { } }
         public required string Nonce { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> RequiredCapabilities { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchTargetLabel> RequiredTargetLabels { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchEntryManifest> Entries { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchManifest? left, Lunil.Hosting.LuaPatchManifest? right) => throw null;
@@ -1632,6 +1638,20 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchTargetCommitResult? other) => throw null;
         public void Deconstruct(out string TargetId, out Lunil.Hosting.LuaPatchCommitResult Commit) => throw null;
+    }
+
+    public sealed class LuaPatchTargetLabel : System.IEquatable<Lunil.Hosting.LuaPatchTargetLabel>
+    {
+        public string Name { get => throw null; init { } }
+        public string Value { get => throw null; init { } }
+        public LuaPatchTargetLabel(string Name, string Value) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetLabel? left, Lunil.Hosting.LuaPatchTargetLabel? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetLabel? left, Lunil.Hosting.LuaPatchTargetLabel? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetLabel? other) => throw null;
+        public void Deconstruct(out string Name, out string Value) => throw null;
     }
 
     public static class LuaPatchTelemetry

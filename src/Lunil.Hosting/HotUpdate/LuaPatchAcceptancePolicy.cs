@@ -16,6 +16,7 @@ public enum LuaPatchAcceptanceStatus : byte
     UpdateIntentMismatch,
     RollbackNotAuthorized,
     CapabilityDenied,
+    TargetSelectorMismatch,
 }
 
 public sealed record LuaPatchAcceptanceResult(
@@ -113,6 +114,12 @@ public sealed record LuaPatchAcceptancePolicy
     public ImmutableArray<string> GrantedCapabilities { get; init; } = [];
 
     /// <summary>
+    /// Case-sensitive labels assigned by the deployment control plane to this target.
+    /// Every signed required target label must match exactly.
+    /// </summary>
+    public ImmutableArray<LuaPatchTargetLabel> TargetLabels { get; init; } = [];
+
+    /// <summary>
     /// Optional host revision-ledger classifier. When present, its result must match the signed
     /// manifest intent, preventing a downgrade from being labelled as a forward update.
     /// </summary>
@@ -164,6 +171,7 @@ public sealed record LuaPatchAcceptancePolicy
         }
 
         var grantedCapabilities = ValidateGrantedCapabilities();
+        var targetLabels = ValidateTargetLabels();
 
         if (!string.Equals(manifest.TargetBuild, TargetBuild, StringComparison.Ordinal))
         {
@@ -232,6 +240,38 @@ public sealed record LuaPatchAcceptancePolicy
                     return Rejected(
                         LuaPatchAcceptanceStatus.CapabilityDenied,
                         $"Required patch capability '{capability}' is not granted by the host policy.");
+                }
+            }
+        }
+
+        if (!manifest.RequiredTargetLabels.IsDefaultOrEmpty)
+        {
+            var requiredNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var requiredLabel in manifest.RequiredTargetLabels)
+            {
+                if (requiredLabel is null || string.IsNullOrWhiteSpace(requiredLabel.Name) ||
+                    !string.Equals(
+                        requiredLabel.Name,
+                        requiredLabel.Name.Trim(),
+                        StringComparison.Ordinal) ||
+                    string.IsNullOrWhiteSpace(requiredLabel.Value) ||
+                    !string.Equals(
+                        requiredLabel.Value,
+                        requiredLabel.Value.Trim(),
+                        StringComparison.Ordinal) ||
+                    !requiredNames.Add(requiredLabel.Name))
+                {
+                    throw new ArgumentException(
+                        "RequiredTargetLabels must contain unique, non-blank canonical names and values.",
+                        nameof(manifest));
+                }
+
+                if (!targetLabels.TryGetValue(requiredLabel.Name, out var actualValue) ||
+                    !string.Equals(actualValue, requiredLabel.Value, StringComparison.Ordinal))
+                {
+                    return Rejected(
+                        LuaPatchAcceptanceStatus.TargetSelectorMismatch,
+                        $"Required target label '{requiredLabel.Name}' does not match this deployment target.");
                 }
             }
         }
@@ -383,5 +423,29 @@ public sealed record LuaPatchAcceptancePolicy
         }
 
         return granted;
+    }
+
+    private Dictionary<string, string> ValidateTargetLabels()
+    {
+        var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (TargetLabels.IsDefaultOrEmpty)
+        {
+            return labels;
+        }
+
+        foreach (var label in TargetLabels)
+        {
+            if (label is null || string.IsNullOrWhiteSpace(label.Name) ||
+                !string.Equals(label.Name, label.Name.Trim(), StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(label.Value) ||
+                !string.Equals(label.Value, label.Value.Trim(), StringComparison.Ordinal) ||
+                !labels.TryAdd(label.Name, label.Value))
+            {
+                throw new InvalidOperationException(
+                    "TargetLabels must contain unique, non-blank canonical names and values.");
+            }
+        }
+
+        return labels;
     }
 }
