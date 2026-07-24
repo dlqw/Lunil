@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using Lunil.Core;
+using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.StandardLibrary;
 
@@ -31,6 +32,7 @@ public sealed class LuaPatchCoordinatorTests
         Assert.Equal<string>(["state-a", "state-b"], result.Targets.Select(
             static target => target.TargetId));
         Assert.All(result.Targets, static target => Assert.True(target.Commit.Succeeded));
+        Assert.All(result.Targets, static target => Assert.Null(target.GenerationSnapshot));
         Assert.Equal(2, Value(first));
         Assert.Equal(2, Value(second));
         Assert.Equal<LuaPatchJournalPhase>(
@@ -1257,6 +1259,66 @@ public sealed class LuaPatchCoordinatorTests
     }
 
     [Fact]
+    public void GenerationGuardRejectsBeforeDistributedHealthyAcknowledgement()
+    {
+        var delegateName = typeof(Func<int, int>).FullName!;
+        using var host = CreateClrCallbackHost(
+            "local function callback(value) return value+1 end; " +
+            "return {value=1,callback=callback}");
+        Load(host);
+        var oldCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+            host.RunUtf8("return require('value').callback").Execution!.Values[0],
+            delegateName);
+        Func<int, int>? candidateCallback = null;
+        host.State.SetGlobal(
+            "capture_callback",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_callback",
+                (_, arguments) =>
+                {
+                    candidateCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+                        arguments[0],
+                        delegateName);
+                    return [];
+                })));
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Unhealthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Rollback,
+                ["process-a"],
+                message: request.Message),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-generation-guard",
+            Ring(Target(
+                "state-a",
+                host,
+                CreateBundle(
+                    "local function callback(value) return value+2 end; " +
+                    "capture_callback(callback); return {value=2,callback=callback}"))),
+            DistributedOptions(store) with
+            {
+                GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.GenerationRejected, result.Status);
+        Assert.Equal(
+            [LuaPatchDistributedBarrierSignal.Prepared, LuaPatchDistributedBarrierSignal.Unhealthy],
+            store.Requests.Select(static request => request.Signal));
+        Assert.Equal(1, Value(host));
+        Assert.Equal(41, oldCallback(40));
+        Assert.NotNull(candidateCallback);
+        Assert.Throws<LuaClrException>(() => candidateCallback(40));
+    }
+
+    [Fact]
     public void DistributedHealthRollbackReopensReplayAcceptance()
     {
         var directory = Path.Combine(
@@ -1773,6 +1835,26 @@ public sealed class LuaPatchCoordinatorTests
                 FileSystem = new SingleFileSystem(source),
             },
         });
+
+    private static LuaHost CreateClrCallbackHost(string source)
+    {
+        var delegateName = typeof(Func<int, int>).FullName!;
+        return new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            StandardLibrary = LuaHostCapabilityProfiles.Create(LuaHostProfile.Restricted) with
+            {
+                FileSystem = new SingleFileSystem(source),
+            },
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.DelegateConversion,
+                AllowedAssemblyNames = [typeof(Func<int, int>).Assembly.GetName().Name!],
+                AllowedTypeNames = [delegateName],
+                AllowedDelegateTypeNames = [delegateName],
+            },
+        });
+    }
 
     private static LuaPatchBundle CreateBundle(string source) => CreateBundle(
         source,

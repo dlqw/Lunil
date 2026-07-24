@@ -630,7 +630,7 @@ public sealed partial class LuaClrBridge
         lock (_callbackGate)
         {
             PruneGenerationRegistrations();
-            return _timerRegistrations.Count(registration => registration.State == state);
+            return CountTimersUnsafe(state);
         }
     }
 

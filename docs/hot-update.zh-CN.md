@@ -389,6 +389,44 @@ Host-polled module timer 也使用该 barrier：旧 timer 以 remaining delay �
 successor generation，而挂起 frame 继续持有旧 immutable generation。State rule 会在 candidate
 暂存给 dependent 之前应用，因此依赖顺序中后续 module 可以看到已经 preserve 的状态。
 
+### Generation retention snapshot 与 rollout guard
+
+`LuaHost.CapturePatchGenerationSnapshot()` 会捕获一次 host 范围的一致视图，覆盖 generation-tracked
+callback、task、timer 与挂起 native continuation。每种 resource 都提供 `Active`、`Pending`、
+`Quiesced` 和 `Stale` 数量，同时给出聚合 resource count、`HasTransitionResidue`、
+`HasStaleResources`、`ObservedAt` 与 `UpdateInProgress`。Stale 表示 resource 仍被引用，但已被
+generation admission 拒绝；它本身不等同于内存泄漏。
+
+生产 ring 应配置明确的 retention budget：
+
+```csharp
+var coordinatorOptions = new LuaPatchCoordinatorOptions
+{
+    GenerationGuard = new LuaPatchGenerationGuardPolicy
+    {
+        MaximumStaleCallbackCount = 128,
+        MaximumStaleTaskCount = 256,
+        MaximumStaleTimerCount = 64,
+        MaximumStaleNativeContinuationCount = 32,
+    },
+};
+```
+
+Guard 在 publication 与应用 health callback 之后执行，但早于 replay acceptance，也早于 distributed
+participant 发送 `Healthy` acknowledgement。默认会拒绝任何 pending 或 quiesced residue。
+`LuaPatchGenerationGuardPolicy.Strict` 还会把全部 stale budget 设为零；只有业务不可能合理保留任何
+旧 callback、task、timer 或 continuation 时才应使用。仅当 Host 已用其他机制强制限制 transition
+lifetime 时，才设置 `RejectTransitionResidue = false`。
+
+任一 target 超出 budget 时，ring 返回 `GenerationRejected`，并把全部本地 target 回滚到上一 live
+generation。`LuaPatchTargetCommitResult.GenerationSnapshot` 会保存每个已检查 target 的决策时 snapshot。
+未配置 guard 时该属性保持 `null`，原有 rollout 路径不变。Budget 配置会在获取 update window 前校验。
+
+Budget 应来自业务正常长尾观测，并对连续 patch 后的增长告警。Guard 不会强制 CLR 或 Lua GC、取消底层
+host task、关闭外部 resource，也无法撤销 candidate loader 的任意外部副作用。Rollback 会恢复
+generation admission 与受管 patch graph；candidate 外部副作用形成的引用仍可能作为 stale resource
+保留，直到应用主动释放。
+
 ## 多 State Barrier 与 Ring 灰度
 
 `LuaPatchCoordinator` 在单进程内协调多个 `LuaHost` state。Barrier ring 中的 target id 与 host

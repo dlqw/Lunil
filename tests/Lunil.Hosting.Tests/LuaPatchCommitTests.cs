@@ -165,6 +165,341 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
+    public void GenerationSnapshotAndPolicyReportTransitionAndStaleBudgets()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+
+        var empty = host.CapturePatchGenerationSnapshot();
+
+        Assert.False(empty.UpdateInProgress);
+        Assert.Equal(0, empty.ActiveResourceCount);
+        Assert.Equal(0, empty.PendingResourceCount);
+        Assert.Equal(0, empty.QuiescedResourceCount);
+        Assert.Equal(0, empty.StaleResourceCount);
+        Assert.False(empty.HasTransitionResidue);
+        Assert.False(empty.HasStaleResources);
+        Assert.True(LuaPatchGenerationGuardPolicy.Strict.Evaluate(empty).Accepted);
+
+        var transition = empty with { PendingTaskCount = 1 };
+        var transitionResult = LuaPatchGenerationGuardPolicy.Strict.Evaluate(transition);
+        Assert.False(transitionResult.Accepted);
+        Assert.Contains("1 pending", transitionResult.Message);
+        Assert.True(new LuaPatchGenerationGuardPolicy
+        {
+            RejectTransitionResidue = false,
+        }.Evaluate(transition).Accepted);
+
+        var stale = empty with { StaleTimerCount = 2 };
+        var staleResult = new LuaPatchGenerationGuardPolicy
+        {
+            MaximumStaleTimerCount = 1,
+        }.Evaluate(stale);
+        Assert.False(staleResult.Accepted);
+        Assert.Contains("stale timer", staleResult.Message);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            (new LuaPatchGenerationGuardPolicy { MaximumStaleCallbackCount = -1 })
+            .Evaluate(empty));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            LuaPatchGenerationGuardPolicy.Strict.Evaluate(
+                empty with { ActiveNativeContinuationCount = -1 }));
+    }
+
+    [Fact]
+    public void StrictGenerationGuardRollsBackBeforeReplayAcceptance()
+    {
+        var delegateName = typeof(Func<int, int>).FullName!;
+        using var host = CreateClrCallbackHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function callback(value) return value+1 end; return {callback=callback}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+            host.RunUtf8("return require('a').callback").Execution!.Values[0],
+            delegateName);
+        Func<int, int>? candidateCallback = null;
+        host.State.SetGlobal(
+            "capture_callback",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_callback",
+                (_, arguments) =>
+                {
+                    candidateCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+                        arguments[0],
+                        delegateName);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local function callback(value) return value+2 end; " +
+            "capture_callback(callback); return {callback=callback}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        LuaPatchGenerationSnapshot? healthSnapshot = null;
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "strict-generation-guard",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    healthSnapshot = host.CapturePatchGenerationSnapshot();
+                    return LuaPatchRingHealthDecision.Accept;
+                },
+                GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.GenerationRejected, result.Status);
+        Assert.Contains("stale callback", result.Message);
+        var guardedTarget = Assert.Single(result.Targets);
+        Assert.NotNull(guardedTarget.GenerationSnapshot);
+        Assert.Equal(1, guardedTarget.GenerationSnapshot.StaleCallbackCount);
+        Assert.NotNull(healthSnapshot);
+        Assert.True(healthSnapshot.UpdateInProgress);
+        Assert.Equal(1, healthSnapshot.ActiveCallbackCount);
+        Assert.Equal(1, healthSnapshot.StaleCallbackCount);
+        Assert.False(healthSnapshot.HasTransitionResidue);
+        Assert.Equal(41, oldCallback(40));
+        Assert.NotNull(candidateCallback);
+        Assert.Throws<LuaClrException>(() => candidateCallback(40));
+        var rolledBack = host.CapturePatchGenerationSnapshot();
+        Assert.False(rolledBack.UpdateInProgress);
+        Assert.Equal(1, rolledBack.ActiveCallbackCount);
+        Assert.Equal(1, rolledBack.StaleCallbackCount);
+    }
+
+    [Fact]
+    public void GenerationGuardAllowsAnExplicitStaleResourceBudget()
+    {
+        var delegateName = typeof(Func<int, int>).FullName!;
+        using var host = CreateClrCallbackHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function callback(value) return value+1 end; return {callback=callback}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+            host.RunUtf8("return require('a').callback").Execution!.Values[0],
+            delegateName);
+        Func<int, int>? candidateCallback = null;
+        host.State.SetGlobal(
+            "capture_callback",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_callback",
+                (_, arguments) =>
+                {
+                    candidateCallback = (Func<int, int>)host.ClrBridge.CreateDelegate(
+                        arguments[0],
+                        delegateName);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local function callback(value) return value+2 end; " +
+            "capture_callback(callback); return {callback=callback}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "budgeted-generation-guard",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                GenerationGuard = new LuaPatchGenerationGuardPolicy
+                {
+                    MaximumStaleCallbackCount = 1,
+                },
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        var targetResult = Assert.Single(result.Targets);
+        Assert.NotNull(targetResult.GenerationSnapshot);
+        Assert.Equal(1, targetResult.GenerationSnapshot.StaleCallbackCount);
+        Assert.Throws<LuaClrException>(() => oldCallback(40));
+        Assert.NotNull(candidateCallback);
+        Assert.Equal(42, candidateCallback(40));
+        var snapshot = host.CapturePatchGenerationSnapshot();
+        Assert.Equal(1, snapshot.ActiveCallbackCount);
+        Assert.Equal(1, snapshot.StaleCallbackCount);
+        Assert.False(snapshot.HasTransitionResidue);
+
+        var acceptedCallback = candidateCallback;
+        var next = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            "local function callback(value) return value+3 end; " +
+            "capture_callback(callback); return {callback=callback}")));
+        Assert.True(next.Succeeded, next.Message);
+        var rejected = new LuaPatchCoordinator().CommitRing(
+            "accumulated-generation-guard",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        next.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                GenerationGuard = new LuaPatchGenerationGuardPolicy
+                {
+                    MaximumStaleCallbackCount = 1,
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.GenerationRejected, rejected.Status);
+        var rejectedSnapshot = Assert.IsType<LuaPatchGenerationSnapshot>(
+            Assert.Single(rejected.Targets).GenerationSnapshot);
+        Assert.Equal(2, rejectedSnapshot.StaleCallbackCount);
+        Assert.Equal(42, acceptedCallback(40));
+        Assert.NotSame(acceptedCallback, candidateCallback);
+        Assert.Throws<LuaClrException>(() => candidateCallback(40));
+    }
+
+    [Fact]
+    public void InvalidGenerationGuardIsRejectedBeforeTheCommitBarrier()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var prepared = host.PreparePatch(CreateBundle(Entry("a", "return {value=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new LuaPatchCoordinator().CommitRing(
+                "invalid-generation-guard",
+                new LuaPatchRolloutRing
+                {
+                    Name = "production",
+                    Targets =
+                    [
+                        new LuaPatchDeploymentTarget(
+                            "state-a",
+                            host,
+                            prepared.PreparedPatch!),
+                    ],
+                },
+                new LuaPatchCoordinatorOptions
+                {
+                    GenerationGuard = new LuaPatchGenerationGuardPolicy
+                    {
+                        MaximumStaleTaskCount = -1,
+                    },
+                }));
+
+        Assert.Equal(1, host.RunUtf8("return require('a').value")
+            .Execution!.Values[0].AsInteger());
+        Assert.False(host.CapturePatchGenerationSnapshot().UpdateInProgress);
+    }
+
+    [Fact]
+    public void GenerationGuardRejectionRollsBackEveryTarget()
+    {
+        using var first = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function callback(value) return value+1 end; " +
+                "return {value=1,callback=callback}",
+        });
+        using var second = CreateClrCallbackHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function callback(value) return value+1 end; " +
+                "return {value=1,callback=callback}",
+        });
+        Assert.True(first.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        Assert.True(second.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var delegateName = typeof(Func<int, int>).FullName!;
+        var oldCallback = (Func<int, int>)second.ClrBridge.CreateDelegate(
+            second.RunUtf8("return require('a').callback").Execution!.Values[0],
+            delegateName);
+        Func<int, int>? candidateCallback = null;
+        first.State.SetGlobal(
+            "capture_callback",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_callback",
+                static (_, _) => [])));
+        second.State.SetGlobal(
+            "capture_callback",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_callback",
+                (_, arguments) =>
+                {
+                    candidateCallback = (Func<int, int>)second.ClrBridge.CreateDelegate(
+                        arguments[0],
+                        delegateName);
+                    return [];
+                })));
+        var bundle = CreateBundle(Entry(
+            "a",
+            "local function callback(value) return value+2 end; " +
+            "capture_callback(callback); return {value=2,callback=callback}"));
+        var firstPreparation = first.PreparePatch(bundle);
+        var secondPreparation = second.PreparePatch(bundle);
+        Assert.True(firstPreparation.Succeeded, firstPreparation.Message);
+        Assert.True(secondPreparation.Succeeded, secondPreparation.Message);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "multi-target-generation-guard",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        first,
+                        firstPreparation.PreparedPatch!),
+                    new LuaPatchDeploymentTarget(
+                        "state-b",
+                        second,
+                        secondPreparation.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.GenerationRejected, result.Status);
+        Assert.Equal(2, result.Targets.Length);
+        Assert.All(result.Targets, static target => Assert.NotNull(target.GenerationSnapshot));
+        Assert.Equal(1, first.RunUtf8("return require('a').value")
+            .Execution!.Values[0].AsInteger());
+        Assert.Equal(41, oldCallback(40));
+        Assert.NotNull(candidateCallback);
+        Assert.Throws<LuaClrException>(() => candidateCallback(40));
+    }
+
+    [Fact]
     public void FailedPatchRestoresOldClrDelegatesAndRejectsCandidateDelegates()
     {
         var delegateName = typeof(Func<int, int>).FullName!;
@@ -489,6 +824,9 @@ public sealed class LuaPatchCommitTests
             Assert.Throws<LuaClrException>(() => host.ClrBridge.Await(oldTaskValue)).Code);
         Assert.Equal(1, host.ClrBridge.ActiveTaskCount);
         Assert.Equal(1, host.ClrBridge.StaleTaskCount);
+        var snapshot = host.CapturePatchGenerationSnapshot();
+        Assert.Equal(1, snapshot.ActiveTaskCount);
+        Assert.Equal(1, snapshot.StaleTaskCount);
     }
 
     [Fact]
@@ -543,6 +881,9 @@ public sealed class LuaPatchCommitTests
         Assert.True(candidateTimer!.IsActive);
         Assert.Equal(1, host.ClrBridge.ActiveTimerCount);
         Assert.Equal(1, host.ClrBridge.StaleTimerCount);
+        var snapshot = host.CapturePatchGenerationSnapshot();
+        Assert.Equal(1, snapshot.ActiveTimerCount);
+        Assert.Equal(1, snapshot.StaleTimerCount);
         time.Advance(TimeSpan.FromMilliseconds(100));
         Assert.Equal(1, host.DispatchClrTimers());
         Assert.Equal("new", host.State.GetGlobal("timer_result").AsString().ToString());

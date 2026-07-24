@@ -421,6 +421,48 @@ upvalue layouts publish a successor generation while suspended frames retain the
 generation. State rules are applied before a candidate is staged for its dependents, so preserved
 state is visible to later modules in dependency order.
 
+### Generation retention snapshots and rollout guards
+
+`LuaHost.CapturePatchGenerationSnapshot()` captures one host-wide view of generation-tracked callbacks,
+tasks, timers, and suspended native continuations. Each resource kind reports `Active`, `Pending`,
+`Quiesced`, and `Stale` counts; aggregate resource counts, `HasTransitionResidue`,
+`HasStaleResources`, `ObservedAt`, and `UpdateInProgress` are included. A stale resource is still
+referenced but is rejected by generation admission. It is not by itself proof of a memory leak.
+
+For a production ring, configure an explicit retention budget:
+
+```csharp
+var coordinatorOptions = new LuaPatchCoordinatorOptions
+{
+    GenerationGuard = new LuaPatchGenerationGuardPolicy
+    {
+        MaximumStaleCallbackCount = 128,
+        MaximumStaleTaskCount = 256,
+        MaximumStaleTimerCount = 64,
+        MaximumStaleNativeContinuationCount = 32,
+    },
+};
+```
+
+The guard evaluates every target after publication and the application health callback, but before
+replay acceptance and before a distributed participant sends its `Healthy` acknowledgement.
+Pending or quiesced residue is rejected by default. `LuaPatchGenerationGuardPolicy.Strict` also sets
+every stale budget to zero; use it only when the workload cannot legitimately retain any old
+callback, task, timer, or continuation. Set `RejectTransitionResidue = false` only when the host has
+a separately enforced transition-lifetime policy.
+
+If any target exceeds a budget, the ring returns `GenerationRejected` and rolls every local target
+back to the previous live generation. `LuaPatchTargetCommitResult.GenerationSnapshot` contains the
+decision-time snapshot for each target that was evaluated. The property remains `null` when no
+guard is configured, preserving the existing rollout path. Budget validation happens before update
+windows are acquired.
+
+Choose budgets from observed long-tail behavior and alert on growth across successive patches. The
+guard does not force CLR or Lua collection, cancel underlying host tasks, close external resources,
+or undo arbitrary side effects performed by a candidate loader. Rollback restores generation
+admission and the managed patch graph, while references created by candidate-side external effects
+can remain visible as stale resources until the application releases them.
+
 ## Multi-State barriers and ring rollout
 
 `LuaPatchCoordinator` coordinates multiple `LuaHost` states in one process. Every target in a
