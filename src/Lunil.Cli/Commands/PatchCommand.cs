@@ -239,6 +239,15 @@ internal static class PatchCommand
             writer.WriteStringValue(capability);
         }
         writer.WriteEndArray();
+        writer.WriteStartArray("requiredTargetLabels");
+        foreach (var label in bundle.Manifest.RequiredTargetLabels)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("name", label.Name);
+            writer.WriteString("value", label.Value);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
         writer.WriteStartArray("modules");
         foreach (var entry in bundle.Entries.Where(static entry => entry.ModuleName is not null))
         {

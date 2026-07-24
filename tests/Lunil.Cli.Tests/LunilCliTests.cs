@@ -41,6 +41,7 @@ public sealed class LunilCliTests
             TargetRevision = "game-2",
             UpdateIntent = LuaPatchUpdateIntent.Rollback,
             RequiredCapabilities = ["game.inventory-v2", "game.world-write"],
+            RequiredTargetLabels = [new("environment", "qa"), new("shard", "eu-2")],
             LanguageVersion = LuaLanguageVersion.Lua54,
             RuntimeAbi = "lunil-0.12",
             CreatedAt = new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
@@ -105,6 +106,13 @@ public sealed class LunilCliTests
                 inspection.RootElement.GetProperty("requiredCapabilities")
                     .EnumerateArray()
                     .Select(static item => item.GetString()!)
+                    .ToArray());
+            Assert.Equal(
+                ["environment=qa", "shard=eu-2"],
+                inspection.RootElement.GetProperty("requiredTargetLabels")
+                    .EnumerateArray()
+                    .Select(static item =>
+                        $"{item.GetProperty("name").GetString()}={item.GetProperty("value").GetString()}")
                     .ToArray());
         }
         Assert.Equal(0, dryRun.ExitCode);

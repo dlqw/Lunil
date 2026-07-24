@@ -55,6 +55,7 @@ public sealed class LuaPatchBundle
         {
             Entries = descriptors,
             RequiredCapabilities = NormalizeCapabilities(manifest.RequiredCapabilities),
+            RequiredTargetLabels = NormalizeTargetLabels(manifest.RequiredTargetLabels),
         };
         _ = LuaPatchDependencyPlan.Create(normalizedEntries);
         var manifestBytes = SerializeManifest(completeManifest);
@@ -364,7 +365,7 @@ public sealed class LuaPatchBundle
     private static void ValidateManifestHeader(
         LuaPatchManifest manifest,
         LuaPatchBundleReadOptions options,
-        bool requireCanonicalCapabilities)
+        bool requireCanonicalClaims)
     {
         if (manifest.FormatVersion != LuaPatchFormat.CurrentVersion)
         {
@@ -390,7 +391,13 @@ public sealed class LuaPatchBundle
             manifest.RequiredCapabilities,
             options.MaximumCapabilityCount,
             options.MaximumCapabilityNameBytes,
-            requireCanonicalCapabilities);
+            requireCanonicalClaims);
+        ValidateTargetLabels(
+            manifest.RequiredTargetLabels,
+            options.MaximumTargetLabelCount,
+            options.MaximumTargetLabelNameBytes,
+            options.MaximumTargetLabelValueBytes,
+            requireCanonicalClaims);
 
         if (!manifest.Entries.IsDefault && !manifest.Entries.IsEmpty)
         {
@@ -439,7 +446,8 @@ public sealed class LuaPatchBundle
             options.MaximumEntryCount <= 0 || options.MaximumEntryBytes <= 0 ||
             options.MaximumTotalEntryBytes <= 0 || options.MaximumNameBytes <= 0 ||
             options.MaximumSignatureBytes <= 0 || options.MaximumCapabilityCount <= 0 ||
-            options.MaximumCapabilityNameBytes <= 0)
+            options.MaximumCapabilityNameBytes <= 0 || options.MaximumTargetLabelCount <= 0 ||
+            options.MaximumTargetLabelNameBytes <= 0 || options.MaximumTargetLabelValueBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Patch read limits must be positive.");
         }
@@ -512,6 +520,85 @@ public sealed class LuaPatchBundle
             }
 
             previous = capability;
+        }
+    }
+
+    private static ImmutableArray<LuaPatchTargetLabel> NormalizeTargetLabels(
+        ImmutableArray<LuaPatchTargetLabel> labels)
+    {
+        if (labels.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var defaults = LuaPatchBundleReadOptions.Default;
+        ValidateTargetLabels(
+            labels,
+            defaults.MaximumTargetLabelCount,
+            defaults.MaximumTargetLabelNameBytes,
+            defaults.MaximumTargetLabelValueBytes,
+            false);
+        var normalized = labels.OrderBy(static label => label.Name, StringComparer.Ordinal)
+            .ToImmutableArray();
+        ValidateTargetLabels(
+            normalized,
+            defaults.MaximumTargetLabelCount,
+            defaults.MaximumTargetLabelNameBytes,
+            defaults.MaximumTargetLabelValueBytes,
+            true);
+        return normalized;
+    }
+
+    private static void ValidateTargetLabels(
+        ImmutableArray<LuaPatchTargetLabel> labels,
+        int maximumCount,
+        int maximumNameBytes,
+        int maximumValueBytes,
+        bool requireCanonicalOrder)
+    {
+        if (labels.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        if (labels.Length > maximumCount)
+        {
+            throw Format(
+                LuaPatchErrorCode.ResourceLimitExceeded,
+                "The patch target-label count exceeds its configured limit.");
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        string? previous = null;
+        foreach (var label in labels)
+        {
+            if (label is null || string.IsNullOrWhiteSpace(label.Name) ||
+                !string.Equals(label.Name, label.Name.Trim(), StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(label.Value) ||
+                !string.Equals(label.Value, label.Value.Trim(), StringComparison.Ordinal))
+            {
+                throw Format(
+                    LuaPatchErrorCode.InvalidManifest,
+                    "Patch target labels must have unique, canonical, non-blank names and values.");
+            }
+
+            if (Encoding.UTF8.GetByteCount(label.Name) > maximumNameBytes ||
+                Encoding.UTF8.GetByteCount(label.Value) > maximumValueBytes)
+            {
+                throw Format(
+                    LuaPatchErrorCode.ResourceLimitExceeded,
+                    "A patch target-label name or value exceeds its configured limit.");
+            }
+
+            if (!names.Add(label.Name) || requireCanonicalOrder && previous is not null &&
+                string.CompareOrdinal(previous, label.Name) >= 0)
+            {
+                throw Format(
+                    LuaPatchErrorCode.InvalidManifest,
+                    "Patch target labels must have unique, canonical, non-blank names and values.");
+            }
+
+            previous = label.Name;
         }
     }
 

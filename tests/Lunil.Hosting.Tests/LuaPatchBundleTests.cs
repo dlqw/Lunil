@@ -72,6 +72,68 @@ public sealed class LuaPatchBundleTests
     }
 
     [Fact]
+    public void SignedManifestCanonicalizesAndBoundsRequiredTargetLabels()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var signer = new LuaPatchEcdsaSigner("release-1", key);
+        var bundle = LuaPatchBundle.Create(
+            CreateManifest() with
+            {
+                RequiredTargetLabels =
+                [
+                    new("shard", "eu-2"),
+                    new("environment", "production"),
+                ],
+            },
+            [Entry("main", [])],
+            signer);
+        var trust = new LuaPatchEcdsaTrustStore([
+            new LuaPatchTrustedEcdsaKey("release-1", key.ExportSubjectPublicKeyInfo()),
+        ]);
+
+        using var stream = new MemoryStream(Write(bundle));
+        var restored = LuaPatchBundle.Read(
+            stream,
+            trust,
+            new LuaPatchBundleReadOptions { UtcNow = bundle.Manifest.CreatedAt });
+        using var limitedStream = new MemoryStream(Write(bundle));
+        var limited = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Read(
+            limitedStream,
+            trust,
+            new LuaPatchBundleReadOptions
+            {
+                UtcNow = bundle.Manifest.CreatedAt,
+                MaximumTargetLabelCount = 1,
+            }));
+        var duplicate = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with
+            {
+                RequiredTargetLabels = [new("shard", "eu-1"), new("shard", "eu-2")],
+            },
+            [Entry("main", [])],
+            signer));
+        var invalid = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with { RequiredTargetLabels = [new(" shard", "eu-2")] },
+            [Entry("main", [])],
+            signer));
+        var oversized = Assert.Throws<LuaPatchFormatException>(() => LuaPatchBundle.Create(
+            CreateManifest() with
+            {
+                RequiredTargetLabels = [new("shard", new string('x', 513))],
+            },
+            [Entry("main", [])],
+            signer));
+
+        Assert.Equal(
+            ["environment", "shard"],
+            restored.Manifest.RequiredTargetLabels.Select(static label => label.Name));
+        Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, limited.Code);
+        Assert.Equal(LuaPatchErrorCode.InvalidManifest, duplicate.Code);
+        Assert.Equal(LuaPatchErrorCode.InvalidManifest, invalid.Code);
+        Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, oversized.Code);
+    }
+
+    [Fact]
     public void BuilderRejectsDuplicateInvalidAndExcessiveCapabilityRequests()
     {
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -419,6 +481,46 @@ public sealed class LuaPatchBundleTests
         Assert.Equal(LuaPatchAcceptanceStatus.CapabilityDenied, capabilityDenied.Status);
         Assert.True(accepted.Accepted);
         Assert.Equal(LuaPatchAcceptanceStatus.UpdateIntentMismatch, mismatch.Status);
+    }
+
+    [Fact]
+    public void AcceptancePolicyRequiresExactSignedTargetLabels()
+    {
+        var manifest = CreateManifest() with
+        {
+            RequiredTargetLabels =
+            [
+                new("environment", "production"),
+                new("shard", "eu-2"),
+            ],
+        };
+        var policy = new LuaPatchAcceptancePolicy
+        {
+            TargetBuild = "game-100",
+            CurrentRevision = "build-99",
+            RuntimeAbi = "lunil-0.12",
+            AllowedChannels = ["production"],
+            TargetLabels =
+            [
+                new("shard", "eu-2"),
+                new("environment", "production"),
+                new("ring", "canary"),
+            ],
+        };
+
+        var accepted = policy.Evaluate(manifest, manifest.CreatedAt);
+        var wrongValue = (policy with
+        {
+            TargetLabels = [new("environment", "production"), new("shard", "eu-1")],
+        }).Evaluate(manifest, manifest.CreatedAt);
+        var wrongCase = (policy with
+        {
+            TargetLabels = [new("environment", "Production"), new("shard", "eu-2")],
+        }).Evaluate(manifest, manifest.CreatedAt);
+
+        Assert.True(accepted.Accepted);
+        Assert.Equal(LuaPatchAcceptanceStatus.TargetSelectorMismatch, wrongValue.Status);
+        Assert.Equal(LuaPatchAcceptanceStatus.TargetSelectorMismatch, wrongCase.Status);
     }
 
     [Fact]
