@@ -130,6 +130,27 @@ tick 使用 candidate callback 与 scheduling policy。
 instance 时设置 `OwnConstructedObjects=false`。userdata、callback、subscription、task 和 timer 都
 属于一个 `LuaState`，不能转移到其他 state。
 
+当 Host 或 native object 必须跨 patch generation 保持唯一 identity 与唯一 owner 时，使用 stable
+resource handle：
+
+```csharp
+var userdata = host.ClrBridge.CreateStableResource(
+    "world-session",
+    worldSession,
+    ownsResource: true);
+host.State.SetGlobal("world_session", LuaValue.FromUserdata(userdata));
+```
+
+启用 `MemberAccess` 时，resource 的精确 runtime type、assembly 及所访问 member 仍必须进入 allowlist。
+Host 侧进行中的工作可调用 `LuaPatchStableResourceHandle.AcquireLease()`；CLR member call 会在本次
+invocation 内自动持有 lease，event subscription 则持有到 unsubscribe。handle 被 Dispose 后拒绝新
+access。owned `IDisposable` 或 `IAsyncDisposable` resource 会在最后一条 lease 关闭后释放；non-owning
+handle 只关闭访问。userdata 始终绑定原来的 `LuaState`。
+
+要在 patch 中延续该 identity，为其 module-cache path 声明 `HostResource + Continue` rule。candidate
+module 应只在该 path 放置 placeholder，不得构造第二份 native resource。migration、rollback 与
+`RejectIfActive` 行为参见[生产级热更新](hot-update.zh-CN.md#状态-schema-与异步资源迁移)。
+
 Trimming 和 NativeAOT 应用必须通过 `DynamicDependency` 等 linker metadata 保留每个 allowlist type 的
 public constructor、member 和 delegate signature。metadata 缺失时以稳定 bridge diagnostic fail closed。
 Interpreter 与 dynamic JIT 共用同一套 bridge 实现和转换规则。

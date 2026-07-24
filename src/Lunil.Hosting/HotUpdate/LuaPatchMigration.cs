@@ -28,6 +28,7 @@ public enum LuaPatchResourceKind : byte
     Timer,
     EventSubscription,
     Task,
+    HostResource,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<LuaPatchResourceDisposition>))]
@@ -125,10 +126,10 @@ public sealed record LuaPatchResourceRule
 
     public required LuaPatchResourceDisposition Disposition { get; init; }
 
-    /// <summary>Module-cache path for a runtime-owned coroutine or CLR timer.</summary>
+    /// <summary>Module-cache path for a runtime-owned coroutine, CLR timer, or stable host resource.</summary>
     public string? StatePath { get; init; }
 
-    /// <summary>Host adapter used for timers, subscriptions, tasks, or reversible coroutine actions.</summary>
+    /// <summary>Host adapter for external lifecycles or reversible coroutine actions.</summary>
     public string? AdapterId { get; init; }
 }
 
@@ -454,13 +455,13 @@ public static class LuaPatchMigrationSchemaSerializer
                 }
 
                 if (resource.Kind is (LuaPatchResourceKind.Coroutine or
-                        LuaPatchResourceKind.Timer) &&
+                        LuaPatchResourceKind.Timer or LuaPatchResourceKind.HostResource) &&
                     string.IsNullOrWhiteSpace(resource.AdapterId) &&
                     resource.StatePath is null)
                 {
                     throw Error(
                         LuaPatchMigrationSchemaErrorCode.InvalidSchema,
-                        "A runtime-managed coroutine or timer rule requires a state path.");
+                        "A runtime-managed coroutine, timer, or host resource rule requires a state path.");
                 }
 
                 if (resource.Kind is (LuaPatchResourceKind.Coroutine or
@@ -474,8 +475,18 @@ public static class LuaPatchMigrationSchemaSerializer
                         $"Resource '{resource.ResourceId}' requires a host adapter.");
                 }
 
+                if (resource.Kind == LuaPatchResourceKind.HostResource &&
+                    resource.Disposition is not (LuaPatchResourceDisposition.Continue or
+                        LuaPatchResourceDisposition.RejectIfActive) &&
+                    string.IsNullOrWhiteSpace(resource.AdapterId))
+                {
+                    throw Error(
+                        LuaPatchMigrationSchemaErrorCode.AdapterRequired,
+                        $"Resource '{resource.ResourceId}' requires a host adapter.");
+                }
+
                 if (resource.Kind is not (LuaPatchResourceKind.Coroutine or
-                        LuaPatchResourceKind.Timer) &&
+                        LuaPatchResourceKind.Timer or LuaPatchResourceKind.HostResource) &&
                     resource.Disposition != LuaPatchResourceDisposition.Continue &&
                     string.IsNullOrWhiteSpace(resource.AdapterId))
                 {

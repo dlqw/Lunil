@@ -313,10 +313,11 @@ separate rules for both that table and one of its descendants. `PatchTable` can 
 module-level `PatchExistingTable` cache policy to preserve both the module cache table and selected
 nested table identities.
 
-Resource rules cover `Coroutine`, `Timer`, `EventSubscription`, and `Task`, with `Continue`, `Cancel`,
-`Restart`, `Drain`, or `RejectIfActive` dispositions. For a runtime-owned coroutine, `Continue`
-installs the previous thread at the same candidate state path, preserving its identity and suspended
-execution state. This includes resumable native `Yielded` and `CallLua` activations: the descriptor,
+Resource rules cover `Coroutine`, `Timer`, `EventSubscription`, `Task`, and `HostResource`, with
+`Continue`, `Cancel`, `Restart`, `Drain`, or `RejectIfActive` dispositions. For a runtime-owned
+coroutine, `Continue` installs the previous thread at the same candidate state path, preserving its
+identity and suspended execution state. This includes resumable native `Yielded` and `CallLua`
+activations: the descriptor,
 invocation state, callback frame, and immutable Lua function versions remain isolated in the old
 activation while the thread is admitted into the candidate generation. Without `Continue`, an old
 module-owned thread becomes stale and `LuaInterpreter.Start`/`Resume` fail before entering the
@@ -335,6 +336,41 @@ new LuaPatchResourceRule
     StatePath = "/workers/matchLoop",
 }
 ```
+
+Use `HostResource` for a non-copyable engine object, native session, file/socket wrapper, or other
+host lifetime that must retain one userdata identity and one owner across generations. Create the
+initial userdata through `LuaClrBridge.CreateStableResource` when Lua needs exact-allowlist CLR
+member access, or put a `LuaPatchStableResourceHandle` in host-created userdata directly:
+
+```csharp
+var sessionUserdata = host.ClrBridge.CreateStableResource(
+    "world-session",
+    worldSession,
+    ownsResource: true);
+host.State.SetGlobal("world_session", LuaValue.FromUserdata(sessionUserdata));
+
+new LuaPatchResourceRule
+{
+    ResourceId = "world-session",
+    Kind = LuaPatchResourceKind.HostResource,
+    Disposition = LuaPatchResourceDisposition.Continue,
+    StatePath = "/session",
+}
+```
+
+The old module cache must contain that live handle at `StatePath`; `ResourceId` must match exactly.
+The candidate only needs the same parent path and may use a non-resource placeholder. `Continue`
+installs the previous userdata into the candidate graph, so external registries and Lua aliases keep
+the same identity and ownership. A later module, barrier, health, or distributed rollback restores
+the old graph without disposing the resource. Do not construct a duplicate native resource in the
+candidate loader.
+
+Host work should hold `LuaPatchStableResourceHandle.AcquireLease()` while it uses the underlying
+object. Disposal becomes final immediately for new callers but defers owned `IDisposable` or
+`IAsyncDisposable` release until every lease closes; CLR member invocations and event subscriptions
+created through the bridge hold such leases automatically. `RejectIfActive` fails while any explicit
+lease exists. `Cancel`, `Restart`, and `Drain` require a reversible resource adapter because their
+external effects are application-specific.
 
 `LuaClrTimer` is also runtime-owned when stored as userdata at `StatePath`. For `Continue`, both module
 versions create their timer at that path; commit transfers the previous remaining delay and dispatch

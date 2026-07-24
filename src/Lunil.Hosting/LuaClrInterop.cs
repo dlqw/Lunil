@@ -308,6 +308,7 @@ public sealed class LuaClrSubscription : IDisposable
 {
     private readonly LuaClrBridge _bridge;
     private readonly LuaClrCallbackRegistration _registration;
+    private IDisposable? _targetLease;
     private LuaHandle? _callbackHandle;
     private int _disposed;
 
@@ -315,12 +316,14 @@ public sealed class LuaClrSubscription : IDisposable
         LuaClrBridge bridge,
         LuaClrCallbackRegistration registration,
         LuaValue callback,
-        LuaHandle callbackHandle)
+        LuaHandle callbackHandle,
+        IDisposable? targetLease = null)
     {
         _bridge = bridge;
         _registration = registration;
         Callback = callback;
         _callbackHandle = callbackHandle;
+        _targetLease = targetLease;
     }
 
     /// <summary>Gets the callback retained by this subscription.</summary>
@@ -343,7 +346,14 @@ public sealed class LuaClrSubscription : IDisposable
             }
             finally
             {
-                Interlocked.Exchange(ref _callbackHandle, null)?.Dispose();
+                try
+                {
+                    Interlocked.Exchange(ref _callbackHandle, null)?.Dispose();
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _targetLease, null)?.Dispose();
+                }
             }
         }
     }
@@ -607,6 +617,60 @@ public sealed partial class LuaClrBridge
         return userdata;
     }
 
+    /// <summary>
+    /// Wraps a host-provided object in a stable, owned userdata identity suitable for
+    /// <see cref="LuaPatchResourceKind.HostResource"/> migration rules.
+    /// </summary>
+    public LuaUserdata CreateStableResource(
+        string resourceId,
+        object resource,
+        bool ownsResource = true)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        var type = resource.GetType();
+        if ((_options.Capabilities & LuaClrCapabilities.MemberAccess) != LuaClrCapabilities.None)
+        {
+            var typeName = type.FullName ?? throw new LuaClrException(
+                LuaClrErrorCode.InvalidTypeName,
+                "A stable CLR resource requires a named runtime type.");
+            if (!ReferenceEquals(ResolveAllowedType(typeName), type))
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.TypeNotAllowed,
+                    $"CLR type '{typeName}' is not the exact allowlisted stable-resource type.");
+            }
+        }
+
+        var handle = new LuaPatchStableResourceHandle(resourceId, resource, ownsResource);
+        LuaUserdata? userdata = null;
+        try
+        {
+            userdata = _state.CreateUserdata(
+                handle,
+                userValueCount: 1,
+                payloadLogicalSize: 96);
+            if ((_options.Capabilities & LuaClrCapabilities.MemberAccess) != LuaClrCapabilities.None)
+            {
+                AttachMetatable(userdata, type);
+            }
+
+            return userdata;
+        }
+        catch
+        {
+            if (userdata is null)
+            {
+                handle.Dispose();
+            }
+            else
+            {
+                userdata.DisposePayload();
+            }
+
+            throw;
+        }
+    }
+
     /// <summary>Returns allowlisted public members for an exact type.</summary>
     public ImmutableArray<LuaClrMemberInfo> ResolveMembers(string typeName)
     {
@@ -623,7 +687,8 @@ public sealed partial class LuaClrBridge
     public LuaValue GetMember(LuaValue target, string memberName, ReadOnlySpan<LuaValue> indexArguments = default)
     {
         RequireCapability(LuaClrCapabilities.MemberAccess);
-        var (instance, type) = UnwrapTarget(target);
+        var (instance, type, stableLease) = UnwrapTarget(target);
+        using var stableLeaseScope = stableLease;
         EnsureMemberAllowed(type, memberName);
         var member = SelectMember(type, memberName, indexArguments, forWrite: false,
             requireStatic: instance is null);
@@ -656,7 +721,8 @@ public sealed partial class LuaClrBridge
     public void SetMember(LuaValue target, string memberName, LuaValue value)
     {
         RequireCapability(LuaClrCapabilities.MemberAccess);
-        var (instance, type) = UnwrapTarget(target);
+        var (instance, type, stableLease) = UnwrapTarget(target);
+        using var stableLeaseScope = stableLease;
         EnsureMemberAllowed(type, memberName);
         var member = SelectMember(type, memberName, [value], forWrite: true,
             requireStatic: instance is null);
@@ -707,7 +773,8 @@ public sealed partial class LuaClrBridge
         ReadOnlySpan<LuaClrNamedArgument> namedArguments = default)
     {
         RequireCapability(LuaClrCapabilities.MemberAccess);
-        var (instance, type) = UnwrapTarget(target);
+        var (instance, type, stableLease) = UnwrapTarget(target);
+        using var stableLeaseScope = stableLease;
         EnsureMemberAllowed(type, memberName);
         var methods = GetMembers(type).OfType<MethodInfo>()
             .Where(method => string.Equals(method.Name, memberName, StringComparison.Ordinal))
@@ -793,47 +860,57 @@ public sealed partial class LuaClrBridge
             throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "A Lua function is required.");
         }
 
-        var (instance, type) = UnwrapTarget(target);
-        EnsureEventAllowed(type, eventName);
-        var eventInfo = type.GetEvent(eventName, BindingFlags.Public | BindingFlags.Instance |
-            BindingFlags.Static) ?? throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-                $"CLR event '{eventName}' was not found.");
-        if (eventInfo.EventHandlerType is null)
-        {
-            throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
-                $"CLR event '{eventName}' has no handler type.");
-        }
-
-        var handlerTypeName = eventInfo.EventHandlerType.FullName ?? eventInfo.EventHandlerType.Name;
-        var handlerType = ResolveAllowedType(handlerTypeName);
-        if (!_allowedDelegates.Contains(handlerTypeName))
-        {
-            throw new LuaClrException(
-                LuaClrErrorCode.InvalidDelegate,
-                $"CLR type '{handlerTypeName}' is not an allowed delegate type.");
-        }
-
-        ValidateDelegateSignature(handlerType.GetMethod("Invoke")!);
-        var registration = CreateCallbackRegistration(callback);
-        var handler = BuildDelegate(handlerType, registration);
-        var handle = _state.CreateHandle(callback);
+        var (instance, type, stableLease) = UnwrapTarget(target);
         try
         {
-            eventInfo.AddEventHandler(instance, handler);
-            registration.AttachSubscription(
-                () => eventInfo.AddEventHandler(instance, handler),
-                () => eventInfo.RemoveEventHandler(instance, handler));
-            return new LuaClrSubscription(
-                this,
-                registration,
-                callback,
-                handle);
+            EnsureEventAllowed(type, eventName);
+            var eventInfo = type.GetEvent(eventName, BindingFlags.Public | BindingFlags.Instance |
+                BindingFlags.Static) ?? throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
+                    $"CLR event '{eventName}' was not found.");
+            if (eventInfo.EventHandlerType is null)
+            {
+                throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
+                    $"CLR event '{eventName}' has no handler type.");
+            }
+
+            var handlerTypeName = eventInfo.EventHandlerType.FullName ?? eventInfo.EventHandlerType.Name;
+            var handlerType = ResolveAllowedType(handlerTypeName);
+            if (!_allowedDelegates.Contains(handlerTypeName))
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.InvalidDelegate,
+                    $"CLR type '{handlerTypeName}' is not an allowed delegate type.");
+            }
+
+            ValidateDelegateSignature(handlerType.GetMethod("Invoke")!);
+            var registration = CreateCallbackRegistration(callback);
+            var handler = BuildDelegate(handlerType, registration);
+            var handle = _state.CreateHandle(callback);
+            try
+            {
+                eventInfo.AddEventHandler(instance, handler);
+                registration.AttachSubscription(
+                    () => eventInfo.AddEventHandler(instance, handler),
+                    () => eventInfo.RemoveEventHandler(instance, handler));
+                var subscription = new LuaClrSubscription(
+                    this,
+                    registration,
+                    callback,
+                    handle,
+                    stableLease);
+                stableLease = null;
+                return subscription;
+            }
+            catch
+            {
+                CloseCallbackRegistration(registration);
+                handle.Dispose();
+                throw;
+            }
         }
-        catch
+        finally
         {
-            CloseCallbackRegistration(registration);
-            handle.Dispose();
-            throw;
+            stableLease?.Dispose();
         }
     }
 
@@ -1389,25 +1466,42 @@ public sealed partial class LuaClrBridge
             LuaValue.FromString(state.Strings.GetOrCreate(System.Text.Encoding.UTF8.GetBytes(name))),
             LuaValue.FromString(state.Strings.GetOrCreate(System.Text.Encoding.UTF8.GetBytes(value))));
 
-    private static (object? Instance, Type Type) UnwrapTarget(LuaValue target)
+    private static (object? Instance, Type Type, LuaPatchStableResourceLease? StableLease)
+        UnwrapTarget(LuaValue target)
     {
         if (target.Kind == LuaValueKind.Userdata)
         {
             var payload = target.AsUserdata().Payload;
             if (payload is LuaClrObject clrObject)
             {
-                return (clrObject.Instance, clrObject.ClrType);
+                return (clrObject.Instance, clrObject.ClrType, null);
+            }
+
+            if (payload is LuaPatchStableResourceHandle stableResource)
+            {
+                try
+                {
+                    var lease = stableResource.AcquireLease();
+                    return (lease.Resource, lease.Resource.GetType(), lease);
+                }
+                catch (ObjectDisposedException exception)
+                {
+                    throw new LuaClrException(
+                        LuaClrErrorCode.InvocationFailed,
+                        $"Stable CLR resource '{stableResource.ResourceId}' is disposed.",
+                        exception);
+                }
             }
 
             if (payload is Type reflectedType)
             {
-                return (null, reflectedType);
+                return (null, reflectedType, null);
             }
         }
 
         if (target.Kind == LuaValueKind.LightUserdata && target.AsLightUserdata().Identity is Type type)
         {
-            return (null, type);
+            return (null, type, null);
         }
 
         throw new LuaClrException(LuaClrErrorCode.TypeNotAllowed,
@@ -2131,7 +2225,11 @@ public sealed partial class LuaClrBridge
         if (value.Kind == LuaValueKind.Userdata)
         {
             var payload = value.AsUserdata().Payload;
-            var instance = payload is LuaClrObject clrObject ? clrObject.Instance : payload;
+            var instance = payload switch
+            {
+                LuaClrObject clrObject => clrObject.Instance,
+                _ => payload,
+            };
             if (instance is not null && nonNullable.IsInstanceOfType(instance))
             {
                 converted = instance;
