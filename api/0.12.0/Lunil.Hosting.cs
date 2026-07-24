@@ -78,6 +78,17 @@ namespace Lunil.Hosting
         void Rollback();
     }
 
+    public interface ILuaPatchTargetIsolation : System.IDisposable
+    {
+        Lunil.Hosting.LuaPatchTargetQuiescenceResult WaitForQuiescence(Lunil.Hosting.LuaPatchTargetLifecycleContext context, System.Threading.CancellationToken cancellationToken);
+        Lunil.Hosting.LuaPatchTargetRestoreResult Restore(Lunil.Hosting.LuaPatchTargetRestoreContext context, System.Threading.CancellationToken cancellationToken);
+    }
+
+    public interface ILuaPatchTargetLifecycle
+    {
+        Lunil.Hosting.LuaPatchTargetIsolationResult TryIsolate(Lunil.Hosting.LuaPatchTargetLifecycleContext context, System.Threading.CancellationToken cancellationToken);
+    }
+
     public sealed class LuaBufferedConsole : Lunil.StandardLibrary.ILuaConsole
     {
         public LuaBufferedConsole(System.ReadOnlySpan<byte> standardInput = null) { }
@@ -662,6 +673,8 @@ namespace Lunil.Hosting
         public static Lunil.Hosting.LuaPatchCoordinatorOptions Default { get => throw null; }
         public Lunil.Hosting.LuaPatchUpdateWindowOptions UpdateWindow { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchCommitOptions Commit { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetLifecycleOptions TargetLifecycle { get => throw null; init { } }
+        public bool RequireTargetIsolation { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRingHealthCallback? HealthCheck { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchDeploymentJournal? Journal { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
@@ -729,6 +742,7 @@ namespace Lunil.Hosting
         public string TargetId { get => throw null; init { } }
         public Lunil.Hosting.LuaHost Host { get => throw null; init { } }
         public Lunil.Hosting.LuaPreparedPatch PreparedPatch { get => throw null; init { } }
+        public Lunil.Hosting.ILuaPatchTargetLifecycle? Lifecycle { get => throw null; init { } }
         public LuaPatchDeploymentTarget(string TargetId, Lunil.Hosting.LuaHost Host, Lunil.Hosting.LuaPreparedPatch PreparedPatch) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchDeploymentTarget? left, Lunil.Hosting.LuaPatchDeploymentTarget? right) => throw null;
@@ -977,7 +991,8 @@ namespace Lunil.Hosting
         RolledBack = 4,
         Failed = 5,
         RecoveredCommitted = 6,
-        RecoveredRolledBack = 7
+        RecoveredRolledBack = 7,
+        Restoring = 8
     }
 
     public sealed class LuaPatchManifest : System.IEquatable<Lunil.Hosting.LuaPatchManifest>
@@ -1466,7 +1481,10 @@ namespace Lunil.Hosting
         PublishFailed = 4,
         HealthRejected = 5,
         JournalFailed = 6,
-        ReplayFailed = 7
+        ReplayFailed = 7,
+        IsolationFailed = 8,
+        QuiescenceFailed = 9,
+        RestoreFailed = 10
     }
 
     public delegate Lunil.Hosting.LuaPatchRingHealthDecision LuaPatchRingHealthCallback(Lunil.Hosting.LuaPatchRingHealthContext context);
@@ -1630,6 +1648,7 @@ namespace Lunil.Hosting
     {
         public string TargetId { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchCommitResult Commit { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetLifecycleResult Lifecycle { get => throw null; init { } }
         public LuaPatchTargetCommitResult(string TargetId, Lunil.Hosting.LuaPatchCommitResult Commit) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchTargetCommitResult? left, Lunil.Hosting.LuaPatchTargetCommitResult? right) => throw null;
@@ -1638,6 +1657,30 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchTargetCommitResult? other) => throw null;
         public void Deconstruct(out string TargetId, out Lunil.Hosting.LuaPatchCommitResult Commit) => throw null;
+    }
+
+    public sealed class LuaPatchTargetIsolationResult : System.IEquatable<Lunil.Hosting.LuaPatchTargetIsolationResult>
+    {
+        public Lunil.Hosting.LuaPatchTargetIsolationStatus Status { get => throw null; init { } }
+        public Lunil.Hosting.ILuaPatchTargetIsolation? Isolation { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaPatchTargetIsolationResult(Lunil.Hosting.LuaPatchTargetIsolationStatus Status, Lunil.Hosting.ILuaPatchTargetIsolation? Isolation, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetIsolationResult? left, Lunil.Hosting.LuaPatchTargetIsolationResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetIsolationResult? left, Lunil.Hosting.LuaPatchTargetIsolationResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetIsolationResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchTargetIsolationStatus Status, out Lunil.Hosting.ILuaPatchTargetIsolation? Isolation, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchTargetIsolationStatus
+    {
+        Isolated = 0,
+        Deferred = 1,
+        Cancelled = 2,
+        Failed = 3
     }
 
     public sealed class LuaPatchTargetLabel : System.IEquatable<Lunil.Hosting.LuaPatchTargetLabel>
@@ -1652,6 +1695,134 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchTargetLabel? other) => throw null;
         public void Deconstruct(out string Name, out string Value) => throw null;
+    }
+
+    public sealed class LuaPatchTargetLifecycleContext : System.IEquatable<Lunil.Hosting.LuaPatchTargetLifecycleContext>
+    {
+        public string TransactionId { get => throw null; init { } }
+        public string RolloutId { get => throw null; init { } }
+        public string RingName { get => throw null; init { } }
+        public string TargetId { get => throw null; init { } }
+        public string PatchId { get => throw null; init { } }
+        public string TargetRevision { get => throw null; init { } }
+        public System.TimeSpan Timeout { get => throw null; init { } }
+        public LuaPatchTargetLifecycleContext(string TransactionId, string RolloutId, string RingName, string TargetId, string PatchId, string TargetRevision, System.TimeSpan Timeout) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetLifecycleContext? left, Lunil.Hosting.LuaPatchTargetLifecycleContext? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetLifecycleContext? left, Lunil.Hosting.LuaPatchTargetLifecycleContext? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetLifecycleContext? other) => throw null;
+        public void Deconstruct(out string TransactionId, out string RolloutId, out string RingName, out string TargetId, out string PatchId, out string TargetRevision, out System.TimeSpan Timeout) => throw null;
+    }
+
+    public sealed class LuaPatchTargetLifecycleOptions : System.IEquatable<Lunil.Hosting.LuaPatchTargetLifecycleOptions>
+    {
+        public static Lunil.Hosting.LuaPatchTargetLifecycleOptions Default { get => throw null; }
+        public System.TimeSpan IsolationTimeout { get => throw null; init { } }
+        public System.TimeSpan QuiescenceTimeout { get => throw null; init { } }
+        public System.TimeSpan RestoreTimeout { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetLifecycleOptions? left, Lunil.Hosting.LuaPatchTargetLifecycleOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetLifecycleOptions? left, Lunil.Hosting.LuaPatchTargetLifecycleOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetLifecycleOptions? other) => throw null;
+    }
+
+    public sealed class LuaPatchTargetLifecycleResult : System.IEquatable<Lunil.Hosting.LuaPatchTargetLifecycleResult>
+    {
+        public Lunil.Hosting.LuaPatchTargetLifecycleStatus Status { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetLifecycleStatus? Failure { get => throw null; init { } }
+        public LuaPatchTargetLifecycleResult(Lunil.Hosting.LuaPatchTargetLifecycleStatus Status, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetLifecycleResult? left, Lunil.Hosting.LuaPatchTargetLifecycleResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetLifecycleResult? left, Lunil.Hosting.LuaPatchTargetLifecycleResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetLifecycleResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchTargetLifecycleStatus Status, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchTargetLifecycleStatus
+    {
+        NotConfigured = 0,
+        Isolated = 1,
+        Quiescent = 2,
+        Restored = 3,
+        IsolationDeferred = 4,
+        IsolationCancelled = 5,
+        IsolationFailed = 6,
+        QuiescenceDeferred = 7,
+        QuiescenceCancelled = 8,
+        QuiescenceFailed = 9,
+        RestoreFailed = 10
+    }
+
+    public sealed class LuaPatchTargetQuiescenceResult : System.IEquatable<Lunil.Hosting.LuaPatchTargetQuiescenceResult>
+    {
+        public Lunil.Hosting.LuaPatchTargetQuiescenceStatus Status { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaPatchTargetQuiescenceResult(Lunil.Hosting.LuaPatchTargetQuiescenceStatus Status, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetQuiescenceResult? left, Lunil.Hosting.LuaPatchTargetQuiescenceResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetQuiescenceResult? left, Lunil.Hosting.LuaPatchTargetQuiescenceResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetQuiescenceResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchTargetQuiescenceStatus Status, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchTargetQuiescenceStatus
+    {
+        Quiescent = 0,
+        Deferred = 1,
+        Cancelled = 2,
+        Failed = 3
+    }
+
+    public sealed class LuaPatchTargetRestoreContext : System.IEquatable<Lunil.Hosting.LuaPatchTargetRestoreContext>
+    {
+        public Lunil.Hosting.LuaPatchTargetLifecycleContext Target { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetRestoreOutcome Outcome { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public LuaPatchTargetRestoreContext(Lunil.Hosting.LuaPatchTargetLifecycleContext Target, Lunil.Hosting.LuaPatchTargetRestoreOutcome Outcome, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetRestoreContext? left, Lunil.Hosting.LuaPatchTargetRestoreContext? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetRestoreContext? left, Lunil.Hosting.LuaPatchTargetRestoreContext? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetRestoreContext? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchTargetLifecycleContext Target, out Lunil.Hosting.LuaPatchTargetRestoreOutcome Outcome, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchTargetRestoreOutcome
+    {
+        Committed = 0,
+        RolledBack = 1
+    }
+
+    public sealed class LuaPatchTargetRestoreResult : System.IEquatable<Lunil.Hosting.LuaPatchTargetRestoreResult>
+    {
+        public Lunil.Hosting.LuaPatchTargetRestoreStatus Status { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaPatchTargetRestoreResult(Lunil.Hosting.LuaPatchTargetRestoreStatus Status, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchTargetRestoreResult? left, Lunil.Hosting.LuaPatchTargetRestoreResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchTargetRestoreResult? left, Lunil.Hosting.LuaPatchTargetRestoreResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchTargetRestoreResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchTargetRestoreStatus Status, out string? Message) => throw null;
+    }
+
+    public enum LuaPatchTargetRestoreStatus
+    {
+        Restored = 0,
+        Failed = 1
     }
 
     public static class LuaPatchTelemetry

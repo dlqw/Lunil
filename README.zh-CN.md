@@ -30,7 +30,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.13` 热更新预览，不是稳定 package 版本线。
+> 当前源码树为 `0.12.0-alpha.14` 热更新预览，新增协调式 target 流量隔离、quiescence 与恢复；
+> 它不是稳定 package 版本线。
 
 ## 性能
 
@@ -325,7 +326,7 @@ flowchart LR
 | 文档 | 内容 |
 | --- | --- |
 | [CLR 互操作](docs/clr-interop.zh-CN.md) | Allowlist 配置、构造、转换、ownership 与发布约束 |
-| [签名 Patch Bundle](docs/hot-update.zh-CN.md) | Patch 信任、游戏循环安全点、多 State ring 灰度、持久恢复 journal 与 CLI 工作流 |
+| [签名 Patch Bundle](docs/hot-update.zh-CN.md) | Patch 信任、target 隔离与 quiescence、游戏循环安全点、多 State ring 灰度、持久恢复 journal 与 CLI 工作流 |
 | [CLI 参考](docs/cli.md) | 命令、配置、profile、诊断与退出码 |
 | [.NET NativeAOT 与 trimming](docs/nativeaot-build-integration.zh-CN.md) | 宿主集成、trimming 标注与发布验证 |
 | [PUC Lua prototype 导入](docs/puc-prototype-import.zh-CN.md) | 导入经过校验的 PUC Lua 5.4 binary prototype |

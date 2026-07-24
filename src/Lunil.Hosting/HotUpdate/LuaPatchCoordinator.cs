@@ -7,7 +7,142 @@ namespace Lunil.Hosting;
 public sealed record LuaPatchDeploymentTarget(
     string TargetId,
     LuaHost Host,
-    LuaPreparedPatch PreparedPatch);
+    LuaPreparedPatch PreparedPatch)
+{
+    /// <summary>
+    /// Optional traffic-isolation and quiescence adapter for this deployment target.
+    /// </summary>
+    public ILuaPatchTargetLifecycle? Lifecycle { get; init; }
+}
+
+/// <summary>Timeouts used by a target lifecycle adapter.</summary>
+public sealed record LuaPatchTargetLifecycleOptions
+{
+    public static LuaPatchTargetLifecycleOptions Default { get; } = new();
+
+    public TimeSpan IsolationTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    public TimeSpan QuiescenceTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    public TimeSpan RestoreTimeout { get; init; } = TimeSpan.FromSeconds(30);
+}
+
+/// <summary>Stable transaction identity and deadline budget supplied to lifecycle adapters.</summary>
+public sealed record LuaPatchTargetLifecycleContext(
+    string TransactionId,
+    string RolloutId,
+    string RingName,
+    string TargetId,
+    string PatchId,
+    string TargetRevision,
+    TimeSpan Timeout);
+
+public enum LuaPatchTargetIsolationStatus : byte
+{
+    Isolated,
+    Deferred,
+    Cancelled,
+    Failed,
+}
+
+public sealed record LuaPatchTargetIsolationResult(
+    LuaPatchTargetIsolationStatus Status,
+    ILuaPatchTargetIsolation? Isolation,
+    string? Message)
+{
+    public bool Succeeded => Status == LuaPatchTargetIsolationStatus.Isolated &&
+        Isolation is not null;
+}
+
+public enum LuaPatchTargetQuiescenceStatus : byte
+{
+    Quiescent,
+    Deferred,
+    Cancelled,
+    Failed,
+}
+
+public sealed record LuaPatchTargetQuiescenceResult(
+    LuaPatchTargetQuiescenceStatus Status,
+    string? Message)
+{
+    public bool Succeeded => Status == LuaPatchTargetQuiescenceStatus.Quiescent;
+}
+
+public enum LuaPatchTargetRestoreOutcome : byte
+{
+    Committed,
+    RolledBack,
+}
+
+public sealed record LuaPatchTargetRestoreContext(
+    LuaPatchTargetLifecycleContext Target,
+    LuaPatchTargetRestoreOutcome Outcome,
+    string? Message);
+
+public enum LuaPatchTargetRestoreStatus : byte
+{
+    Restored,
+    Failed,
+}
+
+public sealed record LuaPatchTargetRestoreResult(
+    LuaPatchTargetRestoreStatus Status,
+    string? Message)
+{
+    public bool Succeeded => Status == LuaPatchTargetRestoreStatus.Restored;
+}
+
+/// <summary>
+/// Stops new target traffic before returning an isolation session. The coordinator then requests
+/// quiescence before entering the host update window.
+/// </summary>
+public interface ILuaPatchTargetLifecycle
+{
+    LuaPatchTargetIsolationResult TryIsolate(
+        LuaPatchTargetLifecycleContext context,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// One isolated target. Restore must be idempotent for the supplied transaction identity.
+/// Dispose releases adapter resources only and must not change traffic routing.
+/// </summary>
+public interface ILuaPatchTargetIsolation : IDisposable
+{
+    LuaPatchTargetQuiescenceResult WaitForQuiescence(
+        LuaPatchTargetLifecycleContext context,
+        CancellationToken cancellationToken);
+
+    LuaPatchTargetRestoreResult Restore(
+        LuaPatchTargetRestoreContext context,
+        CancellationToken cancellationToken);
+}
+
+public enum LuaPatchTargetLifecycleStatus : byte
+{
+    NotConfigured,
+    Isolated,
+    Quiescent,
+    Restored,
+    IsolationDeferred,
+    IsolationCancelled,
+    IsolationFailed,
+    QuiescenceDeferred,
+    QuiescenceCancelled,
+    QuiescenceFailed,
+    RestoreFailed,
+}
+
+public sealed record LuaPatchTargetLifecycleResult(
+    LuaPatchTargetLifecycleStatus Status,
+    string? Message)
+{
+    /// <summary>
+    /// Earlier failed stage when cleanup subsequently restored the target successfully.
+    /// </summary>
+    public LuaPatchTargetLifecycleStatus? Failure { get; init; }
+}
 
 public sealed record LuaPatchRolloutRing
 {
@@ -46,6 +181,12 @@ public sealed record LuaPatchCoordinatorOptions
 
     public LuaPatchCommitOptions Commit { get; init; } = LuaPatchCommitOptions.Default;
 
+    public LuaPatchTargetLifecycleOptions TargetLifecycle { get; init; } =
+        LuaPatchTargetLifecycleOptions.Default;
+
+    /// <summary>Rejects rollout plans containing a target without a lifecycle adapter.</summary>
+    public bool RequireTargetIsolation { get; init; }
+
     public LuaPatchRingHealthCallback? HealthCheck { get; init; }
 
     public ILuaPatchDeploymentJournal? Journal { get; init; }
@@ -65,11 +206,19 @@ public enum LuaPatchRingCommitStatus : byte
     HealthRejected,
     JournalFailed,
     ReplayFailed,
+    IsolationFailed,
+    QuiescenceFailed,
+    RestoreFailed,
 }
 
 public sealed record LuaPatchTargetCommitResult(
     string TargetId,
-    LuaPatchCommitResult Commit);
+    LuaPatchCommitResult Commit)
+{
+    public LuaPatchTargetLifecycleResult Lifecycle { get; init; } = new(
+        LuaPatchTargetLifecycleStatus.NotConfigured,
+        null);
+}
 
 public sealed record LuaPatchRingCommitResult(
     string RolloutId,
@@ -100,6 +249,7 @@ public enum LuaPatchJournalPhase : byte
     Failed,
     RecoveredCommitted,
     RecoveredRolledBack,
+    Restoring,
 }
 
 public sealed record LuaPatchJournalEntry
@@ -235,6 +385,9 @@ public sealed class LuaPatchCoordinator
             ring.Name);
         activity?.SetTag("lunil.ring.target_count", ordered.Length);
         var targetIds = ordered.Select(static target => target.TargetId).ToImmutableArray();
+        var isolations = new List<(
+            LuaPatchDeploymentTarget Target,
+            ILuaPatchTargetIsolation Isolation)>();
         var windows = new List<(LuaPatchDeploymentTarget Target, LuaPatchUpdateWindow Window)>();
         var sessions = new List<(LuaPatchDeploymentTarget Target, LuaHost.PatchCommitSession Session)>();
         var targetResults = ordered.ToDictionary(
@@ -244,6 +397,12 @@ public sealed class LuaPatchCoordinator
                 LuaPatchCommitStatus.BarrierAborted,
                 "The barrier did not reach this target."),
             StringComparer.Ordinal);
+        var lifecycleResults = ordered.ToDictionary(
+            static target => target.TargetId,
+            static _ => new LuaPatchTargetLifecycleResult(
+                LuaPatchTargetLifecycleStatus.NotConfigured,
+                null),
+            StringComparer.Ordinal);
         try
         {
             if (!TryJournal(
@@ -252,6 +411,155 @@ public sealed class LuaPatchCoordinator
                 out var journalError))
             {
                 return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
+            }
+
+            foreach (var target in ordered)
+            {
+                if (target.Lifecycle is null)
+                {
+                    continue;
+                }
+
+                var context = LifecycleContext(target, options.TargetLifecycle.IsolationTimeout);
+                LuaPatchTargetIsolationResult isolation;
+                try
+                {
+                    isolation = target.Lifecycle.TryIsolate(context, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    isolation = new LuaPatchTargetIsolationResult(
+                        LuaPatchTargetIsolationStatus.Cancelled,
+                        null,
+                        "Target isolation was cancelled.");
+                }
+                catch (OperationCanceledException exception)
+                {
+                    isolation = new LuaPatchTargetIsolationResult(
+                        LuaPatchTargetIsolationStatus.Failed,
+                        null,
+                        exception.Message);
+                }
+                catch (Exception exception) when (IsRecoverable(exception))
+                {
+                    isolation = new LuaPatchTargetIsolationResult(
+                        LuaPatchTargetIsolationStatus.Failed,
+                        null,
+                        exception.Message);
+                }
+
+                if (!isolation.Succeeded)
+                {
+                    var malformed = isolation.Status == LuaPatchTargetIsolationStatus.Isolated ||
+                        isolation.Isolation is not null;
+                    if (isolation.Isolation is not null)
+                    {
+                        isolations.Add((target, isolation.Isolation));
+                    }
+
+                    var message = malformed
+                        ? "The target lifecycle returned an invalid isolation result."
+                        : isolation.Message;
+                    var (ringStatus, lifecycleStatus, commitStatus) = malformed
+                        ? (
+                            LuaPatchRingCommitStatus.IsolationFailed,
+                            LuaPatchTargetLifecycleStatus.IsolationFailed,
+                            LuaPatchCommitStatus.BarrierAborted)
+                        : isolation.Status switch
+                        {
+                            LuaPatchTargetIsolationStatus.Cancelled => (
+                                LuaPatchRingCommitStatus.Cancelled,
+                                LuaPatchTargetLifecycleStatus.IsolationCancelled,
+                                LuaPatchCommitStatus.Cancelled),
+                            LuaPatchTargetIsolationStatus.Deferred => (
+                                LuaPatchRingCommitStatus.Deferred,
+                                LuaPatchTargetLifecycleStatus.IsolationDeferred,
+                                LuaPatchCommitStatus.Deferred),
+                            _ => (
+                                LuaPatchRingCommitStatus.IsolationFailed,
+                                LuaPatchTargetLifecycleStatus.IsolationFailed,
+                                LuaPatchCommitStatus.BarrierAborted),
+                        };
+                    lifecycleResults[target.TargetId] = new(lifecycleStatus, message);
+                    targetResults[target.TargetId] = NotExecutedResult(
+                        target.PreparedPatch,
+                        commitStatus,
+                        message);
+                    return FinishBeforeCommit(
+                        ringStatus,
+                        message,
+                        LuaPatchJournalPhase.Failed);
+                }
+
+                isolations.Add((target, isolation.Isolation!));
+                lifecycleResults[target.TargetId] = new(
+                    LuaPatchTargetLifecycleStatus.Isolated,
+                    isolation.Message);
+            }
+
+            foreach (var pair in isolations)
+            {
+                var target = pair.Target;
+                var quiescenceContext = LifecycleContext(
+                    target,
+                    options.TargetLifecycle.QuiescenceTimeout);
+                LuaPatchTargetQuiescenceResult quiescence;
+                try
+                {
+                    quiescence = pair.Isolation.WaitForQuiescence(
+                        quiescenceContext,
+                        cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    quiescence = new LuaPatchTargetQuiescenceResult(
+                        LuaPatchTargetQuiescenceStatus.Cancelled,
+                        "Target quiescence was cancelled.");
+                }
+                catch (OperationCanceledException exception)
+                {
+                    quiescence = new LuaPatchTargetQuiescenceResult(
+                        LuaPatchTargetQuiescenceStatus.Failed,
+                        exception.Message);
+                }
+                catch (Exception exception) when (IsRecoverable(exception))
+                {
+                    quiescence = new LuaPatchTargetQuiescenceResult(
+                        LuaPatchTargetQuiescenceStatus.Failed,
+                        exception.Message);
+                }
+
+                if (!quiescence.Succeeded)
+                {
+                    var (ringStatus, lifecycleStatus, commitStatus) = quiescence.Status switch
+                    {
+                        LuaPatchTargetQuiescenceStatus.Cancelled => (
+                            LuaPatchRingCommitStatus.Cancelled,
+                            LuaPatchTargetLifecycleStatus.QuiescenceCancelled,
+                            LuaPatchCommitStatus.Cancelled),
+                        LuaPatchTargetQuiescenceStatus.Deferred => (
+                            LuaPatchRingCommitStatus.Deferred,
+                            LuaPatchTargetLifecycleStatus.QuiescenceDeferred,
+                            LuaPatchCommitStatus.Deferred),
+                        _ => (
+                            LuaPatchRingCommitStatus.QuiescenceFailed,
+                            LuaPatchTargetLifecycleStatus.QuiescenceFailed,
+                            LuaPatchCommitStatus.BarrierAborted),
+                    };
+                    lifecycleResults[target.TargetId] = new(lifecycleStatus, quiescence.Message);
+                    targetResults[target.TargetId] = NotExecutedResult(
+                        target.PreparedPatch,
+                        commitStatus,
+                        quiescence.Message);
+                    return FinishBeforeCommit(
+                        ringStatus,
+                        quiescence.Message,
+                        LuaPatchJournalPhase.Failed);
+                }
+
+                lifecycleResults[target.TargetId] = new(
+                    LuaPatchTargetLifecycleStatus.Quiescent,
+                    quiescence.Message);
             }
 
             foreach (var target in ordered)
@@ -270,8 +578,10 @@ public sealed class LuaPatchCoordinator
                             ? LuaPatchCommitStatus.Cancelled
                             : LuaPatchCommitStatus.Deferred,
                         opened.Message);
-                    _ = TryJournal(options, Entry(LuaPatchJournalPhase.Failed, opened.Message), out _);
-                    return Result(status, opened.Message);
+                    return FinishBeforeCommit(
+                        status,
+                        opened.Message,
+                        LuaPatchJournalPhase.Failed);
                 }
 
                 windows.Add((target, opened.Window!));
@@ -292,18 +602,15 @@ public sealed class LuaPatchCoordinator
                         sessions,
                         targetResults,
                         "Another state failed barrier preparation.");
-                    _ = TryJournal(
-                        options,
-                        Entry(LuaPatchJournalPhase.RolledBack, preparation.Failure.Message),
-                        out _);
-                    return Result(
+                    return FinishBeforeCommit(
                         preparation.Failure.Status switch
                         {
                             LuaPatchCommitStatus.Cancelled => LuaPatchRingCommitStatus.Cancelled,
                             LuaPatchCommitStatus.Deferred => LuaPatchRingCommitStatus.Deferred,
                             _ => LuaPatchRingCommitStatus.PrepareFailed,
                         },
-                        preparation.Failure.Message);
+                        preparation.Failure.Message,
+                        LuaPatchJournalPhase.RolledBack);
                 }
 
                 sessions.Add((pair.Target, preparation.Session!));
@@ -312,13 +619,19 @@ public sealed class LuaPatchCoordinator
             if (!TryJournal(options, Entry(LuaPatchJournalPhase.Prepared), out journalError))
             {
                 RollbackSessions(sessions, targetResults, journalError);
-                return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
+                return FinishBeforeCommit(
+                    LuaPatchRingCommitStatus.JournalFailed,
+                    journalError,
+                    terminalPhase: null);
             }
 
             if (!TryJournal(options, Entry(LuaPatchJournalPhase.Publishing), out journalError))
             {
                 RollbackSessions(sessions, targetResults, journalError);
-                return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
+                return FinishBeforeCommit(
+                    LuaPatchRingCommitStatus.JournalFailed,
+                    journalError,
+                    terminalPhase: null);
             }
 
             foreach (var pair in sessions)
@@ -331,18 +644,15 @@ public sealed class LuaPatchCoordinator
                         sessions,
                         targetResults,
                         "Another state failed barrier publication.");
-                    _ = TryJournal(
-                        options,
-                        Entry(LuaPatchJournalPhase.RolledBack, failure.Message),
-                        out _);
-                    return Result(
+                    return FinishBeforeCommit(
                         failure.Status switch
                         {
                             LuaPatchCommitStatus.Cancelled => LuaPatchRingCommitStatus.Cancelled,
                             LuaPatchCommitStatus.Deferred => LuaPatchRingCommitStatus.Deferred,
                             _ => LuaPatchRingCommitStatus.PublishFailed,
                         },
-                        failure.Message);
+                        failure.Message,
+                        LuaPatchJournalPhase.RolledBack);
                 }
             }
 
@@ -356,11 +666,10 @@ public sealed class LuaPatchCoordinator
             catch (Exception exception) when (IsRecoverable(exception))
             {
                 RollbackSessions(sessions, targetResults, exception.Message);
-                _ = TryJournal(
-                    options,
-                    Entry(LuaPatchJournalPhase.RolledBack, exception.Message),
-                    out _);
-                return Result(LuaPatchRingCommitStatus.PublishFailed, exception.Message);
+                return FinishBeforeCommit(
+                    LuaPatchRingCommitStatus.PublishFailed,
+                    exception.Message,
+                    LuaPatchJournalPhase.RolledBack);
             }
 
             foreach (var pair in sessions)
@@ -389,11 +698,10 @@ public sealed class LuaPatchCoordinator
                     var message = journalError ?? "The ring health check requested rollback.";
                     targetResults.Clear();
                     RollbackSessions(sessions, targetResults, message);
-                    _ = TryJournal(
-                        options,
-                        Entry(LuaPatchJournalPhase.RolledBack, message),
-                        out _);
-                    return Result(LuaPatchRingCommitStatus.HealthRejected, message);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.HealthRejected,
+                        message,
+                        LuaPatchJournalPhase.RolledBack);
                 }
 
                 if (!Enum.IsDefined(decision))
@@ -401,11 +709,10 @@ public sealed class LuaPatchCoordinator
                     const string message = "The ring health check returned an invalid decision.";
                     targetResults.Clear();
                     RollbackSessions(sessions, targetResults, message);
-                    _ = TryJournal(
-                        options,
-                        Entry(LuaPatchJournalPhase.RolledBack, message),
-                        out _);
-                    return Result(LuaPatchRingCommitStatus.HealthRejected, message);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.HealthRejected,
+                        message,
+                        LuaPatchJournalPhase.RolledBack);
                 }
             }
 
@@ -421,14 +728,44 @@ public sealed class LuaPatchCoordinator
             {
                 targetResults.Clear();
                 RollbackSessions(sessions, targetResults, exception.Message);
-                _ = TryJournal(
-                    options,
-                    Entry(LuaPatchJournalPhase.RolledBack, exception.Message),
-                    out _);
-                return Result(LuaPatchRingCommitStatus.ReplayFailed, exception.Message);
+                return FinishBeforeCommit(
+                    LuaPatchRingCommitStatus.ReplayFailed,
+                    exception.Message,
+                    LuaPatchJournalPhase.RolledBack);
             }
 
-            if (!TryJournal(options, Entry(LuaPatchJournalPhase.Committed), out journalError))
+            if (isolations.Count != 0)
+            {
+                if (!TryJournal(
+                    options,
+                    Entry(LuaPatchJournalPhase.Restoring),
+                    out journalError))
+                {
+                    targetResults.Clear();
+                    RollbackSessions(sessions, targetResults, journalError);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.JournalFailed,
+                        journalError,
+                        LuaPatchJournalPhase.RolledBack);
+                }
+
+                var restoreError = RestoreTargets(
+                    LuaPatchTargetRestoreOutcome.Committed,
+                    null);
+                if (restoreError is not null)
+                {
+                    return Result(LuaPatchRingCommitStatus.RestoreFailed, restoreError);
+                }
+
+                if (!TryJournal(options, Entry(LuaPatchJournalPhase.Committed), out journalError))
+                {
+                    return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
+                }
+            }
+            else if (!TryJournal(
+                options,
+                Entry(LuaPatchJournalPhase.Committed),
+                out journalError))
             {
                 targetResults.Clear();
                 RollbackSessions(sessions, targetResults, journalError);
@@ -448,9 +785,11 @@ public sealed class LuaPatchCoordinator
                 pair.Session.Dispose();
             }
 
-            for (var index = windows.Count - 1; index >= 0; index--)
+            CloseUpdateWindows();
+
+            foreach (var pair in isolations)
             {
-                windows[index].Window.Dispose();
+                pair.Isolation.Dispose();
             }
         }
 
@@ -470,8 +809,122 @@ public sealed class LuaPatchCoordinator
         ImmutableArray<LuaPatchTargetCommitResult> OrderedResults() => ordered
             .Select(target => new LuaPatchTargetCommitResult(
                 target.TargetId,
-                targetResults[target.TargetId]))
+                targetResults[target.TargetId])
+            {
+                Lifecycle = lifecycleResults[target.TargetId],
+            })
             .ToImmutableArray();
+
+        LuaPatchTargetLifecycleContext LifecycleContext(
+            LuaPatchDeploymentTarget target,
+            TimeSpan timeout) => new(
+                transactionId,
+                rolloutId,
+                ring.Name,
+                target.TargetId,
+                patch.PatchId,
+                patch.TargetRevision,
+                timeout);
+
+        LuaPatchRingCommitResult FinishBeforeCommit(
+            LuaPatchRingCommitStatus status,
+            string? message,
+            LuaPatchJournalPhase? terminalPhase)
+        {
+            var restoreError = RestoreTargets(LuaPatchTargetRestoreOutcome.RolledBack, message);
+            if (restoreError is not null)
+            {
+                return Result(LuaPatchRingCommitStatus.RestoreFailed, restoreError);
+            }
+
+            if (terminalPhase is { } phase &&
+                !TryJournal(options, Entry(phase, message), out var terminalError))
+            {
+                return Result(LuaPatchRingCommitStatus.JournalFailed, terminalError);
+            }
+
+            return Result(status, message);
+        }
+
+        string? RestoreTargets(LuaPatchTargetRestoreOutcome outcome, string? message)
+        {
+            CloseUpdateWindows();
+            List<string>? errors = null;
+            for (var index = isolations.Count - 1; index >= 0; index--)
+            {
+                var pair = isolations[index];
+                LuaPatchTargetRestoreResult restoration;
+                try
+                {
+                    restoration = pair.Isolation.Restore(
+                        new LuaPatchTargetRestoreContext(
+                            LifecycleContext(
+                                pair.Target,
+                                options.TargetLifecycle.RestoreTimeout),
+                            outcome,
+                            message),
+                        CancellationToken.None);
+                }
+                catch (OperationCanceledException exception)
+                {
+                    restoration = new LuaPatchTargetRestoreResult(
+                        LuaPatchTargetRestoreStatus.Failed,
+                        exception.Message);
+                }
+                catch (Exception exception) when (IsRecoverable(exception))
+                {
+                    restoration = new LuaPatchTargetRestoreResult(
+                        LuaPatchTargetRestoreStatus.Failed,
+                        exception.Message);
+                }
+
+                if (restoration.Succeeded)
+                {
+                    var previous = lifecycleResults[pair.Target.TargetId];
+                    var failure = previous.Failure ??
+                        (previous.Status is LuaPatchTargetLifecycleStatus.IsolationDeferred or
+                            LuaPatchTargetLifecycleStatus.IsolationCancelled or
+                            LuaPatchTargetLifecycleStatus.IsolationFailed or
+                            LuaPatchTargetLifecycleStatus.QuiescenceDeferred or
+                            LuaPatchTargetLifecycleStatus.QuiescenceCancelled or
+                            LuaPatchTargetLifecycleStatus.QuiescenceFailed or
+                            LuaPatchTargetLifecycleStatus.RestoreFailed
+                                ? previous.Status
+                                : null);
+                    lifecycleResults[pair.Target.TargetId] = new(
+                        LuaPatchTargetLifecycleStatus.Restored,
+                        restoration.Message ?? previous.Message)
+                    {
+                        Failure = failure,
+                    };
+                    continue;
+                }
+
+                var error = restoration.Message ?? "The target lifecycle failed to restore traffic.";
+                lifecycleResults[pair.Target.TargetId] = new(
+                    LuaPatchTargetLifecycleStatus.RestoreFailed,
+                    error)
+                {
+                    Failure = LuaPatchTargetLifecycleStatus.RestoreFailed,
+                };
+                (errors ??= []).Add($"{pair.Target.TargetId}: {error}");
+            }
+
+            return errors is null
+                ? null
+                : "One or more deployment targets could not restore traffic: " +
+                    string.Join("; ", errors);
+        }
+
+        void CloseUpdateWindows()
+        {
+            for (var index = windows.Count - 1; index >= 0; index--)
+            {
+                windows[index].Window.Dispose();
+            }
+
+            windows.Clear();
+        }
 
         LuaPatchRingCommitResult Result(LuaPatchRingCommitStatus status, string? message)
         {
@@ -487,6 +940,7 @@ public sealed class LuaPatchCoordinator
             LuaPatchTelemetry.RecordRing(
                 status.ToString(),
                 duration,
+                status == LuaPatchRingCommitStatus.RestoreFailed ||
                 result.Targets.Any(static target =>
                     target.Commit.SideEffectsMayHaveOccurred && !target.Commit.Succeeded));
             return result;
@@ -630,9 +1084,19 @@ public sealed class LuaPatchCoordinator
         ArgumentException.ThrowIfNullOrWhiteSpace(ring.Name);
         ArgumentNullException.ThrowIfNull(options.UpdateWindow);
         ArgumentNullException.ThrowIfNull(options.Commit);
+        ArgumentNullException.ThrowIfNull(options.TargetLifecycle);
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
         ArgumentNullException.ThrowIfNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
+        ValidateLifecycleTimeout(
+            options.TargetLifecycle.IsolationTimeout,
+            nameof(options.TargetLifecycle.IsolationTimeout));
+        ValidateLifecycleTimeout(
+            options.TargetLifecycle.QuiescenceTimeout,
+            nameof(options.TargetLifecycle.QuiescenceTimeout));
+        ValidateLifecycleTimeout(
+            options.TargetLifecycle.RestoreTimeout,
+            nameof(options.TargetLifecycle.RestoreTimeout));
         if (ring.Targets.IsDefaultOrEmpty)
         {
             throw new ArgumentException("A rollout ring requires at least one target.", nameof(ring));
@@ -651,6 +1115,12 @@ public sealed class LuaPatchCoordinator
             ArgumentException.ThrowIfNullOrWhiteSpace(target.TargetId);
             ArgumentNullException.ThrowIfNull(target.Host);
             ArgumentNullException.ThrowIfNull(target.PreparedPatch);
+            if (options.RequireTargetIsolation && target.Lifecycle is null)
+            {
+                throw new ArgumentException(
+                    $"Target '{target.TargetId}' requires a lifecycle adapter.",
+                    nameof(ring));
+            }
             if (!ids.Add(target.TargetId) || !hosts.Add(target.Host))
             {
                 throw new ArgumentException(
@@ -685,6 +1155,17 @@ public sealed class LuaPatchCoordinator
                     "Every target in a barrier ring must use the same canonical patch manifest.",
                     nameof(ring));
             }
+        }
+    }
+
+    private static void ValidateLifecycleTimeout(TimeSpan timeout, string parameterName)
+    {
+        if (timeout < TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                timeout,
+                "A target lifecycle timeout must be non-negative or infinite.");
         }
     }
 

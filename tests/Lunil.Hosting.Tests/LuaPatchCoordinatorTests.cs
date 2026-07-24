@@ -44,6 +44,276 @@ public sealed class LuaPatchCoordinatorTests
     }
 
     [Fact]
+    public void TargetLifecycleIsolatesQuiescesAndRestoresAroundTheCommitBarrier()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events);
+        var target = Target("state-a", host, CreateBundle("return {value=2}")) with
+        {
+            Lifecycle = lifecycle,
+        };
+        var journal = new MemoryJournal();
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "isolated-rollout",
+            Ring(target),
+            new LuaPatchCoordinatorOptions
+            {
+                RequireTargetIsolation = true,
+                Journal = journal,
+                HealthCheck = _ =>
+                {
+                    events.Add($"health:{Value(host)}");
+                    return LuaPatchRingHealthDecision.Accept;
+                },
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        var targetResult = Assert.Single(result.Targets);
+        Assert.Equal(LuaPatchTargetLifecycleStatus.Restored, targetResult.Lifecycle.Status);
+        Assert.Equal(
+            ["state-a:isolate", "state-a:quiesce", "health:2", "state-a:restore:Committed"],
+            events);
+        Assert.Equal<LuaPatchJournalPhase>(
+            [
+                LuaPatchJournalPhase.Started,
+                LuaPatchJournalPhase.Prepared,
+                LuaPatchJournalPhase.Publishing,
+                LuaPatchJournalPhase.Restoring,
+                LuaPatchJournalPhase.Committed,
+            ],
+            journal.Entries.Select(static entry => entry.Phase));
+        Assert.Equal("isolated-rollout", lifecycle.Context!.RolloutId);
+        Assert.Equal("state-a", lifecycle.Context.TargetId);
+        Assert.Equal(TimeSpan.FromSeconds(30), lifecycle.Context.Timeout);
+    }
+
+    [Fact]
+    public void IsolationDeferralRestoresEarlierTargetsAndNeverEntersTheHostBarrier()
+    {
+        using var first = CreateHost("return {value=1}");
+        using var second = CreateHost("return {value=1}");
+        Load(first);
+        Load(second);
+        var events = new List<string>();
+        var firstLifecycle = new TestTargetLifecycle("state-a", events);
+        var secondLifecycle = new TestTargetLifecycle("state-b", events)
+        {
+            IsolationStatus = LuaPatchTargetIsolationStatus.Deferred,
+        };
+        var bundle = CreateBundle("return {value=2}");
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "deferred-isolation",
+            Ring(
+                Target("state-a", first, bundle) with { Lifecycle = firstLifecycle },
+                Target("state-b", second, bundle) with { Lifecycle = secondLifecycle }));
+
+        Assert.Equal(LuaPatchRingCommitStatus.Deferred, result.Status);
+        Assert.Equal(1, Value(first));
+        Assert.Equal(1, Value(second));
+        Assert.Equal(
+            [
+                "state-a:isolate",
+                "state-b:isolate",
+                "state-a:restore:RolledBack",
+            ],
+            events);
+        Assert.Equal(
+            LuaPatchTargetLifecycleStatus.Restored,
+            result.Targets[0].Lifecycle.Status);
+        Assert.Equal(
+            LuaPatchTargetLifecycleStatus.IsolationDeferred,
+            result.Targets[1].Lifecycle.Status);
+        Assert.All(result.Targets, static target => Assert.False(target.Commit.Succeeded));
+    }
+
+    [Fact]
+    public void QuiescenceFailureRestoresTheIsolatedTargetWithoutExecutingCandidates()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events)
+        {
+            QuiescenceStatus = LuaPatchTargetQuiescenceStatus.Failed,
+        };
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "failed-drain",
+            Ring(Target("state-a", host, CreateBundle(
+                "candidate_ran=true; return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }));
+
+        Assert.Equal(LuaPatchRingCommitStatus.QuiescenceFailed, result.Status);
+        Assert.Equal(LuaPatchTargetLifecycleStatus.Restored, result.Targets[0].Lifecycle.Status);
+        Assert.Equal(
+            LuaPatchTargetLifecycleStatus.QuiescenceFailed,
+            result.Targets[0].Lifecycle.Failure);
+        Assert.Equal(
+            ["state-a:isolate", "state-a:quiesce", "state-a:restore:RolledBack"],
+            events);
+        Assert.Equal(1, Value(host));
+        Assert.True(host.State.GetGlobal("candidate_ran").IsNil);
+    }
+
+    [Fact]
+    public void RestoreFailureLeavesCommittedCodeObservableAndJournalRecoverable()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var lifecycle = new TestTargetLifecycle("state-a", [])
+        {
+            RestoreStatus = LuaPatchTargetRestoreStatus.Failed,
+        };
+        var journal = new MemoryJournal();
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "restore-failure",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }),
+            new LuaPatchCoordinatorOptions { Journal = journal });
+
+        Assert.Equal(LuaPatchRingCommitStatus.RestoreFailed, result.Status);
+        Assert.True(result.Targets[0].Commit.Succeeded);
+        Assert.Equal(
+            LuaPatchTargetLifecycleStatus.RestoreFailed,
+            result.Targets[0].Lifecycle.Status);
+        Assert.Equal(2, Value(host));
+        Assert.Equal(LuaPatchJournalPhase.Restoring, journal.Entries[^1].Phase);
+        Assert.DoesNotContain(journal.Entries, static entry =>
+            entry.Phase == LuaPatchJournalPhase.Committed);
+    }
+
+    [Fact]
+    public void RestoringJournalFailureRollsBackBeforeTrafficIsRestored()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "restoring-journal-failure",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }),
+            new LuaPatchCoordinatorOptions
+            {
+                Journal = new MemoryJournal { ThrowOn = LuaPatchJournalPhase.Restoring },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.JournalFailed, result.Status);
+        Assert.False(result.Targets[0].Commit.Succeeded);
+        Assert.Equal(1, Value(host));
+        Assert.Equal("state-a:restore:RolledBack", events[^1]);
+    }
+
+    [Fact]
+    public void TerminalJournalFailureAfterTrafficRestoreDoesNotReportAFalseRollback()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events);
+        var journal = new MemoryJournal { ThrowOn = LuaPatchJournalPhase.Committed };
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "terminal-journal-failure",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }),
+            new LuaPatchCoordinatorOptions { Journal = journal });
+
+        Assert.Equal(LuaPatchRingCommitStatus.JournalFailed, result.Status);
+        Assert.True(result.Targets[0].Commit.Succeeded);
+        Assert.Equal(2, Value(host));
+        Assert.Equal("state-a:restore:Committed", events[^1]);
+        Assert.Equal(LuaPatchJournalPhase.Restoring, journal.Entries[^1].Phase);
+    }
+
+    [Fact]
+    public void RequiredTargetIsolationRejectsMissingAdaptersBeforeStartingAJournal()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var journal = new MemoryJournal();
+
+        var error = Assert.Throws<ArgumentException>(() =>
+            new LuaPatchCoordinator().CommitRing(
+                "required-isolation",
+                Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+                new LuaPatchCoordinatorOptions
+                {
+                    RequireTargetIsolation = true,
+                    Journal = journal,
+                }));
+
+        Assert.Contains("requires a lifecycle adapter", error.Message, StringComparison.Ordinal);
+        Assert.Empty(journal.Entries);
+        Assert.Equal(1, Value(host));
+    }
+
+    [Fact]
+    public void MalformedIsolationResultIsRejectedAndItsSessionIsRestored()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events)
+        {
+            IsolationStatus = LuaPatchTargetIsolationStatus.Deferred,
+            ReturnIsolationOnFailure = true,
+        };
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "malformed-isolation",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }));
+
+        Assert.Equal(LuaPatchRingCommitStatus.IsolationFailed, result.Status);
+        Assert.Contains("invalid isolation result", result.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            ["state-a:isolate", "state-a:restore:RolledBack"],
+            events);
+        Assert.Equal(1, Value(host));
+    }
+
+    [Fact]
+    public void TargetLifecycleRejectsNegativeTimeoutsBeforeStartingAJournal()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var journal = new MemoryJournal();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new LuaPatchCoordinator().CommitRing(
+                "invalid-lifecycle-timeout",
+                Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+                new LuaPatchCoordinatorOptions
+                {
+                    Journal = journal,
+                    TargetLifecycle = new LuaPatchTargetLifecycleOptions
+                    {
+                        QuiescenceTimeout = TimeSpan.FromMilliseconds(-2),
+                    },
+                }));
+
+        Assert.Empty(journal.Entries);
+        Assert.Equal(1, Value(host));
+    }
+
+    [Fact]
     public void BarrierCommitUsesIndependentTargetScopesAndSealsEveryReplayReservation()
     {
         var directory = System.IO.Path.Combine(
@@ -567,6 +837,44 @@ public sealed class LuaPatchCoordinatorTests
     }
 
     [Fact]
+    public void FileJournalRecoversTrafficRestorationAfterPublicationCommitted()
+    {
+        var directory = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "lunil-journal-tests",
+            Guid.NewGuid().ToString("N"));
+        var path = System.IO.Path.Combine(directory, "deploy.ndjson");
+        try
+        {
+            using var journal = new LuaPatchFileJournal(path);
+            journal.Append(JournalEntry(LuaPatchJournalPhase.Started));
+            journal.Append(JournalEntry(LuaPatchJournalPhase.Prepared));
+            journal.Append(JournalEntry(LuaPatchJournalPhase.Publishing));
+            journal.Append(JournalEntry(LuaPatchJournalPhase.Restoring));
+
+            var incomplete = Assert.Single(journal.GetIncompleteTransactions());
+            Assert.Equal(LuaPatchJournalPhase.Restoring, incomplete.LastPhase);
+            var recovery = Assert.Single(journal.RecoverIncomplete(
+                new CommitRecoveryHandler(),
+                new FixedTimeProvider(new DateTimeOffset(
+                    2026, 7, 22, 2, 0, 0, TimeSpan.Zero))));
+
+            Assert.Equal(LuaPatchRecoveryResolution.Committed, recovery.Resolution);
+            Assert.Equal(
+                LuaPatchJournalPhase.RecoveredCommitted,
+                journal.ReadAll()[^1].Phase);
+            Assert.Empty(journal.GetIncompleteTransactions());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void FileJournalRejectsTamperingAndTruncatedRecords()
     {
         var directory = System.IO.Path.Combine(
@@ -1005,6 +1313,79 @@ public sealed class LuaPatchCoordinatorTests
     {
         public LuaPatchRecoveryResolution Recover(LuaPatchRecoveryRecord record) =>
             LuaPatchRecoveryResolution.RolledBack;
+    }
+
+    private sealed class CommitRecoveryHandler : ILuaPatchCrashRecoveryHandler
+    {
+        public LuaPatchRecoveryResolution Recover(LuaPatchRecoveryRecord record) =>
+            LuaPatchRecoveryResolution.Committed;
+    }
+
+    private sealed class TestTargetLifecycle(
+        string targetId,
+        List<string> events) : ILuaPatchTargetLifecycle, ILuaPatchTargetIsolation
+    {
+        public LuaPatchTargetIsolationStatus IsolationStatus { get; init; } =
+            LuaPatchTargetIsolationStatus.Isolated;
+
+        public LuaPatchTargetQuiescenceStatus QuiescenceStatus { get; init; } =
+            LuaPatchTargetQuiescenceStatus.Quiescent;
+
+        public LuaPatchTargetRestoreStatus RestoreStatus { get; init; } =
+            LuaPatchTargetRestoreStatus.Restored;
+
+        public bool ReturnIsolationOnFailure { get; init; }
+
+        public LuaPatchTargetLifecycleContext? Context { get; private set; }
+
+        public LuaPatchTargetIsolationResult TryIsolate(
+            LuaPatchTargetLifecycleContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Context = context;
+            events.Add($"{targetId}:isolate");
+            return new LuaPatchTargetIsolationResult(
+                IsolationStatus,
+                IsolationStatus == LuaPatchTargetIsolationStatus.Isolated ||
+                    ReturnIsolationOnFailure
+                    ? this
+                    : null,
+                IsolationStatus == LuaPatchTargetIsolationStatus.Isolated
+                    ? null
+                    : "isolation did not complete");
+        }
+
+        public LuaPatchTargetQuiescenceResult WaitForQuiescence(
+            LuaPatchTargetLifecycleContext context,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(targetId, context.TargetId);
+            events.Add($"{targetId}:quiesce");
+            return new LuaPatchTargetQuiescenceResult(
+                QuiescenceStatus,
+                QuiescenceStatus == LuaPatchTargetQuiescenceStatus.Quiescent
+                    ? null
+                    : "target did not quiesce");
+        }
+
+        public LuaPatchTargetRestoreResult Restore(
+            LuaPatchTargetRestoreContext context,
+            CancellationToken cancellationToken)
+        {
+            Assert.Equal(CancellationToken.None, cancellationToken);
+            events.Add($"{targetId}:restore:{context.Outcome}");
+            return new LuaPatchTargetRestoreResult(
+                RestoreStatus,
+                RestoreStatus == LuaPatchTargetRestoreStatus.Restored
+                    ? null
+                    : "traffic restore failed");
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
