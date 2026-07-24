@@ -483,6 +483,94 @@ restored a target after an earlier isolation or quiescence failure, `Status` is 
 `RestoreFailed`, committed module results remain observable, and the journal remains at `Restoring`
 for crash recovery; do not route that target until recovery completes.
 
+### Cross-process prepared and health quorums
+
+Set `LuaPatchCoordinatorOptions.DistributedBarrier` when separate processes must make one durable
+ring decision. Every process uses the same rollout id and ring name, lists the same stable process
+identities, and prepares its own local `LuaHost` targets from the same canonical manifest. The first
+accepted update pins that membership, quorum size, canonical manifest SHA-256, target revision, and
+both timeout policies. A conflicting process fails before publication.
+
+The barrier has two durable gates. First, prepared acknowledgements select exactly
+`RequiredParticipantCount` participants and produce `Apply`; only those selected processes may
+publish. After local publication, the application health callback, and replay acceptance succeed,
+each selected process acknowledges `Healthy`. The store returns `Commit` only after every selected
+participant is healthy. A selected failure or either deadline produces an immutable `Rollback`, so
+surviving processes still hold their rollback sessions and restore the previous generation.
+Processes outside the selected quorum return `Deferred` and stay on the old generation.
+
+The built-in file store provides this protocol across processes that share a lock-correct file
+system. Give it a dedicated directory because pruning owns its barrier JSON, temporary files, and
+lock sidecars:
+
+```csharp
+var participantId = Environment.GetEnvironmentVariable("GAME_PROCESS_ID")!;
+var participants = new[] { "game-a", "game-b", "game-c" }.ToImmutableArray();
+var barrierStore = new LuaPatchFileDistributedBarrierStore(
+    "/srv/game/shared/lunil/barriers",
+    new LuaPatchFileDistributedBarrierStoreOptions
+    {
+        MaximumBarrierCount = 10_000,
+        MaximumParticipantCount = 64,
+        WriterLockTimeout = TimeSpan.FromSeconds(2),
+    });
+
+var localRing = new LuaPatchRolloutRing
+{
+    Name = "production", // Identical in every participant process.
+    Targets = localPreparedTargets,
+};
+
+var result = new LuaPatchCoordinator().CommitRing(
+    "game-2026-07-24-01", // Never reuse a rollout id for another deployment.
+    localRing,
+    new LuaPatchCoordinatorOptions
+    {
+        RequireTargetIsolation = true,
+        Journal = localJournal,
+        HealthCheck = CheckLocalGameHealth,
+        DistributedBarrier = new LuaPatchDistributedBarrierOptions
+        {
+            Store = barrierStore,
+            ParticipantId = participantId,
+            Participants = participants,
+            RequiredParticipantCount = 2,
+            PreparationTimeout = TimeSpan.FromSeconds(30),
+            HealthTimeout = TimeSpan.FromSeconds(30),
+            PollInterval = TimeSpan.FromMilliseconds(50),
+        },
+    },
+    stoppingToken);
+
+if (result.Status == LuaPatchRingCommitStatus.Deferred)
+{
+    KeepServingThePreviousGeneration();
+}
+```
+
+Use a local or shared file system that guarantees exclusive file locks and atomic same-directory
+rename. The store flushes state before replacement, flushes Unix directory entries, normalizes
+clock regressions, bounds identities, messages, participants, state bytes, and active barrier
+files, and rejects hash mismatches or invalid transitions. Its SHA-256 protects against accidental
+corruption, not an attacker who can rewrite the directory; enforce operating-system permissions.
+For a database or consensus service, implement `ILuaPatchDistributedBarrierStore.Advance` with the
+same atomic pin-and-decision semantics.
+
+Retain terminal state long enough for every participant and operator to observe the decision, then
+prune it explicitly. Pruning never removes waiting or apply state and also clears abandoned
+temporary and lock sidecars:
+
+```csharp
+var pruned = barrierStore.PruneCompleted(TimeSpan.FromDays(7), stoppingToken);
+Console.WriteLine($"Removed {pruned.RemovedBarrierCount} terminal barriers.");
+```
+
+Once the distributed store returns `Commit`, a later local journal or traffic-restoration failure
+must not reverse only that process while peers remain committed. Lunil returns the local failure and
+keeps the published generation; keep the target isolated and recover its journal or router before
+serving traffic again. `LuaPatchRingCommitResult.DistributedBarrier` exposes the last observed
+pinned membership, selected quorum, acknowledgements, deadlines, decision, and diagnostic message.
+
 ## Durable deployment journal and recovery
 
 `LuaPatchFileJournal` writes canonical NDJSON records with a contiguous sequence and SHA-256 hash

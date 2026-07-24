@@ -19,6 +19,11 @@ namespace Lunil.Hosting
         System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJournalEntry> ReadAll();
     }
 
+    public interface ILuaPatchDistributedBarrierStore
+    {
+        Lunil.Hosting.LuaPatchDistributedBarrierSnapshot Advance(Lunil.Hosting.LuaPatchDistributedBarrierRequest request, System.Threading.CancellationToken cancellationToken = null);
+    }
+
     public interface ILuaPatchReplayCommitLease : System.IDisposable
     {
         Lunil.Hosting.LuaPatchReplayReservation Reservation { get; }
@@ -743,6 +748,7 @@ namespace Lunil.Hosting
         public bool RequireTargetIsolation { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRingHealthCallback? HealthCheck { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchDeploymentJournal? Journal { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchDistributedBarrierOptions? DistributedBarrier { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchResourceLimits ResourceLimits { get => throw null; init { } }
         public override string ToString() => throw null;
@@ -817,6 +823,124 @@ namespace Lunil.Hosting
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchDeploymentTarget? other) => throw null;
         public void Deconstruct(out string TargetId, out Lunil.Hosting.LuaHost Host, out Lunil.Hosting.LuaPreparedPatch PreparedPatch) => throw null;
+    }
+
+    public enum LuaPatchDistributedBarrierDecision
+    {
+        Waiting = 0,
+        Apply = 1,
+        Commit = 2,
+        Rollback = 3
+    }
+
+    public enum LuaPatchDistributedBarrierErrorCode
+    {
+        InvalidRequest = 0,
+        Conflict = 1,
+        Corrupted = 2,
+        HashMismatch = 3,
+        ResourceLimitExceeded = 4,
+        IoFailure = 5,
+        WriterUnavailable = 6
+    }
+
+    public sealed class LuaPatchDistributedBarrierException : System.Exception
+    {
+        public Lunil.Hosting.LuaPatchDistributedBarrierErrorCode Code { get => throw null; }
+        public LuaPatchDistributedBarrierException(Lunil.Hosting.LuaPatchDistributedBarrierErrorCode code, string message) { }
+        public LuaPatchDistributedBarrierException(Lunil.Hosting.LuaPatchDistributedBarrierErrorCode code, string message, System.Exception innerException) { }
+    }
+
+    public sealed class LuaPatchDistributedBarrierOptions : System.IEquatable<Lunil.Hosting.LuaPatchDistributedBarrierOptions>
+    {
+        public required Lunil.Hosting.ILuaPatchDistributedBarrierStore Store { get => throw null; init { } }
+        public required string ParticipantId { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> Participants { get => throw null; init { } }
+        public int RequiredParticipantCount { get => throw null; init { } }
+        public System.TimeSpan PreparationTimeout { get => throw null; init { } }
+        public System.TimeSpan HealthTimeout { get => throw null; init { } }
+        public System.TimeSpan PollInterval { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchDistributedBarrierOptions? left, Lunil.Hosting.LuaPatchDistributedBarrierOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchDistributedBarrierOptions? left, Lunil.Hosting.LuaPatchDistributedBarrierOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchDistributedBarrierOptions? other) => throw null;
+    }
+
+    public sealed class LuaPatchDistributedBarrierPruneResult : System.IEquatable<Lunil.Hosting.LuaPatchDistributedBarrierPruneResult>
+    {
+        public int ScannedBarrierCount { get => throw null; init { } }
+        public int RemovedBarrierCount { get => throw null; init { } }
+        public int RemovedTemporaryFileCount { get => throw null; init { } }
+        public int RemovedOrphanLockCount { get => throw null; init { } }
+        public LuaPatchDistributedBarrierPruneResult(int ScannedBarrierCount, int RemovedBarrierCount, int RemovedTemporaryFileCount, int RemovedOrphanLockCount) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchDistributedBarrierPruneResult? left, Lunil.Hosting.LuaPatchDistributedBarrierPruneResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchDistributedBarrierPruneResult? left, Lunil.Hosting.LuaPatchDistributedBarrierPruneResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchDistributedBarrierPruneResult? other) => throw null;
+        public void Deconstruct(out int ScannedBarrierCount, out int RemovedBarrierCount, out int RemovedTemporaryFileCount, out int RemovedOrphanLockCount) => throw null;
+    }
+
+    public sealed class LuaPatchDistributedBarrierRequest : System.IEquatable<Lunil.Hosting.LuaPatchDistributedBarrierRequest>
+    {
+        public required string RolloutId { get => throw null; init { } }
+        public required string RingName { get => throw null; init { } }
+        public required string PatchId { get => throw null; init { } }
+        public required string TargetRevision { get => throw null; init { } }
+        public required string PatchManifestIdentity { get => throw null; init { } }
+        public required string ParticipantId { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> Participants { get => throw null; init { } }
+        public int RequiredParticipantCount { get => throw null; init { } }
+        public System.TimeSpan PreparationTimeout { get => throw null; init { } }
+        public System.TimeSpan HealthTimeout { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchDistributedBarrierSignal Signal { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchDistributedBarrierRequest? left, Lunil.Hosting.LuaPatchDistributedBarrierRequest? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchDistributedBarrierRequest? left, Lunil.Hosting.LuaPatchDistributedBarrierRequest? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchDistributedBarrierRequest? other) => throw null;
+    }
+
+    public enum LuaPatchDistributedBarrierSignal
+    {
+        Observe = 0,
+        Prepared = 1,
+        PreparationFailed = 2,
+        Healthy = 3,
+        Unhealthy = 4
+    }
+
+    public sealed class LuaPatchDistributedBarrierSnapshot : System.IEquatable<Lunil.Hosting.LuaPatchDistributedBarrierSnapshot>
+    {
+        public required string RolloutId { get => throw null; init { } }
+        public required string RingName { get => throw null; init { } }
+        public required string PatchId { get => throw null; init { } }
+        public required string TargetRevision { get => throw null; init { } }
+        public required string PatchManifestIdentity { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> Participants { get => throw null; init { } }
+        public int RequiredParticipantCount { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> PreparedParticipants { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> SelectedParticipants { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> HealthyParticipants { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<string> FailedParticipants { get => throw null; init { } }
+        public required Lunil.Hosting.LuaPatchDistributedBarrierDecision Decision { get => throw null; init { } }
+        public required System.DateTimeOffset CreatedAt { get => throw null; init { } }
+        public required System.DateTimeOffset UpdatedAt { get => throw null; init { } }
+        public required System.DateTimeOffset PreparationDeadline { get => throw null; init { } }
+        public System.DateTimeOffset? HealthDeadline { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool IsSelected(string participantId) => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? left, Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? left, Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? other) => throw null;
     }
 
     public sealed class LuaPatchEcdsaSigner : Lunil.Hosting.ILuaPatchSigner
@@ -901,6 +1025,33 @@ namespace Lunil.Hosting
         SigningKeyNotYetValid = 17,
         SigningKeyExpired = 18,
         SigningKeyRevoked = 19
+    }
+
+    public sealed class LuaPatchFileDistributedBarrierStore : Lunil.Hosting.ILuaPatchDistributedBarrierStore
+    {
+        public string DirectoryPath { get => throw null; }
+        public LuaPatchFileDistributedBarrierStore(string directory, Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? options = null) { }
+        public Lunil.Hosting.LuaPatchDistributedBarrierSnapshot Advance(Lunil.Hosting.LuaPatchDistributedBarrierRequest request, System.Threading.CancellationToken cancellationToken = null) => throw null;
+        public Lunil.Hosting.LuaPatchDistributedBarrierPruneResult PruneCompleted(System.TimeSpan minimumAge, System.Threading.CancellationToken cancellationToken = null) => throw null;
+    }
+
+    public sealed class LuaPatchFileDistributedBarrierStoreOptions : System.IEquatable<Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions>
+    {
+        public static Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions Default { get => throw null; }
+        public long MaximumStateBytes { get => throw null; init { } }
+        public int MaximumParticipantCount { get => throw null; init { } }
+        public int MaximumBarrierCount { get => throw null; init { } }
+        public int MaximumMessageBytes { get => throw null; init { } }
+        public int MaximumIdentityBytes { get => throw null; init { } }
+        public System.TimeSpan WriterLockTimeout { get => throw null; init { } }
+        public bool CreateDirectory { get => throw null; init { } }
+        public System.TimeProvider TimeProvider { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? left, Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? left, Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchFileDistributedBarrierStoreOptions? other) => throw null;
     }
 
     public sealed class LuaPatchFileJournal : Lunil.Hosting.ILuaPatchDeploymentJournal, System.IDisposable
@@ -1551,6 +1702,7 @@ namespace Lunil.Hosting
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchTargetCommitResult> Targets { get => throw null; init { } }
         public string? Message { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
+        public Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? DistributedBarrier { get => throw null; init { } }
         public LuaPatchRingCommitResult(string RolloutId, string RingName, string TransactionId, Lunil.Hosting.LuaPatchRingCommitStatus Status, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchTargetCommitResult> Targets, string? Message) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchRingCommitResult? left, Lunil.Hosting.LuaPatchRingCommitResult? right) => throw null;
@@ -1573,7 +1725,8 @@ namespace Lunil.Hosting
         ReplayFailed = 7,
         IsolationFailed = 8,
         QuiescenceFailed = 9,
-        RestoreFailed = 10
+        RestoreFailed = 10,
+        CoordinationFailed = 11
     }
 
     public delegate Lunil.Hosting.LuaPatchRingHealthDecision LuaPatchRingHealthCallback(Lunil.Hosting.LuaPatchRingHealthContext context);

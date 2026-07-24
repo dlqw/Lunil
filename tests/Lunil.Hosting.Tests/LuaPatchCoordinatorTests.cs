@@ -1171,6 +1171,514 @@ public sealed class LuaPatchCoordinatorTests
         }
     }
 
+    [Fact]
+    public void DistributedBarrierPublishesOnlyAfterApplyAndCompletesAfterGlobalHealth()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Healthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Commit,
+                ["process-a"],
+                ["process-a"]),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(2, Value(host));
+        Assert.Equal(
+            [LuaPatchDistributedBarrierSignal.Prepared, LuaPatchDistributedBarrierSignal.Healthy],
+            store.Requests.Select(static request => request.Signal));
+        Assert.Equal(LuaPatchDistributedBarrierDecision.Commit, result.DistributedBarrier!.Decision);
+    }
+
+    [Fact]
+    public void DistributedBarrierLeavesUnselectedParticipantOnTheOldGeneration()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(request => Snapshot(
+            request,
+            LuaPatchDistributedBarrierDecision.Apply,
+            ["process-b"]));
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.Deferred, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.Equal(
+            [LuaPatchDistributedBarrierSignal.Prepared],
+            store.Requests.Select(static request => request.Signal));
+        Assert.False(result.Targets[0].Commit.SideEffectsMayHaveOccurred);
+    }
+
+    [Fact]
+    public void DistributedHealthRollbackRestoresTheOldGeneration()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Healthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Rollback,
+                ["process-a"],
+                message: "peer health failed"),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.True(result.Targets[0].Commit.SideEffectsMayHaveOccurred);
+        Assert.Equal("peer health failed", result.Message);
+    }
+
+    [Fact]
+    public void DistributedHealthRollbackReopensReplayAcceptance()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "lunil-distributed-replay-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var host = CreateHost("return {value=1}");
+            Load(host);
+            var bundle = CreateBundle("return {value=2}");
+            var replay = new LuaPatchFileReplayStore(Path.Combine(directory, "replay.ndjson"));
+            var preparation = host.PreparePatch(bundle, AcceptanceOptions(replay, "state-a"));
+            Assert.True(preparation.Succeeded, preparation.Message);
+            var store = new ScriptedDistributedStore(request => request.Signal switch
+            {
+                LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                    request,
+                    LuaPatchDistributedBarrierDecision.Apply,
+                    ["process-a"]),
+                LuaPatchDistributedBarrierSignal.Healthy => Snapshot(
+                    request,
+                    LuaPatchDistributedBarrierDecision.Rollback,
+                    ["process-a"],
+                    message: "peer health failed"),
+                _ => throw new InvalidOperationException("unexpected distributed signal"),
+            });
+
+            var result = new LuaPatchCoordinator().CommitRing(
+                "distributed-rollout",
+                Ring(new LuaPatchDeploymentTarget("state-a", host, preparation.PreparedPatch!)),
+                DistributedOptions(store) with
+                {
+                    TimeProvider = new FixedTimeProvider(new DateTimeOffset(
+                        2026, 7, 23, 0, 0, 0, TimeSpan.Zero)),
+                });
+
+            Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+            Assert.Equal(
+                [
+                    LuaPatchReplayRecordState.Reserved,
+                    LuaPatchReplayRecordState.Committed,
+                    LuaPatchReplayRecordState.Reopened,
+                ],
+                replay.ReadAll().Select(static record => record.State).ToArray());
+            Assert.True(host.PreparePatch(
+                bundle,
+                AcceptanceOptions(replay, "state-a")).Succeeded);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void LocalHealthFailureAcknowledgesUnhealthyBeforeReturning()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Unhealthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Rollback,
+                ["process-a"],
+                message: request.Message),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store) with
+            {
+                HealthCheck = _ => LuaPatchRingHealthDecision.Rollback,
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.Equal(
+            [LuaPatchDistributedBarrierSignal.Prepared, LuaPatchDistributedBarrierSignal.Unhealthy],
+            store.Requests.Select(static request => request.Signal));
+    }
+
+    [Fact]
+    public void DistributedStoreFailureFailsClosedBeforePublication()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(_ => throw new IOException("store unavailable"));
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.CoordinationFailed, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.False(result.Targets[0].Commit.SideEffectsMayHaveOccurred);
+    }
+
+    [Fact]
+    public void DistributedStoreUnexpectedCancellationFailsClosedBeforePublication()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(
+            _ => throw new OperationCanceledException("store cancelled internally"));
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.CoordinationFailed, result.Status);
+        Assert.Equal("store cancelled internally", result.Message);
+        Assert.Equal(1, Value(host));
+        Assert.False(result.Targets[0].Commit.SideEffectsMayHaveOccurred);
+    }
+
+    [Fact]
+    public void DistributedStoreNullSnapshotFailsClosedBeforePublication()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(_ => null!);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.CoordinationFailed, result.Status);
+        Assert.Contains("no snapshot", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, Value(host));
+    }
+
+    [Fact]
+    public void DistributedPreparationWaitCancellationReportsFailureAndRollsBack()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        using var cancellation = new CancellationTokenSource();
+        var store = new ScriptedDistributedStore(
+            request => request.Signal switch
+            {
+                LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                    request,
+                    LuaPatchDistributedBarrierDecision.Waiting,
+                    []),
+                LuaPatchDistributedBarrierSignal.PreparationFailed => Snapshot(
+                    request,
+                    LuaPatchDistributedBarrierDecision.Rollback,
+                    [],
+                    message: request.Message),
+                _ => throw new InvalidOperationException("unexpected distributed signal"),
+            },
+            request =>
+            {
+                if (request.Signal == LuaPatchDistributedBarrierSignal.Prepared)
+                {
+                    cancellation.Cancel();
+                }
+            });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store),
+            cancellation.Token);
+
+        Assert.Equal(LuaPatchRingCommitStatus.CoordinationFailed, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.Equal(
+            [
+                LuaPatchDistributedBarrierSignal.Prepared,
+                LuaPatchDistributedBarrierSignal.PreparationFailed,
+            ],
+            store.Requests.Select(static request => request.Signal));
+    }
+
+    [Fact]
+    public void FileDistributedBarrierStoreIntegratesWithCoordinatorCommit()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "lunil-distributed-coordinator-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var host = CreateHost("return {value=1}");
+            Load(host);
+            var store = new LuaPatchFileDistributedBarrierStore(directory);
+            var options = DistributedOptions(store);
+            options = options with
+            {
+                DistributedBarrier = options.DistributedBarrier! with
+                {
+                    Participants = ["process-a"],
+                    RequiredParticipantCount = 1,
+                },
+            };
+
+            var result = new LuaPatchCoordinator().CommitRing(
+                "file-distributed-rollout",
+                Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+                options);
+
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal(2, Value(host));
+            Assert.Equal(
+                LuaPatchDistributedBarrierDecision.Commit,
+                result.DistributedBarrier!.Decision);
+            Assert.Equal(["process-a"], result.DistributedBarrier.SelectedParticipants.ToArray());
+            Assert.Equal(["process-a"], result.DistributedBarrier.HealthyParticipants.ToArray());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void LocalPreparationFailureIsDurablyAcknowledged()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var lifecycle = new TestTargetLifecycle("state-a", [])
+        {
+            QuiescenceStatus = LuaPatchTargetQuiescenceStatus.Failed,
+        };
+        var store = new ScriptedDistributedStore(request => Snapshot(
+            request,
+            LuaPatchDistributedBarrierDecision.Rollback,
+            [],
+            message: request.Message));
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}")) with
+            {
+                Lifecycle = lifecycle,
+            }),
+            DistributedOptions(store));
+
+        Assert.Equal(LuaPatchRingCommitStatus.QuiescenceFailed, result.Status);
+        var request = Assert.Single(store.Requests);
+        Assert.Equal(LuaPatchDistributedBarrierSignal.PreparationFailed, request.Signal);
+        Assert.Equal(1, Value(host));
+    }
+
+    [Fact]
+    public void DistributedBarrierPollsBothDurableDecisions()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var preparationObserved = false;
+        var healthObserved = false;
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Waiting,
+                []),
+            LuaPatchDistributedBarrierSignal.Healthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Observe when !preparationObserved => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Observe when !healthObserved => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Commit,
+                ["process-a"],
+                ["process-a"]),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        }, request =>
+        {
+            if (request.Signal == LuaPatchDistributedBarrierSignal.Observe && !preparationObserved)
+            {
+                preparationObserved = true;
+            }
+            else if (request.Signal == LuaPatchDistributedBarrierSignal.Observe)
+            {
+                healthObserved = true;
+            }
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            DistributedOptions(store));
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.True(preparationObserved);
+        Assert.True(healthObserved);
+        Assert.Equal(2, Value(host));
+    }
+
+    [Fact]
+    public void DistributedPreparationTimeoutReportsFailureAndNeverPublishes()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.PreparationFailed => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Rollback,
+                [],
+                message: request.Message),
+            _ => Snapshot(request, LuaPatchDistributedBarrierDecision.Waiting, []),
+        });
+        var options = DistributedOptions(store) with
+        {
+            DistributedBarrier = DistributedOptions(store).DistributedBarrier! with
+            {
+                PreparationTimeout = TimeSpan.FromMilliseconds(10),
+            },
+        };
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            options);
+
+        Assert.Equal(LuaPatchRingCommitStatus.CoordinationFailed, result.Status);
+        Assert.Equal(1, Value(host));
+        Assert.Contains(
+            LuaPatchDistributedBarrierSignal.PreparationFailed,
+            store.Requests.Select(static request => request.Signal));
+    }
+
+    [Fact]
+    public void GlobalCommitIsNotLocallyReversedByALateJournalFailure()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var events = new List<string>();
+        var lifecycle = new TestTargetLifecycle("state-a", events);
+        var target = Target("state-a", host, CreateBundle("return {value=2}")) with
+        {
+            Lifecycle = lifecycle,
+        };
+        var store = new ScriptedDistributedStore(request => request.Signal switch
+        {
+            LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Apply,
+                ["process-a"]),
+            LuaPatchDistributedBarrierSignal.Healthy => Snapshot(
+                request,
+                LuaPatchDistributedBarrierDecision.Commit,
+                ["process-a"],
+                ["process-a"]),
+            _ => throw new InvalidOperationException("unexpected distributed signal"),
+        });
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(target),
+            DistributedOptions(store) with
+            {
+                RequireTargetIsolation = true,
+                Journal = new MemoryJournal { ThrowOn = LuaPatchJournalPhase.Restoring },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.JournalFailed, result.Status);
+        Assert.Equal(2, Value(host));
+        Assert.Equal(["state-a:isolate", "state-a:quiesce"], events);
+        Assert.Equal(LuaPatchDistributedBarrierDecision.Commit, result.DistributedBarrier!.Decision);
+    }
+
+    [Fact]
+    public void DistributedBarrierOptionsRejectInvalidMembershipAndQuorum()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var target = Target("state-a", host, CreateBundle("return {value=2}"));
+        var store = new ScriptedDistributedStore(request => Snapshot(
+            request,
+            LuaPatchDistributedBarrierDecision.Apply,
+            ["process-a"]));
+
+        var missing = DistributedOptions(store) with
+        {
+            DistributedBarrier = DistributedOptions(store).DistributedBarrier! with
+            {
+                Participants = ["process-b"],
+            },
+        };
+        Assert.Throws<ArgumentException>(() => new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(target),
+            missing));
+
+        var quorum = DistributedOptions(store) with
+        {
+            DistributedBarrier = DistributedOptions(store).DistributedBarrier! with
+            {
+                RequiredParticipantCount = 3,
+            },
+        };
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LuaPatchCoordinator().CommitRing(
+            "distributed-rollout",
+            Ring(target),
+            quorum));
+    }
+
     private static LuaPatchDeploymentTarget Target(
         string id,
         LuaHost host,
@@ -1203,6 +1711,48 @@ public sealed class LuaPatchCoordinatorTests
         Name = "production",
         Targets = targets.ToImmutableArray(),
     };
+
+    private static LuaPatchCoordinatorOptions DistributedOptions(
+        ILuaPatchDistributedBarrierStore store) => new()
+        {
+            DistributedBarrier = new LuaPatchDistributedBarrierOptions
+            {
+                Store = store,
+                ParticipantId = "process-a",
+                Participants = ["process-a", "process-b"],
+                RequiredParticipantCount = 1,
+                PreparationTimeout = TimeSpan.FromSeconds(1),
+                HealthTimeout = TimeSpan.FromSeconds(1),
+                PollInterval = TimeSpan.FromMilliseconds(1),
+            },
+        };
+
+    private static LuaPatchDistributedBarrierSnapshot Snapshot(
+        LuaPatchDistributedBarrierRequest request,
+        LuaPatchDistributedBarrierDecision decision,
+        ImmutableArray<string> selected,
+        ImmutableArray<string> healthy = default,
+        string? message = null) => new()
+        {
+            RolloutId = request.RolloutId,
+            RingName = request.RingName,
+            PatchId = request.PatchId,
+            TargetRevision = request.TargetRevision,
+            PatchManifestIdentity = request.PatchManifestIdentity,
+            Participants = request.Participants,
+            RequiredParticipantCount = request.RequiredParticipantCount,
+            PreparedParticipants = selected,
+            SelectedParticipants = selected,
+            HealthyParticipants = healthy.IsDefault ? [] : healthy,
+            Decision = decision,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+            UpdatedAt = DateTimeOffset.UnixEpoch,
+            PreparationDeadline = DateTimeOffset.UnixEpoch + request.PreparationTimeout,
+            HealthDeadline = decision == LuaPatchDistributedBarrierDecision.Waiting
+                ? null
+                : DateTimeOffset.UnixEpoch + request.HealthTimeout,
+            Message = message,
+        };
 
     private static void Load(LuaHost host, string? prefix = null)
     {
@@ -1307,6 +1857,25 @@ public sealed class LuaPatchCoordinatorTests
         }
 
         public ImmutableArray<LuaPatchJournalEntry> ReadAll() => Entries.ToImmutableArray();
+    }
+
+    private sealed class ScriptedDistributedStore(
+        Func<LuaPatchDistributedBarrierRequest, LuaPatchDistributedBarrierSnapshot> advance,
+        Action<LuaPatchDistributedBarrierRequest>? observed = null)
+        : ILuaPatchDistributedBarrierStore
+    {
+        public List<LuaPatchDistributedBarrierRequest> Requests { get; } = [];
+
+        public LuaPatchDistributedBarrierSnapshot Advance(
+            LuaPatchDistributedBarrierRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            var result = advance(request);
+            observed?.Invoke(request);
+            return result;
+        }
     }
 
     private sealed class RollbackRecoveryHandler : ILuaPatchCrashRecoveryHandler

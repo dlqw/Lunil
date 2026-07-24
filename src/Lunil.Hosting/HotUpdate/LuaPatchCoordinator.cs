@@ -191,6 +191,12 @@ public sealed record LuaPatchCoordinatorOptions
 
     public ILuaPatchDeploymentJournal? Journal { get; init; }
 
+    /// <summary>
+    /// Optional cross-process barrier. Local sessions remain rollback-capable until every selected
+    /// participant has acknowledged publication health and the store returns Commit.
+    /// </summary>
+    public LuaPatchDistributedBarrierOptions? DistributedBarrier { get; init; }
+
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     public LuaPatchResourceLimits ResourceLimits { get; init; } = LuaPatchResourceLimits.Default;
@@ -209,6 +215,7 @@ public enum LuaPatchRingCommitStatus : byte
     IsolationFailed,
     QuiescenceFailed,
     RestoreFailed,
+    CoordinationFailed,
 }
 
 public sealed record LuaPatchTargetCommitResult(
@@ -229,6 +236,8 @@ public sealed record LuaPatchRingCommitResult(
     string? Message)
 {
     public bool Succeeded => Status == LuaPatchRingCommitStatus.Committed;
+
+    public LuaPatchDistributedBarrierSnapshot? DistributedBarrier { get; init; }
 }
 
 public sealed record LuaPatchRolloutResult(
@@ -384,6 +393,9 @@ public sealed class LuaPatchCoordinator
             rolloutId,
             ring.Name);
         activity?.SetTag("lunil.ring.target_count", ordered.Length);
+        activity?.SetTag(
+            "lunil.ring.distributed_participant",
+            options.DistributedBarrier?.ParticipantId);
         var targetIds = ordered.Select(static target => target.TargetId).ToImmutableArray();
         var isolations = new List<(
             LuaPatchDeploymentTarget Target,
@@ -403,6 +415,9 @@ public sealed class LuaPatchCoordinator
                 LuaPatchTargetLifecycleStatus.NotConfigured,
                 null),
             StringComparer.Ordinal);
+        LuaPatchDistributedBarrierSnapshot? distributedSnapshot = null;
+        var distributedSelected = false;
+        var distributedCommitted = false;
         try
         {
             if (!TryJournal(
@@ -410,6 +425,7 @@ public sealed class LuaPatchCoordinator
                 Entry(LuaPatchJournalPhase.Started),
                 out var journalError))
             {
+                ReportDistributedFailure(journalError ?? "The local deployment journal failed.");
                 return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
             }
 
@@ -601,7 +617,8 @@ public sealed class LuaPatchCoordinator
                     RollbackSessions(
                         sessions,
                         targetResults,
-                        "Another state failed barrier preparation.");
+                        "Another state failed barrier preparation.",
+                        sideEffectsMayHaveOccurred: false);
                     return FinishBeforeCommit(
                         preparation.Failure.Status switch
                         {
@@ -618,16 +635,80 @@ public sealed class LuaPatchCoordinator
 
             if (!TryJournal(options, Entry(LuaPatchJournalPhase.Prepared), out journalError))
             {
-                RollbackSessions(sessions, targetResults, journalError);
+                RollbackSessions(
+                    sessions,
+                    targetResults,
+                    journalError,
+                    sideEffectsMayHaveOccurred: false);
                 return FinishBeforeCommit(
                     LuaPatchRingCommitStatus.JournalFailed,
                     journalError,
                     terminalPhase: null);
             }
 
+            if (options.DistributedBarrier is not null)
+            {
+                if (!TryWaitForDistributedDecision(
+                    LuaPatchDistributedBarrierSignal.Prepared,
+                    waitingDecision: LuaPatchDistributedBarrierDecision.Waiting,
+                    options.DistributedBarrier.PreparationTimeout,
+                    cancellationToken,
+                    out journalError))
+                {
+                    RollbackSessions(
+                        sessions,
+                        targetResults,
+                        journalError,
+                        sideEffectsMayHaveOccurred: false);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.CoordinationFailed,
+                        journalError,
+                        LuaPatchJournalPhase.RolledBack,
+                        reportDistributedFailure: false);
+                }
+
+                if (distributedSnapshot!.Decision != LuaPatchDistributedBarrierDecision.Apply)
+                {
+                    var message = distributedSnapshot.Message ??
+                        "The distributed preparation barrier rejected publication.";
+                    RollbackSessions(
+                        sessions,
+                        targetResults,
+                        message,
+                        sideEffectsMayHaveOccurred: false);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.CoordinationFailed,
+                        message,
+                        LuaPatchJournalPhase.RolledBack,
+                        reportDistributedFailure: false);
+                }
+
+                if (!distributedSnapshot.IsSelected(options.DistributedBarrier.ParticipantId))
+                {
+                    const string message =
+                        "This participant was not selected by the prepared quorum.";
+                    RollbackSessions(
+                        sessions,
+                        targetResults,
+                        message,
+                        sideEffectsMayHaveOccurred: false);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.Deferred,
+                        message,
+                        LuaPatchJournalPhase.RolledBack,
+                        reportDistributedFailure: false);
+                }
+
+                distributedSelected = true;
+            }
+
             if (!TryJournal(options, Entry(LuaPatchJournalPhase.Publishing), out journalError))
             {
-                RollbackSessions(sessions, targetResults, journalError);
+                RollbackSessions(
+                    sessions,
+                    targetResults,
+                    journalError,
+                    sideEffectsMayHaveOccurred: false);
                 return FinishBeforeCommit(
                     LuaPatchRingCommitStatus.JournalFailed,
                     journalError,
@@ -734,6 +815,30 @@ public sealed class LuaPatchCoordinator
                     LuaPatchJournalPhase.RolledBack);
             }
 
+            if (options.DistributedBarrier is not null)
+            {
+                if (!TryWaitForDistributedDecision(
+                    LuaPatchDistributedBarrierSignal.Healthy,
+                    waitingDecision: LuaPatchDistributedBarrierDecision.Apply,
+                    options.DistributedBarrier.HealthTimeout,
+                    cancellationToken,
+                    out journalError) ||
+                    distributedSnapshot!.Decision != LuaPatchDistributedBarrierDecision.Commit)
+                {
+                    var message = journalError ?? distributedSnapshot?.Message ??
+                        "The distributed health barrier requested rollback.";
+                    targetResults.Clear();
+                    RollbackSessions(sessions, targetResults, message);
+                    return FinishBeforeCommit(
+                        LuaPatchRingCommitStatus.HealthRejected,
+                        message,
+                        LuaPatchJournalPhase.RolledBack,
+                        reportDistributedFailure: false);
+                }
+
+                distributedCommitted = true;
+            }
+
             if (isolations.Count != 0)
             {
                 if (!TryJournal(
@@ -741,6 +846,11 @@ public sealed class LuaPatchCoordinator
                     Entry(LuaPatchJournalPhase.Restoring),
                     out journalError))
                 {
+                    if (distributedCommitted)
+                    {
+                        return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
+                    }
+
                     targetResults.Clear();
                     RollbackSessions(sessions, targetResults, journalError);
                     return FinishBeforeCommit(
@@ -767,12 +877,15 @@ public sealed class LuaPatchCoordinator
                 Entry(LuaPatchJournalPhase.Committed),
                 out journalError))
             {
-                targetResults.Clear();
-                RollbackSessions(sessions, targetResults, journalError);
-                _ = TryJournal(
-                    options,
-                    Entry(LuaPatchJournalPhase.RolledBack, journalError),
-                    out _);
+                if (!distributedCommitted)
+                {
+                    targetResults.Clear();
+                    RollbackSessions(sessions, targetResults, journalError);
+                    _ = TryJournal(
+                        options,
+                        Entry(LuaPatchJournalPhase.RolledBack, journalError),
+                        out _);
+                }
                 return Result(LuaPatchRingCommitStatus.JournalFailed, journalError);
             }
 
@@ -829,8 +942,15 @@ public sealed class LuaPatchCoordinator
         LuaPatchRingCommitResult FinishBeforeCommit(
             LuaPatchRingCommitStatus status,
             string? message,
-            LuaPatchJournalPhase? terminalPhase)
+            LuaPatchJournalPhase? terminalPhase,
+            bool reportDistributedFailure = true)
         {
+            if (reportDistributedFailure && options.DistributedBarrier is not null &&
+                !distributedCommitted)
+            {
+                ReportDistributedFailure(message ?? "The local ring operation failed.");
+            }
+
             var restoreError = RestoreTargets(LuaPatchTargetRestoreOutcome.RolledBack, message);
             if (restoreError is not null)
             {
@@ -844,6 +964,123 @@ public sealed class LuaPatchCoordinator
             }
 
             return Result(status, message);
+        }
+
+        bool TryWaitForDistributedDecision(
+            LuaPatchDistributedBarrierSignal signal,
+            LuaPatchDistributedBarrierDecision waitingDecision,
+            TimeSpan timeout,
+            CancellationToken token,
+            out string? error)
+        {
+            if (!TryAdvanceDistributed(signal, null, token, out error))
+            {
+                return false;
+            }
+
+            var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (distributedSnapshot!.Decision == waitingDecision)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    error = "The distributed barrier wait was cancelled.";
+                    ReportDistributedFailure(error);
+                    return false;
+                }
+
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(waitStarted) >= timeout)
+                {
+                    error = "The distributed barrier wait exceeded its configured timeout.";
+                    ReportDistributedFailure(error);
+                    return false;
+                }
+
+                var poll = options.DistributedBarrier!.PollInterval;
+                if (token.WaitHandle.WaitOne(poll))
+                {
+                    error = "The distributed barrier wait was cancelled.";
+                    ReportDistributedFailure(error);
+                    return false;
+                }
+
+                if (!TryAdvanceDistributed(
+                    LuaPatchDistributedBarrierSignal.Observe,
+                    null,
+                    token,
+                    out error))
+                {
+                    ReportDistributedFailure(error ?? "The distributed barrier store failed.");
+                    return false;
+                }
+            }
+
+            error = null;
+            return true;
+        }
+
+        bool TryAdvanceDistributed(
+            LuaPatchDistributedBarrierSignal signal,
+            string? message,
+            CancellationToken token,
+            out string? error)
+        {
+            var distributed = options.DistributedBarrier!;
+            try
+            {
+                distributedSnapshot = distributed.Store.Advance(new LuaPatchDistributedBarrierRequest
+                {
+                    RolloutId = rolloutId,
+                    RingName = ring.Name,
+                    PatchId = patch.PatchId,
+                    TargetRevision = patch.TargetRevision,
+                    PatchManifestIdentity = GetPatchIdentity(patch),
+                    ParticipantId = distributed.ParticipantId,
+                    Participants = distributed.Participants,
+                    RequiredParticipantCount = distributed.RequiredParticipantCount == 0
+                        ? distributed.Participants.Length
+                        : distributed.RequiredParticipantCount,
+                    PreparationTimeout = distributed.PreparationTimeout,
+                    HealthTimeout = distributed.HealthTimeout,
+                    Signal = signal,
+                    Message = message,
+                }, token) ?? throw new InvalidOperationException(
+                    "The distributed barrier store returned no snapshot.");
+                error = null;
+                return true;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                error = "The distributed barrier operation was cancelled.";
+                return false;
+            }
+            catch (OperationCanceledException exception)
+            {
+                error = string.IsNullOrWhiteSpace(exception.Message)
+                    ? "The distributed barrier store cancelled its operation unexpectedly."
+                    : exception.Message;
+                return false;
+            }
+            catch (Exception exception) when (IsRecoverable(exception))
+            {
+                error = exception.Message;
+                return false;
+            }
+        }
+
+        void ReportDistributedFailure(string message)
+        {
+            if (options.DistributedBarrier is null || distributedCommitted)
+            {
+                return;
+            }
+
+            _ = TryAdvanceDistributed(
+                distributedSelected
+                    ? LuaPatchDistributedBarrierSignal.Unhealthy
+                    : LuaPatchDistributedBarrierSignal.PreparationFailed,
+                message,
+                CancellationToken.None,
+                out _);
         }
 
         string? RestoreTargets(LuaPatchTargetRestoreOutcome outcome, string? message)
@@ -928,13 +1165,25 @@ public sealed class LuaPatchCoordinator
 
         LuaPatchRingCommitResult Result(LuaPatchRingCommitStatus status, string? message)
         {
+            activity?.SetTag(
+                "lunil.ring.distributed_decision",
+                distributedSnapshot?.Decision.ToString());
+            activity?.SetTag(
+                "lunil.ring.distributed_selected_count",
+                distributedSnapshot?.SelectedParticipants.Length);
+            activity?.SetTag(
+                "lunil.ring.distributed_healthy_count",
+                distributedSnapshot?.HealthyParticipants.Length);
             var result = new LuaPatchRingCommitResult(
                 rolloutId,
                 ring.Name,
                 transactionId,
                 status,
                 OrderedResults(),
-                message);
+                message)
+            {
+                DistributedBarrier = distributedSnapshot,
+            };
             var duration = System.Diagnostics.Stopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, status.ToString(), message);
             LuaPatchTelemetry.RecordRing(
@@ -950,14 +1199,15 @@ public sealed class LuaPatchCoordinator
     private static void RollbackSessions(
         IEnumerable<(LuaPatchDeploymentTarget Target, LuaHost.PatchCommitSession Session)> sessions,
         Dictionary<string, LuaPatchCommitResult> results,
-        string? message)
+        string? message,
+        bool sideEffectsMayHaveOccurred = true)
     {
         foreach (var pair in sessions.Reverse())
         {
             results[pair.Target.TargetId] = pair.Session.Rollback(
                 LuaPatchCommitStatus.BarrierAborted,
                 message,
-                sideEffectsMayHaveOccurred: true);
+                sideEffectsMayHaveOccurred);
         }
     }
 
@@ -1030,6 +1280,7 @@ public sealed class LuaPatchCoordinator
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.RolloutId);
         ArgumentNullException.ThrowIfNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
+        ValidateDistributedBarrier(options);
         if (plan.Rings.IsDefaultOrEmpty)
         {
             throw new ArgumentException("A rollout requires at least one ring.", nameof(plan));
@@ -1088,6 +1339,7 @@ public sealed class LuaPatchCoordinator
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
         ArgumentNullException.ThrowIfNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
+        ValidateDistributedBarrier(options);
         ValidateLifecycleTimeout(
             options.TargetLifecycle.IsolationTimeout,
             nameof(options.TargetLifecycle.IsolationTimeout));
@@ -1166,6 +1418,65 @@ public sealed class LuaPatchCoordinator
                 parameterName,
                 timeout,
                 "A target lifecycle timeout must be non-negative or infinite.");
+        }
+    }
+
+    private static void ValidateDistributedBarrier(LuaPatchCoordinatorOptions options)
+    {
+        var distributed = options.DistributedBarrier;
+        if (distributed is null)
+        {
+            return;
+        }
+
+        ArgumentNullException.ThrowIfNull(distributed.Store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(distributed.ParticipantId);
+        if (distributed.Participants.IsDefaultOrEmpty ||
+            distributed.Participants.Any(static participant => string.IsNullOrWhiteSpace(participant)) ||
+            distributed.Participants.Distinct(StringComparer.Ordinal).Count() !=
+            distributed.Participants.Length ||
+            !distributed.Participants.Contains(distributed.ParticipantId, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                "Distributed barrier participants must be non-empty, unique, and include this participant.",
+                nameof(options));
+        }
+
+        LuaPatchResourceLimits.EnsureWithin(
+            nameof(options.ResourceLimits.MaximumTargetsPerRollout),
+            distributed.Participants.Length,
+            options.ResourceLimits.MaximumTargetsPerRollout);
+        var required = distributed.RequiredParticipantCount == 0
+            ? distributed.Participants.Length
+            : distributed.RequiredParticipantCount;
+        if (required <= 0 || required > distributed.Participants.Length)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "The distributed barrier quorum must select at least one pinned participant.");
+        }
+
+        ValidateDistributedTimeout(distributed.PreparationTimeout, nameof(distributed.PreparationTimeout));
+        ValidateDistributedTimeout(distributed.HealthTimeout, nameof(distributed.HealthTimeout));
+        if (distributed.PollInterval <= TimeSpan.Zero ||
+            distributed.PollInterval > TimeSpan.FromMinutes(1) ||
+            distributed.PollInterval > distributed.PreparationTimeout ||
+            distributed.PollInterval > distributed.HealthTimeout)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "The distributed barrier poll interval must be positive and no longer than either phase timeout.");
+        }
+    }
+
+    private static void ValidateDistributedTimeout(TimeSpan timeout, string parameterName)
+    {
+        if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromDays(1))
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                timeout,
+                "A distributed barrier timeout must be positive and no longer than one day.");
         }
     }
 

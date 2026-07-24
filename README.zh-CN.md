@@ -30,10 +30,10 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.20` 热更新预览，新增协调式 target 流量隔离、有界 prepare
+> 当前源码树为 `0.12.0-alpha.21` 热更新预览，新增协调式 target 流量隔离、有界 prepare
 > backpressure，以及面向 CLR callback、task、coroutine、native continuation 和 timer 的原子
-> generation fencing，并支持保留 identity 的状态 table 迁移与 GC-safe 回滚 journal；它不是稳定
-> package 版本线。
+> generation fencing，并支持保留 identity 的状态 table 迁移、GC-safe 回滚 journal 与持久跨进程
+> rollout barrier；它不是稳定 package 版本线。
 
 ## 性能
 
@@ -92,8 +92,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
   不会加载 assembly，也不会开放无限制 reflection。
 - **生产热更新预览**：支持 key 轮换与撤销的签名 Patch Bundle、由 signer 授权的回滚、capability
   准入与签名 target selector、游戏循环原子发布、保留 identity 的状态 table 与资源迁移、host-polled
-  游戏循环 timer、fail-closed 异步 generation、多 State ring 灰度、具备排他 ownership 与
-  compaction 生命周期的持久恢复 journal，以及 .NET telemetry。
+  游戏循环 timer、fail-closed 异步 generation、多 State ring 灰度、固定成员的跨进程 prepare/health
+  quorum、具备排他 ownership 与 compaction 生命周期的持久恢复 journal，以及 .NET telemetry。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
 

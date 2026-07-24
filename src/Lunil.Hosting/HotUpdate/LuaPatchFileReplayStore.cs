@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -365,42 +363,10 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
     private static FileStream? TryOpenLockedFile(
         string path,
         out IOException? exception,
-        out bool contention)
-    {
-        try
-        {
-            var stream = new FileStream(
-                path,
-                FileMode.OpenOrCreate,
-                FileAccess.ReadWrite,
-                FileShare.Read,
-                bufferSize: 1,
-                FileOptions.WriteThrough);
-            if (!OperatingSystem.IsWindows())
-            {
-                var descriptor = stream.SafeFileHandle.DangerousGetHandle().ToInt32();
-                if (UnixFlock(descriptor, UnixLockExclusive | UnixLockNonBlocking) != 0)
-                {
-                    var error = Marshal.GetLastPInvokeError();
-                    exception = NativeIoException("flock", path);
-                    contention = error is 11 or 35;
-                    stream.Dispose();
-                    return null;
-                }
-            }
-
-            exception = null;
-            contention = false;
-            return stream;
-        }
-        catch (Exception caught) when (caught is IOException or UnauthorizedAccessException)
-        {
-            exception = caught as IOException ?? new IOException(caught.Message, caught);
-            contention = caught is IOException ioException &&
-                (ioException.HResult & 0xFFFF) is 11 or 32 or 33 or 35;
-            return null;
-        }
-    }
+        out bool contention) => LuaPatchFileLock.TryOpenExclusive(
+            path,
+            out exception,
+            out contention);
 
     private VerifiedReplayStore ReadAndVerify()
     {
@@ -570,31 +536,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
     }
 
     private void FlushContainingDirectory()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var directory = System.IO.Path.GetDirectoryName(_path)!;
-        var descriptor = UnixOpen(directory, 0);
-        if (descriptor < 0)
-        {
-            throw NativeIoException("open", directory);
-        }
-
-        try
-        {
-            if (UnixFsync(descriptor) != 0)
-            {
-                throw NativeIoException("fsync", directory);
-            }
-        }
-        finally
-        {
-            _ = UnixClose(descriptor);
-        }
-    }
+        => LuaPatchDurableFileSystem.FlushDirectory(System.IO.Path.GetDirectoryName(_path)!);
 
     private static void ApplyState(
         LuaPatchReplayRecord record,
@@ -808,35 +750,6 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
     private static LuaPatchReplayStoreException Error(
         LuaPatchReplayStoreErrorCode code,
         string message) => new(code, message);
-
-    private static IOException NativeIoException(string operation, string path)
-    {
-        var error = Marshal.GetLastPInvokeError();
-        return new IOException(
-            $"Unix {operation} failed for replay-store path '{path}'.",
-            new Win32Exception(error));
-    }
-
-#pragma warning disable CA2101
-#pragma warning disable SYSLIB1054
-    [DllImport("libc", EntryPoint = "open", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixOpen(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-        int flags);
-
-    [DllImport("libc", EntryPoint = "fsync", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixFsync(int descriptor);
-
-    [DllImport("libc", EntryPoint = "flock", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixFlock(int descriptor, int operation);
-
-    [DllImport("libc", EntryPoint = "close", ExactSpelling = true)]
-    private static extern int UnixClose(int descriptor);
-#pragma warning restore SYSLIB1054
-#pragma warning restore CA2101
-
-    private const int UnixLockExclusive = 2;
-    private const int UnixLockNonBlocking = 4;
 
     private sealed class CommitLease : ILuaPatchReplayCommitLease
     {

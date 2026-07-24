@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -583,63 +581,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
     }
 
     private void FlushContainingDirectory()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            // .NET does not expose opening a Windows directory with backup semantics. The source
-            // file is durably flushed before the atomic same-volume replacement; NTFS/ReFS own the
-            // directory-entry durability boundary.
-            return;
-        }
-
-        var directory = System.IO.Path.GetDirectoryName(_path)!;
-        var descriptor = UnixOpen(directory, 0);
-        if (descriptor < 0)
-        {
-            throw NativeIoException("open", directory);
-        }
-
-        try
-        {
-            if (UnixFsync(descriptor) != 0)
-            {
-                throw NativeIoException("fsync", directory);
-            }
-        }
-        finally
-        {
-            _ = UnixClose(descriptor);
-        }
-    }
-
-    private static IOException NativeIoException(string operation, string path)
-    {
-        var error = Marshal.GetLastPInvokeError();
-        return new IOException(
-            $"Unix {operation} failed for journal directory '{path}'.",
-            new Win32Exception(error));
-    }
-
-#pragma warning disable CA2101 // The Unix open ABI requires an explicitly marshalled UTF-8 path.
-#pragma warning disable SYSLIB1054 // DllImport avoids enabling unsafe code for the libc calls.
-    [DllImport("libc", EntryPoint = "open", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixOpen(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-        int flags);
-
-    [DllImport("libc", EntryPoint = "fsync", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixFsync(int descriptor);
-
-    [DllImport("libc", EntryPoint = "flock", SetLastError = true, ExactSpelling = true)]
-    private static extern int UnixFlock(int descriptor, int operation);
-
-    [DllImport("libc", EntryPoint = "close", ExactSpelling = true)]
-    private static extern int UnixClose(int descriptor);
-#pragma warning restore SYSLIB1054
-#pragma warning restore CA2101
-
-    private const int UnixLockExclusive = 2;
-    private const int UnixLockNonBlocking = 4;
+        => LuaPatchDurableFileSystem.FlushDirectory(System.IO.Path.GetDirectoryName(_path)!);
 
     private void EnsureWriterOwnership()
     {
@@ -649,38 +591,16 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         }
 
         EnsureDirectory();
-        FileStream writerLock;
-        try
-        {
-            writerLock = new FileStream(
-                WriterLockPath,
-                FileMode.OpenOrCreate,
-                FileAccess.ReadWrite,
-                FileShare.Read,
-                bufferSize: 1,
-                FileOptions.WriteThrough);
-        }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException)
+        var writerLock = LuaPatchFileLock.TryOpenExclusive(
+            WriterLockPath,
+            out var exception,
+            out _);
+        if (writerLock is null)
         {
             throw new LuaPatchJournalException(
                 LuaPatchJournalErrorCode.WriterUnavailable,
                 "Another journal writer owns this path, or the writer lock cannot be opened.",
-                exception);
-        }
-
-        if (!OperatingSystem.IsWindows())
-        {
-            var descriptor = writerLock.SafeFileHandle.DangerousGetHandle().ToInt32();
-            if (UnixFlock(descriptor, UnixLockExclusive | UnixLockNonBlocking) != 0)
-            {
-                var exception = NativeIoException("flock", WriterLockPath);
-                writerLock.Dispose();
-                throw new LuaPatchJournalException(
-                    LuaPatchJournalErrorCode.WriterUnavailable,
-                    "Another journal writer owns this path, or the writer lock cannot be opened.",
-                    exception);
-            }
+                exception!);
         }
 
         _writerLock = writerLock;
