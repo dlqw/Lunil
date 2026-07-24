@@ -65,6 +65,14 @@ array 与 `ValueTuple`、`LuaValue`、兼容 CLR userdata 以及 primitive `obje
 userdata 会 root Lua callback，并在释放时解除订阅。callback 遵循 `ThreadPolicy` 和 state ownership，
 从不支持的线程进入 busy state 或尝试 yield 时会 fail closed。
 
+热更新发布会按 closure 所属 `LuaIrModule` 对 delegate 进行 generation fencing。旧 module
+generation 的 delegate 会以 `SubscriptionClosed` fail closed；candidate loader 执行期间创建的
+delegate 保持 pending，直到整个 patch barrier 发布。Candidate 失败或 ring health rollback 会拒绝
+candidate delegate，并恢复旧 generation。Event subscription 使用同一事务：发布时解除旧 handler，
+rollback 时重新订阅；失败 candidate 的 handler 会被解除。可通过 `LuaClrSubscription.IsActive`
+检查生命周期，并将 `LuaClrBridge` 的 `ActiveCallbackCount`、`PendingCallbackCount`、
+`QuiescedCallbackCount` 和 `StaleCallbackCount` 导出为 gauge。
+
 ## Ownership 与部署
 
 `LuaClrObject` 默认拥有构造出的 `IDisposable` instance，并且最多转发一次 `Dispose`；Host 自己拥有

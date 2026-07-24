@@ -70,6 +70,15 @@ idempotent `LuaClrSubscription`. The subscription userdata roots the Lua callbac
 when disposed. Callback entry obeys `ThreadPolicy`, preserves Lua state ownership, and rejects
 callbacks that yield or re-enter a busy state from an unsupported thread.
 
+Hot-update publication fences delegates by the `LuaIrModule` that owns their closure. Delegates from
+the previous module generation become fail-closed with `SubscriptionClosed`; candidate delegates
+created while loaders execute remain pending until the whole patch barrier publishes. A failed
+candidate or ring health rollback rejects candidate delegates and restores the previous generation.
+Event subscriptions follow the same transaction: old handlers are detached on publication and
+reattached on rollback, while failed candidate handlers are detached. Use `IsActive` on
+`LuaClrSubscription` and export `ActiveCallbackCount`, `PendingCallbackCount`,
+`QuiescedCallbackCount`, and `StaleCallbackCount` from `LuaClrBridge` as lifecycle gauges.
+
 ## Ownership and deployment
 
 `LuaClrObject` owns constructed `IDisposable` instances by default and forwards `Dispose` at most once;

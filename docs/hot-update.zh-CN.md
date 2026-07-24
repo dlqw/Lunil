@@ -271,6 +271,12 @@ timer、subscription 和 task 生命周期变更，使用指定的 `ILuaPatchRes
 Adapter 的 `Prepare` 不得修改状态；`Apply` 必须能由 `Rollback` 完整逆转，operation dispose 只能
 释放 journal 资源。
 
+从 module-owned Lua closure 创建的 CLR delegate 与 event subscription 无需 schema adapter，也会
+加入 host transaction。发布会把旧 generation delegate 标记为 stale、激活 candidate delegate，并
+解除已被替代的 event handler。Execution、migration、barrier 或 health 任一步失败都会逆转该切换：
+恢复旧 subscription，并在 candidate callback 进入 Lua 前拒绝它。游戏服务通过 CLR delegate 注册
+timer 或 event 时，应同时监控 CLR interop 教程所述的 bridge callback counters。
+
 兼容 closure slot 与 loader upvalue 仍会自动迁移：lexical identity 和 upvalue layout 匹配时发布
 successor generation，而挂起 frame 继续持有旧 immutable generation。State rule 会在 candidate
 暂存给 dependent 之前应用，因此依赖顺序中后续 module 可以看到已经 preserve 的状态。
