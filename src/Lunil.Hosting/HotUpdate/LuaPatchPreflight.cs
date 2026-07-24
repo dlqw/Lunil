@@ -12,6 +12,7 @@ public enum LuaPatchPreflightStatus : byte
     ChunkValidationFailed,
     CanonicalIrDecoderRequired,
     CanonicalIrValidationFailed,
+    Deferred,
 }
 
 public sealed record LuaPatchModulePreflightResult(

@@ -17,6 +17,15 @@ public enum LuaPatchPrepareStatus : byte
     MigrationAdapterMissing,
     StateSchemaVersionMismatch,
     AcceptanceRejected,
+    Deferred,
+}
+
+public enum LuaPatchPreparationAdmissionStatus : byte
+{
+    NotConfigured,
+    Acquired,
+    Saturated,
+    TimedOut,
 }
 
 /// <summary>Per-module evidence captured while a patch is prepared.</summary>
@@ -53,6 +62,15 @@ public sealed record LuaPatchPrepareOptions
     { get; init; }
 
     public LuaPatchResourceLimits ResourceLimits { get; init; } = LuaPatchResourceLimits.Default;
+
+    /// <summary>
+    /// Optional shared admission limiter for isolated compilation. It applies to synchronous and
+    /// asynchronous preparation and should normally be shared by every target in one process.
+    /// </summary>
+    public LuaPatchPreparationLimiter? PreparationLimiter { get; init; }
+
+    /// <summary>How long to wait in the limiter's bounded queue before returning Deferred.</summary>
+    public TimeSpan PreparationWaitTimeout { get; init; } = TimeSpan.Zero;
 
     /// <summary>
     /// Optional deployment acceptance policy. It must be configured together with
@@ -163,6 +181,8 @@ public sealed record LuaPatchPrepareResult(
     ImmutableArray<LuaPatchModulePrepareResult> Modules,
     string? Message)
 {
+    public LuaPatchPreparationAdmissionStatus AdmissionStatus { get; init; }
+
     /// <summary>Acceptance evidence when preparation was configured with a policy.</summary>
     public LuaPatchAcceptanceResult? Acceptance { get; init; }
 

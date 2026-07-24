@@ -52,6 +52,26 @@ public sealed partial class LuaHost
     {
         ArgumentNullException.ThrowIfNull(bundle);
         var snapshot = SnapshotPrepareOptions(options ?? LuaPatchPrepareOptions.Default);
+        if (snapshot.PreparationLimiter is { } limiter)
+        {
+            var admissionStarted = Stopwatch.GetTimestamp();
+            var admission = limiter.AcquireAsync(
+                snapshot.PreparationWaitTimeout,
+                cancellationToken).AsTask().GetAwaiter().GetResult();
+            if (!admission.Succeeded)
+            {
+                return DeferredPreparation(bundle, admission.Failure, admissionStarted);
+            }
+
+            using (admission.Lease!)
+            {
+                return PreparePatchCore(bundle, snapshot, cancellationToken) with
+                {
+                    AdmissionStatus = LuaPatchPreparationAdmissionStatus.Acquired,
+                };
+            }
+        }
+
         return PreparePatchCore(bundle, snapshot, cancellationToken);
     }
 
@@ -59,16 +79,90 @@ public sealed partial class LuaHost
     /// Performs isolated compilation on a worker thread, then briefly enters the execution gate to
     /// bind expected revisions. Cancellation never publishes a live-state change.
     /// </summary>
-    public Task<LuaPatchPrepareResult> PreparePatchAsync(
+    public async Task<LuaPatchPrepareResult> PreparePatchAsync(
         LuaPatchBundle bundle,
         LuaPatchPrepareOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         var snapshot = SnapshotPrepareOptions(options ?? LuaPatchPrepareOptions.Default);
-        return Task.Run(
-            () => PreparePatchCore(bundle, snapshot, cancellationToken),
-            cancellationToken);
+        if (snapshot.PreparationLimiter is not { } limiter)
+        {
+            return await Task.Run(
+                () => PreparePatchCore(bundle, snapshot, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var admissionStarted = Stopwatch.GetTimestamp();
+        var admission = await limiter.AcquireAsync(
+            snapshot.PreparationWaitTimeout,
+            cancellationToken).ConfigureAwait(false);
+        if (!admission.Succeeded)
+        {
+            return DeferredPreparation(bundle, admission.Failure, admissionStarted);
+        }
+
+        using (admission.Lease!)
+        {
+            var result = await Task.Run(
+                () => PreparePatchCore(bundle, snapshot, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            return result with
+            {
+                AdmissionStatus = LuaPatchPreparationAdmissionStatus.Acquired,
+            };
+        }
+    }
+
+    private static LuaPatchPrepareResult DeferredPreparation(
+        LuaPatchBundle bundle,
+        LuaPatchPreparationLimiter.AdmissionFailure failure,
+        long startedTimestamp)
+    {
+        var message = failure == LuaPatchPreparationLimiter.AdmissionFailure.TimedOut
+            ? "The patch preparation admission wait budget elapsed."
+            : "Patch preparation concurrency and queue capacity are saturated.";
+        var plan = LuaPatchDependencyPlan.Create(bundle.Entries);
+        var entries = bundle.Entries
+            .Where(static entry => entry.ModuleName is not null)
+            .ToDictionary(static entry => entry.ModuleName!, StringComparer.Ordinal);
+        var preflightModules = plan.Components
+            .SelectMany(static component => component.Modules)
+            .Select(moduleName => new LuaPatchModulePreflightResult(
+                moduleName,
+                entries[moduleName].Kind,
+                LuaPatchPreflightStatus.Deferred,
+                null,
+                null,
+                message))
+            .ToImmutableArray();
+        var preflight = new LuaPatchPreflightResult(bundle.Manifest, plan, preflightModules);
+        var modules = preflightModules
+            .Select(module => new LuaPatchModulePrepareResult(
+                module.ModuleName,
+                LuaPatchPrepareStatus.Deferred,
+                null,
+                module,
+                message))
+            .ToImmutableArray();
+        using var activity = LuaPatchTelemetry.Start(
+            "lunil.patch.prepare",
+            bundle.Manifest.PatchId);
+        LuaPatchTelemetry.Complete(activity, LuaPatchPrepareStatus.Deferred.ToString(), message);
+        LuaPatchTelemetry.RecordPreparation(
+            LuaPatchPrepareStatus.Deferred.ToString(),
+            Stopwatch.GetElapsedTime(startedTimestamp));
+        return new LuaPatchPrepareResult(
+            LuaPatchPrepareStatus.Deferred,
+            null,
+            preflight,
+            modules,
+            message)
+        {
+            AdmissionStatus = failure == LuaPatchPreparationLimiter.AdmissionFailure.TimedOut
+                ? LuaPatchPreparationAdmissionStatus.TimedOut
+                : LuaPatchPreparationAdmissionStatus.Saturated,
+        };
     }
 
     private LuaPatchPrepareResult PreparePatchCore(
@@ -825,6 +919,7 @@ public sealed partial class LuaHost
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
+        LuaPatchPreparationLimiter.ValidateWaitTimeout(options.PreparationWaitTimeout);
         var acceptanceConfigured = options.AcceptancePolicy is not null;
         if (acceptanceConfigured != (options.ReplayStore is not null) ||
             acceptanceConfigured != (options.ReplayScope is not null))

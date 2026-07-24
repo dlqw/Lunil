@@ -1193,7 +1193,25 @@ namespace Lunil.Hosting
         CompilationFailed = 2,
         ChunkValidationFailed = 3,
         CanonicalIrDecoderRequired = 4,
-        CanonicalIrValidationFailed = 5
+        CanonicalIrValidationFailed = 5,
+        Deferred = 6
+    }
+
+    public enum LuaPatchPreparationAdmissionStatus
+    {
+        NotConfigured = 0,
+        Acquired = 1,
+        Saturated = 2,
+        TimedOut = 3
+    }
+
+    public sealed class LuaPatchPreparationLimiter
+    {
+        public int MaximumConcurrency { get => throw null; }
+        public int MaximumQueueLength { get => throw null; }
+        public int ActiveCount { get => throw null; }
+        public int QueuedCount { get => throw null; }
+        public LuaPatchPreparationLimiter(int maximumConcurrency, int maximumQueueLength) { }
     }
 
     public sealed class LuaPatchPrepareOptions : System.IEquatable<Lunil.Hosting.LuaPatchPrepareOptions>
@@ -1204,6 +1222,8 @@ namespace Lunil.Hosting
         public System.Collections.Generic.IReadOnlyDictionary<string, Lunil.Hosting.ILuaPatchStateMigrationAdapter>? StateMigrationAdapters { get => throw null; init { } }
         public System.Collections.Generic.IReadOnlyDictionary<string, Lunil.Hosting.ILuaPatchResourceMigrationAdapter>? ResourceMigrationAdapters { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchResourceLimits ResourceLimits { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchPreparationLimiter? PreparationLimiter { get => throw null; init { } }
+        public System.TimeSpan PreparationWaitTimeout { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptancePolicy? AcceptancePolicy { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchReplayStore? ReplayStore { get => throw null; init { } }
         public string? ReplayScope { get => throw null; init { } }
@@ -1223,6 +1243,7 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaPatchPreflightResult Preflight { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchModulePrepareResult> Modules { get => throw null; init { } }
         public string? Message { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchPreparationAdmissionStatus AdmissionStatus { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptanceResult? Acceptance { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
         public LuaPatchPrepareResult(Lunil.Hosting.LuaPatchPrepareStatus Status, Lunil.Hosting.LuaPreparedPatch? PreparedPatch, Lunil.Hosting.LuaPatchPreflightResult Preflight, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchModulePrepareResult> Modules, string? Message) { }
@@ -1244,7 +1265,8 @@ namespace Lunil.Hosting
         UnsupportedCachePolicy = 4,
         MigrationAdapterMissing = 5,
         StateSchemaVersionMismatch = 6,
-        AcceptanceRejected = 7
+        AcceptanceRejected = 7,
+        Deferred = 8
     }
 
     public sealed class LuaPatchRecoveryRecord : System.IEquatable<Lunil.Hosting.LuaPatchRecoveryRecord>
