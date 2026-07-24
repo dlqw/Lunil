@@ -245,9 +245,28 @@ public sealed class LuaClrTimerTests
     {
         var time = new ManualTimeProvider();
         using var host = CreateHost(time);
+        var completion = new TaskCompletionSource<LuaClrException>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                host.DispatchClrTimers();
+                completion.SetException(new InvalidOperationException(
+                    "Timer dispatch unexpectedly accepted a non-owner thread."));
+            }
+            catch (LuaClrException exception)
+            {
+                completion.SetResult(exception);
+            }
+            catch (Exception exception)
+            {
+                completion.SetException(exception);
+            }
+        });
 
-        var error = await Task.Run(() => Assert.Throws<LuaClrException>(
-            () => host.DispatchClrTimers()));
+        thread.Start();
+        var error = await completion.Task;
 
         Assert.Equal(LuaClrErrorCode.ThreadDenied, error.Code);
     }
