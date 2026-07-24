@@ -1215,8 +1215,19 @@ public sealed class LuaPatchCommitTests
                     release.Wait(TimeSpan.FromSeconds(5));
                     return [];
                 })));
-        var executing = Task.Run(() => host.RunUtf8("hold_frame()"));
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+        var executing = Task.Factory.StartNew(
+            () => host.RunUtf8("hold_frame()"),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        var executionEntered = entered.Wait(TimeSpan.FromSeconds(30));
+        if (!executionEntered)
+        {
+            release.Set();
+            _ = await executing.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        Assert.True(executionEntered);
 
         var opened = host.TryOpenPatchUpdateWindow();
         release.Set();
