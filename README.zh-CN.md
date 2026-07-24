@@ -30,9 +30,9 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 > PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
 > `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
 > 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.18` 热更新预览，新增协调式 target 流量隔离、有界 prepare
-> backpressure，以及原子 CLR callback、task、coroutine 与 native continuation generation
-> fencing；它不是稳定 package 版本线。
+> 当前源码树为 `0.12.0-alpha.19` 热更新预览，新增协调式 target 流量隔离、有界 prepare
+> backpressure，以及面向 CLR callback、task、coroutine、native continuation 和 timer 的原子
+> generation fencing；它不是稳定 package 版本线。
 
 ## 性能
 
@@ -90,8 +90,8 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 - **受能力控制的 CLR bridge**：0.11 可以发现、构造和调用精确 allowlist 中的 CLR 类型，
   不会加载 assembly，也不会开放无限制 reflection。
 - **生产热更新预览**：支持 key 轮换与撤销的签名 Patch Bundle、由 signer 授权的回滚、capability
-  准入与签名 target selector、游戏循环原子发布、状态与资源迁移、fail-closed coroutine/native
-  continuation generation、多 State ring 灰度、具备排他 ownership 与 compaction 生命周期的持久
+  准入与签名 target selector、游戏循环原子发布、状态与资源迁移、host-polled 游戏循环 timer、
+  fail-closed 异步 generation、多 State ring 灰度、具备排他 ownership 与 compaction 生命周期的持久
   恢复 journal，以及 .NET telemetry。
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。

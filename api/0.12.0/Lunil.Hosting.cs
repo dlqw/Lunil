@@ -122,6 +122,10 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrOptions Options { get => throw null; }
         public bool IsEnabled { get => throw null; }
         public int OwnerThreadId { get => throw null; }
+        public int ActiveTimerCount { get => throw null; }
+        public int PendingTimerCount { get => throw null; }
+        public int QuiescedTimerCount { get => throw null; }
+        public int StaleTimerCount { get => throw null; }
         public LuaClrBridge(Lunil.Runtime.LuaState state, Lunil.Hosting.LuaClrOptions? options = null) { }
         public Lunil.Hosting.LuaClrTypeInfo ResolveType(string typeName) => throw null;
         public Lunil.Runtime.Values.LuaUserdata CreateInstance(string typeName, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
@@ -137,6 +141,9 @@ namespace Lunil.Hosting
         public void Cancel(Lunil.Runtime.Values.LuaValue value) { }
         public void DisposeValue(Lunil.Runtime.Values.LuaValue value) { }
         public void InstallGlobalModule() { }
+        public Lunil.Hosting.LuaClrTimer ScheduleTimer(Lunil.Runtime.Values.LuaValue callback, Lunil.Hosting.LuaClrTimerOptions options) => throw null;
+        public int DispatchTimers() => throw null;
+        public int DispatchTimers(int maximumCallbacks) => throw null;
     }
 
     public sealed class LuaClrCancellation : System.IDisposable
@@ -157,7 +164,8 @@ namespace Lunil.Hosting
         DelegateConversion = 8,
         EventSubscription = 16,
         Async = 32,
-        Disposal = 64
+        Disposal = 64,
+        Timers = 128
     }
 
     public sealed class LuaClrConstructorInfo : System.IEquatable<Lunil.Hosting.LuaClrConstructorInfo>
@@ -192,7 +200,8 @@ namespace Lunil.Hosting
         AsyncFailed = 14,
         ThreadDenied = 15,
         InvalidRefOut = 16,
-        AsyncGenerationClosed = 17
+        AsyncGenerationClosed = 17,
+        TimerGenerationClosed = 18
     }
 
     public sealed class LuaClrException : System.Exception
@@ -284,6 +293,9 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaClrThreadPolicy ThreadPolicy { get => throw null; init { } }
         public bool IncludeExceptionMessages { get => throw null; init { } }
         public int MaximumCachedMembers { get => throw null; init { } }
+        public System.TimeProvider TimeProvider { get => throw null; init { } }
+        public int MaximumTimerCount { get => throw null; init { } }
+        public int MaximumTimerDispatchCount { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaClrOptions? left, Lunil.Hosting.LuaClrOptions? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaClrOptions? left, Lunil.Hosting.LuaClrOptions? right) => throw null;
@@ -315,6 +327,42 @@ namespace Lunil.Hosting
     {
         OwnerThreadOnly = 0,
         AnyThreadWhenIdle = 1
+    }
+
+    public sealed class LuaClrTimer : System.IDisposable
+    {
+        public Lunil.Hosting.LuaClrBridge Bridge { get => throw null; }
+        public Lunil.Runtime.Values.LuaValue Callback { get => throw null; }
+        public Lunil.Hosting.LuaClrTimerOptions Options { get => throw null; }
+        public bool IsActive { get => throw null; }
+        public bool IsScheduled { get => throw null; }
+        public bool IsDisposed { get => throw null; }
+        public long DispatchedTickCount { get => throw null; }
+        public long MissedTickCount { get => throw null; }
+        public void Cancel() { }
+        public void Dispose() { }
+    }
+
+    public enum LuaClrTimerCatchUpPolicy
+    {
+        Skip = 0,
+        Coalesce = 1,
+        CatchUp = 2
+    }
+
+    public sealed class LuaClrTimerOptions : System.IEquatable<Lunil.Hosting.LuaClrTimerOptions>
+    {
+        public static Lunil.Hosting.LuaClrTimerOptions Default { get => throw null; }
+        public System.TimeSpan DueTime { get => throw null; init { } }
+        public System.TimeSpan Period { get => throw null; init { } }
+        public Lunil.Hosting.LuaClrTimerCatchUpPolicy CatchUpPolicy { get => throw null; init { } }
+        public int MaximumCatchUpTicks { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaClrTimerOptions? left, Lunil.Hosting.LuaClrTimerOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaClrTimerOptions? left, Lunil.Hosting.LuaClrTimerOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaClrTimerOptions? other) => throw null;
     }
 
     public sealed class LuaClrTypeInfo : System.IEquatable<Lunil.Hosting.LuaClrTypeInfo>
@@ -386,6 +434,8 @@ namespace Lunil.Hosting
         public Lunil.Runtime.Execution.LuaExecutionResult Execute(Lunil.IR.Canonical.LuaIrModule module, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null) => throw null;
         public Lunil.Runtime.Execution.LuaExecutionResult ExecuteBinaryChunk(System.ReadOnlySpan<byte> binaryChunk, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments = null, Lunil.IR.Lua54.Lua54ChunkReaderOptions? readerOptions = null) => throw null;
         public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceResult> AnalyzeWorkspaceAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Threading.CancellationToken cancellationToken = null) => throw null;
+        public int DispatchClrTimers() => throw null;
+        public int DispatchClrTimers(int maximumCallbacks) => throw null;
         public void Dispose() { }
         public void SetPatchStateSchemaVersion(string schemaId, string version) { }
         public bool TryGetPatchStateSchemaVersion(string schemaId, out string? version) => throw null;

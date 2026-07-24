@@ -32,9 +32,9 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 > explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
 > The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
 > construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.18` hot-update preview; it adds coordinated target
-> isolation, bounded preparation backpressure, and atomic CLR callback, task, coroutine, and native
-> continuation generation fencing and is not the stable package line.
+> The current source tree is the `0.12.0-alpha.19` hot-update preview; it adds coordinated target
+> isolation, bounded preparation backpressure, and atomic generation fencing for CLR callbacks,
+> tasks, coroutines, native continuations, and timers. It is not the stable package line.
 
 ## Performance
 
@@ -99,8 +99,9 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   exact-allowlisted CLR types without loading assemblies or enabling unrestricted reflection.
 - **Production hot-update preview** — signed Patch Bundles with key rotation and revocation,
   signer-authorized rollback, capability admission, signed target selection, game-loop atomic
-  publication, state and resource migration, fail-closed coroutine/native continuation generations,
-  multi-State ring rollout, exclusively owned and compactable recovery journals, and .NET telemetry.
+  publication, state and resource migration, host-polled game-loop timers, fail-closed asynchronous
+  generations, multi-State ring rollout, exclusively owned and compactable recovery journals, and
+  .NET telemetry.
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
   use deterministic interpreter fallback when dynamic code is unavailable.
 

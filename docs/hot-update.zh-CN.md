@@ -271,8 +271,8 @@ Resource rule 覆盖 `Coroutine`、`Timer`、`EventSubscription` 和 `Task`，di
 frame 与 immutable Lua function version 保持在旧 activation 内隔离，而 thread 会被准入 candidate
 generation。没有 `Continue` 时，旧 module-owned thread 会变为 stale，`LuaInterpreter.Start`/`Resume`
 会在进入 scheduler 前失败。`RejectIfActive` 会拒绝该路径上的非终止 thread。可逆
-cancel/restart/drain，以及全部 host-owned
-timer、subscription 和 task 生命周期变更，使用指定的 `ILuaPatchResourceMigrationAdapter`；
+cancel/restart/drain，以及全部 host-owned timer、subscription 和 task 生命周期变更，使用指定的
+`ILuaPatchResourceMigrationAdapter`；
 缺少 adapter 会在进入 update window 前使 prepare 失败。
 Adapter 的 `Prepare` 不得修改状态；`Apply` 必须能由 `Rollback` 完整逆转，operation dispose 只能
 释放 journal 资源。
@@ -284,6 +284,22 @@ new LuaPatchResourceRule
     Kind = LuaPatchResourceKind.Coroutine,
     Disposition = LuaPatchResourceDisposition.Continue,
     StatePath = "/workers/matchLoop",
+}
+```
+
+`LuaClrTimer` 作为 userdata 保存在 `StatePath` 时同样属于 runtime-owned resource。使用 `Continue`
+时，新旧 module 都要在该 path 创建 timer；commit 会把旧 timer 的 remaining delay 与 dispatch
+counter 转给 pending candidate timer。发布后使用 candidate callback、period 与 catch-up policy，
+且不会重新开始 delay。旧 timer 仍有 scheduled tick 时，`RejectIfActive` 会中止；`Cancel`、`Restart`
+与 `Drain` 仍要求可逆 adapter。
+
+```csharp
+new LuaPatchResourceRule
+{
+    ResourceId = "heartbeat",
+    Kind = LuaPatchResourceKind.Timer,
+    Disposition = LuaPatchResourceDisposition.Continue,
+    StatePath = "/timers/heartbeat",
 }
 ```
 
@@ -306,6 +322,11 @@ generation；candidate task result 仅在整个 barrier 发布后可被外部消
 期间消费），rollback 会恢复旧 task
 generation。Wrapper fencing 不会取消底层 operation；外部 operation 本身需要 stop、drain 或
 restart 时，应使用 cancellation token 或 resource migration adapter。
+
+Host-polled module timer 也使用该 barrier：旧 timer 以 remaining delay 暂停，candidate timer 在完整
+发布前不能 dispatch；rollback 会把 candidate 标为 stale 并恢复旧 schedule。应监控
+`LuaClrBridge` 的 `ActiveTimerCount`、`PendingTimerCount`、`QuiescedTimerCount` 与
+`StaleTimerCount`，并且只在 state idle 时通过 `LuaHost.DispatchClrTimers` 驱动到期工作。
 
 兼容 closure slot 与 loader upvalue 仍会自动迁移：lexical identity 和 upvalue layout 匹配时发布
 successor generation，而挂起 frame 继续持有旧 immutable generation。State rule 会在 candidate

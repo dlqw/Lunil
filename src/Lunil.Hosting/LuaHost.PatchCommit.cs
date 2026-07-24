@@ -1722,7 +1722,8 @@ public sealed partial class LuaHost
                     continue;
                 }
 
-                if (rule.Kind != LuaPatchResourceKind.Coroutine)
+                if (rule.Kind is not (LuaPatchResourceKind.Coroutine or
+                    LuaPatchResourceKind.Timer))
                 {
                     if (rule.Disposition != LuaPatchResourceDisposition.Continue)
                     {
@@ -1743,27 +1744,71 @@ public sealed partial class LuaHost
                 }
 
                 var path = LuaPatchStatePath.Parse(rule.StatePath!);
-                if (!TryResolvePath(PreviousCache, path, out var value) ||
-                    value.Kind != LuaValueKind.Thread)
+                if (!TryResolvePath(PreviousCache, path, out var value))
                 {
                     throw new LuaPatchMigrationSchemaException(
                         LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
-                        $"Coroutine resource '{rule.ResourceId}' does not resolve to a thread.");
+                        $"Runtime resource '{rule.ResourceId}' was not found at its state path.");
                 }
 
-                if (rule.Disposition == LuaPatchResourceDisposition.RejectIfActive &&
-                    value.AsThread().Status is not (LuaThreadStatus.Dead or LuaThreadStatus.Error))
+                if (rule.Kind == LuaPatchResourceKind.Coroutine)
+                {
+                    if (value.Kind != LuaValueKind.Thread)
+                    {
+                        throw new LuaPatchMigrationSchemaException(
+                            LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                            $"Coroutine resource '{rule.ResourceId}' does not resolve to a thread.");
+                    }
+
+                    if (rule.Disposition == LuaPatchResourceDisposition.RejectIfActive &&
+                        value.AsThread().Status is not (LuaThreadStatus.Dead or LuaThreadStatus.Error))
+                    {
+                        throw new LuaPatchMigrationSchemaException(
+                            LuaPatchMigrationSchemaErrorCode.ResourceActive,
+                            $"Coroutine resource '{rule.ResourceId}' is still active.");
+                    }
+
+                    if (rule.Disposition == LuaPatchResourceDisposition.Continue)
+                    {
+                        SetCandidatePath(path, value);
+                        generationUpdate.TransferCoroutine(value.AsThread(), Module.Module);
+                    }
+
+                    continue;
+                }
+
+                if (value.Kind != LuaValueKind.Userdata ||
+                    value.AsUserdata().Payload is not LuaClrTimer timer ||
+                    !ReferenceEquals(timer.Bridge, _host.ClrBridge))
                 {
                     throw new LuaPatchMigrationSchemaException(
-                        LuaPatchMigrationSchemaErrorCode.ResourceActive,
-                        $"Coroutine resource '{rule.ResourceId}' is still active.");
+                        LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                        $"Timer resource '{rule.ResourceId}' does not resolve to a host timer.");
                 }
 
-                if (rule.Disposition == LuaPatchResourceDisposition.Continue)
+                if (rule.Disposition == LuaPatchResourceDisposition.RejectIfActive)
                 {
-                    SetCandidatePath(path, value);
-                    generationUpdate.TransferCoroutine(value.AsThread(), Module.Module);
+                    if (timer.HasLiveSchedule)
+                    {
+                        throw new LuaPatchMigrationSchemaException(
+                            LuaPatchMigrationSchemaErrorCode.ResourceActive,
+                            $"Timer resource '{rule.ResourceId}' is still active.");
+                    }
+
+                    continue;
                 }
+
+                if (!TryResolvePath(CandidateValue, path, out var candidateTimerValue) ||
+                    candidateTimerValue.Kind != LuaValueKind.Userdata ||
+                    candidateTimerValue.AsUserdata().Payload is not LuaClrTimer candidateTimer ||
+                    !ReferenceEquals(candidateTimer.Bridge, _host.ClrBridge))
+                {
+                    throw new LuaPatchMigrationSchemaException(
+                        LuaPatchMigrationSchemaErrorCode.StateKindMismatch,
+                        $"Timer resource '{rule.ResourceId}' has no candidate timer replacement.");
+                }
+
+                generationUpdate.TransferTimerSchedule(timer, candidateTimer, Module.Module);
             }
 
             if (CandidateValue.IsNil)

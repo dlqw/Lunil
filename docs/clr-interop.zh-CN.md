@@ -39,6 +39,8 @@ Deterministic Host 使用相同策略。
 - `clr.on(target, event, callback)`：可释放的 event subscription。
 - `clr.await(task)`：等待 `Task`/`ValueTask` userdata 并转换结果。
 - `clr.cancellation()`、`clr.cancel(value)`：创建并触发 bridge-owned cancellation token source。
+- `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])`：创建由 Host 轮询的 timer。
+- `clr.cancel_timer(timer)`：无需通用 disposal capability 即可取消 timer。
 - `clr.dispose(value)`：幂等释放 bridge userdata 或 subscription。
 
 构造出的 userdata 也可以通过普通 Lua indexing/call 使用 allowlist 内的 property、field、method、
@@ -81,11 +83,52 @@ Module frame 调用 CLR code 时创建的 `LuaClrTask` wrapper 使用同一 gene
 `LuaClrTask.IsActive`，并监控 bridge 的 `ActiveTaskCount`、`PendingTaskCount`、
 `QuiescedTaskCount` 与 `StaleTaskCount` gauge。
 
+## 游戏循环 Timer
+
+授予 `Timers` 后可创建 `LuaClrTimer`。Timer 不持有 worker，也不会从 thread pool callback 进入 Lua；
+游戏主循环只在 state idle 时显式驱动：
+
+```csharp
+var options = LuaHostOptions.Restricted with
+{
+    Clr = new LuaClrOptions
+    {
+        Capabilities = LuaClrCapabilities.Timers,
+        InstallGlobalModule = true,
+        TimeProvider = TimeProvider.System,
+        MaximumTimerCount = 4096,
+        MaximumTimerDispatchCount = 256,
+    },
+};
+using var host = new LuaHost(options);
+host.RunUtf8("heartbeat=clr.timer(function(tick,missed) last_tick=tick; missed_ticks=missed end,0,50,'coalesce')");
+
+while (running)
+{
+    host.DispatchClrTimers(256);
+    RunGameFrame();
+}
+```
+
+Callback 接收从 1 开始的 dispatch tick，以及本次省略的 elapsed tick 数。`skip` 从当前 poll 时刻
+计算下一周期，`coalesce` 保持原始 phase 并报告省略数，`catch_up` 则逐个 dispatch 已经过期的 tick，
+每次 poll 最多执行 `MaximumCatchUpTicks` 个。省略 `periodMs` 时为 one-shot。Timer 数量、单次 poll
+dispatch 数、duration 与 catch-up 均有前置资源上限。调度使用配置的 `TimeProvider` monotonic
+timestamp，wall-clock 校时不会移动 due tick。在 busy state 或非 owner thread dispatch 会
+fail closed；callback 使用 Host 配置的 interpreter budget。
+
+Module-owned timer 会加入 patch generation barrier。旧 timer 以 remaining delay 暂停，candidate timer
+在 pending 阶段不调度；发布后只有 candidate active，execution/migration/barrier/health rollback 则只
+恢复旧 timer。在结果确定前不能取消 quiesced timer。应同时监控 `LuaClrTimer.IsActive` 与
+`ActiveTimerCount`、`PendingTimerCount`、`QuiescedTimerCount`、`StaleTimerCount`。签名 schema 中的
+`Timer + Continue` 会把 remaining delay 与 counter 转给同一 state path 的 candidate timer，因此下一
+tick 使用 candidate callback 与 scheduling policy。
+
 ## Ownership 与部署
 
 `LuaClrObject` 默认拥有构造出的 `IDisposable` instance，并且最多转发一次 `Dispose`；Host 自己拥有
-instance 时设置 `OwnConstructedObjects=false`。userdata、callback、subscription 和 task 都属于一个
-`LuaState`，不能转移到其他 state。
+instance 时设置 `OwnConstructedObjects=false`。userdata、callback、subscription、task 和 timer 都
+属于一个 `LuaState`，不能转移到其他 state。
 
 Trimming 和 NativeAOT 应用必须通过 `DynamicDependency` 等 linker metadata 保留每个 allowlist type 的
 public constructor、member 和 delegate signature。metadata 缺失时以稳定 bridge diagnostic fail closed。
