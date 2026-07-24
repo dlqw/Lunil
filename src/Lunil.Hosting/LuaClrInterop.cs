@@ -273,13 +273,16 @@ public sealed class LuaClrCancellation : IDisposable
 /// <summary>Disposable event/delegate subscription owned by one Lua state.</summary>
 public sealed class LuaClrSubscription : IDisposable
 {
-    private readonly Action _unsubscribe;
+    private readonly LuaClrCallbackRegistration _registration;
     private LuaHandle? _callbackHandle;
     private int _disposed;
 
-    internal LuaClrSubscription(Action unsubscribe, LuaValue callback, LuaHandle callbackHandle)
+    internal LuaClrSubscription(
+        LuaClrCallbackRegistration registration,
+        LuaValue callback,
+        LuaHandle callbackHandle)
     {
-        _unsubscribe = unsubscribe;
+        _registration = registration;
         Callback = callback;
         _callbackHandle = callbackHandle;
     }
@@ -290,6 +293,9 @@ public sealed class LuaClrSubscription : IDisposable
     /// <summary>Gets whether the subscription has been disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
+    /// <summary>Gets whether the callback is attached and admitted by the live patch generation.</summary>
+    public bool IsActive => !IsDisposed && _registration.IsSubscriptionActive;
+
     /// <summary>Unsubscribes at most once.</summary>
     public void Dispose()
     {
@@ -297,7 +303,7 @@ public sealed class LuaClrSubscription : IDisposable
         {
             try
             {
-                _unsubscribe();
+                _registration.Close();
             }
             finally
             {
@@ -370,7 +376,7 @@ public sealed class LuaClrObject : IDisposable
 [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
 [UnconditionalSuppressMessage("Trimming", "IL2080", Justification = "The host owns exact CLR interop metadata and preserves its allowlist.")]
 [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Exact allowlisted types are rooted by the host; delegate expressions use the interpreter on AOT runtimes.")]
-public sealed class LuaClrBridge
+public sealed partial class LuaClrBridge
 {
     private readonly LuaState _state;
     private readonly LuaClrOptions _options;
@@ -703,13 +709,14 @@ public sealed class LuaClrBridge
         }
 
         ValidateDelegateSignature(type.GetMethod("Invoke")!);
-        return BuildDelegate(type, function);
+        return BuildDelegate(type, CreateCallbackRegistration(function));
     }
 
     /// <summary>Subscribes a Lua function to an allowlisted CLR event.</summary>
     public LuaClrSubscription Subscribe(LuaValue target, string eventName, LuaValue callback)
     {
         RequireCapability(LuaClrCapabilities.EventSubscription);
+        RequireCapability(LuaClrCapabilities.DelegateConversion);
         if (callback.Kind != LuaValueKind.Function)
         {
             throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "A Lua function is required.");
@@ -726,16 +733,33 @@ public sealed class LuaClrBridge
                 $"CLR event '{eventName}' has no handler type.");
         }
 
-        var handler = CreateDelegate(callback, eventInfo.EventHandlerType.FullName ?? eventInfo.EventHandlerType.Name);
+        var handlerTypeName = eventInfo.EventHandlerType.FullName ?? eventInfo.EventHandlerType.Name;
+        var handlerType = ResolveAllowedType(handlerTypeName);
+        if (!_allowedDelegates.Contains(handlerTypeName))
+        {
+            throw new LuaClrException(
+                LuaClrErrorCode.InvalidDelegate,
+                $"CLR type '{handlerTypeName}' is not an allowed delegate type.");
+        }
+
+        ValidateDelegateSignature(handlerType.GetMethod("Invoke")!);
+        var registration = CreateCallbackRegistration(callback);
+        var handler = BuildDelegate(handlerType, registration);
         var handle = _state.CreateHandle(callback);
         try
         {
             eventInfo.AddEventHandler(instance, handler);
+            registration.AttachSubscription(
+                () => eventInfo.AddEventHandler(instance, handler),
+                () => eventInfo.RemoveEventHandler(instance, handler));
             return new LuaClrSubscription(
-                () => eventInfo.RemoveEventHandler(instance, handler), callback, handle);
+                registration,
+                callback,
+                handle);
         }
         catch
         {
+            registration.Close();
             handle.Dispose();
             throw;
         }
@@ -1550,7 +1574,9 @@ public sealed class LuaClrBridge
         }
     }
 
-    private Delegate BuildDelegate(Type delegateType, LuaValue function)
+    private Delegate BuildDelegate(
+        Type delegateType,
+        LuaClrCallbackRegistration registration)
     {
         var invoke = delegateType.GetMethod("Invoke")!;
         var parameters = invoke.GetParameters()
@@ -1562,7 +1588,7 @@ public sealed class LuaClrBridge
             Expression.Constant(this),
             nameof(InvokeDelegateCore),
             Type.EmptyTypes,
-            Expression.Constant(function),
+            Expression.Constant(registration),
             boxed,
             Expression.Constant(invoke.ReturnType, typeof(Type)));
         Expression body = invoke.ReturnType == typeof(void)
@@ -1571,11 +1597,15 @@ public sealed class LuaClrBridge
         return Expression.Lambda(delegateType, body, parameters).Compile(preferInterpretation: true);
     }
 
-    private object? InvokeDelegateCore(LuaValue function, object?[] arguments, Type returnType)
+    private object? InvokeDelegateCore(
+        LuaClrCallbackRegistration registration,
+        object?[] arguments,
+        Type returnType)
     {
         lock (_callbackGate)
         {
             EnsureThread();
+            var function = registration.GetActiveCallback();
             var luaArguments = arguments.Select(ToLuaValue).ToArray();
             var closure = function.TryGetClosure() ??
                 throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "Lua callback is not a closure.");

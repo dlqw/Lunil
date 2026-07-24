@@ -110,6 +110,10 @@ namespace Lunil.Hosting
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Exact allowlisted types are rooted by the host; delegate expressions use the interpreter on AOT runtimes.")]
     public sealed class LuaClrBridge
     {
+        public int ActiveCallbackCount { get => throw null; }
+        public int PendingCallbackCount { get => throw null; }
+        public int QuiescedCallbackCount { get => throw null; }
+        public int StaleCallbackCount { get => throw null; }
         public Lunil.Runtime.LuaState State { get => throw null; }
         public Lunil.Hosting.LuaClrOptions Options { get => throw null; }
         public bool IsEnabled { get => throw null; }
@@ -287,6 +291,7 @@ namespace Lunil.Hosting
     {
         public Lunil.Runtime.Values.LuaValue Callback { get => throw null; }
         public bool IsDisposed { get => throw null; }
+        public bool IsActive { get => throw null; }
         public void Dispose() { }
     }
 

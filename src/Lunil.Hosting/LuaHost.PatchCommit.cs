@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
@@ -526,6 +527,7 @@ public sealed partial class LuaHost
         }
 
         var transactions = new List<PatchModuleTransaction>(preparedPatch.Modules.Length);
+        LuaClrBridge.LuaClrCallbackUpdate? callbackUpdate = null;
         var transferred = false;
         try
         {
@@ -536,6 +538,12 @@ public sealed partial class LuaHost
                     module,
                     observed[module.ModuleName]));
             }
+
+            callbackUpdate = ClrBridge.BeginCallbackUpdate(
+                observed.Values
+                    .Select(static record => record.Module)
+                    .OfType<LuaIrModule>(),
+                preparedPatch.Modules.Select(static module => module.Module));
 
             NormalizeTargetModules(transactions, stagedCount: 0);
             for (var index = 0; index < transactions.Count; index++)
@@ -656,6 +664,7 @@ public sealed partial class LuaHost
                 started,
                 transactions,
                 replayLease,
+                callbackUpdate,
                 timeProvider ?? TimeProvider.System);
             transferred = true;
             return PatchCommitSessionPreparation.FromSession(session);
@@ -679,11 +688,7 @@ public sealed partial class LuaHost
         {
             if (!transferred)
             {
-                replayLease?.Dispose();
-                foreach (var transaction in transactions)
-                {
-                    transaction.Dispose();
-                }
+                DisposePatchCommitResources(callbackUpdate, replayLease, transactions);
             }
         }
     }
@@ -1072,6 +1077,39 @@ public sealed partial class LuaHost
         not StackOverflowException and
         not AccessViolationException;
 
+    private static void DisposePatchCommitResources(
+        LuaClrBridge.LuaClrCallbackUpdate? callbackUpdate,
+        ILuaPatchReplayCommitLease? replayLease,
+        IEnumerable<PatchModuleTransaction> transactions)
+    {
+        List<Exception>? failures = null;
+        TryDispose(callbackUpdate, ref failures);
+        TryDispose(replayLease, ref failures);
+        foreach (var transaction in transactions)
+        {
+            TryDispose(transaction, ref failures);
+        }
+
+        if (failures is { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "One or more patch commit resources could not be released.",
+                failures.Count == 1 ? failures[0] : new AggregateException(failures));
+        }
+    }
+
+    private static void TryDispose(IDisposable? resource, ref List<Exception>? failures)
+    {
+        try
+        {
+            resource?.Dispose();
+        }
+        catch (Exception exception) when (IsRecoverablePatchException(exception))
+        {
+            (failures ??= []).Add(exception);
+        }
+    }
+
     private void NormalizeTargetModules(
         List<PatchModuleTransaction> transactions,
         int stagedCount)
@@ -1204,6 +1242,7 @@ public sealed partial class LuaHost
         private readonly long _started;
         private readonly List<PatchModuleTransaction> _transactions;
         private readonly ILuaPatchReplayCommitLease? _replayLease;
+        private readonly LuaClrBridge.LuaClrCallbackUpdate _callbackUpdate;
         private readonly TimeProvider _timeProvider;
         private bool _schemaPublished;
         private bool _disposed;
@@ -1216,6 +1255,7 @@ public sealed partial class LuaHost
             long started,
             List<PatchModuleTransaction> transactions,
             ILuaPatchReplayCommitLease? replayLease,
+            LuaClrBridge.LuaClrCallbackUpdate callbackUpdate,
             TimeProvider timeProvider)
         {
             _host = host;
@@ -1225,6 +1265,7 @@ public sealed partial class LuaHost
             _started = started;
             _transactions = transactions;
             _replayLease = replayLease;
+            _callbackUpdate = callbackUpdate;
             _timeProvider = timeProvider;
         }
 
@@ -1303,6 +1344,8 @@ public sealed partial class LuaHost
                     _host._jitExecutor?.Invalidate(transaction.PreviousRecord.Module);
                 }
             }
+
+            _callbackUpdate.Apply();
         }
 
         public void CompleteReplayAcceptance(DateTimeOffset committedAt)
@@ -1332,6 +1375,17 @@ public sealed partial class LuaHost
         {
             ThrowIfDisposed();
             var restored = RollbackTransactions(_transactions);
+            try
+            {
+                _callbackUpdate.Rollback();
+            }
+            catch (Exception exception) when (IsRecoverablePatchException(exception))
+            {
+                restored = false;
+                message = string.IsNullOrWhiteSpace(message)
+                    ? exception.Message
+                    : message + " CLR callback rollback failed: " + exception.Message;
+            }
             if (_schemaPublished && _patch.MigrationSchema is { } migrationSchema)
             {
                 _host._patchStateSchemaVersions[migrationSchema.SchemaId] =
@@ -1361,11 +1415,7 @@ public sealed partial class LuaHost
             }
 
             _disposed = true;
-            _replayLease?.Dispose();
-            foreach (var transaction in _transactions)
-            {
-                transaction.Dispose();
-            }
+            DisposePatchCommitResources(_callbackUpdate, _replayLease, _transactions);
         }
 
         private void ThrowIfDisposed() =>
