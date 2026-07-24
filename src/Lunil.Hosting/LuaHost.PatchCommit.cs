@@ -527,7 +527,7 @@ public sealed partial class LuaHost
         }
 
         var transactions = new List<PatchModuleTransaction>(preparedPatch.Modules.Length);
-        LuaClrBridge.LuaClrCallbackUpdate? callbackUpdate = null;
+        LuaClrBridge.LuaClrGenerationUpdate? generationUpdate = null;
         var transferred = false;
         try
         {
@@ -539,7 +539,7 @@ public sealed partial class LuaHost
                     observed[module.ModuleName]));
             }
 
-            callbackUpdate = ClrBridge.BeginCallbackUpdate(
+            generationUpdate = ClrBridge.BeginGenerationUpdate(
                 observed.Values
                     .Select(static record => record.Module)
                     .OfType<LuaIrModule>(),
@@ -664,7 +664,7 @@ public sealed partial class LuaHost
                 started,
                 transactions,
                 replayLease,
-                callbackUpdate,
+                generationUpdate,
                 timeProvider ?? TimeProvider.System);
             transferred = true;
             return PatchCommitSessionPreparation.FromSession(session);
@@ -688,7 +688,7 @@ public sealed partial class LuaHost
         {
             if (!transferred)
             {
-                DisposePatchCommitResources(callbackUpdate, replayLease, transactions);
+                DisposePatchCommitResources(generationUpdate, replayLease, transactions);
             }
         }
     }
@@ -1078,12 +1078,12 @@ public sealed partial class LuaHost
         not AccessViolationException;
 
     private static void DisposePatchCommitResources(
-        LuaClrBridge.LuaClrCallbackUpdate? callbackUpdate,
+        LuaClrBridge.LuaClrGenerationUpdate? generationUpdate,
         ILuaPatchReplayCommitLease? replayLease,
         IEnumerable<PatchModuleTransaction> transactions)
     {
         List<Exception>? failures = null;
-        TryDispose(callbackUpdate, ref failures);
+        TryDispose(generationUpdate, ref failures);
         TryDispose(replayLease, ref failures);
         foreach (var transaction in transactions)
         {
@@ -1242,7 +1242,7 @@ public sealed partial class LuaHost
         private readonly long _started;
         private readonly List<PatchModuleTransaction> _transactions;
         private readonly ILuaPatchReplayCommitLease? _replayLease;
-        private readonly LuaClrBridge.LuaClrCallbackUpdate _callbackUpdate;
+        private readonly LuaClrBridge.LuaClrGenerationUpdate _generationUpdate;
         private readonly TimeProvider _timeProvider;
         private bool _schemaPublished;
         private bool _disposed;
@@ -1255,7 +1255,7 @@ public sealed partial class LuaHost
             long started,
             List<PatchModuleTransaction> transactions,
             ILuaPatchReplayCommitLease? replayLease,
-            LuaClrBridge.LuaClrCallbackUpdate callbackUpdate,
+            LuaClrBridge.LuaClrGenerationUpdate generationUpdate,
             TimeProvider timeProvider)
         {
             _host = host;
@@ -1265,7 +1265,7 @@ public sealed partial class LuaHost
             _started = started;
             _transactions = transactions;
             _replayLease = replayLease;
-            _callbackUpdate = callbackUpdate;
+            _generationUpdate = generationUpdate;
             _timeProvider = timeProvider;
         }
 
@@ -1345,7 +1345,7 @@ public sealed partial class LuaHost
                 }
             }
 
-            _callbackUpdate.Apply();
+            _generationUpdate.Apply();
         }
 
         public void CompleteReplayAcceptance(DateTimeOffset committedAt)
@@ -1377,14 +1377,14 @@ public sealed partial class LuaHost
             var restored = RollbackTransactions(_transactions);
             try
             {
-                _callbackUpdate.Rollback();
+                _generationUpdate.Rollback();
             }
             catch (Exception exception) when (IsRecoverablePatchException(exception))
             {
                 restored = false;
                 message = string.IsNullOrWhiteSpace(message)
                     ? exception.Message
-                    : message + " CLR callback rollback failed: " + exception.Message;
+                    : message + " CLR generation rollback failed: " + exception.Message;
             }
             if (_schemaPublished && _patch.MigrationSchema is { } migrationSchema)
             {
@@ -1415,7 +1415,7 @@ public sealed partial class LuaHost
             }
 
             _disposed = true;
-            DisposePatchCommitResources(_callbackUpdate, _replayLease, _transactions);
+            DisposePatchCommitResources(_generationUpdate, _replayLease, _transactions);
         }
 
         private void ThrowIfDisposed() =>

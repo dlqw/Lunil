@@ -430,6 +430,250 @@ public sealed class LuaPatchCommitTests
     }
 
     [Fact]
+    public void CommittedPatchFencesOldClrTasksAndPublishesCandidateTasks()
+    {
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var host = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                $"local task=clr.call('{typeName}','Create',41); return {{task=task}}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldTaskValue = host.RunUtf8("return require('a').task").Execution!.Values[0];
+        var oldTask = TaskPayload(oldTaskValue);
+        LuaValue candidateTaskValue = LuaValue.Nil;
+        LuaClrTask? candidateTask = null;
+        (int Active, int Pending, int Quiesced, int Stale)? stagedCounts = null;
+        host.State.SetGlobal(
+            "capture_task",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_task",
+                (_, arguments) =>
+                {
+                    candidateTaskValue = arguments[0];
+                    candidateTask = TaskPayload(candidateTaskValue);
+                    Assert.Equal(
+                        LuaClrErrorCode.AsyncGenerationClosed,
+                        Assert.Throws<LuaClrException>(() =>
+                            host.ClrBridge.Await(oldTaskValue)).Code);
+                    Assert.Equal(42, host.ClrBridge.Await(candidateTaskValue).AsInteger());
+                    stagedCounts = (
+                        host.ClrBridge.ActiveTaskCount,
+                        host.ClrBridge.PendingTaskCount,
+                        host.ClrBridge.QuiescedTaskCount,
+                        host.ClrBridge.StaleTaskCount);
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            $"local task=clr.call('{typeName}','Create',42); " +
+            "capture_task(task); return {task=task}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+
+        LuaPatchCommitResult commit;
+        using (opened.Window!)
+        {
+            commit = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.True(commit.Succeeded, commit.Message);
+        Assert.Equal((0, 1, 1, 0), stagedCounts!.Value);
+        Assert.False(oldTask.IsActive);
+        Assert.NotNull(candidateTask);
+        Assert.True(candidateTask.IsActive);
+        Assert.Equal(42, host.ClrBridge.Await(candidateTaskValue).AsInteger());
+        Assert.Equal(
+            LuaClrErrorCode.AsyncGenerationClosed,
+            Assert.Throws<LuaClrException>(() => host.ClrBridge.Await(oldTaskValue)).Code);
+        Assert.Equal(1, host.ClrBridge.ActiveTaskCount);
+        Assert.Equal(1, host.ClrBridge.StaleTaskCount);
+    }
+
+    [Fact]
+    public void FailedPatchRestoresOldClrTasksAndRejectsCandidateTasks()
+    {
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var host = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                $"local task=clr.call('{typeName}','Create',41); return {{task=task}}",
+            ["mods/b.lua"] = "return {value=1}",
+        });
+        Assert.True(host.RunUtf8(
+            "package.path='mods/?.lua'; require('a'); require('b')").Succeeded);
+        var oldTaskValue = host.RunUtf8("return require('a').task").Execution!.Values[0];
+        LuaValue candidateTaskValue = LuaValue.Nil;
+        host.State.SetGlobal(
+            "capture_task",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_task",
+                (_, arguments) =>
+                {
+                    candidateTaskValue = arguments[0];
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(
+            Entry(
+                "a",
+                $"local task=clr.call('{typeName}','Create',42); " +
+                "capture_task(task); return {task=task}"),
+            Entry("b", "error('candidate failed')", "a")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+
+        LuaPatchCommitResult commit;
+        using (opened.Window!)
+        {
+            commit = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+        }
+
+        Assert.Equal(LuaPatchCommitStatus.ExecutionFailed, commit.Status);
+        Assert.Equal(41, host.ClrBridge.Await(oldTaskValue).AsInteger());
+        Assert.Equal(
+            LuaClrErrorCode.AsyncGenerationClosed,
+            Assert.Throws<LuaClrException>(() => host.ClrBridge.Await(candidateTaskValue)).Code);
+        Assert.Equal(1, host.ClrBridge.ActiveTaskCount);
+        Assert.Equal(1, host.ClrBridge.StaleTaskCount);
+    }
+
+    [Fact]
+    public void HealthRollbackRestoresThePreviousClrTaskGeneration()
+    {
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var host = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                $"local task=clr.call('{typeName}','Create',41); return {{task=task}}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var oldTaskValue = host.RunUtf8("return require('a').task").Execution!.Values[0];
+        LuaValue candidateTaskValue = LuaValue.Nil;
+        host.State.SetGlobal(
+            "capture_task",
+            LuaValue.FromFunction(new LuaNativeFunction(
+                "capture_task",
+                (_, arguments) =>
+                {
+                    candidateTaskValue = arguments[0];
+                    return [];
+                })));
+        var prepared = host.PreparePatch(CreateBundle(Entry(
+            "a",
+            $"local task=clr.call('{typeName}','Create',42); " +
+            "capture_task(task); return {task=task}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var result = new LuaPatchCoordinator().CommitRing(
+            "task-health-rollback",
+            new LuaPatchRolloutRing
+            {
+                Name = "production",
+                Targets =
+                [
+                    new LuaPatchDeploymentTarget(
+                        "state-a",
+                        host,
+                        prepared.PreparedPatch!),
+                ],
+            },
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    Assert.Equal(42, host.ClrBridge.Await(candidateTaskValue).AsInteger());
+                    Assert.Equal(
+                        LuaClrErrorCode.AsyncGenerationClosed,
+                        Assert.Throws<LuaClrException>(() =>
+                            host.ClrBridge.Await(oldTaskValue)).Code);
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        Assert.Equal(41, host.ClrBridge.Await(oldTaskValue).AsInteger());
+        Assert.Equal(
+            LuaClrErrorCode.AsyncGenerationClosed,
+            Assert.Throws<LuaClrException>(() => host.ClrBridge.Await(candidateTaskValue)).Code);
+    }
+
+    [Fact]
+    public void HostOwnedClrTasksAreNotFencedByModulePatches()
+    {
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var host = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var taskValue = host.ClrBridge.InvokeStatic(
+            typeName,
+            nameof(PatchTaskSource.Create),
+            [LuaValue.FromInteger(43)]).ReturnValue;
+        var task = TaskPayload(taskValue);
+        var prepared = host.PreparePatch(CreateBundle(Entry("a", "return {value=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+
+        using (opened.Window!)
+        {
+            Assert.True(host.CommitPatch(prepared.PreparedPatch!, opened.Window!).Succeeded);
+        }
+
+        Assert.True(task.IsActive);
+        Assert.Equal(43, host.ClrBridge.Await(taskValue).AsInteger());
+        task.Dispose();
+        Assert.True(task.IsDisposed);
+        Assert.False(task.IsActive);
+    }
+
+    [Fact]
+    public async Task AwaitRechecksTaskGenerationAfterLateCompletion()
+    {
+        const int taskId = 1701;
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var host = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                $"local task=clr.call('{typeName}','CreatePending',{taskId}); " +
+                "return {task=task}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        var taskValue = host.RunUtf8("return require('a').task").Execution!.Values[0];
+        using var started = new ManualResetEventSlim();
+        var awaiting = Task.Run(() =>
+        {
+            started.Set();
+            return Record.Exception(() => host.ClrBridge.Await(taskValue));
+        });
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+
+        try
+        {
+            await Task.Delay(100);
+            Assert.False(awaiting.IsCompleted);
+            var prepared = host.PreparePatch(CreateBundle(Entry("a", "return {value=2}")));
+            Assert.True(prepared.Succeeded, prepared.Message);
+            var opened = host.TryOpenPatchUpdateWindow();
+            Assert.True(opened.Succeeded, opened.Message);
+            using (opened.Window!)
+            {
+                Assert.True(host.CommitPatch(prepared.PreparedPatch!, opened.Window!).Succeeded);
+            }
+        }
+        finally
+        {
+            PatchTaskSource.Complete(taskId, 44);
+        }
+
+        var exception = Assert.IsType<LuaClrException>(
+            await awaiting.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(LuaClrErrorCode.AsyncGenerationClosed, exception.Code);
+    }
+
+    [Fact]
     public void RevisionConflictRejectsPatchBeforeCandidateExecution()
     {
         var files = new MutableMemoryFileSystem(new Dictionary<string, string>
@@ -848,6 +1092,34 @@ public sealed class LuaPatchCommitTests
         });
     }
 
+    private static LuaHost CreateClrTaskHost(IReadOnlyDictionary<string, string> files)
+    {
+        var typeName = typeof(PatchTaskSource).FullName!;
+        return new LuaHost(LuaHostOptions.Default with
+        {
+            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            StandardLibrary = LuaHostCapabilityProfiles.Create(LuaHostProfile.Restricted) with
+            {
+                FileSystem = new MutableMemoryFileSystem(files),
+            },
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.MemberAccess | LuaClrCapabilities.Async,
+                AllowedAssemblyNames = [typeof(PatchTaskSource).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                AllowedMemberNames =
+                [
+                    nameof(PatchTaskSource.Create),
+                    nameof(PatchTaskSource.CreatePending),
+                ],
+                InstallGlobalModule = true,
+            },
+        });
+    }
+
+    private static LuaClrTask TaskPayload(LuaValue value) =>
+        Assert.IsType<LuaClrTask>(value.AsUserdata().Payload);
+
     public sealed class CallbackEventSource
     {
         public event Func<int, int>? Changed;
@@ -876,6 +1148,28 @@ public sealed class LuaPatchCommitTests
         }
 
         public int Raise(int value) => _changed?.Invoke(value) ?? -1;
+    }
+
+    public static class PatchTaskSource
+    {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+            int,
+            TaskCompletionSource<int>> Pending = [];
+
+        public static Task<int> Create(int value) => Task.FromResult(value);
+
+        public static Task<int> CreatePending(int id) => Pending.GetOrAdd(
+            id,
+            static _ => new TaskCompletionSource<int>(
+                TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+
+        public static void Complete(int id, int value)
+        {
+            if (Pending.TryRemove(id, out var completion))
+            {
+                completion.TrySetResult(value);
+            }
+        }
     }
 
     private sealed class MutableMemoryFileSystem(IReadOnlyDictionary<string, string> files)

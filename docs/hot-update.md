@@ -301,6 +301,13 @@ barrier, or health failure reverses that switch: previous subscriptions are rest
 callbacks are rejected before they can enter Lua. Monitor the bridge callback counters described in
 the CLR interop guide when a game service registers timers or events through CLR delegates.
 
+Module-owned `LuaClrTask` wrappers are fenced by that barrier as well. Awaiting an old task cannot
+deliver a late result into the new module generation; candidate task results become externally
+consumable only after the whole barrier publishes (the owning loader can consume them while staging),
+and rollback restores the old task generation. This wrapper
+fencing does not cancel the underlying operation, so use cancellation tokens or a resource migration
+adapter when the external operation itself must stop, drain, or restart.
+
 Compatible closure slots and loader upvalues remain automatic: matching lexical identities and
 upvalue layouts publish a successor generation while suspended frames retain the previous immutable
 generation. State rules are applied before a candidate is staged for its dependents, so preserved

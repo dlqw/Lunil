@@ -79,6 +79,16 @@ reattached on rollback, while failed candidate handlers are detached. Use `IsAct
 `LuaClrSubscription` and export `ActiveCallbackCount`, `PendingCallbackCount`,
 `QuiescedCallbackCount`, and `StaleCallbackCount` from `LuaClrBridge` as lifecycle gauges.
 
+`LuaClrTask` wrappers created while a module frame calls CLR code use the same generation barrier.
+`clr.await` checks admission before waiting and again before converting the result: previous tasks
+become stale after publication, candidate tasks remain externally pending until publication, and
+rollback restores only the previous generation. The owning candidate loader may await its own task
+while staging state. Other inactive wrappers fail with `AsyncGenerationClosed`; the underlying CLR
+`Task` is not cancelled. Host-side CLR calls made without a running module frame remain host-owned
+and are not fenced. Use `LuaClrTask.IsActive` and the bridge's `ActiveTaskCount`,
+`PendingTaskCount`, `QuiescedTaskCount`, and `StaleTaskCount` gauges before consuming `Task` directly
+from host integration code.
+
 ## Ownership and deployment
 
 `LuaClrObject` owns constructed `IDisposable` instances by default and forwards `Dispose` at most once;
