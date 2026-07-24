@@ -189,6 +189,11 @@ public sealed record LuaPatchCoordinatorOptions
 
     public LuaPatchRingHealthCallback? HealthCheck { get; init; }
 
+    /// <summary>
+    /// Optional post-publication guard for pending, quiesced, and stale generation resources.
+    /// </summary>
+    public LuaPatchGenerationGuardPolicy? GenerationGuard { get; init; }
+
     public ILuaPatchDeploymentJournal? Journal { get; init; }
 
     /// <summary>
@@ -216,6 +221,7 @@ public enum LuaPatchRingCommitStatus : byte
     QuiescenceFailed,
     RestoreFailed,
     CoordinationFailed,
+    GenerationRejected,
 }
 
 public sealed record LuaPatchTargetCommitResult(
@@ -225,6 +231,9 @@ public sealed record LuaPatchTargetCommitResult(
     public LuaPatchTargetLifecycleResult Lifecycle { get; init; } = new(
         LuaPatchTargetLifecycleStatus.NotConfigured,
         null);
+
+    /// <summary>Snapshot evaluated by the generation guard, when configured.</summary>
+    public LuaPatchGenerationSnapshot? GenerationSnapshot { get; init; }
 }
 
 public sealed record LuaPatchRingCommitResult(
@@ -414,6 +423,8 @@ public sealed class LuaPatchCoordinator
             static _ => new LuaPatchTargetLifecycleResult(
                 LuaPatchTargetLifecycleStatus.NotConfigured,
                 null),
+            StringComparer.Ordinal);
+        var generationSnapshots = new Dictionary<string, LuaPatchGenerationSnapshot>(
             StringComparer.Ordinal);
         LuaPatchDistributedBarrierSnapshot? distributedSnapshot = null;
         var distributedSelected = false;
@@ -797,6 +808,38 @@ public sealed class LuaPatchCoordinator
                 }
             }
 
+            if (options.GenerationGuard is { } generationGuard)
+            {
+                foreach (var pair in sessions)
+                {
+                    LuaPatchGenerationSnapshot snapshot;
+                    LuaPatchGenerationGuardResult evaluation;
+                    try
+                    {
+                        snapshot = pair.Target.Host.CapturePatchGenerationSnapshot();
+                        generationSnapshots[pair.Target.TargetId] = snapshot;
+                        evaluation = generationGuard.Evaluate(snapshot);
+                    }
+                    catch (Exception exception) when (IsRecoverable(exception))
+                    {
+                        evaluation = new LuaPatchGenerationGuardResult(false, exception.Message);
+                    }
+
+                    if (!evaluation.Accepted)
+                    {
+                        var message =
+                            $"Target '{pair.Target.TargetId}' failed the generation guard: " +
+                            (evaluation.Message ?? "The generation snapshot was rejected.");
+                        targetResults.Clear();
+                        RollbackSessions(sessions, targetResults, message);
+                        return FinishBeforeCommit(
+                            LuaPatchRingCommitStatus.GenerationRejected,
+                            message,
+                            LuaPatchJournalPhase.RolledBack);
+                    }
+                }
+            }
+
             try
             {
                 var committedAt = options.TimeProvider.GetUtcNow();
@@ -925,6 +968,7 @@ public sealed class LuaPatchCoordinator
                 targetResults[target.TargetId])
             {
                 Lifecycle = lifecycleResults[target.TargetId],
+                GenerationSnapshot = generationSnapshots.GetValueOrDefault(target.TargetId),
             })
             .ToImmutableArray();
 
@@ -1280,6 +1324,7 @@ public sealed class LuaPatchCoordinator
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.RolloutId);
         ArgumentNullException.ThrowIfNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
+        options.GenerationGuard?.Validate();
         ValidateDistributedBarrier(options);
         if (plan.Rings.IsDefaultOrEmpty)
         {
@@ -1339,6 +1384,7 @@ public sealed class LuaPatchCoordinator
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
         ArgumentNullException.ThrowIfNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
+        options.GenerationGuard?.Validate();
         ValidateDistributedBarrier(options);
         ValidateLifecycleTimeout(
             options.TargetLifecycle.IsolationTimeout,

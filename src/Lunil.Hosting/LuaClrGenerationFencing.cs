@@ -391,8 +391,7 @@ public sealed partial class LuaClrBridge
         lock (_callbackGate)
         {
             PruneGenerationRegistrations();
-            return _callbackRegistrations.Count(reference =>
-                reference.TryGetTarget(out var registration) && registration.State == state);
+            return CountCallbacksUnsafe(state);
         }
     }
 
@@ -401,8 +400,7 @@ public sealed partial class LuaClrBridge
         lock (_callbackGate)
         {
             PruneGenerationRegistrations();
-            return _taskRegistrations.Count(reference =>
-                reference.TryGetTarget(out var registration) && registration.State == state);
+            return CountTasksUnsafe(state);
         }
     }
 

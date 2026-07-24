@@ -431,6 +431,7 @@ namespace Lunil.Hosting
         public int PendingNativeContinuationCount { get => throw null; }
         public int QuiescedNativeContinuationCount { get => throw null; }
         public int StaleNativeContinuationCount { get => throw null; }
+        public Lunil.Hosting.LuaPatchGenerationSnapshot CapturePatchGenerationSnapshot() => throw null;
         public LuaHost(Lunil.Hosting.LuaHostOptions? options = null) { }
         public Lunil.Compiler.LuaCompilationResult Compile(Lunil.Compiler.LuaSourceDocument source, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public Lunil.Compiler.LuaCompilationResult CompileUtf8(string source, string? sourceName = null, System.Threading.CancellationToken cancellationToken = null) => throw null;
@@ -748,6 +749,7 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaPatchTargetLifecycleOptions TargetLifecycle { get => throw null; init { } }
         public bool RequireTargetIsolation { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRingHealthCallback? HealthCheck { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchGenerationGuardPolicy? GenerationGuard { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchDeploymentJournal? Journal { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchDistributedBarrierOptions? DistributedBarrier { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
@@ -1124,6 +1126,71 @@ namespace Lunil.Hosting
         public Lunil.Hosting.LuaPatchErrorCode Code { get => throw null; }
         public LuaPatchFormatException(Lunil.Hosting.LuaPatchErrorCode code, string message) { }
         public LuaPatchFormatException(Lunil.Hosting.LuaPatchErrorCode code, string message, System.Exception innerException) { }
+    }
+
+    public sealed class LuaPatchGenerationGuardPolicy : System.IEquatable<Lunil.Hosting.LuaPatchGenerationGuardPolicy>
+    {
+        public static Lunil.Hosting.LuaPatchGenerationGuardPolicy Strict { get => throw null; }
+        public bool RejectTransitionResidue { get => throw null; init { } }
+        public int MaximumStaleCallbackCount { get => throw null; init { } }
+        public int MaximumStaleTaskCount { get => throw null; init { } }
+        public int MaximumStaleTimerCount { get => throw null; init { } }
+        public int MaximumStaleNativeContinuationCount { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchGenerationGuardResult Evaluate(Lunil.Hosting.LuaPatchGenerationSnapshot snapshot) => throw null;
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchGenerationGuardPolicy? left, Lunil.Hosting.LuaPatchGenerationGuardPolicy? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchGenerationGuardPolicy? left, Lunil.Hosting.LuaPatchGenerationGuardPolicy? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchGenerationGuardPolicy? other) => throw null;
+    }
+
+    public sealed class LuaPatchGenerationGuardResult : System.IEquatable<Lunil.Hosting.LuaPatchGenerationGuardResult>
+    {
+        public bool Accepted { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public LuaPatchGenerationGuardResult(bool Accepted, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchGenerationGuardResult? left, Lunil.Hosting.LuaPatchGenerationGuardResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchGenerationGuardResult? left, Lunil.Hosting.LuaPatchGenerationGuardResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchGenerationGuardResult? other) => throw null;
+        public void Deconstruct(out bool Accepted, out string? Message) => throw null;
+    }
+
+    public sealed class LuaPatchGenerationSnapshot : System.IEquatable<Lunil.Hosting.LuaPatchGenerationSnapshot>
+    {
+        public required System.DateTimeOffset ObservedAt { get => throw null; init { } }
+        public required bool UpdateInProgress { get => throw null; init { } }
+        public required int ActiveCallbackCount { get => throw null; init { } }
+        public required int PendingCallbackCount { get => throw null; init { } }
+        public required int QuiescedCallbackCount { get => throw null; init { } }
+        public required int StaleCallbackCount { get => throw null; init { } }
+        public required int ActiveTaskCount { get => throw null; init { } }
+        public required int PendingTaskCount { get => throw null; init { } }
+        public required int QuiescedTaskCount { get => throw null; init { } }
+        public required int StaleTaskCount { get => throw null; init { } }
+        public required int ActiveTimerCount { get => throw null; init { } }
+        public required int PendingTimerCount { get => throw null; init { } }
+        public required int QuiescedTimerCount { get => throw null; init { } }
+        public required int StaleTimerCount { get => throw null; init { } }
+        public required int ActiveNativeContinuationCount { get => throw null; init { } }
+        public required int PendingNativeContinuationCount { get => throw null; init { } }
+        public required int QuiescedNativeContinuationCount { get => throw null; init { } }
+        public required int StaleNativeContinuationCount { get => throw null; init { } }
+        public long ActiveResourceCount { get => throw null; }
+        public long PendingResourceCount { get => throw null; }
+        public long QuiescedResourceCount { get => throw null; }
+        public long StaleResourceCount { get => throw null; }
+        public bool HasTransitionResidue { get => throw null; }
+        public bool HasStaleResources { get => throw null; }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchGenerationSnapshot? left, Lunil.Hosting.LuaPatchGenerationSnapshot? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchGenerationSnapshot? left, Lunil.Hosting.LuaPatchGenerationSnapshot? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchGenerationSnapshot? other) => throw null;
     }
 
     public sealed class LuaPatchJournalCompactionOptions : System.IEquatable<Lunil.Hosting.LuaPatchJournalCompactionOptions>
@@ -1728,7 +1795,8 @@ namespace Lunil.Hosting
         IsolationFailed = 8,
         QuiescenceFailed = 9,
         RestoreFailed = 10,
-        CoordinationFailed = 11
+        CoordinationFailed = 11,
+        GenerationRejected = 12
     }
 
     public delegate Lunil.Hosting.LuaPatchRingHealthDecision LuaPatchRingHealthCallback(Lunil.Hosting.LuaPatchRingHealthContext context);
@@ -1916,6 +1984,7 @@ namespace Lunil.Hosting
         public string TargetId { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchCommitResult Commit { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchTargetLifecycleResult Lifecycle { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchGenerationSnapshot? GenerationSnapshot { get => throw null; init { } }
         public LuaPatchTargetCommitResult(string TargetId, Lunil.Hosting.LuaPatchCommitResult Commit) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchTargetCommitResult? left, Lunil.Hosting.LuaPatchTargetCommitResult? right) => throw null;
