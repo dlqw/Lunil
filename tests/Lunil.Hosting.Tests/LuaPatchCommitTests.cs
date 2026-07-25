@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Lunil.CodeGen.Cil.Jit;
@@ -353,6 +354,43 @@ public sealed class LuaPatchCommitTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             LuaPatchGenerationGuardPolicy.Strict.Evaluate(
                 empty with { ActiveNativeContinuationCount = -1 }));
+    }
+
+    [Fact]
+    public void ReleasedStaleCallbackAndTaskRegistrationsArePrunedAfterFullCollection()
+    {
+        using var callbackHost = CreateClrCallbackHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function callback(value) return value+1 end; return {callback=callback}",
+        });
+        var callbackReferences = CommitAndReleaseStaleCallback(callbackHost);
+        Assert.Equal(1, callbackHost.CapturePatchGenerationSnapshot().StaleCallbackCount);
+
+        CollectOwners(callbackHost, callbackReferences);
+
+        var callbackSnapshot = callbackHost.CapturePatchGenerationSnapshot();
+        Assert.Equal(0, callbackSnapshot.StaleCallbackCount);
+        Assert.Equal(0, callbackSnapshot.ActiveCallbackCount);
+        Assert.False(callbackSnapshot.HasTransitionResidue);
+        Assert.All(callbackReferences, static reference => Assert.False(reference.IsAlive));
+
+        var typeName = typeof(PatchTaskSource).FullName!;
+        using var taskHost = CreateClrTaskHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                $"local task=clr.call('{typeName}','Create',41); return {{task=task}}",
+        });
+        var taskReferences = CommitAndReleaseStaleTask(taskHost);
+        Assert.Equal(1, taskHost.CapturePatchGenerationSnapshot().StaleTaskCount);
+
+        CollectOwners(taskHost, taskReferences);
+
+        Assert.All(taskReferences, static reference => Assert.False(reference.IsAlive));
+        var taskSnapshot = taskHost.CapturePatchGenerationSnapshot();
+        Assert.Equal(0, taskSnapshot.StaleTaskCount);
+        Assert.Equal(0, taskSnapshot.ActiveTaskCount);
+        Assert.False(taskSnapshot.HasTransitionResidue);
     }
 
     [Fact]
@@ -2106,6 +2144,72 @@ public sealed class LuaPatchCommitTests
 
     private static LuaClrTimer TimerPayload(LuaValue value) =>
         Assert.IsType<LuaClrTimer>(value.AsUserdata().Payload);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] CommitAndReleaseStaleCallback(LuaHost host)
+    {
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        Assert.True(host.State.TryGetModule("a", out var oldRecord));
+        var callbackValue = oldRecord!.CachedValue.AsTable().Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("callback"u8)));
+        var callbackDelegate = host.ClrBridge.CreateDelegate(
+            callbackValue,
+            typeof(Func<int, int>).FullName!);
+        var handleCount = host.State.Heap.HandleCount;
+        var references = new WeakReference[]
+        {
+            new(callbackDelegate),
+        };
+
+        CommitReplacement(host);
+        Assert.Equal(handleCount, host.State.Heap.HandleCount);
+        return references;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] CommitAndReleaseStaleTask(LuaHost host)
+    {
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        Assert.True(host.State.TryGetModule("a", out var oldRecord));
+        var taskValue = oldRecord!.CachedValue.AsTable().Get(LuaValue.FromString(
+            host.State.Strings.GetOrCreate("task"u8)));
+        var task = TaskPayload(taskValue);
+        var handleCount = host.State.Heap.HandleCount;
+        var references = new WeakReference[]
+        {
+            new(task),
+        };
+
+        CommitReplacement(host);
+        Assert.Equal(handleCount, host.State.Heap.HandleCount);
+        return references;
+    }
+
+    private static void CommitReplacement(LuaHost host)
+    {
+        var prepared = host.PreparePatch(CreateBundle(Entry("a", "return {value=2}")));
+        Assert.True(prepared.Succeeded, prepared.Message);
+        var opened = host.TryOpenPatchUpdateWindow();
+        Assert.True(opened.Succeeded, opened.Message);
+        using (opened.Window!)
+        {
+            var committed = host.CommitPatch(prepared.PreparedPatch!, opened.Window!);
+            Assert.True(committed.Succeeded, committed.Message);
+        }
+    }
+
+    private static void CollectOwners(LuaHost host, IEnumerable<WeakReference> references)
+    {
+        Assert.True(host.RunUtf8("return 0").Succeeded);
+        for (var attempt = 0; attempt < 10 && references.Any(static item => item.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            host.State.Heap.CollectFull();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
 
     private sealed class ManualTimeProvider : TimeProvider
     {
