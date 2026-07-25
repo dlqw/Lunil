@@ -14,27 +14,22 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.11.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.12.0-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
 Lunil 是使用纯 C# 实现的版本化 Lua 编译器、分析工具链与 .NET 10 运行时。Lua 5.4.8 仍是默认版本，
-稳定版 `0.11.0` 另外提供显式 Lua 5.1–5.5 契约。源码和版本化 PUC Lua 二进制 chunk
+同时提供显式 Lua 5.1–5.5 契约。源码和版本化 PUC Lua 二进制 chunk
 会汇入同一个经过验证的 canonical IR，再通过参考解释器或基于 profile 的 CoreCLR
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.11.0` 是当前支持版本。它暴露 Lua 5.1–5.5 的显式版本身份和独立
-> PUC chunk adapter，同时保持 Lua 5.4.8 为默认版本。
-> `0.11.0` 源码线增加 opt-in、精确 allowlist 的 CLR 类型发现与对象构造 bridge；
-> 嵌入 Host 未配置时该 bridge 保持禁用。
-> 当前源码树为 `0.12.0-alpha.25` 热更新预览，新增协调式 target 流量隔离、有界 prepare
-> backpressure，以及面向 CLR callback、task、coroutine、native continuation 和 timer 的原子
-> generation fencing，并支持保留 identity 的状态 table 迁移、GC-safe 回滚 journal、持久跨进程
-> rollout barrier、host/native resource 的稳定 ownership、generation retention rollout guard 与
-> 有界运维历史与 profile remap 的 candidate JIT 预热；它不是稳定 package 版本线。
+> 稳定版 `0.12.0` 是当前支持版本。它保留版本化 Lua 5.1–5.5 契约与 opt-in 的精确 allowlist
+> CLR bridge，并为 Hosting 和游戏循环业务提供生产级热更新：签名准入、协调式 target 隔离、
+> 多 State 原子发布、保留 identity 的状态与资源迁移、异步 generation fencing、持久跨进程
+> barrier、有界 rollout history，以及发布前 JIT 预热。
 
 ## 性能
 
@@ -77,9 +72,9 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
   metatable、to-be-closed 变量、binary chunk 与标准库。
 - **经过验证的编译管线**：byte-oriented source text、无损语法树、绑定、类型与流分析、workspace
   分析、canonical lowering 与独立 IR 验证。
-- **强类型分析嵌入**：0.12 预览版提供 call、member、function、parameter、block facade 与可扩展
+- **强类型分析嵌入**：0.12.0 提供 call、member、function、parameter、block facade 与可扩展
   visitor，同时保留无损语法树作为高级场景的 escape hatch。
-- **稳定符号身份**：0.12 预览版提供跨 compilation 与 workspace snapshot 的可序列化 symbol/function
+- **稳定符号身份**：0.12.0 提供跨 compilation 与 workspace snapshot 的可序列化 symbol/function
   key，不依赖源码 offset 或瞬时 ID。
 - **代码智能索引**：直接提供 typed call site、未解析调用保留、reference 查询以及
   compilation/workspace call graph，无需宿主重新解释 generic AST。
@@ -89,9 +84,9 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
   host handle、弱表、ephemeron、finalizer 与逻辑 GC。
 - **自适应执行**：动态代码可用时，默认 Auto JIT 选择经过验证的编译路径；否则使用参考解释器。
 - **可嵌入与可沙箱化**：可复用 Hosting API，提供 Restricted、Trusted 与 Deterministic 能力配置。
-- **受能力控制的 CLR bridge**：0.11 可以发现、构造和调用精确 allowlist 中的 CLR 类型，
+- **受能力控制的 CLR bridge**：可以发现、构造和调用精确 allowlist 中的 CLR 类型，
   不会加载 assembly，也不会开放无限制 reflection。
-- **生产热更新预览**：支持 key 轮换与撤销的签名 Patch Bundle、由 signer 授权的回滚、capability
+- **生产级热更新**：支持 key 轮换与撤销的签名 Patch Bundle、由 signer 授权的回滚、capability
   准入与签名 target selector、游戏循环原子发布、保留 identity 的状态 table 与资源迁移、host-polled
   游戏循环 timer、fail-closed 异步 generation、多 State ring 灰度、固定成员的跨进程 prepare/health
   quorum、lease-safe host/native resource continuity、具备排他 ownership 与 compaction 生命周期的
@@ -100,7 +95,7 @@ JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解
 - **跨平台**：Windows、Linux、macOS 的 x64/Arm64 bundle；动态代码不可用时 NativeAOT 与 trimming
   会确定性回退解释器。
 
-## 0.11.0 CLR 互操作
+## CLR 互操作
 
 CLR 互操作是 opt-in 且 fail-closed 的。Host 必须授予所需 capability，并提供精确、大小写敏感的
 assembly、type、member、delegate 和 event allowlist；bridge 只搜索已经加载的 assembly，不会暴露
@@ -131,7 +126,7 @@ field、indexer、operator 与 bound method。Delegate 转换和 event callback 
 
 由于 Lunil 不公开 Lua C ABI，因此不支持原生 Lua C module。
 
-## 0.12 预览版强类型语法分析
+## 0.12.0 强类型语法分析
 
 强类型 facade 让常见源码分析不再依赖 grammar shape 和 child 顺序。下面的 walker 可以发现
 括号调用和字符串简写调用中的 UTF-8 常量 `require` 请求。Facade 包含 recovery node 或 missing
@@ -163,7 +158,7 @@ sealed class RequireWalker(SourceText source) : LuaSyntaxWalker
 ```
 
 
-## 0.12 预览版稳定 symbol key
+## 0.12.0 稳定 symbol key
 
 持久化 symbol 或 function key 时应使用逻辑 module 名称，而不是宿主绝对路径。序列化后的值可在
 后续 snapshot 中重建。插入空白、注释或不相关声明不会改变命名 symbol 的 key；重命名、模块变化和
@@ -187,7 +182,7 @@ var persisted = new LuaSymbolKey(key.Value);
 var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
 ```
 
-## 0.12 预览版 call graph 与 reference 查询
+## 0.12.0 call graph 与 reference 查询
 
 `LuaAnalysisResult.CallGraph` 会保留 resolved、dynamic、unresolved 和 unreachable call site。
 每条 edge 都包含 containing function、callee/receiver type、direct symbol/name、可选 module request，
@@ -225,10 +220,10 @@ UTF-16 编辑器位置、诊断 phase、稳定 snapshot identity、CFG、workspa
 
 ### CLI
 
-从已配置的 GitHub Packages source 安装稳定版 `0.11.0`，或直接在源码 checkout 中运行：
+从已配置的 GitHub Packages source 安装稳定版 `0.12.0`，或直接在源码 checkout 中运行：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.11.0
+dotnet tool install --global Lunil.Cli --version 0.12.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -255,7 +250,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 引用稳定版 Hosting package：
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.11.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.12.0" />
 ```
 
 通过可复用的 Restricted host 编译并执行：
@@ -317,14 +312,14 @@ flowchart LR
 
 ## 兼容性
 
-- 语言目标：默认 Lua 5.4.8；稳定版 `0.11.0` 提供显式 Lua 5.1–5.5 目标。
+- 语言目标：默认 Lua 5.4.8；同时提供显式 Lua 5.1–5.5 目标。
 - 运行时目标：.NET 10。
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
-- 稳定线：`0.11.x`（当前版本 `0.11.0`）；`0.10.x` 仍兼容既有 Host。
-- 预览源码线：`0.12.0-alpha.5`；其 reviewed API snapshot 在稳定版 `0.12.0` freeze 前仍可扩展。
+- 稳定线：`0.12.x`（当前版本 `0.12.0`）；既有 Host 仍可使用 `0.11.0` 公共 API。
 
-兼容性变更和部署说明见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
+CLR 兼容性变更见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)；opt-in 的 0.12.0 部署路径见
+[签名 Patch Bundle](docs/hot-update.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
 [.NET NativeAOT 与 trimming（简体中文）](docs/nativeaot-build-integration.zh-CN.md)。
 
 ## 文档
