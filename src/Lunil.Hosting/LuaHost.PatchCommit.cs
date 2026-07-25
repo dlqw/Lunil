@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -214,7 +215,19 @@ public sealed partial class LuaHost
                 migrationSchema,
                 options,
                 cancellationToken);
+            result = ApplyJitWarmup(result, options, cancellationToken);
             result = ApplyPatchAcceptance(result, bundle.Signature, options);
+            if (result.JitWarmup is { } warmup)
+            {
+                activity?.SetTag("lunil.patch.jit_warmup.status", warmup.Status.ToString());
+                activity?.SetTag("lunil.patch.jit_warmup.duration_ms", warmup.Duration.TotalMilliseconds);
+                activity?.SetTag(
+                    "lunil.patch.jit_warmup.ready_functions",
+                    warmup.Modules.Sum(static module => module.Warmup?.ReadyFunctionCount ?? 0));
+                activity?.SetTag(
+                    "lunil.patch.jit_warmup.failed_functions",
+                    warmup.Modules.Sum(static module => module.Warmup?.FailedFunctionCount ?? 0));
+            }
             var duration = Stopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, result.Status.ToString(), result.Message);
             LuaPatchTelemetry.RecordPreparation(result.Status.ToString(), duration);
@@ -791,6 +804,9 @@ public sealed partial class LuaHost
                 preflight.Modules.Length);
             var prepared = ImmutableArray.CreateBuilder<LuaPreparedPatchModule>(
                 preflight.Modules.Length);
+            Dictionary<string, LuaIrModule>? jitWarmupSources = options.JitWarmup is null
+                ? null
+                : new Dictionary<string, LuaIrModule>(StringComparer.Ordinal);
             var overall = LuaPatchPrepareStatus.Ready;
             string? expectedStateSchemaVersion = null;
             if (migrationSchema is not null &&
@@ -908,6 +924,10 @@ public sealed partial class LuaHost
                     module.Compilation,
                     reloadOptions,
                     moduleMigration));
+                if (record.Module is LuaIrModule previousModule)
+                {
+                    jitWarmupSources?.Add(module.ModuleName, previousModule);
+                }
             }
 
             var moduleResults = results.ToImmutable();
@@ -932,7 +952,8 @@ public sealed partial class LuaHost
                     new Dictionary<string, ILuaPatchStateMigrationAdapter>(StringComparer.Ordinal),
                 options.ResourceMigrationAdapters ??
                     new Dictionary<string, ILuaPatchResourceMigrationAdapter>(StringComparer.Ordinal),
-                options.ResourceLimits);
+                options.ResourceLimits,
+                jitWarmupSources: jitWarmupSources);
             return new LuaPatchPrepareResult(
                 LuaPatchPrepareStatus.Ready,
                 patch,
@@ -1019,6 +1040,286 @@ public sealed partial class LuaHost
             Acceptance = acceptance,
         };
     }
+
+    private LuaPatchPrepareResult ApplyJitWarmup(
+        LuaPatchPrepareResult result,
+        LuaPatchPrepareOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (!result.Succeeded || options.JitWarmup is not { } configured)
+        {
+            return result;
+        }
+
+        if (!Enum.IsDefined(configured.FailureBehavior))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "JIT warmup failure behavior is invalid.");
+        }
+
+        ArgumentNullException.ThrowIfNull(configured.ExecutorOptions);
+        ValidateJitWarmupOptions(configured);
+        var started = Stopwatch.GetTimestamp();
+        if (SelectedExecutionBackend != LuaHostExecutionBackend.Jit || !IsDynamicCodeAvailable)
+        {
+            return result with
+            {
+                PreparedPatch = result.PreparedPatch!.WithoutJitWarmupSources(),
+                JitWarmup = new LuaPatchJitWarmupResult(
+                    LuaPatchJitWarmupStatus.NotApplicable,
+                    result.PreparedPatch!.Modules.Select(static module =>
+                        new LuaPatchJitWarmupModuleResult(
+                            module.ModuleName,
+                            LuaPatchJitWarmupStatus.NotApplicable,
+                            0,
+                            0,
+                            0,
+                            0,
+                            null,
+                            null,
+                            null)).ToImmutableArray(),
+                    Stopwatch.GetElapsedTime(started)),
+            };
+        }
+
+        var executor = GetJitExecutor();
+        var modules = ImmutableArray.CreateBuilder<LuaPatchJitWarmupModuleResult>(
+            result.PreparedPatch!.Modules.Length);
+        var remainingFunctions = configured.MaximumTotalFunctions;
+        foreach (var module in result.PreparedPatch.Modules)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remainingDuration = GetRemainingJitWarmupDuration(
+                started,
+                configured.MaximumTotalDuration);
+            if (remainingFunctions == 0)
+            {
+                modules.Add(new LuaPatchJitWarmupModuleResult(
+                    module.ModuleName,
+                    LuaPatchJitWarmupStatus.BudgetLimited,
+                    0,
+                    0,
+                    0,
+                    0,
+                    null,
+                    null,
+                    "The patch-wide JIT warmup function budget was exhausted."));
+                continue;
+            }
+
+            if (remainingDuration <= TimeSpan.Zero)
+            {
+                modules.Add(new LuaPatchJitWarmupModuleResult(
+                    module.ModuleName,
+                    LuaPatchJitWarmupStatus.TimedOut,
+                    0,
+                    0,
+                    0,
+                    0,
+                    null,
+                    null,
+                    "The patch-wide JIT warmup budget was exhausted."));
+                continue;
+            }
+
+            try
+            {
+                LuaJitProfileRemapResult? remap = null;
+                if (result.PreparedPatch.JitWarmupSources?.TryGetValue(
+                    module.ModuleName,
+                    out var previous) == true)
+                {
+                    remap = LuaJitProfileRemapper.Remap(
+                        previous,
+                        module.Module,
+                        executor.ExportProfile(previous));
+                    if (!remap.Succeeded)
+                    {
+                        modules.Add(new LuaPatchJitWarmupModuleResult(
+                            module.ModuleName,
+                            LuaPatchJitWarmupStatus.CompletedWithFailures,
+                            0,
+                            0,
+                            0,
+                            0,
+                            null,
+                            remap.DiagnosticCode,
+                            remap.Message));
+                        continue;
+                    }
+
+                    var import = executor.ImportProfile(module.Module, remap.Payload!);
+                    if (import.Status is LuaJitProfileImportStatus.Rejected or
+                        LuaJitProfileImportStatus.Incompatible)
+                    {
+                        modules.Add(new LuaPatchJitWarmupModuleResult(
+                            module.ModuleName,
+                            LuaPatchJitWarmupStatus.CompletedWithFailures,
+                            remap.RemappedFunctionCount,
+                            remap.IncompatibleFunctionCount,
+                            remap.AddedFunctionCount,
+                            remap.RemovedFunctionCount,
+                            null,
+                            import.DiagnosticCode,
+                            import.Message));
+                        continue;
+                    }
+                }
+
+                remainingDuration = GetRemainingJitWarmupDuration(
+                    started,
+                    configured.MaximumTotalDuration);
+                if (remainingDuration <= TimeSpan.Zero)
+                {
+                    modules.Add(new LuaPatchJitWarmupModuleResult(
+                        module.ModuleName,
+                        LuaPatchJitWarmupStatus.TimedOut,
+                        remap?.RemappedFunctionCount ?? 0,
+                        remap?.IncompatibleFunctionCount ?? 0,
+                        remap?.AddedFunctionCount ?? 0,
+                        remap?.RemovedFunctionCount ?? 0,
+                        null,
+                        null,
+                        "The patch-wide JIT warmup budget was exhausted during profile remapping."));
+                    continue;
+                }
+
+                var warmup = executor.Warmup(
+                    module.Module,
+                    configured.ExecutorOptions with
+                    {
+                        MaximumFunctions = Math.Min(
+                            configured.ExecutorOptions.MaximumFunctions,
+                            remainingFunctions),
+                        MaximumDuration = configured.ExecutorOptions.MaximumDuration ==
+                            Timeout.InfiniteTimeSpan
+                            ? remainingDuration
+                            : remainingDuration == Timeout.InfiniteTimeSpan
+                                ? configured.ExecutorOptions.MaximumDuration
+                                : TimeSpan.FromTicks(Math.Min(
+                                    configured.ExecutorOptions.MaximumDuration.Ticks,
+                                    remainingDuration.Ticks)),
+                    },
+                    cancellationToken);
+                remainingFunctions -= warmup.Functions.Length;
+                var moduleStatus = warmup.Status switch
+                {
+                    LuaJitWarmupStatus.Completed when
+                        warmup.CandidateFunctionCount > warmup.SelectedFunctionCount =>
+                        LuaPatchJitWarmupStatus.BudgetLimited,
+                    LuaJitWarmupStatus.Completed => LuaPatchJitWarmupStatus.Completed,
+                    LuaJitWarmupStatus.TimedOut => LuaPatchJitWarmupStatus.TimedOut,
+                    LuaJitWarmupStatus.Disabled => LuaPatchJitWarmupStatus.NotApplicable,
+                    _ => LuaPatchJitWarmupStatus.CompletedWithFailures,
+                };
+                modules.Add(new LuaPatchJitWarmupModuleResult(
+                    module.ModuleName,
+                    moduleStatus,
+                    remap?.RemappedFunctionCount ?? 0,
+                    remap?.IncompatibleFunctionCount ?? 0,
+                    remap?.AddedFunctionCount ?? 0,
+                    remap?.RemovedFunctionCount ?? 0,
+                    warmup,
+                    null,
+                    null));
+            }
+            catch (Exception exception) when (IsRecoverablePatchException(exception))
+            {
+                modules.Add(new LuaPatchJitWarmupModuleResult(
+                    module.ModuleName,
+                    LuaPatchJitWarmupStatus.CompletedWithFailures,
+                    0,
+                    0,
+                    0,
+                    0,
+                    null,
+                    "JIT4001",
+                    exception.Message));
+            }
+        }
+
+        var moduleResults = modules.ToImmutable();
+        var overall = moduleResults.Any(static module =>
+            module.Status == LuaPatchJitWarmupStatus.TimedOut)
+            ? LuaPatchJitWarmupStatus.TimedOut
+            : moduleResults.Any(static module => !module.Succeeded)
+                ? LuaPatchJitWarmupStatus.CompletedWithFailures
+                : moduleResults.Any(static module =>
+                    module.Status == LuaPatchJitWarmupStatus.BudgetLimited)
+                    ? LuaPatchJitWarmupStatus.BudgetLimited
+                    : moduleResults.All(static module =>
+                        module.Status == LuaPatchJitWarmupStatus.NotApplicable)
+                        ? LuaPatchJitWarmupStatus.NotApplicable
+                        : LuaPatchJitWarmupStatus.Completed;
+        var warmupResult = new LuaPatchJitWarmupResult(
+            overall,
+            moduleResults,
+            Stopwatch.GetElapsedTime(started));
+        if (configured.FailureBehavior == LuaPatchJitWarmupFailureBehavior.RequireSuccess &&
+            !warmupResult.Succeeded)
+        {
+            foreach (var module in result.PreparedPatch.Modules)
+            {
+                executor.Invalidate(module.Module);
+            }
+
+            return result with
+            {
+                Status = LuaPatchPrepareStatus.JitWarmupFailed,
+                PreparedPatch = null,
+                Modules = result.Modules.Select(static module => module with
+                {
+                    Status = LuaPatchPrepareStatus.JitWarmupFailed,
+                    Message = "Required candidate JIT warmup did not complete successfully.",
+                }).ToImmutableArray(),
+                Message = "Required candidate JIT warmup did not complete successfully.",
+                JitWarmup = warmupResult,
+            };
+        }
+
+        return result with
+        {
+            PreparedPatch = result.PreparedPatch.WithoutJitWarmupSources(),
+            JitWarmup = warmupResult,
+        };
+    }
+
+    private static void ValidateJitWarmupOptions(LuaPatchJitWarmupOptions options)
+    {
+        if (options.MaximumTotalFunctions is < 1 or > 10_000)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Patch JIT warmup must select between 1 and 10,000 functions in total.");
+        }
+
+        if (options.MaximumTotalDuration <= TimeSpan.Zero &&
+            options.MaximumTotalDuration != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Patch JIT warmup duration is invalid.");
+        }
+        if (options.MaximumTotalDuration != Timeout.InfiniteTimeSpan &&
+            options.MaximumTotalDuration.TotalMilliseconds > uint.MaxValue - 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Patch JIT warmup duration exceeds the supported cancellation timer range.");
+        }
+
+        if (options.ExecutorOptions.MaximumFunctions is < 1 or > 10_000 ||
+            options.ExecutorOptions.MaximumDuration <= TimeSpan.Zero &&
+            options.ExecutorOptions.MaximumDuration != Timeout.InfiniteTimeSpan ||
+            options.ExecutorOptions.MaximumDuration != Timeout.InfiniteTimeSpan &&
+            options.ExecutorOptions.MaximumDuration.TotalMilliseconds > uint.MaxValue - 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Executor JIT warmup bounds are invalid.");
+        }
+    }
+
+    private static TimeSpan GetRemainingJitWarmupDuration(
+        long started,
+        TimeSpan maximumDuration) => maximumDuration == Timeout.InfiniteTimeSpan
+        ? Timeout.InfiniteTimeSpan
+        : maximumDuration - Stopwatch.GetElapsedTime(started);
 
     private static Dictionary<string, TAdapter>? SnapshotAdapters<TAdapter>(
         IReadOnlyDictionary<string, TAdapter>? adapters,

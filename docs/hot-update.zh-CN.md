@@ -462,6 +462,58 @@ payload。它会包含应用提供的 target id，因此暴露该 endpoint 时�
 health 数据，不能代替 durable audit 或 crash recovery；这些场景仍使用
 `ILuaPatchDeploymentJournal`。
 
+### Profile remap 的 candidate JIT 预热
+
+JIT host 可以在 `PreparePatch` 期间编译 candidate function，避免 publication 后才承担编译尖峰。
+该能力默认关闭；预热不会创建 Lua closure、执行 candidate loader、修改 live `LuaState`，也不会进入
+commit update window：
+
+```csharp
+var preparation = host.PreparePatch(bundle, new LuaPatchPrepareOptions
+{
+    PreparationLimiter = sharedPreparationLimiter,
+    JitWarmup = new LuaPatchJitWarmupOptions
+    {
+        FailureBehavior = LuaPatchJitWarmupFailureBehavior.BestEffort,
+        MaximumTotalFunctions = 1_024,
+        MaximumTotalDuration = TimeSpan.FromSeconds(30),
+        ExecutorOptions = new LuaJitWarmupOptions
+        {
+            MaximumFunctions = 256,       // 每个 module
+            MaximumDuration = TimeSpan.FromSeconds(5),
+            IncludeTier2 = true,
+            ProfiledFunctionsOnly = false,
+        },
+    },
+}, cancellationToken);
+
+var warmup = preparation.JitWarmup;
+```
+
+对每个已加载 replacement，Lunil 会 snapshot 旧 module 的 JIT profile，通过
+`LuaJitProfileRemapper` 只迁移 lexical identity 与 canonical operand 均兼容的观测，再导入
+candidate 专属 profile，并按 profile hotness 从高到低编译。结构发生变化或新增的 function 不继承观测；
+当 `ProfiledFunctionsOnly` 为 `false` 时，它们仍可参与 Tier 1 预热。只有通过既有 profile-guided
+eligibility gate 的 function 才会尝试 Tier 2。
+
+`MaximumTotalFunctions` 与 `MaximumTotalDuration` 限制整个 patch，内层配置限制每个 module。
+达到 function limit 会返回成功的有界结果 `BudgetLimited`。Deadline 会协作取消由 warmup 发起的编译并返回
+`TimedOut`；如果 function 已由其他 caller 编译，warmup 会停止等待而不会取消该共享任务。Caller
+cancellation 仍传播 `OperationCanceledException`。Capacity 必须在 1 到 10,000 之间；有限 duration
+必须为正，并处于平台 cancellation timer 的范围内。
+
+`BestEffort` 在编译或 deadline 失败时仍保留 ready patch，并通过
+`LuaPatchPrepareResult.JitWarmup` 暴露失败；`RequireSuccess` 则返回 `JitWarmupFailed`，不产生
+prepared patch。Eligibility rejection 与 compilation failure 分开统计，前者本身不会导致 warmup
+失败。Interpreter 或不支持 dynamic code 的 host 返回 `NotApplicable`，也不会创建 JIT executor。
+
+预热代码安装到 host 既有的 content-addressed JIT cache，继续受
+`LuaJitExecutorOptions.MaximumCodeCacheBytes` 和正常 eviction 约束。被放弃或 rollback 的 candidate
+可以在该有界 cache 中保留到 eviction，以便同内容重试复用；成功 publication 会直接复用 compiled
+entry。多 target 应共享 `LuaPatchPreparationLimiter`，避免并发 profile remap 与编译形成无界 prepare
+尖峰。Preparation activity 还会暴露 `lunil.patch.jit_warmup.status`、duration、ready-function 与
+failed-function tag。
+
 ## 多 State Barrier 与 Ring 灰度
 
 `LuaPatchCoordinator` 在单进程内协调多个 `LuaHost` state。Barrier ring 中的 target id 与 host

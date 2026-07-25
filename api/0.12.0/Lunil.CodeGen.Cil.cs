@@ -341,6 +341,7 @@ namespace Lunil.CodeGen.Cil.Jit
         public Lunil.CodeGen.Cil.Jit.LuaJitTier2Eligibility GetTier2PromotionEligibility(Lunil.IR.Canonical.LuaIrModule module, int functionId) => throw null;
         public byte[] ExportProfile(Lunil.IR.Canonical.LuaIrModule module) => throw null;
         public Lunil.CodeGen.Cil.Jit.LuaJitProfileImportResult ImportProfile(Lunil.IR.Canonical.LuaIrModule module, System.ReadOnlySpan<byte> payload) => throw null;
+        public Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult Warmup(Lunil.IR.Canonical.LuaIrModule module, Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? options = null, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public Lunil.CodeGen.Cil.Jit.LuaJitCompilationTier GetFunctionTier(Lunil.IR.Canonical.LuaIrModule module, int functionId) => throw null;
         public Lunil.CodeGen.Cil.Jit.LuaJitTier2State GetTier2State(Lunil.IR.Canonical.LuaIrModule module, int functionId) => throw null;
         public Lunil.CodeGen.Cil.Jit.LuaJitTier2Plan? GetTier2Plan(Lunil.IR.Canonical.LuaIrModule module, int functionId) => throw null;
@@ -978,6 +979,78 @@ namespace Lunil.CodeGen.Cil.Jit
         Thread = 128,
         Userdata = 256,
         LightUserdata = 512
+    }
+
+    public sealed class LuaJitWarmupFunctionResult : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult>
+    {
+        public int FunctionId { get => throw null; init { } }
+        public long ProfileSamples { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionStatus Status { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitCompilationTier Tier { get => throw null; init { } }
+        public string? DiagnosticCode { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaJitWarmupFunctionResult(int FunctionId, long ProfileSamples, Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionStatus Status, Lunil.CodeGen.Cil.Jit.LuaJitCompilationTier Tier, string? DiagnosticCode) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult? other) => throw null;
+        public void Deconstruct(out int FunctionId, out long ProfileSamples, out Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionStatus Status, out Lunil.CodeGen.Cil.Jit.LuaJitCompilationTier Tier, out string? DiagnosticCode) => throw null;
+    }
+
+    public enum LuaJitWarmupFunctionStatus
+    {
+        ReadyTier1 = 0,
+        ReadyTier2 = 1,
+        Ineligible = 2,
+        Tier1Failed = 3,
+        Tier2Failed = 4
+    }
+
+    public sealed class LuaJitWarmupOptions : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions>
+    {
+        public static Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions Default { get => throw null; }
+        public int MaximumFunctions { get => throw null; init { } }
+        public System.TimeSpan MaximumDuration { get => throw null; init { } }
+        public bool IncludeTier2 { get => throw null; init { } }
+        public bool ProfiledFunctionsOnly { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions? other) => throw null;
+    }
+
+    public sealed class LuaJitWarmupResult : System.IEquatable<Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult>
+    {
+        public Lunil.CodeGen.Cil.Jit.LuaJitWarmupStatus Status { get => throw null; init { } }
+        public int CandidateFunctionCount { get => throw null; init { } }
+        public int SelectedFunctionCount { get => throw null; init { } }
+        public int ReadyFunctionCount { get => throw null; init { } }
+        public int IneligibleFunctionCount { get => throw null; init { } }
+        public int FailedFunctionCount { get => throw null; init { } }
+        public int SkippedFunctionCount { get => throw null; init { } }
+        public System.TimeSpan Duration { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult> Functions { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaJitWarmupResult(Lunil.CodeGen.Cil.Jit.LuaJitWarmupStatus Status, int CandidateFunctionCount, int SelectedFunctionCount, int ReadyFunctionCount, int IneligibleFunctionCount, int FailedFunctionCount, int SkippedFunctionCount, System.TimeSpan Duration, System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult> Functions) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? right) => throw null;
+        public static bool operator ==(Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? left, Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? other) => throw null;
+        public void Deconstruct(out Lunil.CodeGen.Cil.Jit.LuaJitWarmupStatus Status, out int CandidateFunctionCount, out int SelectedFunctionCount, out int ReadyFunctionCount, out int IneligibleFunctionCount, out int FailedFunctionCount, out int SkippedFunctionCount, out System.TimeSpan Duration, out System.Collections.Immutable.ImmutableArray<Lunil.CodeGen.Cil.Jit.LuaJitWarmupFunctionResult> Functions) => throw null;
+    }
+
+    public enum LuaJitWarmupStatus
+    {
+        Completed = 0,
+        CompletedWithFailures = 1,
+        TimedOut = 2,
+        Disabled = 3
     }
 }
 namespace Lunil.CodeGen.Cil.Planning

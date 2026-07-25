@@ -1263,6 +1263,74 @@ namespace Lunil.Hosting
         public void Deconstruct(out string TargetId, out Lunil.Hosting.LuaPatchCommitStatus CommitStatus, out Lunil.Hosting.LuaPatchTargetLifecycleStatus LifecycleStatus, out bool SideEffectsMayHaveOccurred, out System.TimeSpan PauseDuration) => throw null;
     }
 
+    public enum LuaPatchJitWarmupFailureBehavior
+    {
+        BestEffort = 0,
+        RequireSuccess = 1
+    }
+
+    public sealed class LuaPatchJitWarmupModuleResult : System.IEquatable<Lunil.Hosting.LuaPatchJitWarmupModuleResult>
+    {
+        public string ModuleName { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchJitWarmupStatus Status { get => throw null; init { } }
+        public int RemappedFunctionCount { get => throw null; init { } }
+        public int IncompatibleFunctionCount { get => throw null; init { } }
+        public int AddedFunctionCount { get => throw null; init { } }
+        public int RemovedFunctionCount { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? Warmup { get => throw null; init { } }
+        public string? DiagnosticCode { get => throw null; init { } }
+        public string? Message { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaPatchJitWarmupModuleResult(string ModuleName, Lunil.Hosting.LuaPatchJitWarmupStatus Status, int RemappedFunctionCount, int IncompatibleFunctionCount, int AddedFunctionCount, int RemovedFunctionCount, Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? Warmup, string? DiagnosticCode, string? Message) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchJitWarmupModuleResult? left, Lunil.Hosting.LuaPatchJitWarmupModuleResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchJitWarmupModuleResult? left, Lunil.Hosting.LuaPatchJitWarmupModuleResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchJitWarmupModuleResult? other) => throw null;
+        public void Deconstruct(out string ModuleName, out Lunil.Hosting.LuaPatchJitWarmupStatus Status, out int RemappedFunctionCount, out int IncompatibleFunctionCount, out int AddedFunctionCount, out int RemovedFunctionCount, out Lunil.CodeGen.Cil.Jit.LuaJitWarmupResult? Warmup, out string? DiagnosticCode, out string? Message) => throw null;
+    }
+
+    public sealed class LuaPatchJitWarmupOptions : System.IEquatable<Lunil.Hosting.LuaPatchJitWarmupOptions>
+    {
+        public static Lunil.Hosting.LuaPatchJitWarmupOptions Default { get => throw null; }
+        public Lunil.Hosting.LuaPatchJitWarmupFailureBehavior FailureBehavior { get => throw null; init { } }
+        public Lunil.CodeGen.Cil.Jit.LuaJitWarmupOptions ExecutorOptions { get => throw null; init { } }
+        public int MaximumTotalFunctions { get => throw null; init { } }
+        public System.TimeSpan MaximumTotalDuration { get => throw null; init { } }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchJitWarmupOptions? left, Lunil.Hosting.LuaPatchJitWarmupOptions? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchJitWarmupOptions? left, Lunil.Hosting.LuaPatchJitWarmupOptions? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchJitWarmupOptions? other) => throw null;
+    }
+
+    public sealed class LuaPatchJitWarmupResult : System.IEquatable<Lunil.Hosting.LuaPatchJitWarmupResult>
+    {
+        public Lunil.Hosting.LuaPatchJitWarmupStatus Status { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJitWarmupModuleResult> Modules { get => throw null; init { } }
+        public System.TimeSpan Duration { get => throw null; init { } }
+        public bool Succeeded { get => throw null; }
+        public LuaPatchJitWarmupResult(Lunil.Hosting.LuaPatchJitWarmupStatus Status, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJitWarmupModuleResult> Modules, System.TimeSpan Duration) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchJitWarmupResult? left, Lunil.Hosting.LuaPatchJitWarmupResult? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchJitWarmupResult? left, Lunil.Hosting.LuaPatchJitWarmupResult? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchJitWarmupResult? other) => throw null;
+        public void Deconstruct(out Lunil.Hosting.LuaPatchJitWarmupStatus Status, out System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchJitWarmupModuleResult> Modules, out System.TimeSpan Duration) => throw null;
+    }
+
+    public enum LuaPatchJitWarmupStatus
+    {
+        Completed = 0,
+        BudgetLimited = 1,
+        CompletedWithFailures = 2,
+        TimedOut = 3,
+        NotApplicable = 4
+    }
+
     public sealed class LuaPatchJournalCompactionOptions : System.IEquatable<Lunil.Hosting.LuaPatchJournalCompactionOptions>
     {
         public static Lunil.Hosting.LuaPatchJournalCompactionOptions Default { get => throw null; }
@@ -1583,6 +1651,7 @@ namespace Lunil.Hosting
         public Lunil.Hosting.ILuaPatchReplayStore? ReplayStore { get => throw null; init { } }
         public string? ReplayScope { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchJitWarmupOptions? JitWarmup { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchPrepareOptions? left, Lunil.Hosting.LuaPatchPrepareOptions? right) => throw null;
         public static bool operator ==(Lunil.Hosting.LuaPatchPrepareOptions? left, Lunil.Hosting.LuaPatchPrepareOptions? right) => throw null;
@@ -1600,6 +1669,7 @@ namespace Lunil.Hosting
         public string? Message { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchPreparationAdmissionStatus AdmissionStatus { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchAcceptanceResult? Acceptance { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchJitWarmupResult? JitWarmup { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
         public LuaPatchPrepareResult(Lunil.Hosting.LuaPatchPrepareStatus Status, Lunil.Hosting.LuaPreparedPatch? PreparedPatch, Lunil.Hosting.LuaPatchPreflightResult Preflight, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchModulePrepareResult> Modules, string? Message) { }
         public override string ToString() => throw null;
@@ -1621,7 +1691,8 @@ namespace Lunil.Hosting
         MigrationAdapterMissing = 5,
         StateSchemaVersionMismatch = 6,
         AcceptanceRejected = 7,
-        Deferred = 8
+        Deferred = 8,
+        JitWarmupFailed = 9
     }
 
     public sealed class LuaPatchRecoveryRecord : System.IEquatable<Lunil.Hosting.LuaPatchRecoveryRecord>
