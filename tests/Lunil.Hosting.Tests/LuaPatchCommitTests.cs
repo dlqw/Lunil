@@ -12,6 +12,153 @@ namespace Lunil.Hosting.Tests;
 public sealed class LuaPatchCommitTests
 {
     [Fact]
+    public void PreparePatchRemapsProfilesAndWarmsCandidateWithoutPublishing()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function compute(value) local total=0; " +
+                "for index=1,20 do total=total+value+index end; return total end; " +
+                "return {value=compute(1)}",
+        }, LuaHostExecutionBackend.Jit);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+        Assert.True(host.State.TryGetModule("a", out var previous));
+        var previousRevision = previous!.Revision;
+
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry(
+                "a",
+                "local function compute(value) local total=0; " +
+                "for index=1,20 do total=total+value+index end; return total end; " +
+                "return {value=compute(2)}")),
+            new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions
+                {
+                    ExecutorOptions = new LuaJitWarmupOptions
+                    {
+                        MaximumFunctions = 16,
+                        IncludeTier2 = false,
+                    },
+                },
+            });
+
+        Assert.True(prepared.Succeeded, prepared.Message);
+        Assert.Equal(LuaPatchJitWarmupStatus.Completed, prepared.JitWarmup!.Status);
+        var module = Assert.Single(prepared.JitWarmup.Modules);
+        Assert.NotNull(module.Warmup);
+        Assert.True(module.Warmup.ReadyFunctionCount > 0);
+        Assert.True(module.RemappedFunctionCount + module.IncompatibleFunctionCount > 0);
+        Assert.True(host.State.TryGetModule("a", out var current));
+        Assert.Equal(previousRevision, current!.Revision);
+        Assert.Equal(230, host.RunUtf8("return require('a').value").Execution!.Values[0].AsInteger());
+    }
+
+    [Fact]
+    public void PreparePatchWarmupIsNotApplicableToInterpreterHosts()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        });
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry("a", "return {value=2}")),
+            new LuaPatchPrepareOptions { JitWarmup = LuaPatchJitWarmupOptions.Default });
+
+        Assert.True(prepared.Succeeded, prepared.Message);
+        Assert.Equal(LuaPatchJitWarmupStatus.NotApplicable, prepared.JitWarmup!.Status);
+        Assert.Null(host.JitStatistics);
+    }
+
+    [Theory]
+    [InlineData(LuaPatchJitWarmupFailureBehavior.BestEffort, true)]
+    [InlineData(LuaPatchJitWarmupFailureBehavior.RequireSuccess, false)]
+    public void PreparePatchWarmupTimeoutHonorsFailureBehavior(
+        LuaPatchJitWarmupFailureBehavior behavior,
+        bool expectedSuccess)
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local total=0; for index=1,20 do total=total+index end; return {value=total}",
+        }, LuaHostExecutionBackend.Jit);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry(
+                "a",
+                "local total=0; for index=1,20 do total=total+index+1 end; return {value=total}")),
+            new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions
+                {
+                    FailureBehavior = behavior,
+                    ExecutorOptions = new LuaJitWarmupOptions
+                    {
+                        MaximumDuration = TimeSpan.FromTicks(1),
+                        IncludeTier2 = false,
+                    },
+                },
+            });
+
+        Assert.Equal(expectedSuccess, prepared.Succeeded);
+        Assert.Equal(LuaPatchJitWarmupStatus.TimedOut, prepared.JitWarmup!.Status);
+        Assert.Equal(
+            expectedSuccess ? LuaPatchPrepareStatus.Ready : LuaPatchPrepareStatus.JitWarmupFailed,
+            prepared.Status);
+    }
+
+    [Fact]
+    public void PreparePatchWarmupFunctionBudgetIsObservableButNotAFailure()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] =
+                "local function compute(value) return value+1 end; return {value=compute(1)}",
+        }, LuaHostExecutionBackend.Jit);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+
+        var prepared = host.PreparePatch(
+            CreateBundle(Entry(
+                "a",
+                "local function compute(value) return value+2 end; return {value=compute(1)}")),
+            new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions
+                {
+                    FailureBehavior = LuaPatchJitWarmupFailureBehavior.RequireSuccess,
+                    MaximumTotalFunctions = 1,
+                    ExecutorOptions = new LuaJitWarmupOptions { IncludeTier2 = false },
+                },
+            });
+
+        Assert.True(prepared.Succeeded, prepared.Message);
+        Assert.Equal(LuaPatchJitWarmupStatus.BudgetLimited, prepared.JitWarmup!.Status);
+        Assert.Equal(
+            LuaPatchJitWarmupStatus.BudgetLimited,
+            Assert.Single(prepared.JitWarmup.Modules).Status);
+    }
+
+    [Fact]
+    public void PreparePatchWarmupValidatesPatchWideBounds()
+    {
+        using var host = CreateHost(new Dictionary<string, string>
+        {
+            ["mods/a.lua"] = "return {value=1}",
+        }, LuaHostExecutionBackend.Jit);
+        Assert.True(host.RunUtf8("package.path='mods/?.lua'; require('a')").Succeeded);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => host.PreparePatch(
+            CreateBundle(Entry("a", "return {value=2}")),
+            new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions { MaximumTotalFunctions = 0 },
+            }));
+    }
+
+    [Fact]
     public async Task BackgroundPrepareCapturesRevisionsWithoutMutatingLiveState()
     {
         using var host = CreateHost(new Dictionary<string, string>

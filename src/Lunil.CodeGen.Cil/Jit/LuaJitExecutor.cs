@@ -3,6 +3,7 @@ using Lunil.IR.Lua54;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
+using System.Collections.Immutable;
 
 namespace Lunil.CodeGen.Cil.Jit;
 
@@ -227,6 +228,102 @@ public sealed class LuaJitExecutor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Compiles bounded candidate functions without creating a Lua closure or executing Lua code.
+    /// Profile-hot functions are processed first.
+    /// </summary>
+    public LuaJitWarmupResult Warmup(
+        LuaIrModule module,
+        LuaJitWarmupOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(module);
+        options ??= LuaJitWarmupOptions.Default;
+        ValidateWarmupOptions(options);
+        if (!IsDynamicCodeAvailable || Options.Policy == LuaJitPolicy.InterpreterOnly)
+        {
+            return new LuaJitWarmupResult(
+                LuaJitWarmupStatus.Disabled,
+                module.Functions.Length,
+                0,
+                0,
+                0,
+                0,
+                module.Functions.Length,
+                TimeSpan.Zero,
+                []);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        using var deadline = options.MaximumDuration == Timeout.InfiniteTimeSpan
+            ? null
+            : new CancellationTokenSource(options.MaximumDuration);
+        using var linkedCancellation = deadline is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                deadline.Token);
+        var warmupCancellation = linkedCancellation?.Token ?? cancellationToken;
+        var candidates = module.Functions
+            .Select(function => (function.Id, Profile: _registry.GetFunctionProfile(module, function.Id)))
+            .Where(candidate => !options.ProfiledFunctionsOnly || candidate.Profile.Samples > 0)
+            .OrderByDescending(static candidate => candidate.Profile.Samples)
+            .ThenBy(static candidate => candidate.Id)
+            .ToArray();
+        var selected = candidates.Take(options.MaximumFunctions).ToArray();
+        var results = ImmutableArray.CreateBuilder<LuaJitWarmupFunctionResult>(selected.Length);
+        var timedOut = false;
+        try
+        {
+            foreach (var candidate in selected)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (deadline?.IsCancellationRequested == true ||
+                    options.MaximumDuration != Timeout.InfiniteTimeSpan &&
+                    System.Diagnostics.Stopwatch.GetElapsedTime(started) >= options.MaximumDuration)
+                {
+                    timedOut = true;
+                    break;
+                }
+
+                results.Add(_registry.WarmupFunction(
+                    module,
+                    candidate.Id,
+                    options.IncludeTier2,
+                    warmupCancellation));
+            }
+        }
+        catch (OperationCanceledException) when (
+            deadline?.IsCancellationRequested == true &&
+            !cancellationToken.IsCancellationRequested)
+        {
+            timedOut = true;
+        }
+
+        var functions = results.ToImmutable();
+        var ready = functions.Count(static result => result.Succeeded);
+        var ineligible = functions.Count(static result =>
+            result.Status == LuaJitWarmupFunctionStatus.Ineligible);
+        var failed = functions.Length - ready - ineligible;
+        var status = timedOut
+            ? LuaJitWarmupStatus.TimedOut
+            : failed > 0
+                ? LuaJitWarmupStatus.CompletedWithFailures
+                : LuaJitWarmupStatus.Completed;
+        return new LuaJitWarmupResult(
+            status,
+            candidates.Length,
+            selected.Length,
+            ready,
+            ineligible,
+            failed,
+            candidates.Length - selected.Length,
+            System.Diagnostics.Stopwatch.GetElapsedTime(started),
+            functions);
+    }
+
     public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
     {
         ThrowIfDisposed();
@@ -337,6 +434,31 @@ public sealed class LuaJitExecutor : IDisposable
             throw new ArgumentOutOfRangeException(
                 nameof(options),
                 "CompilationRetryBackoff cannot be negative.");
+        }
+    }
+
+    private static void ValidateWarmupOptions(LuaJitWarmupOptions options)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumFunctions);
+        if (options.MaximumFunctions > 10_000)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Warmup cannot select more than 10,000 functions.");
+        }
+
+        if (options.MaximumDuration <= TimeSpan.Zero &&
+            options.MaximumDuration != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Warmup duration is invalid.");
+        }
+
+        if (options.MaximumDuration != Timeout.InfiniteTimeSpan &&
+            options.MaximumDuration.TotalMilliseconds > uint.MaxValue - 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "Warmup duration exceeds the supported cancellation timer range.");
         }
     }
 }

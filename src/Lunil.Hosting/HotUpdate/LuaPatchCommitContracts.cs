@@ -3,6 +3,7 @@ using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
+using Lunil.CodeGen.Cil.Jit;
 
 namespace Lunil.Hosting;
 
@@ -18,6 +19,7 @@ public enum LuaPatchPrepareStatus : byte
     StateSchemaVersionMismatch,
     AcceptanceRejected,
     Deferred,
+    JitWarmupFailed,
 }
 
 public enum LuaPatchPreparationAdmissionStatus : byte
@@ -89,6 +91,65 @@ public sealed record LuaPatchPrepareOptions
 
     /// <summary>Clock used for acceptance timestamps and time-based policy checks.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>Optional bounded JIT warmup performed after live revision binding.</summary>
+    public LuaPatchJitWarmupOptions? JitWarmup { get; init; }
+}
+
+public enum LuaPatchJitWarmupFailureBehavior : byte
+{
+    BestEffort,
+    RequireSuccess,
+}
+
+public enum LuaPatchJitWarmupStatus : byte
+{
+    Completed,
+    BudgetLimited,
+    CompletedWithFailures,
+    TimedOut,
+    NotApplicable,
+}
+
+public sealed record LuaPatchJitWarmupOptions
+{
+    public static LuaPatchJitWarmupOptions Default { get; } = new();
+
+    public LuaPatchJitWarmupFailureBehavior FailureBehavior { get; init; }
+
+    public LuaJitWarmupOptions ExecutorOptions { get; init; } = LuaJitWarmupOptions.Default;
+
+    /// <summary>Total functions compiled across every module in one prepared patch.</summary>
+    public int MaximumTotalFunctions { get; init; } = 1_024;
+
+    /// <summary>Total wall-clock budget across every module in one prepared patch.</summary>
+    public TimeSpan MaximumTotalDuration { get; init; } = TimeSpan.FromSeconds(30);
+}
+
+public sealed record LuaPatchJitWarmupModuleResult(
+    string ModuleName,
+    LuaPatchJitWarmupStatus Status,
+    int RemappedFunctionCount,
+    int IncompatibleFunctionCount,
+    int AddedFunctionCount,
+    int RemovedFunctionCount,
+    LuaJitWarmupResult? Warmup,
+    string? DiagnosticCode,
+    string? Message)
+{
+    public bool Succeeded => Status is LuaPatchJitWarmupStatus.Completed or
+        LuaPatchJitWarmupStatus.BudgetLimited or
+        LuaPatchJitWarmupStatus.NotApplicable;
+}
+
+public sealed record LuaPatchJitWarmupResult(
+    LuaPatchJitWarmupStatus Status,
+    ImmutableArray<LuaPatchJitWarmupModuleResult> Modules,
+    TimeSpan Duration)
+{
+    public bool Succeeded => Status is LuaPatchJitWarmupStatus.Completed or
+        LuaPatchJitWarmupStatus.BudgetLimited or
+        LuaPatchJitWarmupStatus.NotApplicable;
 }
 
 /// <summary>
@@ -108,7 +169,8 @@ public sealed class LuaPreparedPatch
         IReadOnlyDictionary<string, ILuaPatchResourceMigrationAdapter> resourceMigrationAdapters,
         LuaPatchResourceLimits resourceLimits,
         ILuaPatchReplayStore? replayStore = null,
-        LuaPatchReplayReservation? replayReservation = null)
+        LuaPatchReplayReservation? replayReservation = null,
+        IReadOnlyDictionary<string, LuaIrModule>? jitWarmupSources = null)
     {
         Owner = owner;
         Manifest = manifest;
@@ -121,6 +183,7 @@ public sealed class LuaPreparedPatch
         ResourceLimits = resourceLimits;
         ReplayStore = replayStore;
         ReplayReservation = replayReservation;
+        JitWarmupSources = jitWarmupSources;
     }
 
     public LuaPatchManifest Manifest { get; }
@@ -152,6 +215,8 @@ public sealed class LuaPreparedPatch
 
     internal LuaPatchReplayReservation? ReplayReservation { get; }
 
+    internal IReadOnlyDictionary<string, LuaIrModule>? JitWarmupSources { get; }
+
     internal LuaPreparedPatch WithReplayReservation(
         ILuaPatchReplayStore replayStore,
         LuaPatchReplayReservation replayReservation) => new(
@@ -165,7 +230,30 @@ public sealed class LuaPreparedPatch
             ResourceMigrationAdapters,
             ResourceLimits,
             replayStore,
-            replayReservation);
+            replayReservation,
+            JitWarmupSources);
+
+    internal LuaPreparedPatch WithoutJitWarmupSources()
+    {
+        if (JitWarmupSources is null)
+        {
+            return this;
+        }
+
+        return new LuaPreparedPatch(
+            Owner,
+            Manifest,
+            DependencyPlan,
+            Modules,
+            MigrationSchema,
+            ExpectedStateSchemaVersion,
+            StateMigrationAdapters,
+            ResourceMigrationAdapters,
+            ResourceLimits,
+            ReplayStore,
+            ReplayReservation,
+            jitWarmupSources: null);
+    }
 }
 
 /// <summary>One precompiled module and the live revision against which it was prepared.</summary>
@@ -190,6 +278,9 @@ public sealed record LuaPatchPrepareResult(
 
     /// <summary>Acceptance evidence when preparation was configured with a policy.</summary>
     public LuaPatchAcceptanceResult? Acceptance { get; init; }
+
+    /// <summary>Structured profile-remap and compilation outcome when warmup was requested.</summary>
+    public LuaPatchJitWarmupResult? JitWarmup { get; init; }
 
     public bool Succeeded => Status == LuaPatchPrepareStatus.Ready && PreparedPatch is not null;
 }

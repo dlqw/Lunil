@@ -502,6 +502,62 @@ results, and patch payloads. It does include application-provided target ids, so
 authorize any endpoint that exposes it. This is volatile process health, not a durable audit log or
 crash-recovery source; keep using `ILuaPatchDeploymentJournal` for those roles.
 
+### Profile-remapped candidate JIT warmup
+
+JIT hosts can compile candidate functions during `PreparePatch` instead of paying the compilation
+cost after publication. Warmup is opt-in and does not create a Lua closure, execute a candidate
+loader, mutate the live `LuaState`, or enter the commit update window:
+
+```csharp
+var preparation = host.PreparePatch(bundle, new LuaPatchPrepareOptions
+{
+    PreparationLimiter = sharedPreparationLimiter,
+    JitWarmup = new LuaPatchJitWarmupOptions
+    {
+        FailureBehavior = LuaPatchJitWarmupFailureBehavior.BestEffort,
+        MaximumTotalFunctions = 1_024,
+        MaximumTotalDuration = TimeSpan.FromSeconds(30),
+        ExecutorOptions = new LuaJitWarmupOptions
+        {
+            MaximumFunctions = 256,       // per module
+            MaximumDuration = TimeSpan.FromSeconds(5),
+            IncludeTier2 = true,
+            ProfiledFunctionsOnly = false,
+        },
+    },
+}, cancellationToken);
+
+var warmup = preparation.JitWarmup;
+```
+
+For each loaded replacement, Lunil snapshots the old module's JIT profile, uses
+`LuaJitProfileRemapper` to carry observations only across lexically and canonically compatible
+functions, imports that candidate-specific profile, and then compiles functions in descending
+profile-hotness order. Structurally changed and newly added functions receive no inherited
+observations, but remain eligible for Tier 1 warmup when `ProfiledFunctionsOnly` is `false`. Tier 2
+is attempted only when imported observations pass the existing profile-guided eligibility gates.
+
+`MaximumTotalFunctions` and `MaximumTotalDuration` bound the whole patch; the nested limits apply to
+each module. Reaching the function limit reports `BudgetLimited` and is a successful bounded
+outcome. A deadline cooperatively cancels compiler work started by warmup and reports `TimedOut`.
+When a function is already being compiled for another caller, warmup stops waiting without
+canceling that shared work. Caller cancellation still propagates as `OperationCanceledException`.
+Capacities must be between 1 and 10,000; finite durations must be positive and within the platform
+cancellation-timer range.
+
+`BestEffort` keeps a ready patch when compilation or a deadline fails and exposes the failure in
+`LuaPatchPrepareResult.JitWarmup`. `RequireSuccess` returns `JitWarmupFailed` and no prepared patch
+for those outcomes. Eligibility rejection is reported separately from compilation failure and does
+not by itself fail warmup. Interpreter and dynamic-code-disabled hosts report `NotApplicable`
+without creating a JIT executor.
+
+Warm code is installed in the host's existing content-addressed JIT cache and remains subject to
+`LuaJitExecutorOptions.MaximumCodeCacheBytes` and normal eviction. Abandoned or rolled-back
+candidates may remain reusable in that bounded cache until eviction; successful publication reuses
+the compiled entry directly. Share `LuaPatchPreparationLimiter` across targets so concurrent
+profile remap and compilation cannot create an unbounded preparation burst. Preparation activities
+also expose `lunil.patch.jit_warmup.status`, duration, ready-function, and failed-function tags.
+
 ## Multi-State barriers and ring rollout
 
 `LuaPatchCoordinator` coordinates multiple `LuaHost` states in one process. Every target in a

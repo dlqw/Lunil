@@ -21,6 +21,245 @@ namespace Lunil.CodeGen.Cil.Tests;
 public sealed class LuaJitExecutorTests
 {
     [Fact]
+    public void ExplicitWarmupCompilesWithoutExecutingLuaCode()
+    {
+        var compiler = new CountingCompiler(ReflectionEmitLuaTier1Compiler.Instance);
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                EnableTier2 = false,
+            },
+            compiler: compiler);
+        var module = Compile(
+            "local function add(value) return value + 1 end; " +
+            "local total = 0; for index = 1, 20 do total = total + add(index) end; return total");
+
+        var result = executor.Warmup(module, new LuaJitWarmupOptions
+        {
+            MaximumFunctions = 16,
+            IncludeTier2 = false,
+        });
+
+        Assert.Equal(LuaJitWarmupStatus.Completed, result.Status);
+        Assert.True(result.ReadyFunctionCount > 0);
+        Assert.True(compiler.CallCount > 0);
+        Assert.Equal(0, executor.Statistics.CompiledInvocations);
+        Assert.All(
+            result.Functions.Where(static function => function.Succeeded),
+            static function => Assert.Equal(LuaJitCompilationTier.Tier1, function.Tier));
+    }
+
+    [Fact]
+    public void ExplicitWarmupHonorsSelectionBoundsAndDisabledBackend()
+    {
+        var module = Compile(
+            "local function a(value) return value + 1 end; " +
+            "local function b(value) return value + 2 end; return a(1) + b(2)");
+        using var bounded = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            EnableTier2 = false,
+        });
+
+        var result = bounded.Warmup(module, new LuaJitWarmupOptions
+        {
+            MaximumFunctions = 1,
+            IncludeTier2 = false,
+        });
+
+        Assert.Equal(1, result.SelectedFunctionCount);
+        Assert.Single(result.Functions);
+        Assert.Equal(module.Functions.Length - 1, result.SkippedFunctionCount);
+
+        using var disabled = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.InterpreterOnly,
+        });
+        var disabledResult = disabled.Warmup(module);
+        Assert.Equal(LuaJitWarmupStatus.Disabled, disabledResult.Status);
+        Assert.Empty(disabledResult.Functions);
+    }
+
+    [Fact]
+    public async Task ExplicitWarmupCancelsInFlightCompilation()
+    {
+        using var started = new ManualResetEventSlim();
+        using var observed = new ManualResetEventSlim();
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                EnableTier2 = false,
+            },
+            compiler: new CancellableCompiler(started, observed));
+        var module = Compile(
+            "local total = 0; for index = 1, 20 do total = total + index end; return total");
+        using var cancellation = new CancellationTokenSource();
+
+        var warmup = Task.Factory.StartNew(
+            () => executor.Warmup(
+                module,
+                new LuaJitWarmupOptions { IncludeTier2 = false },
+                cancellation.Token),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => warmup);
+        Assert.True(observed.Wait(TimeSpan.FromSeconds(10)));
+        Assert.Equal(LuaJitFunctionState.Cold, executor.GetFunctionState(module, 0));
+    }
+
+    [Fact]
+    public void ExplicitWarmupDeadlineReturnsTimedOutAndLeavesFunctionRetryable()
+    {
+        using var started = new ManualResetEventSlim();
+        using var observed = new ManualResetEventSlim();
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                EnableTier2 = false,
+            },
+            compiler: new CancellableCompiler(started, observed));
+        var module = Compile(
+            "local total = 0; for index = 1, 20 do total = total + index end; return total");
+
+        var result = executor.Warmup(
+            module,
+            new LuaJitWarmupOptions
+            {
+                IncludeTier2 = false,
+                MaximumDuration = TimeSpan.FromMilliseconds(250),
+            });
+
+        Assert.Equal(LuaJitWarmupStatus.TimedOut, result.Status);
+        Assert.Equal(
+            result.CandidateFunctionCount - result.SelectedFunctionCount,
+            result.SkippedFunctionCount);
+        if (started.IsSet)
+        {
+            Assert.True(observed.IsSet);
+        }
+
+        Assert.Equal(LuaJitFunctionState.Cold, executor.GetFunctionState(module, 0));
+    }
+
+    [Fact]
+    public async Task ExplicitWarmupCancellationDoesNotWaitForAnExistingRuntimeCompilation()
+    {
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var executor = CreateExecutor(
+            LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                MaximumConcurrentCompilations = 1,
+            },
+            compiler: new BlockingCompiler(
+                ReflectionEmitLuaTier1Compiler.Instance,
+                started,
+                release));
+        var module = Compile("return 42");
+        AssertValues(ExecuteFresh(executor, module), LuaValue.FromInteger(42));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        try
+        {
+            var warmup = Task.Factory.StartNew(
+                () => executor.Warmup(
+                    module,
+                    new LuaJitWarmupOptions { IncludeTier2 = false },
+                    cancellation.Token),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                warmup.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await executor.WaitForIdleAsync(timeout.Token);
+        Assert.Equal(LuaJitFunctionState.Ready, executor.GetFunctionState(module, 0));
+    }
+
+    [Fact]
+    public void ExplicitWarmupUsesImportedProfileToCompileTier2WithoutExecution()
+    {
+        var module = Compile(
+            "local total = 0; for i = 1, 5 do total = total + i end; return total");
+        byte[] payload;
+        using (var training = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            SynchronousCompilation = true,
+            Tier2InvocationThreshold = int.MaxValue,
+            Tier2BackedgeThreshold = int.MaxValue,
+        }))
+        {
+            for (var iteration = 0; iteration < 3; iteration++)
+            {
+                AssertValues(ExecuteFresh(training, module), LuaValue.FromInteger(15));
+            }
+
+            payload = training.ExportProfile(module);
+        }
+
+        using var warmed = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.Auto,
+            FunctionEntryThreshold = 1000,
+            BackedgeThreshold = int.MaxValue,
+            Tier2InvocationThreshold = 2,
+            Tier2BackedgeThreshold = int.MaxValue,
+        });
+        Assert.True(warmed.ImportProfile(module, payload).Succeeded);
+
+        var result = warmed.Warmup(module);
+
+        Assert.Equal(LuaJitWarmupStatus.Completed, result.Status);
+        var function = Assert.Single(result.Functions);
+        Assert.Equal(LuaJitWarmupFunctionStatus.ReadyTier2, function.Status);
+        Assert.Equal(LuaJitCompilationTier.Tier2, warmed.GetFunctionTier(module, 0));
+        Assert.Equal(0, warmed.Statistics.CompiledInvocations);
+        Assert.Equal(1, warmed.Statistics.CompilationCompleted);
+        Assert.Equal(1, warmed.Statistics.Tier2CompilationCompleted);
+    }
+
+    [Fact]
+    public void ExplicitWarmupValidatesResourceBounds()
+    {
+        var module = Compile("return 1");
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => executor.Warmup(
+            module,
+            new LuaJitWarmupOptions { MaximumFunctions = 0 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => executor.Warmup(
+            module,
+            new LuaJitWarmupOptions { MaximumFunctions = 10_001 }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => executor.Warmup(
+            module,
+            new LuaJitWarmupOptions { MaximumDuration = TimeSpan.Zero }));
+
+        var unprofiled = executor.Warmup(
+            module,
+            new LuaJitWarmupOptions { ProfiledFunctionsOnly = true });
+        Assert.Equal(0, unprofiled.CandidateFunctionCount);
+        Assert.Equal(0, unprofiled.SelectedFunctionCount);
+        Assert.Equal(0, unprofiled.SkippedFunctionCount);
+    }
+
+    [Fact]
     public void ReleaseDefaultEnablesQualifiedTier1Tier2AndLoopOsrAutoPolicy()
     {
         Assert.Equal(LuaJitPolicy.Auto, LuaJitExecutorOptions.Default.Policy);

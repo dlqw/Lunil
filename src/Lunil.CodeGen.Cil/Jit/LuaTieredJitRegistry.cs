@@ -789,6 +789,90 @@ internal sealed class LuaTieredJitRegistry :
         }
     }
 
+    public LuaJitWarmupFunctionResult WarmupFunction(
+        LuaIrModule module,
+        int functionId,
+        bool includeTier2,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var function = module.Functions[functionId];
+        var key = new FunctionKey(
+            GetModuleContentId(module),
+            functionId,
+            LuaCodegenAbiV3.RuntimeAbiVersion,
+            CodegenVersion);
+        var entry = GetOrCreateEntry(key, function.ParameterCount);
+        var eligibility = EnsureEligibility(entry, module);
+        var samples = entry.Profile.Samples;
+        if (!eligibility.IsCompilable)
+        {
+            return new LuaJitWarmupFunctionResult(
+                functionId,
+                samples,
+                LuaJitWarmupFunctionStatus.Ineligible,
+                LuaJitCompilationTier.Interpreter,
+                eligibility.DiagnosticCode);
+        }
+
+        var tier1Task = RequestCompilation(
+            entry,
+            module,
+            compileSynchronously: true,
+            cancellationToken);
+        var tier1 = tier1Task?.WaitAsync(cancellationToken).GetAwaiter().GetResult() == true;
+        if (!tier1)
+        {
+            lock (entry.Gate)
+            {
+                return new LuaJitWarmupFunctionResult(
+                    functionId,
+                    samples,
+                    LuaJitWarmupFunctionStatus.Tier1Failed,
+                    LuaJitCompilationTier.Interpreter,
+                    entry.FailureCode);
+            }
+        }
+
+        if (includeTier2 && IsTier2Enabled && samples > 0)
+        {
+            var tier2Task = RequestTier2Compilation(
+                entry,
+                module,
+                compileSynchronously: true,
+                cancellationToken);
+            if (tier2Task is not null &&
+                !tier2Task.WaitAsync(cancellationToken).GetAwaiter().GetResult())
+            {
+                lock (entry.Gate)
+                {
+                    if (entry.Tier2State == LuaJitTier2State.Failed)
+                    {
+                        return new LuaJitWarmupFunctionResult(
+                            functionId,
+                            samples,
+                            LuaJitWarmupFunctionStatus.Tier2Failed,
+                            LuaJitCompilationTier.Tier1,
+                            entry.Tier2Eligibility?.DiagnosticCode ?? "JIT2001");
+                    }
+                }
+            }
+        }
+
+        lock (entry.Gate)
+        {
+            var tier = entry.ActiveTier;
+            return new LuaJitWarmupFunctionResult(
+                functionId,
+                samples,
+                tier == LuaJitCompilationTier.Tier2
+                    ? LuaJitWarmupFunctionStatus.ReadyTier2
+                    : LuaJitWarmupFunctionStatus.ReadyTier1,
+                tier,
+                null);
+        }
+    }
+
     public LuaJitCompilationTier GetFunctionTier(LuaIrModule module, int functionId)
     {
         var entry = FindEntry(module, functionId);
@@ -2278,8 +2362,10 @@ internal sealed class LuaTieredJitRegistry :
     private Task<bool>? RequestTier2Compilation(
         FunctionEntry entry,
         LuaIrModule module,
-        bool compileSynchronously)
+        bool compileSynchronously,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         LuaJitFunctionProfile profile;
         var evaluateEligibility = !_options.EnableTier2ManagedFallback;
         lock (entry.Gate)
@@ -2324,13 +2410,18 @@ internal sealed class LuaTieredJitRegistry :
         if (evaluateEligibility)
         {
             LuaJitTier2Eligibility eligibility;
+            using var eligibilityCancellation = cancellationToken.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(
+                    _disposeCancellation.Token,
+                    cancellationToken)
+                : null;
             try
             {
                 eligibility = ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
                     module,
                     entry.Key.FunctionId,
                     profile,
-                    _disposeCancellation.Token);
+                    eligibilityCancellation?.Token ?? _disposeCancellation.Token);
             }
             catch
             {
@@ -2419,7 +2510,8 @@ internal sealed class LuaTieredJitRegistry :
                 entry.Tier2Completion,
                 LuaJitCompilationTier.Tier2,
                 profile,
-                null);
+                null,
+                cancellationToken);
         }
 
         Interlocked.Increment(ref _tier2CompilationQueued);
@@ -2460,7 +2552,8 @@ internal sealed class LuaTieredJitRegistry :
     private Task<bool>? RequestCompilation(
         FunctionEntry entry,
         LuaIrModule module,
-        bool compileSynchronously)
+        bool compileSynchronously,
+        CancellationToken cancellationToken = default)
     {
         if (!_capabilities.IsDynamicCodeSupported || !_capabilities.IsDynamicCodeCompiled)
         {
@@ -2500,7 +2593,8 @@ internal sealed class LuaTieredJitRegistry :
                 entry.Completion,
                 LuaJitCompilationTier.Tier1,
                 null,
-                null);
+                null,
+                cancellationToken);
         }
 
         Interlocked.Increment(ref _compilationQueued);
@@ -2620,14 +2714,20 @@ internal sealed class LuaTieredJitRegistry :
 
         var started = Stopwatch.GetTimestamp();
         LuaTier1CompilationResult result;
+        CancellationTokenSource? linkedCancellation = null;
+        var compilationCancellation = request.CancellationToken.CanBeCanceled
+            ? (linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                _disposeCancellation.Token,
+                request.CancellationToken)).Token
+            : _disposeCancellation.Token;
         try
         {
             result = _compiler.Compile(
                 request.Module,
                 request.Entry.Key.FunctionId,
                 IsTier2Enabled || IsLoopOsrEnabled,
-                _disposeCancellation.Token);
-            _disposeCancellation.Token.ThrowIfCancellationRequested();
+                compilationCancellation);
+            compilationCancellation.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -2641,6 +2741,22 @@ internal sealed class LuaTieredJitRegistry :
 
             return;
         }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+            lock (request.Entry.Gate)
+            {
+                if (ReferenceEquals(request.Entry.Completion, request.Completion) &&
+                    request.Entry.State == LuaJitFunctionState.Compiling)
+                {
+                    request.Entry.State = LuaJitFunctionState.Cold;
+                    request.Entry.CompilationAttempts--;
+                }
+
+                request.Completion.TrySetCanceled(request.CancellationToken);
+            }
+
+            return;
+        }
         catch (Exception exception) when (exception is not OutOfMemoryException and
             not StackOverflowException and not AccessViolationException)
         {
@@ -2648,6 +2764,10 @@ internal sealed class LuaTieredJitRegistry :
                 null,
                 0,
                 [$"{exception.GetType().Name}: {exception.Message}"]);
+        }
+        finally
+        {
+            linkedCancellation?.Dispose();
         }
 
         var compileDuration = Stopwatch.GetElapsedTime(started);
@@ -2701,14 +2821,20 @@ internal sealed class LuaTieredJitRegistry :
 
         var started = Stopwatch.GetTimestamp();
         LuaTier2CompilationResult result;
+        CancellationTokenSource? linkedCancellation = null;
+        var compilationCancellation = request.CancellationToken.CanBeCanceled
+            ? (linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                _disposeCancellation.Token,
+                request.CancellationToken)).Token
+            : _disposeCancellation.Token;
         try
         {
             result = _tier2Compiler.Compile(
                 request.Module,
                 request.Entry.Key.FunctionId,
                 request.Profile!,
-                _disposeCancellation.Token);
-            _disposeCancellation.Token.ThrowIfCancellationRequested();
+                compilationCancellation);
+            compilationCancellation.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -2716,6 +2842,22 @@ internal sealed class LuaTieredJitRegistry :
             {
                 request.Entry.Tier2State = LuaJitTier2State.Invalidated;
                 request.Entry.Tier2Completion?.TrySetCanceled(_disposeCancellation.Token);
+            }
+
+            return;
+        }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+            lock (request.Entry.Gate)
+            {
+                if (ReferenceEquals(request.Entry.Tier2Completion, request.Completion) &&
+                    request.Entry.Tier2State == LuaJitTier2State.Compiling)
+                {
+                    request.Entry.Tier2State = LuaJitTier2State.Profiling;
+                    request.Entry.Tier2CompilationAttempts--;
+                }
+
+                request.Completion.TrySetCanceled(request.CancellationToken);
             }
 
             return;
@@ -2728,6 +2870,10 @@ internal sealed class LuaTieredJitRegistry :
                 null,
                 0,
                 [$"{exception.GetType().Name}: {exception.Message}"]);
+        }
+        finally
+        {
+            linkedCancellation?.Dispose();
         }
 
         var compileDuration = Stopwatch.GetElapsedTime(started);
@@ -4134,7 +4280,8 @@ internal sealed class LuaTieredJitRegistry :
         TaskCompletionSource<bool> Completion,
         LuaJitCompilationTier Tier,
         LuaJitFunctionProfile? Profile,
-        LoopOsrEntry? LoopOsr);
+        LoopOsrEntry? LoopOsr,
+        CancellationToken CancellationToken = default);
 
     private sealed class LoopOsrEntry(
         LoopKey key,
