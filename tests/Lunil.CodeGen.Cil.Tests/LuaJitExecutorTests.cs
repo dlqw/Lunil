@@ -260,6 +260,23 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
+    public void ExplicitWarmupCodeCacheDoesNotRetainModuleOrLuaOwners()
+    {
+        using var executor = CreateExecutor(LuaJitExecutorOptions.Default with
+        {
+            Policy = LuaJitPolicy.PreferJit,
+            EnableTier2 = false,
+        });
+
+        var references = WarmupAndReleaseOwners(executor);
+        CollectOwners(references);
+
+        Assert.All(references, static reference => Assert.False(reference.IsAlive));
+        Assert.True(executor.Statistics.EstimatedCodeBytes > 0);
+        Assert.Equal(0, executor.Statistics.CompiledInvocations);
+    }
+
+    [Fact]
     public void ReleaseDefaultEnablesQualifiedTier1Tier2AndLoopOsrAutoPolicy()
     {
         Assert.Equal(LuaJitPolicy.Auto, LuaJitExecutorOptions.Default.Policy);
@@ -6203,6 +6220,31 @@ public sealed class LuaJitExecutorTests
         var closure = state.CreateMainClosure(module);
         AssertValues(executor.Execute(state, closure), LuaValue.FromInteger(11));
         return [new WeakReference(module), new WeakReference(state), new WeakReference(closure)];
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] WarmupAndReleaseOwners(LuaJitExecutor executor)
+    {
+        var module = Compile(
+            "local function update(value) return value + 1 end; return update(40)");
+        var state = new LuaState();
+        var closure = state.CreateMainClosure(module);
+        var result = executor.Warmup(
+            module,
+            new LuaJitWarmupOptions { IncludeTier2 = false });
+        Assert.Equal(LuaJitWarmupStatus.Completed, result.Status);
+        Assert.True(result.ReadyFunctionCount > 0);
+        return [new WeakReference(module), new WeakReference(state), new WeakReference(closure)];
+    }
+
+    private static void CollectOwners(IEnumerable<WeakReference> references)
+    {
+        for (var attempt = 0; attempt < 10 && references.Any(static item => item.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

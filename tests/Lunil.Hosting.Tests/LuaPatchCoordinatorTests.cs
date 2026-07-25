@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using Lunil.CodeGen.Cil.Jit;
 using Lunil.Core;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
@@ -177,6 +179,163 @@ public sealed class LuaPatchCoordinatorTests
         Assert.Equal(0, snapshot.TotalRecordedCount);
         Assert.Equal(1, snapshot.RecordingFailureCount);
         Assert.Empty(snapshot.Entries);
+    }
+
+    [Fact]
+    public void RepeatedMixedRolloutsRemainEquivalentAndBoundedAcrossBackends()
+    {
+        const int rounds = 32;
+        const int historyCapacity = 8;
+        const long maximumCodeCacheBytes = 8_192;
+        const string initialSource =
+            "local function delta() return 1 end; " +
+            "local function update(state) state.total=state.total+delta(); return state.total end; " +
+            "return {value=1,update=update}";
+        using var interpreter = CreateHost(
+            initialSource,
+            LuaHostExecutionBackend.Interpreter,
+            maximumCodeCacheBytes);
+        using var jit = CreateHost(
+            initialSource,
+            LuaHostExecutionBackend.Jit,
+            maximumCodeCacheBytes);
+        Load(interpreter, "game_state={total=0}; require('value')");
+        Load(jit, "game_state={total=0}; require('value')");
+        var history = new LuaPatchHistory(historyCapacity);
+        var coordinator = new LuaPatchCoordinator();
+        long publishedValue = 1;
+        long expectedTotal = 0;
+        long previousRevision = Revision(interpreter);
+        Assert.Equal(previousRevision, Revision(jit));
+
+        for (var round = 0; round < rounds; round++)
+        {
+            var candidateValue = round + 2;
+            var bundle = CreateBundle(
+                $"local function delta() return {candidateValue} end; " +
+                "local function update(state) state.total=state.total+delta(); " +
+                "return state.total end; " +
+                $"return {{value={candidateValue},update=update}}");
+            var prepareOptions = new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions
+                {
+                    ExecutorOptions = new LuaJitWarmupOptions
+                    {
+                        MaximumFunctions = 16,
+                        IncludeTier2 = false,
+                    },
+                },
+            };
+            var interpreterPrepared = interpreter.PreparePatch(bundle, prepareOptions);
+            var jitPrepared = jit.PreparePatch(bundle, prepareOptions);
+            Assert.True(interpreterPrepared.Succeeded, interpreterPrepared.Message);
+            Assert.True(jitPrepared.Succeeded, jitPrepared.Message);
+            Assert.Equal(
+                LuaPatchJitWarmupStatus.NotApplicable,
+                interpreterPrepared.JitWarmup!.Status);
+            Assert.Equal(LuaPatchJitWarmupStatus.Completed, jitPrepared.JitWarmup!.Status);
+            Assert.Equal(
+                Assert.Single(interpreterPrepared.PreparedPatch!.Modules).ExpectedRevision,
+                Assert.Single(jitPrepared.PreparedPatch!.Modules).ExpectedRevision);
+            var rollback = (round & 1) != 0;
+
+            var result = coordinator.CommitRing(
+                $"longevity-{round}",
+                Ring(
+                    new LuaPatchDeploymentTarget(
+                        "interpreter",
+                        interpreter,
+                        interpreterPrepared.PreparedPatch!),
+                    new LuaPatchDeploymentTarget(
+                        "jit",
+                        jit,
+                        jitPrepared.PreparedPatch!)),
+                new LuaPatchCoordinatorOptions
+                {
+                    History = history,
+                    GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+                    HealthCheck = _ => rollback
+                        ? LuaPatchRingHealthDecision.Rollback
+                        : LuaPatchRingHealthDecision.Accept,
+                });
+
+            Assert.Equal(
+                rollback
+                    ? LuaPatchRingCommitStatus.HealthRejected
+                    : LuaPatchRingCommitStatus.Committed,
+                result.Status);
+            if (!rollback)
+            {
+                publishedValue = candidateValue;
+            }
+
+            Assert.Equal(publishedValue, Value(interpreter));
+            Assert.Equal(publishedValue, Value(jit));
+            expectedTotal += publishedValue;
+            Assert.Equal(expectedTotal, UpdateGameState(interpreter));
+            Assert.Equal(expectedTotal, UpdateGameState(jit));
+            var interpreterRevision = Revision(interpreter);
+            var jitRevision = Revision(jit);
+            Assert.Equal(interpreterRevision, jitRevision);
+            if (rollback)
+            {
+                Assert.Equal(previousRevision, interpreterRevision);
+            }
+            else
+            {
+                Assert.True(interpreterRevision > previousRevision);
+            }
+            previousRevision = interpreterRevision;
+            Assert.All(result.Targets, target =>
+            {
+                if (rollback)
+                {
+                    Assert.Null(target.GenerationSnapshot);
+                }
+                else
+                {
+                    Assert.NotNull(target.GenerationSnapshot);
+                    Assert.True(target.GenerationSnapshot.UpdateInProgress);
+                    Assert.False(target.GenerationSnapshot.HasTransitionResidue);
+                }
+            });
+            Assert.False(interpreter.CapturePatchGenerationSnapshot().UpdateInProgress);
+            Assert.False(jit.CapturePatchGenerationSnapshot().UpdateInProgress);
+            Assert.Null(interpreter.JitStatistics);
+            Assert.InRange(jit.JitStatistics!.EstimatedCodeBytes, 1, maximumCodeCacheBytes);
+        }
+
+        var snapshot = history.CaptureSnapshot();
+        Assert.Equal(rounds, snapshot.TotalRecordedCount);
+        Assert.Equal(rounds - historyCapacity, snapshot.DroppedEntryCount);
+        Assert.Equal(historyCapacity, snapshot.Entries.Length);
+        Assert.Equal(
+            Enumerable.Range(rounds - historyCapacity + 1, historyCapacity)
+                .Select(static value => (long)value),
+            snapshot.Entries.Select(static entry => entry.Sequence));
+        Assert.Equal(0, snapshot.RecordingFailureCount);
+        Assert.Equal(1, snapshot.ConsecutiveUnsuccessfulCount);
+        Assert.True(jit.JitStatistics!.CacheEvictions > 0);
+    }
+
+    [Fact]
+    public void RolledBackWarmedCandidateGraphIsCollectibleWhileCodeCacheRemainsBounded()
+    {
+        const long maximumCodeCacheBytes = 8_192;
+        using var host = CreateHost(
+            "return {value=1}",
+            LuaHostExecutionBackend.Jit,
+            maximumCodeCacheBytes);
+        Load(host);
+
+        var references = RollbackWarmedCandidateAndReleaseOwners(host);
+        Assert.All(references, static reference => Assert.True(reference.IsAlive));
+        CollectOwners(host, references);
+
+        Assert.All(references, static reference => Assert.False(reference.IsAlive));
+        Assert.Equal(1, Value(host));
+        Assert.InRange(host.JitStatistics!.EstimatedCodeBytes, 1, maximumCodeCacheBytes);
     }
 
     [Fact]
@@ -2005,15 +2164,93 @@ public sealed class LuaPatchCoordinatorTests
     private static long Value(LuaHost host) => host.RunUtf8(
         "return require('value').value").Execution!.Values[0].AsInteger();
 
-    private static LuaHost CreateHost(string source) => new(
+    private static long UpdateGameState(LuaHost host) => host.RunUtf8(
+        "return require('value').update(game_state)").Execution!.Values[0].AsInteger();
+
+    private static long Revision(LuaHost host)
+    {
+        Assert.True(host.State.TryGetModule("value", out var record));
+        return record!.Revision;
+    }
+
+    private static LuaHost CreateHost(string source) => CreateHost(
+        source,
+        LuaHostExecutionBackend.Interpreter,
+        LuaJitExecutorOptions.Default.MaximumCodeCacheBytes);
+
+    private static LuaHost CreateHost(
+        string source,
+        LuaHostExecutionBackend backend,
+        long maximumCodeCacheBytes) => new(
         LuaHostOptions.Default with
         {
-            ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            ExecutionBackend = backend,
+            Jit = LuaJitExecutorOptions.Default with
+            {
+                Policy = LuaJitPolicy.PreferJit,
+                FunctionEntryThreshold = 1,
+                BackedgeThreshold = 1,
+                SynchronousCompilation = true,
+                EnableTier2 = false,
+                EnableLoopOsr = false,
+                MaximumCodeCacheBytes = maximumCodeCacheBytes,
+            },
             StandardLibrary = LuaHostCapabilityProfiles.Create(LuaHostProfile.Restricted) with
             {
                 FileSystem = new SingleFileSystem(source),
             },
         });
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference[] RollbackWarmedCandidateAndReleaseOwners(LuaHost host)
+    {
+        var prepared = host.PreparePatch(
+            CreateBundle(
+                "local function update(value) return value+1 end; " +
+                "return {value=2,update=update}"),
+            new LuaPatchPrepareOptions
+            {
+                JitWarmup = new LuaPatchJitWarmupOptions
+                {
+                    ExecutorOptions = new LuaJitWarmupOptions { IncludeTier2 = false },
+                },
+            });
+        Assert.True(prepared.Succeeded, prepared.Message);
+        Assert.Equal(LuaPatchJitWarmupStatus.Completed, prepared.JitWarmup!.Status);
+        WeakReference[]? references = null;
+        var result = new LuaPatchCoordinator().CommitRing(
+            "collect-warmed-candidate",
+            Ring(new LuaPatchDeploymentTarget("state-a", host, prepared.PreparedPatch!)),
+            new LuaPatchCoordinatorOptions
+            {
+                HealthCheck = _ =>
+                {
+                    Assert.True(host.State.TryGetModule("value", out var candidate));
+                    references =
+                    [
+                        new WeakReference(candidate!.Module!),
+                        new WeakReference(candidate.CachedValue.AsTable()),
+                        new WeakReference(candidate.Loader.TryGetClosure()!),
+                    ];
+                    return LuaPatchRingHealthDecision.Rollback;
+                },
+            });
+        Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        return Assert.IsType<WeakReference[]>(references);
+    }
+
+    private static void CollectOwners(LuaHost host, IEnumerable<WeakReference> references)
+    {
+        Assert.True(host.RunUtf8("return 0").Succeeded);
+        for (var attempt = 0; attempt < 10 && references.Any(static item => item.IsAlive); attempt++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            host.State.Heap.CollectFull();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
 
     private static LuaHost CreateClrCallbackHost(string source)
     {
