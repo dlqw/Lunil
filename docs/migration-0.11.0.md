@@ -20,14 +20,19 @@ using var host = new LuaHost(LuaHostOptions.Restricted with
             LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Value", "Translate"],
+        AllowedMemberNames =
+        [
+            "Example.Contracts.Point.Value",
+            "Example.Contracts.Point.Translate",
+        ],
         InstallGlobalModule = true,
     },
 });
 ```
 
-`AllowedMemberNames` accepts exact member names or type-qualified entries. Delegate and event
-capabilities require their own exact lists (`AllowedDelegateTypeNames`, `AllowedEventNames`).
+`AllowedMemberNames` accepts bare member names or type-qualified entries. A bare name applies to
+every allowlisted type, so type-qualified entries are recommended for least privilege. Delegate and
+event capabilities require their own exact lists (`AllowedDelegateTypeNames`, `AllowedEventNames`).
 Use `ThreadPolicy` to choose callback admission and `OwnConstructedObjects` to choose disposal
 ownership. The bridge searches only already-loaded assemblies and never falls back to unrestricted
 reflection.

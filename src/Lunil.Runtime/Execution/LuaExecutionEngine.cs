@@ -41,23 +41,26 @@ internal sealed class LuaExecutionEngine
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(closure);
-        state.Heap.ValidateValue(LuaValue.FromFunction(closure));
-        var verificationErrors = LuaIrVerifier.Verify(closure.Module);
-        if (!verificationErrors.IsEmpty)
+        lock (state.ExecutionGate)
         {
-            throw new LuaRuntimeException(
-                $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
-        }
+            state.Heap.ValidateValue(LuaValue.FromFunction(closure));
+            var verificationErrors = LuaIrVerifier.Verify(closure.Module);
+            if (!verificationErrors.IsEmpty)
+            {
+                throw new LuaRuntimeException(
+                    $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
+            }
 
-        var thread = state.MainThread;
-        thread.Initialize(LuaValue.FromFunction(closure));
-        var result = RunScheduler(state, thread, arguments, yieldableRoot: false);
-        if (result.Signal == LuaVmSignal.Error)
-        {
-            throw new LuaRuntimeException(result.Values[0]);
-        }
+            var thread = state.MainThread;
+            thread.Initialize(LuaValue.FromFunction(closure));
+            var result = RunScheduler(state, thread, arguments, yieldableRoot: false);
+            if (result.Signal == LuaVmSignal.Error)
+            {
+                throw new LuaRuntimeException(result.Values[0]);
+            }
 
-        return result;
+            return result;
+        }
     }
 
     public LuaExecutionResult ExecuteBinaryChunk(
@@ -67,7 +70,10 @@ internal sealed class LuaExecutionEngine
         Lua54ChunkReaderOptions? readerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(state);
-        return Execute(state, state.LoadBinaryChunk(binaryChunk, readerOptions), arguments);
+        lock (state.ExecutionGate)
+        {
+            return Execute(state, state.LoadBinaryChunk(binaryChunk, readerOptions), arguments);
+        }
     }
 
     public LuaExecutionResult Start(
@@ -75,13 +81,17 @@ internal sealed class LuaExecutionEngine
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default)
     {
-        ValidateThreadEntry(state, thread);
-        if (thread.Status != LuaThreadStatus.New || thread.Started)
+        ArgumentNullException.ThrowIfNull(state);
+        lock (state.ExecutionGate)
         {
-            throw new LuaRuntimeException("Cannot start a coroutine that has already started.");
-        }
+            ValidateThreadEntry(state, thread);
+            if (thread.Status != LuaThreadStatus.New || thread.Started)
+            {
+                throw new LuaRuntimeException("Cannot start a coroutine that has already started.");
+            }
 
-        return RunScheduler(state, thread, arguments, yieldableRoot: true);
+            return RunScheduler(state, thread, arguments, yieldableRoot: true);
+        }
     }
 
     public LuaExecutionResult Resume(
@@ -89,56 +99,63 @@ internal sealed class LuaExecutionEngine
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default)
     {
-        ValidateThreadEntry(state, thread);
-        if (thread.Status == LuaThreadStatus.New && !thread.Started)
+        ArgumentNullException.ThrowIfNull(state);
+        lock (state.ExecutionGate)
         {
+            ValidateThreadEntry(state, thread);
+            if (thread.Status == LuaThreadStatus.New && !thread.Started)
+            {
+                return RunScheduler(state, thread, arguments, yieldableRoot: true);
+            }
+
+            if (thread.Status != LuaThreadStatus.Suspended)
+            {
+                throw new LuaRuntimeException($"Cannot resume a {FormatStatus(thread)} coroutine.");
+            }
+
             return RunScheduler(state, thread, arguments, yieldableRoot: true);
         }
-
-        if (thread.Status != LuaThreadStatus.Suspended)
-        {
-            throw new LuaRuntimeException($"Cannot resume a {FormatStatus(thread)} coroutine.");
-        }
-
-        return RunScheduler(state, thread, arguments, yieldableRoot: true);
     }
 
     public LuaExecutionResult Close(LuaState state, LuaThread thread)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(thread);
-        state.Heap.ValidateValue(LuaValue.FromThread(thread));
-        ValidateClosableThread(state, thread);
-
-        if (thread.Status is LuaThreadStatus.New or LuaThreadStatus.Dead)
+        lock (state.ExecutionGate)
         {
-            thread.FinishClosed();
-            return new LuaExecutionResult(LuaVmSignal.Completed, []);
-        }
+            state.Heap.ValidateValue(LuaValue.FromThread(thread));
+            ValidateClosableThread(state, thread);
 
-        var failed = thread.Status == LuaThreadStatus.Error;
-        var error = failed ? thread.TerminalError : LuaValue.Nil;
-        thread.IsClosing = true;
-        thread.CloseHadError = failed;
-        thread.UnwindState = new LuaUnwindState(
-            boundary: null,
-            error,
-            debugBoundaryFunction: LuaValue.Nil,
-            errorHandler: LuaValue.Nil);
-        var closeResult = RunScheduler(
-            state,
-            thread,
-            arguments: [],
-            yieldableRoot: false,
-            activateThread: false);
-        var closeError = closeResult.Signal == LuaVmSignal.Error && closeResult.Values.Length != 0
-            ? closeResult.Values[0]
-            : LuaValue.Nil;
-        failed = thread.CloseHadError;
-        thread.FinishClosed();
-        return failed
-            ? new LuaExecutionResult(LuaVmSignal.Error, [closeError])
-            : new LuaExecutionResult(LuaVmSignal.Completed, []);
+            if (thread.Status is LuaThreadStatus.New or LuaThreadStatus.Dead)
+            {
+                thread.FinishClosed();
+                return new LuaExecutionResult(LuaVmSignal.Completed, []);
+            }
+
+            var failed = thread.Status == LuaThreadStatus.Error;
+            var error = failed ? thread.TerminalError : LuaValue.Nil;
+            thread.IsClosing = true;
+            thread.CloseHadError = failed;
+            thread.UnwindState = new LuaUnwindState(
+                boundary: null,
+                error,
+                debugBoundaryFunction: LuaValue.Nil,
+                errorHandler: LuaValue.Nil);
+            var closeResult = RunScheduler(
+                state,
+                thread,
+                arguments: [],
+                yieldableRoot: false,
+                activateThread: false);
+            var closeError = closeResult.Signal == LuaVmSignal.Error && closeResult.Values.Length != 0
+                ? closeResult.Values[0]
+                : LuaValue.Nil;
+            failed = thread.CloseHadError;
+            thread.FinishClosed();
+            return failed
+                ? new LuaExecutionResult(LuaVmSignal.Error, [closeError])
+                : new LuaExecutionResult(LuaVmSignal.Completed, []);
+        }
     }
 
     private LuaExecutionResult RunScheduler(
@@ -153,6 +170,9 @@ internal sealed class LuaExecutionEngine
             throw new LuaRuntimeException("C stack overflow");
         }
 
+        var previousRunningThread = state.RunningThread;
+        var previousRunningThreadIsYieldable = state.RunningThreadIsYieldable;
+        var previousIsRunningFinalizer = state.IsRunningFinalizer;
         _schedulerNestingDepth++;
         state.Heap.AddPermanentRoot(root);
         try
@@ -556,9 +576,9 @@ internal sealed class LuaExecutionEngine
         }
         finally
         {
-            state.IsRunningFinalizer = false;
-            state.RunningThread = null;
-            state.RunningThreadIsYieldable = false;
+            state.IsRunningFinalizer = previousIsRunningFinalizer;
+            state.RunningThread = previousRunningThread;
+            state.RunningThreadIsYieldable = previousRunningThreadIsYieldable;
             state.Heap.RemovePermanentRoot(root);
             _schedulerNestingDepth--;
         }

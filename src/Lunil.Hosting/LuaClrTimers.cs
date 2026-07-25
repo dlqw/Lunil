@@ -489,84 +489,91 @@ public sealed partial class LuaClrBridge
                 $"The timer dispatch count must be between 1 and {_options.MaximumTimerDispatchCount}.");
         }
 
-        lock (_callbackGate)
+        EnterCallbackExecutionBoundary();
+        try
         {
-            EnsureThread();
-            if (_state.RunningThread is not null)
+            lock (_callbackGate)
             {
-                throw new LuaClrException(
-                    LuaClrErrorCode.ThreadDenied,
-                    "CLR timers can be dispatched only while the Lua state is idle.");
-            }
-
-            PruneGenerationRegistrations();
-            var now = _options.TimeProvider.GetTimestamp();
-            foreach (var registration in _timerRegistrations)
-            {
-                if (registration.State == LuaClrGenerationState.Active &&
-                    registration.Timer.IsDue(now))
+                if (_state.RunningThread is not null)
                 {
-                    _dueTimerBuffer.Add(registration);
+                    throw new LuaClrException(
+                        LuaClrErrorCode.ThreadDenied,
+                        "CLR timers can be dispatched only while the Lua state is idle.");
                 }
-            }
 
-            _dueTimerBuffer.Sort(static (left, right) =>
-            {
-                var dueComparison = left.Timer.NextDueTimestamp.CompareTo(
-                    right.Timer.NextDueTimestamp);
-                return dueComparison != 0 ? dueComparison : left.Order.CompareTo(right.Order);
-            });
-            var dispatched = 0;
-            try
-            {
-                while (_dueTimerBuffer.Count != 0 && dispatched < maximumCallbacks)
+                PruneGenerationRegistrations();
+                var now = _options.TimeProvider.GetTimestamp();
+                foreach (var registration in _timerRegistrations)
                 {
-                    var madeProgress = false;
-                    foreach (var registration in _dueTimerBuffer)
+                    if (registration.State == LuaClrGenerationState.Active &&
+                        registration.Timer.IsDue(now))
                     {
-                        if (dispatched >= maximumCallbacks)
+                        _dueTimerBuffer.Add(registration);
+                    }
+                }
+
+                _dueTimerBuffer.Sort(static (left, right) =>
+                {
+                    var dueComparison = left.Timer.NextDueTimestamp.CompareTo(
+                        right.Timer.NextDueTimestamp);
+                    return dueComparison != 0 ? dueComparison : left.Order.CompareTo(right.Order);
+                });
+                var dispatched = 0;
+                try
+                {
+                    while (_dueTimerBuffer.Count != 0 && dispatched < maximumCallbacks)
+                    {
+                        var madeProgress = false;
+                        foreach (var registration in _dueTimerBuffer)
+                        {
+                            if (dispatched >= maximumCallbacks)
+                            {
+                                break;
+                            }
+
+                            _timerCatchUpCounts.TryGetValue(registration, out var catchUpCount);
+                            if (!registration.Timer.TryPrepareDispatch(
+                                now,
+                                _options.TimeProvider,
+                                catchUpCount,
+                                out var tick,
+                                out var missed))
+                            {
+                                continue;
+                            }
+
+                            madeProgress = true;
+                            if (registration.Timer.Options.CatchUpPolicy ==
+                                LuaClrTimerCatchUpPolicy.CatchUp)
+                            {
+                                _timerCatchUpCounts[registration] = catchUpCount + 1;
+                            }
+
+                            InvokeLuaCallback(
+                                registration.Callback,
+                                [LuaValue.FromInteger(tick), LuaValue.FromInteger(missed)],
+                                _timerExecutionOptions);
+                            dispatched++;
+                        }
+
+                        if (!madeProgress)
                         {
                             break;
                         }
-
-                        _timerCatchUpCounts.TryGetValue(registration, out var catchUpCount);
-                        if (!registration.Timer.TryPrepareDispatch(
-                            now,
-                            _options.TimeProvider,
-                            catchUpCount,
-                            out var tick,
-                            out var missed))
-                        {
-                            continue;
-                        }
-
-                        madeProgress = true;
-                        if (registration.Timer.Options.CatchUpPolicy ==
-                            LuaClrTimerCatchUpPolicy.CatchUp)
-                        {
-                            _timerCatchUpCounts[registration] = catchUpCount + 1;
-                        }
-
-                        InvokeLuaCallback(
-                            registration.Callback,
-                            [LuaValue.FromInteger(tick), LuaValue.FromInteger(missed)],
-                            _timerExecutionOptions);
-                        dispatched++;
-                    }
-
-                    if (!madeProgress)
-                    {
-                        break;
                     }
                 }
-            }
-            finally
-            {
-                _dueTimerBuffer.Clear();
-                _timerCatchUpCounts.Clear();
-            }
+                finally
+                {
+                    _dueTimerBuffer.Clear();
+                    _timerCatchUpCounts.Clear();
+                }
 
-            return dispatched;
+                return dispatched;
+            }
+        }
+        finally
+        {
+            Monitor.Exit(_state.ExecutionGate);
         }
     }
 

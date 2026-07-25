@@ -17,4 +17,10 @@ When `RuntimeFeature.IsDynamicCodeSupported` is `false`, `LuaJitExecutor` uses t
 
 ## Compatibility boundaries
 
-.NET NativeAOT is a deployment mode for the managed host; it is not a Lua AOT backend. Lunil does not expose the Lua C ABI, so native Lua C modules are unsupported. Reflection-based host extensions must preserve their own reachable members with linker metadata. See the Chinese guide for detailed publishing examples and CLR bridge trimming requirements.
+.NET NativeAOT is a deployment mode for the managed host; it is not a Lua AOT backend. Lunil does
+not expose the Lua C ABI, so native Lua C modules are unsupported. Reflection-based host extensions
+must preserve their own reachable members with linker metadata. CLR bridge consumers must preserve
+the public constructors, members, and delegate signatures of allowlisted application types. The
+bridge itself preserves its interpreted delegate callback adapter and generic task-result metadata;
+the NativeAOT fixture exercises both delegate conversion and `Task<TResult>` result consumption.
+See the Chinese guide for detailed publishing examples.

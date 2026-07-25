@@ -16,7 +16,11 @@ var options = LuaHostOptions.Restricted with
             LuaClrCapabilities.Async,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Value", "Translate"],
+        AllowedMemberNames =
+        [
+            "Example.Contracts.Point.Value",
+            "Example.Contracts.Point.Translate",
+        ],
         InstallGlobalModule = true,
     },
 };
@@ -27,6 +31,12 @@ var run = host.RunUtf8("local p=clr.new('Example.Contracts.Point', 1, 2); return
 Assembly names, type names, and member names are ordinal and case-sensitive. The bridge does not
 load an assembly by name. A capability that needs an allowlist fails closed when its list is empty.
 Restricted, NativeAOT, trimming, and deterministic hosts use the same policy.
+
+A bare `AllowedMemberNames` entry such as `"Value"` applies to every allowlisted type. Prefer
+`Full.Type.Name.Member` entries so adding another type cannot expose an unrelated member with the
+same name. If the number of allowlisted member and overload candidates for one type exceeds
+`MaximumCachedMembers`, discovery and access fail explicitly with `MemberNotFound`; candidates are
+never silently truncated.
 
 ## Lua module
 
@@ -39,7 +49,7 @@ When installed, the global `clr` table contains:
 - `clr.call(target, name, ...)` — method/operator invocation. A type name as the first argument
   invokes a static member.
 - `clr.on(target, event, callback)` — disposable event subscription.
-- `clr.await(task)` — waits for a `Task`/`ValueTask` userdata and converts its result.
+- `clr.await(task)` — synchronously waits for a `Task`/`ValueTask` userdata and converts its result.
 - `clr.cancellation()`, `clr.cancel(value)` — create and signal a bridge-owned cancellation token source.
 - `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])` — create a host-polled timer.
 - `clr.cancel_timer(timer)` — cancel a timer without requiring the general disposal capability.
@@ -55,13 +65,25 @@ Candidates are filtered by arity, optional/default parameters, and named host-si
 lowest total conversion cost wins; ordinal parameter signatures break ties. Supported conversions
 include nil to references/nullable, booleans, strings/chars, exact enum names and integer values,
 all CLR numeric types with overflow checks, arrays and `ValueTuple` values represented by Lua tables,
-`LuaValue`, compatible CLR userdata, and primitive `object` fallback. Unsupported values produce a
-stable `NoMatchingConstructor` or `NoMatchingMember` error.
+`LuaValue`, compatible CLR userdata, and primitive `object` fallback. CLR rectangular arrays become
+nested one-based tables, one table per dimension; jagged arrays follow the same recursive rule.
+Unsupported values produce a stable `NoMatchingConstructor` or `NoMatchingMember` error.
+
+CLR enums become name strings when returned to Lua; Lua-to-CLR conversion accepts an exact name or
+an integer. CLR `decimal` values become Lua floats and can lose precision. `ulong` values through
+`long.MaxValue` become Lua integers; larger values fail explicitly with `InvocationFailed` instead
+of changing to userdata. Use an allowlisted application value type when enum flags, decimal values,
+or unsigned 64-bit values must retain their complete CLR representation.
 
 Methods with `ref`/`out` parameters return the ordinary result followed by ref/out values in
 parameter order. Task and `ValueTask` results become `LuaClrTask` userdata and are consumed by
 `clr.await`. `LuaClrCancellation` userdata converts to `CancellationToken`; nil maps to `CancellationToken.None`. CLR exceptions are translated to `LuaClrException`/catchable Lua errors; set
 `IncludeExceptionMessages` only when exposing messages is appropriate for the host.
+
+`clr.await` is deliberately synchronous. An incomplete task is rejected with `AsyncFailed` when the
+calling thread has a `SynchronizationContext`, preventing the common single-thread game-loop
+deadlock. In frame-driven or asynchronous hosts, integrate the public `LuaClrTask.Task` with the host
+scheduler and resume Lua through an explicit host boundary instead of blocking the frame thread.
 
 ## Delegates and events
 
@@ -71,6 +93,9 @@ Grant `EventSubscription` and list event names in `AllowedEventNames`; `Subscrib
 idempotent `LuaClrSubscription`. The subscription userdata roots the Lua callback and releases it
 when disposed. Callback entry obeys `ThreadPolicy`, preserves Lua state ownership, and rejects
 callbacks that yield or re-enter a busy state from an unsupported thread.
+`AnyThreadWhenIdle` uses the same per-state execution boundary as interpreter and JIT execution: a
+non-owner callback enters only when it can atomically claim an idle state, otherwise it fails with
+`ThreadDenied`.
 
 Hot-update publication fences delegates by the `LuaIrModule` that owns their closure. Delegates from
 the previous module generation become fail-closed with `SubscriptionClosed`; candidate delegates
@@ -164,6 +189,8 @@ resource. See [Production hot update](hot-update.md#state-schema-and-resource-mi
 rollback, and `RejectIfActive` behavior.
 
 Trimming and NativeAOT applications must preserve public constructors, members, and delegate
-signatures for every allowlisted type with linker metadata such as `DynamicDependency`. Missing
-metadata fails closed with a stable bridge diagnostic. Interpreter and dynamic JIT share the same
+signatures for every allowlisted application type with linker metadata such as `DynamicDependency`.
+The bridge preserves its delegate callback adapter and `Task<TResult>.Result` metadata, so delegate
+conversion and generic task results work in the NativeAOT interpreter path. Missing metadata for an
+allowlisted application member still fails closed. Interpreter and dynamic JIT share the same
 bridge implementation and conversion rules.

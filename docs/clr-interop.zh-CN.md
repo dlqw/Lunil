@@ -15,7 +15,11 @@ var options = LuaHostOptions.Restricted with
             LuaClrCapabilities.Async,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Value", "Translate"],
+        AllowedMemberNames =
+        [
+            "Example.Contracts.Point.Value",
+            "Example.Contracts.Point.Translate",
+        ],
         InstallGlobalModule = true,
     },
 };
@@ -27,6 +31,11 @@ assembly、type 和 member 名称均使用 ordinal、大小写敏感匹配。bri
 需要 allowlist 的 capability 在列表为空时 fail closed。Restricted、NativeAOT、trimming 和
 Deterministic Host 使用相同策略。
 
+`AllowedMemberNames` 中的裸名 entry（例如 `"Value"`）会应用于全部 allowlisted type。推荐使用
+`Full.Type.Name.Member`，避免以后新增 type 时意外暴露同名 member。如果单个 type 的 allowlist member
+和 overload candidate 数超过 `MaximumCachedMembers`，发现与访问会明确以 `MemberNotFound` 失败，
+不会静默截断 candidate。
+
 ## Lua 模块
 
 安装后，全局 `clr` 表提供：
@@ -37,7 +46,7 @@ Deterministic Host 使用相同策略。
 - `clr.get(target, name [, index...])`、`clr.set(target, name, value)`：显式 member 访问。
 - `clr.call(target, name, ...)`：method/operator 调用；第一个参数为 type 名称时调用 static member。
 - `clr.on(target, event, callback)`：可释放的 event subscription。
-- `clr.await(task)`：等待 `Task`/`ValueTask` userdata 并转换结果。
+- `clr.await(task)`：同步等待 `Task`/`ValueTask` userdata 并转换结果。
 - `clr.cancellation()`、`clr.cancel(value)`：创建并触发 bridge-owned cancellation token source。
 - `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])`：创建由 Host 轮询的 timer。
 - `clr.cancel_timer(timer)`：无需通用 disposal capability 即可取消 timer。
@@ -55,9 +64,19 @@ string/char、精确 enum 名称与 integer、全部 CLR 数值类型（含溢�
 array 与 `ValueTuple`、`LuaValue`、兼容 CLR userdata 以及 primitive `object` fallback。不支持的值
 返回稳定的 `NoMatchingConstructor` 或 `NoMatchingMember`。
 
+CLR rectangular array 会按维度递归转换为从 1 开始的嵌套 table；jagged array 使用相同的递归规则。
+CLR enum 返回 Lua 时转换为名称 string，Lua 到 CLR 则接受精确名称或 integer。CLR `decimal` 转为 Lua
+float，可能损失精度。`ulong` 不超过 `long.MaxValue` 时转为 Lua integer；更大的值明确以
+`InvocationFailed` 失败，不再静默变成 userdata。需要完整保留 enum flag、decimal 或无符号 64 位值时，
+应暴露 allowlist 内的应用 value type。
+
 带 `ref`/`out` 的 method 返回普通结果，再按参数顺序返回 ref/out 值。Task/ValueTask 结果包装为
 `LuaClrTask` userdata，由 `clr.await` 消费。`LuaClrCancellation` userdata 转换为 `CancellationToken`；nil 映射为 `CancellationToken.None`。CLR exception 转换为 `LuaClrException`/可捕获 Lua error；
 仅在适合公开异常消息时设置 `IncludeExceptionMessages`。
+
+`clr.await` 有意保持同步语义。调用线程存在 `SynchronizationContext` 且 task 尚未完成时，会以
+`AsyncFailed` 拒绝等待，避免常见的单线程 game-loop 死锁。Frame-driven 或 async Host 应把公开的
+`LuaClrTask.Task` 接入自己的 scheduler，再通过明确的 Host 边界恢复 Lua，而不是阻塞 frame thread。
 
 ## Delegate 与 event
 
@@ -66,6 +85,8 @@ array 与 `ValueTuple`、`LuaValue`、兼容 CLR userdata 以及 primitive `obje
 `AllowedEventNames` 列出 event 名称；`Subscribe` 返回幂等的 `LuaClrSubscription`。subscription
 userdata 会 root Lua callback，并在释放时解除订阅。callback 遵循 `ThreadPolicy` 和 state ownership，
 从不支持的线程进入 busy state 或尝试 yield 时会 fail closed。
+`AnyThreadWhenIdle` 与 interpreter/JIT 共用同一个 per-state 执行边界：非 owner callback 只有在能够
+原子占用 idle state 时才会进入，否则以 `ThreadDenied` fail closed。
 
 热更新发布会按 closure 所属 `LuaIrModule` 对 delegate 进行 generation fencing。旧 module
 generation 的 delegate 会以 `SubscriptionClosed` fail closed；candidate loader 执行期间创建的
@@ -151,6 +172,8 @@ handle 只关闭访问。userdata 始终绑定原来的 `LuaState`。
 module 应只在该 path 放置 placeholder，不得构造第二份 native resource。migration、rollback 与
 `RejectIfActive` 行为参见[生产级热更新](hot-update.zh-CN.md#状态-schema-与异步资源迁移)。
 
-Trimming 和 NativeAOT 应用必须通过 `DynamicDependency` 等 linker metadata 保留每个 allowlist type 的
-public constructor、member 和 delegate signature。metadata 缺失时以稳定 bridge diagnostic fail closed。
-Interpreter 与 dynamic JIT 共用同一套 bridge 实现和转换规则。
+Trimming 和 NativeAOT 应用必须通过 `DynamicDependency` 等 linker metadata 保留每个 allowlist
+应用 type 的 public constructor、member 和 delegate signature。Bridge 会保留自己的 delegate callback
+adapter 与 `Task<TResult>.Result` metadata，因此 delegate conversion 和泛型 task result 可在 NativeAOT
+interpreter 路径工作。Allowlist 应用 member 的 metadata 缺失时仍会 fail closed。Interpreter 与
+dynamic JIT 共用同一套 bridge 实现和转换规则。

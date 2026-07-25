@@ -14,6 +14,8 @@ namespace Lunil.Runtime;
 
 public sealed class LuaState
 {
+    internal object ExecutionGate { get; } = new();
+
     private readonly Dictionary<LuaValueKind, LuaTable> _typeMetatables = [];
     private readonly Dictionary<string, LoadedModuleRegistration> _loadedModules =
         new(StringComparer.Ordinal);
