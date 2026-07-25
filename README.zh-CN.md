@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.12.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.12.1-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -26,10 +26,9 @@ Lunil 是使用纯 C# 实现的版本化 Lua 编译器、分析工具链与 .NET
 JIT 执行；.NET NativeAOT 与 trimming 应用仍可使用相同编译器和解释器。
 
 > [!NOTE]
-> 稳定版 `0.12.0` 是当前支持版本。它保留版本化 Lua 5.1–5.5 契约与 opt-in 的精确 allowlist
-> CLR bridge，并为 Hosting 和游戏循环业务提供生产级热更新：签名准入、协调式 target 隔离、
-> 多 State 原子发布、保留 identity 的状态与资源迁移、异步 generation fencing、持久跨进程
-> barrier、有界 rollout history，以及发布前 JIT 预热。
+> 稳定版 `0.12.1` 是当前支持版本。它保留 0.12.0 的版本化 Lua 5.1–5.5 契约与
+> 生产级热更新路径，同时加固 opt-in 精确 allowlist CLR bridge 的 state admission、同步 task
+> 等待、NativeAOT metadata、member-cache 诊断和 CLR value conversion 边界。
 
 ## 性能
 
@@ -220,10 +219,10 @@ UTF-16 编辑器位置、诊断 phase、稳定 snapshot identity、CFG、workspa
 
 ### CLI
 
-从已配置的 GitHub Packages source 安装稳定版 `0.12.0`，或直接在源码 checkout 中运行：
+从已配置的 GitHub Packages source 安装稳定版 `0.12.1`，或直接在源码 checkout 中运行：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.12.0
+dotnet tool install --global Lunil.Cli --version 0.12.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -250,7 +249,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 引用稳定版 Hosting package：
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.12.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.12.1" />
 ```
 
 通过可复用的 Restricted host 编译并执行：
@@ -316,7 +315,7 @@ flowchart LR
 - 运行时目标：.NET 10。
 - 发布 RID：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - Binary chunk：有界 Lua 5.4 格式与显式目标校验；不兼容的数值布局会被拒绝，而不是截断。
-- 稳定线：`0.12.x`（当前版本 `0.12.0`）；既有 Host 仍可使用 `0.11.0` 公共 API。
+- 稳定线：`0.12.x`（当前版本 `0.12.1`）；既有 Host 仍可使用 `0.11.0` 公共 API。
 
 CLR 兼容性变更见 [`0.11.0` 迁移指南](docs/migration-0.11.0.zh-CN.md)；opt-in 的 0.12.0 部署路径见
 [签名 Patch Bundle](docs/hot-update.zh-CN.md)。.NET NativeAOT 仍是受支持的宿主发布方式，详见
