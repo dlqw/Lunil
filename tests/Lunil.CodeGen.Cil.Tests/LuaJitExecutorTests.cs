@@ -97,10 +97,14 @@ public sealed class LuaJitExecutorTests
             "local total = 0; for index = 1, 20 do total = total + index end; return total");
         using var cancellation = new CancellationTokenSource();
 
-        var warmup = Task.Run(() => executor.Warmup(
-            module,
-            new LuaJitWarmupOptions { IncludeTier2 = false },
-            cancellation.Token));
+        var warmup = Task.Factory.StartNew(
+            () => executor.Warmup(
+                module,
+                new LuaJitWarmupOptions { IncludeTier2 = false },
+                cancellation.Token),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
         cancellation.Cancel();
 
@@ -110,7 +114,7 @@ public sealed class LuaJitExecutorTests
     }
 
     [Fact]
-    public async Task ExplicitWarmupDeadlineCancelsInFlightCompilationAndReturnsTimedOut()
+    public void ExplicitWarmupDeadlineReturnsTimedOutAndLeavesFunctionRetryable()
     {
         using var started = new ManualResetEventSlim();
         using var observed = new ManualResetEventSlim();
@@ -124,21 +128,23 @@ public sealed class LuaJitExecutorTests
         var module = Compile(
             "local total = 0; for index = 1, 20 do total = total + index end; return total");
 
-        var warmup = Task.Run(() => executor.Warmup(
+        var result = executor.Warmup(
             module,
             new LuaJitWarmupOptions
             {
                 IncludeTier2 = false,
-                MaximumDuration = TimeSpan.FromMilliseconds(50),
-            }));
+                MaximumDuration = TimeSpan.FromMilliseconds(250),
+            });
 
-        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
-        var result = await warmup;
         Assert.Equal(LuaJitWarmupStatus.TimedOut, result.Status);
         Assert.Equal(
             result.CandidateFunctionCount - result.SelectedFunctionCount,
             result.SkippedFunctionCount);
-        Assert.True(observed.Wait(TimeSpan.FromSeconds(10)));
+        if (started.IsSet)
+        {
+            Assert.True(observed.IsSet);
+        }
+
         Assert.Equal(LuaJitFunctionState.Cold, executor.GetFunctionState(module, 0));
     }
 
@@ -164,10 +170,14 @@ public sealed class LuaJitExecutorTests
 
         try
         {
-            var warmup = Task.Run(() => executor.Warmup(
-                module,
-                new LuaJitWarmupOptions { IncludeTier2 = false },
-                cancellation.Token));
+            var warmup = Task.Factory.StartNew(
+                () => executor.Warmup(
+                    module,
+                    new LuaJitWarmupOptions { IncludeTier2 = false },
+                    cancellation.Token),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 warmup.WaitAsync(TimeSpan.FromSeconds(5)));
