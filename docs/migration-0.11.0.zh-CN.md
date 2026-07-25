@@ -20,13 +20,18 @@ using var host = new LuaHost(LuaHostOptions.Restricted with
             LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Value", "Translate"],
+        AllowedMemberNames =
+        [
+            "Example.Contracts.Point.Value",
+            "Example.Contracts.Point.Translate",
+        ],
         InstallGlobalModule = true,
     },
 });
 ```
 
-`AllowedMemberNames` 接受精确 member 名或带类型限定的 entry。Delegate 与 event capability 需要
+`AllowedMemberNames` 接受裸 member 名或带类型限定的 entry；裸名会应用于全部 allowlisted type，
+因此最小权限配置应优先使用类型限定 entry。Delegate 与 event capability 需要
 独立的精确列表（`AllowedDelegateTypeNames`、`AllowedEventNames`）。通过 `ThreadPolicy` 设置
 callback 线程策略，通过 `OwnConstructedObjects` 设置 disposal ownership。Bridge 只搜索已经加载的
 assembly，不会 fallback 到不受限制的 reflection。

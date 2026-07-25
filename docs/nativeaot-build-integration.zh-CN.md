@@ -45,4 +45,7 @@ dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
 - Lunil 不暴露 Lua C ABI，因此不支持 native Lua C module。
 - 动态代码不可用时，JIT 专用遥测不会表示为编译成功；应用应把执行视为 interpreter 路径。
 - 反射型 host extension 必须自行用 linker metadata 保留可访问成员。
-- 使用 CLR bridge 时，必须保留 allowlist 中 type 的 public constructor、member 和 delegate signature；可使用 `DynamicDependency`。缺少 metadata 时 bridge 会以诊断拒绝访问。
+- 使用 CLR bridge 时，必须保留 allowlist 应用 type 的 public constructor、member 和 delegate
+  signature；可使用 `DynamicDependency`。Bridge 自身会保留 interpreted delegate callback adapter
+  与泛型 task-result metadata，NativeAOT fixture 会同时验证 delegate conversion 和
+  `Task<TResult>` result。应用 member 缺少 metadata 时 bridge 仍会以诊断拒绝访问。

@@ -156,16 +156,28 @@ public static class Program
     private static bool VerifyClrInterop()
     {
         var typeName = typeof(ClrFixtureValue).FullName!;
+        var delegateName = typeof(Func<int, int>).FullName!;
         using var host = new LuaHost(new LuaHostOptions
         {
             ExecutionBackend = LuaHostExecutionBackend.Interpreter,
             Clr = new LuaClrOptions
             {
                 Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction |
-                    LuaClrCapabilities.MemberAccess,
-                AllowedAssemblyNames = [typeof(ClrFixtureValue).Assembly.GetName().Name!],
-                AllowedTypeNames = [typeName],
-                AllowedMemberNames = ["Value", "Add"],
+                    LuaClrCapabilities.MemberAccess | LuaClrCapabilities.DelegateConversion |
+                    LuaClrCapabilities.Async,
+                AllowedAssemblyNames =
+                [
+                    typeof(ClrFixtureValue).Assembly.GetName().Name!,
+                    typeof(Func<int, int>).Assembly.GetName().Name!,
+                ],
+                AllowedTypeNames = [typeName, delegateName],
+                AllowedMemberNames =
+                [
+                    $"{typeName}.Value",
+                    $"{typeName}.Add",
+                    $"{typeName}.Async",
+                ],
+                AllowedDelegateTypeNames = [delegateName],
                 InstallGlobalModule = true,
             },
         });
@@ -175,12 +187,20 @@ public static class Program
         var payload = userdata.GetPayload<LuaClrObject>();
         var luaResult = host.RunUtf8(
             $"local value=clr.new('{typeName}', 43); return type(value),value.Value,value:Add(1)");
+        var function = host.RunUtf8("return function(value) return value+1 end").Execution!.Values[0];
+        var callback = (Func<int, int>)host.ClrBridge.CreateDelegate(function, delegateName);
+        var task = host.ClrBridge.InvokeStatic(
+            typeName,
+            nameof(ClrFixtureValue.Async),
+            [LuaValue.FromInteger(41)]).ReturnValue;
         return info.IsConstructible &&
             payload.Instance is ClrFixtureValue { Value: 42 } &&
             luaResult.Succeeded &&
             luaResult.Execution!.Values[0].AsString().ToString() == "userdata" &&
             luaResult.Execution.Values[1].AsInteger() == 43 &&
-            luaResult.Execution.Values[2].AsInteger() == 44;
+            luaResult.Execution.Values[2].AsInteger() == 44 &&
+            callback(41) == 42 &&
+            host.ClrBridge.Await(task).AsInteger() == 41;
     }
 
     private static bool VerifyReplayStore()
@@ -230,5 +250,7 @@ public static class Program
         public long Value { get; }
 
         public long Add(long amount) => Value + amount;
+
+        public static Task<long> Async(long value) => Task.FromResult(value);
     }
 }

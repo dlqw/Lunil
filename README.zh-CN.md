@@ -110,7 +110,7 @@ var options = LuaHostOptions.Restricted with
             LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
         AllowedAssemblyNames = ["Example.Contracts"],
         AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Translate"],
+        AllowedMemberNames = ["Example.Contracts.Point.Translate"],
         InstallGlobalModule = true,
     },
 };

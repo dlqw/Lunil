@@ -171,7 +171,10 @@ public sealed record LuaClrOptions
     /// <summary>Gets whether CLR exceptions are exposed to Lua with their messages.</summary>
     public bool IncludeExceptionMessages { get; init; }
 
-    /// <summary>Gets the maximum number of members cached for one type.</summary>
+    /// <summary>
+    /// Gets the maximum allowlisted member candidates cached for one type. Exceeding the bound
+    /// fails explicitly instead of truncating candidates.
+    /// </summary>
     public int MaximumCachedMembers { get; init; } = 256;
 
     /// <summary>Gets the clock used by host-polled CLR timers.</summary>
@@ -190,7 +193,9 @@ public enum LuaClrThreadPolicy : byte
     /// <summary>Only the thread that created the bridge may enter Lua.</summary>
     OwnerThreadOnly,
 
-    /// <summary>Allow callbacks from any thread when the host scheduler is idle.</summary>
+    /// <summary>
+    /// Allow a callback from any thread only when it atomically claims the idle state boundary.
+    /// </summary>
     AnyThreadWhenIdle,
 }
 
@@ -225,12 +230,14 @@ public sealed record LuaClrInvocationResult(LuaValue ReturnValue, ImmutableArray
 public sealed class LuaClrTask : IDisposable
 {
     private readonly Task _task;
+    private readonly PropertyInfo? _resultProperty;
     private readonly LuaClrTaskRegistration _registration;
     private int _disposed;
 
     internal LuaClrTask(Task task, LuaClrBridge bridge)
     {
         _task = task;
+        _resultProperty = FindResultProperty(task.GetType());
         Bridge = bridge;
         _registration = bridge.CreateTaskRegistration();
     }
@@ -262,16 +269,51 @@ public sealed class LuaClrTask : IDisposable
         }
     }
 
-    [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Task result metadata is preserved by the consuming application.")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Task<>))]
     internal object? GetResult()
     {
         EnsureConsumable();
         _task.GetAwaiter().GetResult();
         EnsureConsumable();
-        return _task.GetType().GetProperty("Result")?.GetValue(_task);
+        if (_resultProperty is null)
+        {
+            if (FindGenericTaskType(_task.GetType()) is not null)
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.AsyncFailed,
+                    "The CLR task result metadata is unavailable.");
+            }
+
+            return null;
+        }
+
+        return _resultProperty.GetValue(_task);
     }
 
     internal void EnsureConsumable() => Bridge.EnsureTaskConsumable(_registration);
+
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Task<>))]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075",
+        Justification = "Task<TResult>.Result metadata is rooted for every closed Task<TResult> instance.")]
+    private static PropertyInfo? FindResultProperty(Type taskType) =>
+        FindGenericTaskType(taskType)?.GetProperty(
+            nameof(Task<int>.Result),
+            BindingFlags.Public | BindingFlags.Instance);
+
+    private static Type? FindGenericTaskType(Type taskType)
+    {
+        for (var current = taskType; current is not null; current = current.BaseType)
+        {
+            if (current.IsGenericType && current.GetGenericTypeDefinition() == typeof(Task<>))
+            {
+                return current;
+            }
+        }
+
+        return null;
+    }
 }
 
 /// <summary>Bridge-owned cancellation source passed to allowlisted CLR calls.</summary>
@@ -914,7 +956,10 @@ public sealed partial class LuaClrBridge
         }
     }
 
-    /// <summary>Synchronously awaits a bridge task and converts its result to Lua.</summary>
+    /// <summary>
+    /// Synchronously awaits a bridge task and converts its result to Lua. Incomplete tasks are
+    /// rejected while the calling thread has a synchronization context.
+    /// </summary>
     public LuaValue Await(LuaValue value)
     {
         RequireCapability(LuaClrCapabilities.Async);
@@ -928,6 +973,14 @@ public sealed partial class LuaClrBridge
             throw new LuaClrException(
                 LuaClrErrorCode.AsyncFailed,
                 "The CLR task belongs to a different Lua state.");
+        }
+
+        if (!task.IsCompleted && SynchronizationContext.Current is not null)
+        {
+            throw new LuaClrException(
+                LuaClrErrorCode.AsyncFailed,
+                "Synchronous CLR task waiting is denied while a synchronization context is active; " +
+                "integrate LuaClrTask.Task with the host scheduler instead.");
         }
 
         try
@@ -1534,8 +1587,16 @@ public sealed partial class LuaClrBridge
                     EventInfo @event => @event.EventHandlerType?.FullName ?? string.Empty,
                     _ => string.Empty,
                 }, StringComparer.Ordinal)
-                .Take(state._options.MaximumCachedMembers)
+                .Take(state._options.MaximumCachedMembers + 1)
                 .ToArray();
+            if (members.Length > state._options.MaximumCachedMembers)
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.MemberNotFound,
+                    $"CLR type '{current.FullName}' exposes more than " +
+                    $"{state._options.MaximumCachedMembers} allowlisted member candidates.");
+            }
+
             return members.ToImmutableArray();
         }, this).ToArray();
     }
@@ -1872,6 +1933,7 @@ public sealed partial class LuaClrBridge
         }
     }
 
+    [DynamicDependency(nameof(InvokeDelegateCore), typeof(LuaClrBridge))]
     private Delegate BuildDelegate(
         Type delegateType,
         LuaClrCallbackRegistration registration)
@@ -1900,25 +1962,32 @@ public sealed partial class LuaClrBridge
         object?[] arguments,
         Type returnType)
     {
-        lock (_callbackGate)
+        EnterCallbackExecutionBoundary();
+        try
         {
-            EnsureThread();
-            var function = registration.GetActiveCallback();
-            var luaArguments = arguments.Select(ToLuaValue).ToArray();
-            var result = InvokeLuaCallback(function, luaArguments);
-
-            var value = result.Length == 0 ? LuaValue.Nil : result[0];
-            if (returnType == typeof(void))
+            lock (_callbackGate)
             {
-                return null;
-            }
+                var function = registration.GetActiveCallback();
+                var luaArguments = arguments.Select(ToLuaValue).ToArray();
+                var result = InvokeLuaCallback(function, luaArguments);
 
-            if (!TryConvert(value, returnType, out var converted, out _))
-            {
-                throw new LuaClrException(LuaClrErrorCode.InvocationFailed,
-                    $"Lua callback result cannot convert to '{returnType.FullName}'.");
+                var value = result.Length == 0 ? LuaValue.Nil : result[0];
+                if (returnType == typeof(void))
+                {
+                    return null;
+                }
+
+                if (!TryConvert(value, returnType, out var converted, out _))
+                {
+                    throw new LuaClrException(LuaClrErrorCode.InvocationFailed,
+                        $"Lua callback result cannot convert to '{returnType.FullName}'.");
+                }
+                return converted;
             }
-            return converted;
+        }
+        finally
+        {
+            Monitor.Exit(_state.ExecutionGate);
         }
     }
 
@@ -1974,6 +2043,10 @@ public sealed partial class LuaClrBridge
             case uint number: return LuaValue.FromInteger(number);
             case long number: return LuaValue.FromInteger(number);
             case ulong number when number <= long.MaxValue: return LuaValue.FromInteger((long)number);
+            case ulong number:
+                throw new LuaClrException(
+                    LuaClrErrorCode.InvocationFailed,
+                    $"CLR UInt64 value '{number}' exceeds the Lua integer range.");
             case float number: return LuaValue.FromFloat(number);
             case double number: return LuaValue.FromFloat(number);
             case decimal number: return LuaValue.FromFloat((double)number);
@@ -1982,14 +2055,7 @@ public sealed partial class LuaClrBridge
             case Task task:
                 return LuaValue.FromUserdata(_state.CreateUserdata(new LuaClrTask(task, this), 1, 64));
             case Array array:
-                {
-                    var table = _state.CreateTable(array.Length, 1);
-                    for (var index = 0; index < array.Length; index++)
-                    {
-                        table.Set(LuaValue.FromInteger(index + 1), ToLuaValue(array.GetValue(index)));
-                    }
-                    return LuaValue.FromTable(table);
-                }
+                return ToLuaArray(array);
         }
 
         var valueType = value.GetType();
@@ -2022,12 +2088,35 @@ public sealed partial class LuaClrBridge
         return LuaValue.FromUserdata(userdata);
     }
 
+    private LuaValue ToLuaArray(Array array)
+    {
+        var indices = new int[array.Rank];
+        return ToLuaArrayDimension(array, indices, dimension: 0);
+    }
+
+    private LuaValue ToLuaArrayDimension(Array array, int[] indices, int dimension)
+    {
+        var length = array.GetLength(dimension);
+        var lowerBound = array.GetLowerBound(dimension);
+        var table = _state.CreateTable(length, 0);
+        for (var offset = 0; offset < length; offset++)
+        {
+            indices[dimension] = lowerBound + offset;
+            var value = dimension + 1 == array.Rank
+                ? ToLuaValue(array.GetValue(indices))
+                : ToLuaArrayDimension(array, indices, dimension + 1);
+            table.Set(LuaValue.FromInteger(offset + 1L), value);
+        }
+
+        return LuaValue.FromTable(table);
+    }
+
     private static bool IsSupportedClrType(Type type) =>
         type == typeof(void) || type == typeof(object) || type == typeof(string) ||
         type == typeof(bool) || type == typeof(char) || IsNumeric(type) || type.IsEnum ||
         Nullable.GetUnderlyingType(type) is not null || type.IsArray || type.IsClass;
 
-    private void EnsureThread()
+    private void EnterCallbackExecutionBoundary()
     {
         if (_options.ThreadPolicy == LuaClrThreadPolicy.OwnerThreadOnly &&
             Environment.CurrentManagedThreadId != _ownerThreadId)
@@ -2037,12 +2126,25 @@ public sealed partial class LuaClrBridge
         }
 
         if (_options.ThreadPolicy == LuaClrThreadPolicy.AnyThreadWhenIdle &&
-            Environment.CurrentManagedThreadId != _ownerThreadId &&
-            _state.RunningThread is not null)
+            Environment.CurrentManagedThreadId != _ownerThreadId)
         {
-            throw new LuaClrException(LuaClrErrorCode.ThreadDenied,
-                "CLR callbacks cannot enter a running Lua state from another thread.");
+            if (!Monitor.TryEnter(_state.ExecutionGate))
+            {
+                throw new LuaClrException(LuaClrErrorCode.ThreadDenied,
+                    "CLR callbacks cannot enter a running Lua state from another thread.");
+            }
+
+            if (_state.RunningThread is not null)
+            {
+                Monitor.Exit(_state.ExecutionGate);
+                throw new LuaClrException(LuaClrErrorCode.ThreadDenied,
+                    "CLR callbacks cannot re-enter a running Lua state from a non-owner thread.");
+            }
+
+            return;
         }
+
+        Monitor.Enter(_state.ExecutionGate);
     }
 
     [UnconditionalSuppressMessage(
