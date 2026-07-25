@@ -750,6 +750,7 @@ namespace Lunil.Hosting
         public bool RequireTargetIsolation { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchRingHealthCallback? HealthCheck { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchGenerationGuardPolicy? GenerationGuard { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchHistory? History { get => throw null; init { } }
         public Lunil.Hosting.ILuaPatchDeploymentJournal? Journal { get => throw null; init { } }
         public Lunil.Hosting.LuaPatchDistributedBarrierOptions? DistributedBarrier { get => throw null; init { } }
         public System.TimeProvider TimeProvider { get => throw null; init { } }
@@ -1191,6 +1192,75 @@ namespace Lunil.Hosting
         public override int GetHashCode() => throw null;
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Hosting.LuaPatchGenerationSnapshot? other) => throw null;
+    }
+
+    public sealed class LuaPatchHistory
+    {
+        public int MaximumEntryCount { get => throw null; }
+        public LuaPatchHistory(int maximumEntryCount = 256) { }
+        public Lunil.Hosting.LuaPatchHistorySnapshot CaptureSnapshot() => throw null;
+    }
+
+    public sealed class LuaPatchHistoryEntry : System.IEquatable<Lunil.Hosting.LuaPatchHistoryEntry>
+    {
+        public long Sequence { get => throw null; init { } }
+        public System.DateTimeOffset RecordedAt { get => throw null; init { } }
+        public string RolloutId { get => throw null; init { } }
+        public string RingName { get => throw null; init { } }
+        public string TransactionId { get => throw null; init { } }
+        public string PatchId { get => throw null; init { } }
+        public string TargetRevision { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchRingCommitStatus Status { get => throw null; init { } }
+        public System.TimeSpan Duration { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryTargetEntry> Targets { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchDistributedBarrierDecision? DistributedDecision { get => throw null; init { } }
+        public LuaPatchHistoryEntry(long Sequence, System.DateTimeOffset RecordedAt, string RolloutId, string RingName, string TransactionId, string PatchId, string TargetRevision, Lunil.Hosting.LuaPatchRingCommitStatus Status, System.TimeSpan Duration, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryTargetEntry> Targets) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchHistoryEntry? left, Lunil.Hosting.LuaPatchHistoryEntry? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchHistoryEntry? left, Lunil.Hosting.LuaPatchHistoryEntry? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchHistoryEntry? other) => throw null;
+        public void Deconstruct(out long Sequence, out System.DateTimeOffset RecordedAt, out string RolloutId, out string RingName, out string TransactionId, out string PatchId, out string TargetRevision, out Lunil.Hosting.LuaPatchRingCommitStatus Status, out System.TimeSpan Duration, out System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryTargetEntry> Targets) => throw null;
+    }
+
+    public sealed class LuaPatchHistorySnapshot : System.IEquatable<Lunil.Hosting.LuaPatchHistorySnapshot>
+    {
+        public int MaximumEntryCount { get => throw null; init { } }
+        public long TotalRecordedCount { get => throw null; init { } }
+        public long DroppedEntryCount { get => throw null; init { } }
+        public long RecordingFailureCount { get => throw null; init { } }
+        public int ConsecutiveUnsuccessfulCount { get => throw null; init { } }
+        public System.DateTimeOffset? LastCommittedAt { get => throw null; init { } }
+        public System.DateTimeOffset? LastUnsuccessfulAt { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryEntry> Entries { get => throw null; init { } }
+        public LuaPatchHistorySnapshot(int MaximumEntryCount, long TotalRecordedCount, long DroppedEntryCount, long RecordingFailureCount, int ConsecutiveUnsuccessfulCount, System.DateTimeOffset? LastCommittedAt, System.DateTimeOffset? LastUnsuccessfulAt, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryEntry> Entries) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchHistorySnapshot? left, Lunil.Hosting.LuaPatchHistorySnapshot? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchHistorySnapshot? left, Lunil.Hosting.LuaPatchHistorySnapshot? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchHistorySnapshot? other) => throw null;
+        public void Deconstruct(out int MaximumEntryCount, out long TotalRecordedCount, out long DroppedEntryCount, out long RecordingFailureCount, out int ConsecutiveUnsuccessfulCount, out System.DateTimeOffset? LastCommittedAt, out System.DateTimeOffset? LastUnsuccessfulAt, out System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchHistoryEntry> Entries) => throw null;
+    }
+
+    public sealed class LuaPatchHistoryTargetEntry : System.IEquatable<Lunil.Hosting.LuaPatchHistoryTargetEntry>
+    {
+        public string TargetId { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchCommitStatus CommitStatus { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetLifecycleStatus LifecycleStatus { get => throw null; init { } }
+        public bool SideEffectsMayHaveOccurred { get => throw null; init { } }
+        public System.TimeSpan PauseDuration { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchGenerationSnapshot? GenerationSnapshot { get => throw null; init { } }
+        public Lunil.Hosting.LuaPatchTargetLifecycleStatus? LifecycleFailure { get => throw null; init { } }
+        public LuaPatchHistoryTargetEntry(string TargetId, Lunil.Hosting.LuaPatchCommitStatus CommitStatus, Lunil.Hosting.LuaPatchTargetLifecycleStatus LifecycleStatus, bool SideEffectsMayHaveOccurred, System.TimeSpan PauseDuration) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Hosting.LuaPatchHistoryTargetEntry? left, Lunil.Hosting.LuaPatchHistoryTargetEntry? right) => throw null;
+        public static bool operator ==(Lunil.Hosting.LuaPatchHistoryTargetEntry? left, Lunil.Hosting.LuaPatchHistoryTargetEntry? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Hosting.LuaPatchHistoryTargetEntry? other) => throw null;
+        public void Deconstruct(out string TargetId, out Lunil.Hosting.LuaPatchCommitStatus CommitStatus, out Lunil.Hosting.LuaPatchTargetLifecycleStatus LifecycleStatus, out bool SideEffectsMayHaveOccurred, out System.TimeSpan PauseDuration) => throw null;
     }
 
     public sealed class LuaPatchJournalCompactionOptions : System.IEquatable<Lunil.Hosting.LuaPatchJournalCompactionOptions>
@@ -1772,6 +1842,7 @@ namespace Lunil.Hosting
         public string? Message { get => throw null; init { } }
         public bool Succeeded { get => throw null; }
         public Lunil.Hosting.LuaPatchDistributedBarrierSnapshot? DistributedBarrier { get => throw null; init { } }
+        public System.TimeSpan Duration { get => throw null; init { } }
         public LuaPatchRingCommitResult(string RolloutId, string RingName, string TransactionId, Lunil.Hosting.LuaPatchRingCommitStatus Status, System.Collections.Immutable.ImmutableArray<Lunil.Hosting.LuaPatchTargetCommitResult> Targets, string? Message) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Hosting.LuaPatchRingCommitResult? left, Lunil.Hosting.LuaPatchRingCommitResult? right) => throw null;

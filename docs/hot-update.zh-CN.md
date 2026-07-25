@@ -427,6 +427,41 @@ host task、关闭外部 resource，也无法撤销 candidate loader 的任意�
 generation admission 与受管 patch graph；candidate 外部副作用形成的引用仍可能作为 stale resource
 保留，直到应用主动释放。
 
+### 有界 rollout history 与 health endpoint
+
+进程内 health endpoint 需要查询近期 ring 终态、但不能因此持有 `LuaModuleRecord`、
+`LuaExecutionResult`、Lua value 或 candidate heap graph 时，使用 `LuaPatchHistory`：
+
+```csharp
+var history = new LuaPatchHistory(maximumEntryCount: 256);
+var options = new LuaPatchCoordinatorOptions
+{
+    History = history,
+    GenerationGuard = generationGuard,
+};
+
+var result = coordinator.Deploy(plan, options, stoppingToken);
+var health = history.CaptureSnapshot();
+```
+
+Capacity 必须在 1 到 10,000 之间。`CaptureSnapshot()` 按从旧到新返回 entry，并提供累计记录数、
+淘汰数、记录失败数、连续 unsuccessful 数量，以及最近 committed/unsuccessful 时间。每条 entry 包含
+稳定的 rollout、ring、transaction、patch、revision、status、duration、distributed decision，以及
+每个 target 的 commit、lifecycle、side-effect、pause 和 generation-guard 字段。
+`LuaPatchRingCommitResult.Duration` 也会直接暴露同一 ring 总耗时。
+
+Coordinator 只在 target cleanup 与流量恢复结束后记录 ring。`Deploy` 会记录到首个 unsuccessful ring
+为止的每个已尝试 ring；`CommitRing` 记录单次终态。未配置 `History` 时不会分配 history entry。
+Snapshot 读取是线程安全的，不会等待 Lua execution，但会与另一项 history read/append 短暂串行。
+
+History append 是 best effort，不能替代或改变 rollout 终态。Clock 或 summary recording 的可恢复失败
+会增加 `RecordingFailureCount`，且不会加入不完整 entry；该值非零时应告警。
+
+History 有意不保存 raw failure message、exception object、module record、execution result 或 patch
+payload。它会包含应用提供的 target id，因此暴露该 endpoint 时必须进行认证与授权。它只是进程内易失
+health 数据，不能代替 durable audit 或 crash recovery；这些场景仍使用
+`ILuaPatchDeploymentJournal`。
+
 ## 多 State Barrier 与 Ring 灰度
 
 `LuaPatchCoordinator` 在单进程内协调多个 `LuaHost` state。Barrier ring 中的 target id 与 host

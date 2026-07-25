@@ -463,6 +463,45 @@ or undo arbitrary side effects performed by a candidate loader. Rollback restore
 admission and the managed patch graph, while references created by candidate-side external effects
 can remain visible as stale resources until the application releases them.
 
+### Bounded rollout history and health endpoints
+
+Use `LuaPatchHistory` when an in-process health endpoint needs recent terminal ring outcomes without
+retaining `LuaModuleRecord`, `LuaExecutionResult`, Lua values, or candidate heap graphs:
+
+```csharp
+var history = new LuaPatchHistory(maximumEntryCount: 256);
+var options = new LuaPatchCoordinatorOptions
+{
+    History = history,
+    GenerationGuard = generationGuard,
+};
+
+var result = coordinator.Deploy(plan, options, stoppingToken);
+var health = history.CaptureSnapshot();
+```
+
+The capacity must be between 1 and 10,000 entries. `CaptureSnapshot()` returns entries in
+oldest-to-newest order together with total, dropped, and recording-failure counts, the consecutive
+unsuccessful count, and the latest committed and unsuccessful timestamps. Each entry contains
+stable rollout, ring, transaction, patch, revision, status, duration, distributed decision, and
+per-target commit, lifecycle, side-effect, pause, and generation-guard fields.
+`LuaPatchRingCommitResult.Duration` exposes the same total ring duration directly.
+
+The coordinator records a ring only after target cleanup and traffic restoration finish. `Deploy`
+records every attempted ring up to the first unsuccessful ring; `CommitRing` records its single
+terminal outcome. Omitting `History` performs no history allocation. Snapshot reads are thread-safe
+and do not block on Lua execution, although they briefly serialize with another history read or
+append.
+
+History append is best effort and cannot replace or change a terminal rollout result. A recoverable
+clock or summary-recording failure increments `RecordingFailureCount` without adding a partial
+entry; alert on any non-zero value.
+
+History intentionally omits raw failure messages, exception objects, module records, execution
+results, and patch payloads. It does include application-provided target ids, so authenticate and
+authorize any endpoint that exposes it. This is volatile process health, not a durable audit log or
+crash-recovery source; keep using `ILuaPatchDeploymentJournal` for those roles.
+
 ## Multi-State barriers and ring rollout
 
 `LuaPatchCoordinator` coordinates multiple `LuaHost` states in one process. Every target in a

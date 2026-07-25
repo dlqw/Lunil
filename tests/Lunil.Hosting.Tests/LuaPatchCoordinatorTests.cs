@@ -11,6 +11,175 @@ namespace Lunil.Hosting.Tests;
 public sealed class LuaPatchCoordinatorTests
 {
     [Fact]
+    public void BoundedHistoryRecordsTerminalHealthWithoutRetainingCommitGraphs()
+    {
+        var history = new LuaPatchHistory(maximumEntryCount: 2);
+        var firstTime = new DateTimeOffset(2026, 7, 25, 0, 0, 0, TimeSpan.Zero);
+        var secondTime = firstTime.AddMinutes(1);
+        var thirdTime = firstTime.AddMinutes(2);
+        var thirdDuration = TimeSpan.Zero;
+
+        using (var host = CreateHost("return {value=1}"))
+        {
+            Load(host);
+            var result = new LuaPatchCoordinator().CommitRing(
+                "history-success-1",
+                Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+                new LuaPatchCoordinatorOptions
+                {
+                    History = history,
+                    TimeProvider = new FixedTimeProvider(firstTime),
+                    GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+                });
+            Assert.True(result.Succeeded, result.Message);
+        }
+
+        using (var host = CreateHost("return {value=1}"))
+        {
+            Load(host);
+            var result = new LuaPatchCoordinator().CommitRing(
+                "history-failure",
+                Ring(Target("state-b", host, CreateBundle("return {value=2}"))),
+                new LuaPatchCoordinatorOptions
+                {
+                    History = history,
+                    TimeProvider = new FixedTimeProvider(secondTime),
+                    HealthCheck = _ => LuaPatchRingHealthDecision.Rollback,
+                });
+            Assert.Equal(LuaPatchRingCommitStatus.HealthRejected, result.Status);
+        }
+        var unsuccessful = history.CaptureSnapshot();
+        Assert.Equal(1, unsuccessful.ConsecutiveUnsuccessfulCount);
+        Assert.Equal(firstTime, unsuccessful.LastCommittedAt);
+        Assert.Equal(secondTime, unsuccessful.LastUnsuccessfulAt);
+
+        using (var host = CreateHost("return {value=1}"))
+        {
+            Load(host);
+            var result = new LuaPatchCoordinator().CommitRing(
+                "history-success-2",
+                Ring(Target("state-c", host, CreateBundle("return {value=2}"))),
+                new LuaPatchCoordinatorOptions
+                {
+                    History = history,
+                    TimeProvider = new FixedTimeProvider(thirdTime),
+                    GenerationGuard = LuaPatchGenerationGuardPolicy.Strict,
+                });
+            Assert.True(result.Succeeded, result.Message);
+            thirdDuration = result.Duration;
+        }
+
+        var snapshot = history.CaptureSnapshot();
+        Assert.Equal(2, snapshot.MaximumEntryCount);
+        Assert.Equal(3, snapshot.TotalRecordedCount);
+        Assert.Equal(1, snapshot.DroppedEntryCount);
+        Assert.Equal(0, snapshot.RecordingFailureCount);
+        Assert.Equal(0, snapshot.ConsecutiveUnsuccessfulCount);
+        Assert.Equal(thirdTime, snapshot.LastCommittedAt);
+        Assert.Equal(secondTime, snapshot.LastUnsuccessfulAt);
+        Assert.Equal([2L, 3L], snapshot.Entries.Select(static entry => entry.Sequence));
+        Assert.Equal(
+            [LuaPatchRingCommitStatus.HealthRejected, LuaPatchRingCommitStatus.Committed],
+            snapshot.Entries.Select(static entry => entry.Status));
+        Assert.Equal("history-failure", snapshot.Entries[0].RolloutId);
+        Assert.Equal("patch-1", snapshot.Entries[0].PatchId);
+        Assert.Equal("build-2", snapshot.Entries[0].TargetRevision);
+        Assert.Equal(secondTime, snapshot.Entries[0].RecordedAt);
+        Assert.Equal(thirdDuration, snapshot.Entries[1].Duration);
+        var failedTarget = Assert.Single(snapshot.Entries[0].Targets);
+        Assert.Equal("state-b", failedTarget.TargetId);
+        Assert.Equal(LuaPatchCommitStatus.BarrierAborted, failedTarget.CommitStatus);
+        Assert.True(failedTarget.SideEffectsMayHaveOccurred);
+        Assert.Null(failedTarget.GenerationSnapshot);
+        Assert.NotNull(Assert.Single(snapshot.Entries[1].Targets).GenerationSnapshot);
+    }
+
+    [Fact]
+    public async Task HistorySnapshotsRemainConsistentDuringConcurrentReads()
+    {
+        var history = new LuaPatchHistory(maximumEntryCount: 4);
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        using var finished = new CancellationTokenSource();
+        var errors = new List<Exception>();
+        var reader = Task.Run(() =>
+        {
+            while (!finished.IsCancellationRequested)
+            {
+                try
+                {
+                    var snapshot = history.CaptureSnapshot();
+                    Assert.InRange(snapshot.Entries.Length, 0, 4);
+                    Assert.Equal(
+                        snapshot.Entries.OrderBy(static entry => entry.Sequence),
+                        snapshot.Entries);
+                }
+                catch (Exception exception)
+                {
+                    lock (errors)
+                    {
+                        errors.Add(exception);
+                    }
+                    return;
+                }
+            }
+        });
+
+        for (var index = 0; index < 12; index++)
+        {
+            var result = new LuaPatchCoordinator().CommitRing(
+                $"history-concurrent-{index}",
+                Ring(Target(
+                    "state-a",
+                    host,
+                    CreateBundle($"return {{value={index + 2}}}"))),
+                new LuaPatchCoordinatorOptions { History = history });
+            Assert.True(result.Succeeded, result.Message);
+        }
+
+        finished.Cancel();
+        await reader;
+        Assert.Empty(errors);
+        var final = history.CaptureSnapshot();
+        Assert.Equal(12, final.TotalRecordedCount);
+        Assert.Equal(8, final.DroppedEntryCount);
+        Assert.Equal(4, final.Entries.Length);
+        Assert.Equal(0, final.ConsecutiveUnsuccessfulCount);
+    }
+
+    [Fact]
+    public void HistoryCapacityRejectsUnboundedConfigurations()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LuaPatchHistory(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new LuaPatchHistory(10_001));
+    }
+
+    [Fact]
+    public void HistoryRecordingFailureDoesNotChangeTheCommittedResult()
+    {
+        using var host = CreateHost("return {value=1}");
+        Load(host);
+        var history = new LuaPatchHistory();
+        var time = new ThrowOnCallTimeProvider(throwOnCall: 7);
+
+        var result = new LuaPatchCoordinator().CommitRing(
+            "history-clock-failure",
+            Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
+            new LuaPatchCoordinatorOptions
+            {
+                History = history,
+                TimeProvider = time,
+            });
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(2, Value(host));
+        var snapshot = history.CaptureSnapshot();
+        Assert.Equal(0, snapshot.TotalRecordedCount);
+        Assert.Equal(1, snapshot.RecordingFailureCount);
+        Assert.Empty(snapshot.Entries);
+    }
+
+    [Fact]
     public void BarrierCommitPublishesAllStatesAndWritesDurablePhases()
     {
         using var first = CreateHost("return {value=1}");
@@ -626,8 +795,11 @@ public sealed class LuaPatchCoordinatorTests
                 },
             ],
         };
+        var history = new LuaPatchHistory();
 
-        var result = new LuaPatchCoordinator().Deploy(plan);
+        var result = new LuaPatchCoordinator().Deploy(
+            plan,
+            new LuaPatchCoordinatorOptions { History = history });
 
         Assert.False(result.Succeeded);
         Assert.Equal(2, result.Rings.Length);
@@ -635,6 +807,9 @@ public sealed class LuaPatchCoordinatorTests
         Assert.Equal(LuaPatchRingCommitStatus.PrepareFailed, result.Rings[1].Status);
         Assert.Equal(2, Value(canary));
         Assert.Equal(1, Value(production));
+        Assert.Equal(
+            ["canary", "production"],
+            history.CaptureSnapshot().Entries.Select(static entry => entry.RingName));
     }
 
     [Fact]
@@ -1178,6 +1353,7 @@ public sealed class LuaPatchCoordinatorTests
     {
         using var host = CreateHost("return {value=1}");
         Load(host);
+        var history = new LuaPatchHistory();
         var store = new ScriptedDistributedStore(request => request.Signal switch
         {
             LuaPatchDistributedBarrierSignal.Prepared => Snapshot(
@@ -1195,7 +1371,7 @@ public sealed class LuaPatchCoordinatorTests
         var result = new LuaPatchCoordinator().CommitRing(
             "distributed-rollout",
             Ring(Target("state-a", host, CreateBundle("return {value=2}"))),
-            DistributedOptions(store));
+            DistributedOptions(store) with { History = history });
 
         Assert.True(result.Succeeded, result.Message);
         Assert.Equal(2, Value(host));
@@ -1203,6 +1379,9 @@ public sealed class LuaPatchCoordinatorTests
             [LuaPatchDistributedBarrierSignal.Prepared, LuaPatchDistributedBarrierSignal.Healthy],
             store.Requests.Select(static request => request.Signal));
         Assert.Equal(LuaPatchDistributedBarrierDecision.Commit, result.DistributedBarrier!.Decision);
+        Assert.Equal(
+            LuaPatchDistributedBarrierDecision.Commit,
+            Assert.Single(history.CaptureSnapshot().Entries).DistributedDecision);
     }
 
     [Fact]
@@ -2036,6 +2215,21 @@ public sealed class LuaPatchCoordinatorTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class ThrowOnCallTimeProvider(int throwOnCall) : TimeProvider
+    {
+        private int _callCount;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            if (Interlocked.Increment(ref _callCount) == throwOnCall)
+            {
+                throw new InvalidOperationException("history clock failed");
+            }
+
+            return new DateTimeOffset(2026, 7, 25, 0, 0, 0, TimeSpan.Zero);
         }
     }
 

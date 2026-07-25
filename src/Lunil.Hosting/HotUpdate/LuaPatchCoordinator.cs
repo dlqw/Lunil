@@ -194,6 +194,9 @@ public sealed record LuaPatchCoordinatorOptions
     /// </summary>
     public LuaPatchGenerationGuardPolicy? GenerationGuard { get; init; }
 
+    /// <summary>Optional bounded operational history for completed rollout rings.</summary>
+    public LuaPatchHistory? History { get; init; }
+
     public ILuaPatchDeploymentJournal? Journal { get; init; }
 
     /// <summary>
@@ -247,6 +250,9 @@ public sealed record LuaPatchRingCommitResult(
     public bool Succeeded => Status == LuaPatchRingCommitStatus.Committed;
 
     public LuaPatchDistributedBarrierSnapshot? DistributedBarrier { get; init; }
+
+    /// <summary>Gets total ring duration including lifecycle, health, and durable gates.</summary>
+    public TimeSpan Duration { get; init; }
 }
 
 public sealed record LuaPatchRolloutResult(
@@ -339,6 +345,7 @@ public sealed class LuaPatchCoordinator
                         ring,
                         options,
                         cancellationToken);
+                    RecordHistory(options, ring, result);
                     results.Add(result);
                     if (!result.Succeeded)
                     {
@@ -376,7 +383,9 @@ public sealed class LuaPatchCoordinator
             _operationActive = true;
             try
             {
-                return CommitRingCore(rolloutId, ring, options, cancellationToken);
+                var result = CommitRingCore(rolloutId, ring, options, cancellationToken);
+                RecordHistory(options, ring, result);
+                return result;
             }
             finally
             {
@@ -1227,18 +1236,47 @@ public sealed class LuaPatchCoordinator
                 message)
             {
                 DistributedBarrier = distributedSnapshot,
+                Duration = System.Diagnostics.Stopwatch.GetElapsedTime(started),
             };
-            var duration = System.Diagnostics.Stopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, status.ToString(), message);
             LuaPatchTelemetry.RecordRing(
                 status.ToString(),
-                duration,
+                result.Duration,
                 status == LuaPatchRingCommitStatus.RestoreFailed ||
                 result.Targets.Any(static target =>
                     target.Commit.SideEffectsMayHaveOccurred && !target.Commit.Succeeded));
             return result;
         }
     }
+
+    private static void RecordHistory(
+        LuaPatchCoordinatorOptions options,
+        LuaPatchRolloutRing ring,
+        LuaPatchRingCommitResult result)
+    {
+        if (options.History is not { } history)
+        {
+            return;
+        }
+
+        try
+        {
+            var patch = ring.Targets[0].PreparedPatch.Manifest;
+            history.Record(
+                result,
+                patch.PatchId,
+                patch.TargetRevision,
+                options.TimeProvider.GetUtcNow(),
+                result.Duration);
+        }
+        catch (Exception exception) when (IsRecoverableHistoryFailure(exception))
+        {
+            history.RecordFailure();
+        }
+    }
+
+    private static bool IsRecoverableHistoryFailure(Exception exception) => exception is not
+        OutOfMemoryException and not StackOverflowException and not AccessViolationException;
 
     private static void RollbackSessions(
         IEnumerable<(LuaPatchDeploymentTarget Target, LuaHost.PatchCommitSession Session)> sessions,
