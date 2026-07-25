@@ -15,29 +15,24 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.11.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.0-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
 Lunil is a pure C# versioned Lua compiler, analysis toolchain, and runtime for .NET 10. Lua 5.4.8
-remains the default; the stable `0.11.0` release additionally enables explicit Lua 5.1,
-Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and versioned binary chunks converge on one verified canonical IR, then execute through a reference
+remains the default, with explicit Lua 5.1, Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and
+versioned binary chunks converge on one verified canonical IR, then execute through a reference
 interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter remain available in
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.11.0` is the supported release. It preserves Lua 5.4.8 as the default while exposing
-> explicit Lua 5.1–5.5 version identities and independent PUC chunk adapters.
-> The `0.11.0` source line adds an opt-in, exact-allowlist CLR type discovery and object
-> construction bridge; it remains disabled unless an embedding host configures it.
-> The current source tree is the `0.12.0-alpha.25` hot-update preview; it adds coordinated target
-> isolation, bounded preparation backpressure, and atomic generation fencing for CLR callbacks,
-> tasks, coroutines, native continuations, and timers, plus identity-preserving state-table
-> migration with GC-safe rollback journals, durable cross-process rollout barriers, and stable
-> ownership for host/native resources, generation-retention rollout guards, bounded operational
-> history, and profile-remapped candidate JIT warmup. It is not the stable package line.
+> Stable `0.12.0` is the supported release. It preserves the versioned Lua 5.1–5.5 contracts and
+> opt-in exact-allowlist CLR bridge while adding production hot update for hosted and game-loop
+> workloads: signed admission, coordinated target isolation, atomic multi-State publication,
+> identity-preserving state and resource migration, asynchronous generation fencing, durable
+> cross-process barriers, bounded rollout history, and pre-publication JIT warmup.
 
 ## Performance
 
@@ -78,15 +73,15 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
 ## Highlights
 
 - **Versioned Lua fidelity** — Lua 5.4 remains the default, with explicit Lua 5.1–5.5 source and
-  binary-chunk adapters in stable 0.11.0; each version has its own syntax, numeric, library,
+  binary-chunk adapters; each version has its own syntax, numeric, library,
   and chunk contract.
 - **Lua 5.4 fidelity** — complete syntax, binary strings, integer/float behavior, multiple results,
   varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
 - **Verified compiler pipeline** — byte-oriented source text, lossless syntax, binding, type and
   flow analysis, workspace analysis, canonical lowering, and independent IR verification.
-- **Typed analysis embedding** — the 0.12 preview adds call, member, function, parameter, and block
+- **Typed analysis embedding** — 0.12.0 adds call, member, function, parameter, and block
   facades plus extensible visitors while preserving the lossless tree as an escape hatch.
-- **Stable symbol identities** — the 0.12 preview exposes serialized keys for symbols and functions
+- **Stable symbol identities** — 0.12.0 exposes serialized keys for symbols and functions
   across compilation and workspace snapshots without using source offsets or transient IDs.
 - **Code intelligence indexes** — typed call sites, unresolved call retention, reference queries,
   and compilation/workspace call graphs are available without reinterpreting the generic AST.
@@ -98,9 +93,9 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
   is available and otherwise uses the reference interpreter.
 - **Embeddable and sandboxable** — reusable hosting API with restricted, trusted, and deterministic
   capability profiles.
-- **Capability-controlled CLR bridge** — the 0.11 can discover, construct, and invoke
+- **Capability-controlled CLR bridge** — discover, construct, and invoke
   exact-allowlisted CLR types without loading assemblies or enabling unrestricted reflection.
-- **Production hot-update preview** — signed Patch Bundles with key rotation and revocation,
+- **Production hot update** — signed Patch Bundles with key rotation and revocation,
   signer-authorized rollback, capability admission, signed target selection, game-loop atomic
   publication, identity-preserving state-table and resource migration, host-polled game-loop timers,
   fail-closed asynchronous generations, multi-State ring rollout, pinned cross-process
@@ -110,7 +105,7 @@ the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
 - **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
   use deterministic interpreter fallback when dynamic code is unavailable.
 
-## CLR interoperation in 0.11.0
+## CLR interoperation
 
 CLR interoperation is opt-in and fail-closed. A host must grant the required capabilities and
 provide exact, case-sensitive assembly, type, member, delegate, and event allowlists; the bridge
@@ -143,7 +138,7 @@ for conversion, overload, NativeAOT, trimming, and deployment details.
 
 Native Lua C modules are not supported because Lunil does not expose the Lua C ABI.
 
-## Typed syntax analysis in 0.12 preview
+## Typed syntax analysis in 0.12.0
 
 Typed facades remove grammar-shape and child-order assumptions from common source analysis. The
 walker below finds constant UTF-8 `require` requests, including parenthesized and shorthand string
@@ -176,7 +171,7 @@ sealed class RequireWalker(SourceText source) : LuaSyntaxWalker
 ```
 
 
-## Stable symbol keys in 0.12 preview
+## Stable symbol keys in 0.12.0
 
 Use a logical module name—not an absolute host path—when persisting symbol or function keys. The
 serialized value can be stored and reconstructed in a later snapshot. Whitespace, comments, and
@@ -200,7 +195,7 @@ var persisted = new LuaSymbolKey(key.Value);
 var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
 ```
 
-## Call graph and reference queries in 0.12 preview
+## Call graph and reference queries in 0.12.0
 
 `LuaAnalysisResult.CallGraph` retains resolved, dynamic, unresolved, and unreachable call sites.
 Each edge includes its containing function, callee and receiver types, direct symbol/name, optional
@@ -240,10 +235,10 @@ workspace cycles, cache invalidation, lifetime, concurrency, and production budg
 
 ### CLI
 
-Install stable `0.11.0` from the configured GitHub Packages source, or run from a checkout:
+Install stable `0.12.0` from the configured GitHub Packages source, or run from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.11.0
+dotnet tool install --global Lunil.Cli --version 0.12.0
 lunil --version
 
 lunil run app.lua -- one two
@@ -270,7 +265,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 Reference the stable hosting package:
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.11.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.12.0" />
 ```
 
 Compile and execute through a reusable restricted host:
@@ -333,17 +328,16 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics.
 
 ## Compatibility
 
-- Language target: Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets are available in the
-  stable `0.11.0` release.
+- Language target: Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets are available.
 - Runtime target: .NET 10.
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
-- Stable line: `0.11.x` (current release `0.11.0`); `0.10.x` remains compatible for existing hosts.
-- Preview source line: `0.12.0-alpha.5`; its reviewed API snapshot may grow before the stable
-  `0.12.0` freeze.
+- Stable line: `0.12.x` (current release `0.12.0`); public APIs from `0.11.0` remain usable by
+  existing hosts.
 
-Compatibility changes and deployment notes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md).
+CLR compatibility changes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md);
+the opt-in 0.12.0 deployment path is covered by [Signed patch bundles](docs/hot-update.md).
 .NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
 
 ## Documentation
