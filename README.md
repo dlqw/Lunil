@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.1-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
@@ -28,11 +28,10 @@ interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter r
 .NET NativeAOT and trimmed applications.
 
 > [!NOTE]
-> Stable `0.12.0` is the supported release. It preserves the versioned Lua 5.1–5.5 contracts and
-> opt-in exact-allowlist CLR bridge while adding production hot update for hosted and game-loop
-> workloads: signed admission, coordinated target isolation, atomic multi-State publication,
-> identity-preserving state and resource migration, asynchronous generation fencing, durable
-> cross-process barriers, bounded rollout history, and pre-publication JIT warmup.
+> Stable `0.12.1` is the supported release. It preserves the versioned Lua 5.1–5.5 contracts and
+> production hot-update path from 0.12.0 while hardening the opt-in exact-allowlist CLR bridge across
+> state admission, synchronous task waiting, NativeAOT metadata, member-cache diagnostics, and CLR
+> value conversion boundaries.
 
 ## Performance
 
@@ -235,10 +234,10 @@ workspace cycles, cache invalidation, lifetime, concurrency, and production budg
 
 ### CLI
 
-Install stable `0.12.0` from the configured GitHub Packages source, or run from a checkout:
+Install stable `0.12.1` from the configured GitHub Packages source, or run from a checkout:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.12.0
+dotnet tool install --global Lunil.Cli --version 0.12.1
 lunil --version
 
 lunil run app.lua -- one two
@@ -265,7 +264,7 @@ dotnet test Lunil.sln --configuration Release --no-build --no-restore
 Reference the stable hosting package:
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.12.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.12.1" />
 ```
 
 Compile and execute through a reusable restricted host:
@@ -333,7 +332,7 @@ budgets, safe points, debug behavior, invalidation, and fallback semantics.
 - Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
   layouts are rejected rather than truncated.
-- Stable line: `0.12.x` (current release `0.12.0`); public APIs from `0.11.0` remain usable by
+- Stable line: `0.12.x` (current release `0.12.1`); public APIs from `0.11.0` remain usable by
   existing hosts.
 
 CLR compatibility changes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md);
