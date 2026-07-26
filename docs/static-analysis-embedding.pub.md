@@ -1,21 +1,18 @@
-# Static analysis embedding
+# How to embed Lunil static analysis
 
-[简体中文](static-analysis-embedding.zh-CN.md)
+[简体中文](static-analysis-embedding.zh-CN.pub.md)
 
-This guide targets hosts that consume Lunil as a compiler and code-intelligence library. The
-checked-in sample is the executable source of truth:
+This guide shows how to use Lunil as a compiler and code-intelligence library in an existing .NET
+host. The checked-in sample provides a complete executable example:
 
 ```bash
 dotnet run --project samples/Lunil.StaticAnalysis.Embedding -c Release
-dotnet test tests/Lunil.Workspace.Tests/Lunil.Workspace.Tests.csproj -c Release \
-  --filter FullyQualifiedName~StaticAnalysisEmbeddingSampleTests
 ```
 
 The sample compiles one annotated file, prints semantic and analysis indexes, analyzes a cyclic
-two-module workspace three times, demonstrates cache reuse and invalidation, and is built and
-executed by the solution tests.
+two-module workspace three times, and demonstrates cache reuse and invalidation.
 
-## Configure one pipeline
+## 1. Configure one pipeline
 
 `LuaCompilerOptions.LanguageVersion` is authoritative for standalone compilation.
 `LuaWorkspaceOptions.LanguageVersion` is authoritative for a workspace and aligns its nested
@@ -54,7 +51,7 @@ Check `Succeeded` before executing or persisting canonical IR. Static-analysis d
 useful when warnings or recoverable source errors are present, so retain diagnostics with the
 snapshot rather than discarding the entire result.
 
-## Byte spans and editor locations
+## 2. Convert byte spans to editor locations
 
 `SourceText` stores UTF-8 bytes. Every `TextSpan` is a half-open UTF-8 byte range
 `[Start, End)`, not a UTF-16 string index. Convert offsets through the owning source:
@@ -68,7 +65,7 @@ SourceLocation end = result.Source.Text.GetLocation(span.End);
 `Line` and `Utf16Column` directly. A one-based UI should add one to both values, as the sample's
 `FormatSpan` helper does. Never apply a span to a different source snapshot.
 
-## Correlate semantic and analysis data
+## 3. Correlate semantic and analysis data
 
 `LuaSymbol.Id` and `LuaFunctionInfo.Id` are compilation-local. Within one result:
 
@@ -91,7 +88,7 @@ moving it to a different lexical owner, or changing its module identity may prod
 Classes, aliases, and enums use `LuaCompilationResult.GetAnnotationKey` and
 `ResolveAnnotationKey`.
 
-## Read CFGs, calls, and declarations
+## 4. Read CFGs, calls, and declarations
 
 Each `LuaFunctionAnalysis` exposes the inferred function type and return pack, flow iteration
 count, widening state, and a `LuaControlFlowGraph`. Use `block.IsReachable` rather than assuming
@@ -102,7 +99,7 @@ calls together with their containing function and optional target function.
 `LuaAnnotationDocument.Annotations` is the syntax-level view. Use the former for types and the
 latter for tooling that must preserve exact directives and source spans.
 
-## Analyze a reusable workspace
+## 5. Analyze a reusable workspace
 
 Use logical module names for `LuaModuleIdentity` and stable source-origin strings for
 `SourceIdentity`:
@@ -136,7 +133,7 @@ under root-confined directories. A request such as `game.player` therefore maps 
 `game/player.lua` or `game/player/init.lua`. Custom resolvers should return the same logical module
 for the same request and honor cancellation.
 
-## Cycles, cache reuse, and invalidation
+## 6. Handle cycles, cache reuse, and invalidation
 
 Workspace results include graph strongly connected components. `IsCyclic` identifies components
 that require fixed-point analysis. For each module, persist the exported type/hash,
@@ -153,7 +150,7 @@ drops reuse state.
 indexes across the completed workspace and include module/source identities and stable containing
 function keys.
 
-## Lifetime, concurrency, diagnostics, and budgets
+## 7. Manage lifetime, concurrency, diagnostics, and budgets
 
 - Compilation and workspace result objects are immutable snapshots and can be read concurrently.
 - A `LuaWorkspace` accepts concurrent callers but serializes top-level operations to preserve cache
@@ -168,5 +165,9 @@ function keys.
   fixed-point/diagnostic budgets for untrusted or large projects. Treat an exhausted budget or
   widening as explicit analysis state, not as a successful precise result.
 
-The complete, compiling implementation of every operation above is in
-[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs).
+The compiling
+[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
+demonstrates compilation, annotation and semantic inspection, stable symbol/reference keys, CFGs,
+workspace reuse with cache invalidation, cross-workspace references, and the call graph. Resolver
+customization, key re-resolution, global-reference queries, `ClearCache()`, and concurrent-operation
+integration are API contracts described on this page but are not exercised by that sample.

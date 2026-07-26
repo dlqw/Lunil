@@ -213,12 +213,25 @@ public sealed class LunilCliTests
         using var fixture = new CliFixture();
 
         var help = await fixture.RunAsync("--help");
+        var runHelp = await fixture.RunAsync("run", "--help");
+        var buildHelp = await fixture.RunAsync("build", "--help");
         var version = await fixture.RunAsync("--version");
 
         Assert.Equal(0, help.ExitCode);
+        Assert.Equal(0, runHelp.ExitCode);
+        Assert.Equal(0, buildHelp.ExitCode);
         Assert.Contains("lunil run", help.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("Lua 5.1–5.5 compiler", help.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--execution <backend>", help.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("--lua-version <version>", help.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains(
+            "PUC chunks for the selected Lua version",
+            runHelp.StandardOutput,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Build a PUC chunk for the selected Lua version",
+            buildHelp.StandardOutput,
+            StringComparison.Ordinal);
         Assert.Equal(0, version.ExitCode);
         var informationalVersion = typeof(LunilCli).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!

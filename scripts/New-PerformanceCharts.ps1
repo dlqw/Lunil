@@ -34,6 +34,7 @@ function Get-PublicEngineLabel([string] $Engine) {
         'LuaJIT' { return 'LuaJIT 2.1' }
         'Native Lua 5.4' { return 'PUC Lua 5.4.8' }
         'Lunil Auto JIT' { return "Lunil Auto JIT $($data.release)" }
+        'MoonSharp' { return 'MoonSharp 2.0.0' }
         'NeoLua' { return 'NeoLua 1.3.19' }
         'Luau' { return 'Luau 0.623' }
         'GopherLua' { return 'GopherLua 1.1.1' }
@@ -44,7 +45,17 @@ function Get-PublicEngineLabel([string] $Engine) {
 }
 
 function Get-PublicOverall($Report) {
-    $publicEngines = @('LuaJIT', 'Native Lua 5.4', 'Lunil Auto JIT', 'NeoLua', 'Luau', 'GopherLua', 'Wasmoon', 'UniLua')
+    $publicEngines = @(
+        'LuaJIT',
+        'Native Lua 5.4',
+        'Lunil Auto JIT',
+        'MoonSharp',
+        'NeoLua',
+        'Luau',
+        'GopherLua',
+        'Wasmoon',
+        'UniLua'
+    )
     return @($Report.overall |
         Where-Object { $_.engine -in $publicEngines } |
         Sort-Object { [double]$_.speedupVsNativeLua } -Descending)
@@ -67,7 +78,12 @@ function Get-RidScope($Report, [switch] $ForDescription) {
 
 function New-EngineOverviewSvg($Report) {
     $width = 1120
-    $height = 620
+    $engines = @(Get-PublicOverall $Report)
+    $extraRows = [Math]::Max(0, $engines.Count - 8)
+    $height = 620 + ($extraRows * 48)
+    $plotBottom = 532 + ($extraRows * 48)
+    $tickLabelY = 552 + ($extraRows * 48)
+    $footerY = 590 + ($extraRows * 48)
     $plotLeft = 260
     $plotRight = 1040
     $plotWidth = $plotRight - $plotLeft
@@ -82,10 +98,10 @@ function New-EngineOverviewSvg($Report) {
     else {
         "geometric mean across 8 workloads × $ridCount release RIDs"
     }
-    $lines.Add('<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">')
+    $lines.Add("<svg xmlns=`"http://www.w3.org/2000/svg`" width=`"$width`" height=`"$height`" viewBox=`"0 0 $width $height`" role=`"img`" aria-labelledby=`"title desc`">")
     $lines.Add("  <title id=`"title`">Lunil $($Report.release) runtime comparison</title>")
     $lines.Add("  <desc id=`"desc`">Geometric mean speedup across eight workloads and $(Get-RidScope $Report -ForDescription), normalized to PUC Lua 5.4.8.</desc>")
-    $lines.Add('  <rect width="1120" height="620" rx="20" fill="#f8fafc"/>')
+    $lines.Add("  <rect width=`"$width`" height=`"$height`" rx=`"20`" fill=`"#f8fafc`"/>")
     $lines.Add('  <text x="56" y="64" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Runtime comparison</text>')
     $lines.Add("  <text x=`"56`" y=`"94`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"15`" fill=`"#475569`">Lunil $($Report.release) · $engineScope</text>")
     foreach ($tick in $ticks) {
@@ -93,11 +109,11 @@ function New-EngineOverviewSvg($Report) {
         $x = Format-Number $position '0.0'
         $stroke = if ($tick -eq 1.0) { '#0f766e' } else { '#cbd5e1' }
         $dash = if ($tick -eq 1.0) { '' } else { ' stroke-dasharray="3 5"' }
-        $lines.Add("  <line x1=`"$x`" y1=`"126`" x2=`"$x`" y2=`"532`" stroke=`"$stroke`" stroke-width=`"1`"$dash/>")
-        $lines.Add("  <text x=`"$x`" y=`"552`" text-anchor=`"middle`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"12`" fill=`"#64748b`">$(Format-Number $tick '0.##')×</text>")
+        $lines.Add("  <line x1=`"$x`" y1=`"126`" x2=`"$x`" y2=`"$plotBottom`" stroke=`"$stroke`" stroke-width=`"1`"$dash/>")
+        $lines.Add("  <text x=`"$x`" y=`"$tickLabelY`" text-anchor=`"middle`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"12`" fill=`"#64748b`">$(Format-Number $tick '0.##')×</text>")
     }
     $row = 0
-    foreach ($engine in (Get-PublicOverall $Report)) {
+    foreach ($engine in $engines) {
         $y = 142 + ($row * 48)
         $barY = $y - 18
         $end = $plotLeft + (([Math]::Log([double]$engine.speedupVsNativeLua) - [Math]::Log($minimum)) / ([Math]::Log($maximum) - [Math]::Log($minimum))) * $plotWidth
@@ -110,7 +126,7 @@ function New-EngineOverviewSvg($Report) {
         $lines.Add("  <text x=`"$(Format-Number $labelX '0.0')`" y=`"$y`" text-anchor=`"$anchor`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"14`" font-weight=`"700`" fill=`"#0f172a`">$(Format-Number $engine.speedupVsNativeLua)×</text>")
         $row++
     }
-    $lines.Add('  <text x="56" y="590" font-family="Inter,Segoe UI,sans-serif" font-size="13" fill="#64748b">Higher is faster · logarithmic scale · PUC Lua 5.4.8 = 1.000×</text>')
+    $lines.Add("  <text x=`"56`" y=`"$footerY`" font-family=`"Inter,Segoe UI,sans-serif`" font-size=`"13`" fill=`"#64748b`">Higher is faster · logarithmic scale · PUC Lua 5.4.8 = 1.000×</text>")
     $lines.Add('</svg>')
     return ($lines -join "`n") + "`n"
 }

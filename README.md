@@ -5,8 +5,7 @@
 <h1 align="center">Lunil</h1>
 
 <p align="center">
-  A correctness-first, versioned Lua compiler and managed runtime for modern .NET, with
-  capability-controlled CLR interoperation.
+  A correctness-first, versioned Lua compiler, analysis toolchain, and managed runtime for .NET.
 </p>
 
 <p align="center">
@@ -15,253 +14,70 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.1-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases/tag/v0.12.1"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.1-16a34a?style=flat-square"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil is a pure C# versioned Lua compiler, analysis toolchain, and runtime for .NET 10. Lua 5.4.8
-remains the default, with explicit Lua 5.1, Lua 5.2, Lua 5.3, and Lua 5.5 contracts. Source and
-versioned binary chunks converge on one verified canonical IR, then execute through a reference
-interpreter or a profile-guided CoreCLR JIT. The same compiler and interpreter remain available in
-.NET NativeAOT and trimmed applications.
+Lunil compiles Lua source and versioned PUC Lua binary chunks into one verified canonical IR. The
+same IR runs through a reference interpreter or a profile-guided CoreCLR JIT. Lua 5.4.8 is the
+default language contract; explicit Lua 5.1, 5.2, 5.3, and 5.5 contracts are also available.
 
 > [!NOTE]
-> Stable `0.12.1` is the supported release. It preserves the versioned Lua 5.1–5.5 contracts and
-> production hot-update path from 0.12.0 while hardening the opt-in exact-allowlist CLR bridge across
-> state admission, synchronous task waiting, NativeAOT metadata, member-cache diagnostics, and CLR
-> value conversion boundaries.
+> `0.12.1` is the current stable release and targets .NET 10. NativeAOT and trimmed applications use
+> the interpreter when dynamic code is unavailable.
 
-## Performance
+## What Lunil provides
 
-The formal `0.10.0` dataset uses identical Lua source across eight workloads, six balanced rounds,
-and the `win-x64` release RID. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster. Each
-row identifies its semantic group so comparisons stay within compatible language contracts.
+- **Versioned Lua behavior** — source parsing, standard libraries, runtime semantics, and binary
+  chunks follow the selected Lua 5.1–5.5 contract.
+- **Verified compilation** — lossless UTF-8 syntax, binding, type and flow analysis, canonical
+  lowering, and independent IR verification.
+- **Code intelligence** — typed syntax facades, annotations, stable symbol/function keys,
+  references, control-flow graphs, call graphs, and reusable workspaces.
+- **Managed execution** — explicit Lua values, tables, closures, coroutines, resource budgets,
+  logical GC, an interpreter, and an adaptive JIT.
+- **Controlled embedding** — trusted, restricted, and deterministic host profiles plus a
+  capability-controlled, exact-allowlist CLR bridge.
+- **Production updates** — signed patch bundles, atomic game-loop publication, state/resource
+  migration, multi-State rollouts, and durable recovery journals.
+- **Portable deployment** — release bundles for Windows, Linux, and macOS on x64 and Arm64, with
+  .NET NativeAOT and trimming support.
 
-| Engine | Version | Semantic group | Geomean vs PUC Lua 5.4.8 |
-| --- | --- | --- | ---: |
-| LuaJIT | 2.1 (commit `3c4f9fe`) | `lua51-dialect` | 9.376x |
-| **Lunil Auto JIT** | **0.10.0** | **lua54** | **1.475x** |
-| Luau | 0.623 | `lua51-dialect` | 1.056x |
-| PUC Lua | 5.4.8 | `lua54` | 1.000x |
-| Wasmoon | 1.16.0 | `lua54` | 0.470x |
-| NeoLua | 1.3.19 | `managed-dotnet` | 0.352x |
-| UniLua | `194eb311` | `lua52-managed` | 0.308x |
-| GopherLua | 1.1.1 | `lua51-dialect` | 0.214x |
-
-![Lunil 0.10.0 runtime comparison](assets/performance/0.10.0-runtime-overview.svg)
-
-| Auto JIT workload | Vs PUC Lua 5.4.8 |
-| --- | ---: |
-| Arithmetic | 1.321x |
-| Iterative Fibonacci | 3.203x |
-| Mandelbrot | 3.339x |
-| Control flow | 1.661x |
-| Function calls | 2.839x |
-| Table access | 0.377x |
-| Prime sieve | 0.450x |
-| String build | 1.980x |
-
-![Lunil 0.10.0 Auto JIT by workload](assets/performance/0.10.0-auto-workloads.svg)
-
-The default Auto JIT reaches `1.980x` PUC Lua 5.4.8 on the `string_build` workload. The reviewed
-release values, benchmark environment, pinned reference versions, and commands are preserved in
-the [machine-readable dataset](benchmarks/results/0.10.0-performance.json).
-
-## Highlights
-
-- **Versioned Lua fidelity** — Lua 5.4 remains the default, with explicit Lua 5.1–5.5 source and
-  binary-chunk adapters; each version has its own syntax, numeric, library,
-  and chunk contract.
-- **Lua 5.4 fidelity** — complete syntax, binary strings, integer/float behavior, multiple results,
-  varargs, coroutines, metatables, to-be-closed variables, binary chunks, and standard libraries.
-- **Verified compiler pipeline** — byte-oriented source text, lossless syntax, binding, type and
-  flow analysis, workspace analysis, canonical lowering, and independent IR verification.
-- **Typed analysis embedding** — 0.12.0 adds call, member, function, parameter, and block
-  facades plus extensible visitors while preserving the lossless tree as an escape hatch.
-- **Stable symbol identities** — 0.12.0 exposes serialized keys for symbols and functions
-  across compilation and workspace snapshots without using source offsets or transient IDs.
-- **Code intelligence indexes** — typed call sites, unresolved call retention, reference queries,
-  and compilation/workspace call graphs are available without reinterpreting the generic AST.
-- **Runnable analysis embedding** — a CI-executed sample covers compiler, semantics, annotations,
-  CFGs, call/reference indexes, cyclic workspaces, stable identities, and cache invalidation.
-- **Managed runtime** — explicit Lua values, tables, closures, threads, upvalues, resource budgets,
-  protected errors, host handles, weak tables, ephemerons, finalizers, and logical GC.
-- **Adaptive execution** — the default Auto JIT selects verified compiled paths when dynamic code
-  is available and otherwise uses the reference interpreter.
-- **Embeddable and sandboxable** — reusable hosting API with restricted, trusted, and deterministic
-  capability profiles.
-- **Capability-controlled CLR bridge** — discover, construct, and invoke
-  exact-allowlisted CLR types without loading assemblies or enabling unrestricted reflection.
-- **Production hot update** — signed Patch Bundles with key rotation and revocation,
-  signer-authorized rollback, capability admission, signed target selection, game-loop atomic
-  publication, identity-preserving state-table and resource migration, host-polled game-loop timers,
-  fail-closed asynchronous generations, multi-State ring rollout, pinned cross-process
-  prepare/health quorums, lease-safe host/native resource continuity, exclusively owned and
-  compactable recovery journals, configurable stale-generation budgets, heap-independent bounded
-  rollout history, bounded pre-publication JIT warmup, and .NET telemetry.
-- **Cross-platform** — Windows, Linux, and macOS bundles for x64 and Arm64; NativeAOT and trimming
-  use deterministic interpreter fallback when dynamic code is unavailable.
-
-## CLR interoperation
-
-CLR interoperation is opt-in and fail-closed. A host must grant the required capabilities and
-provide exact, case-sensitive assembly, type, member, delegate, and event allowlists; the bridge
-only searches assemblies that are already loaded and never exposes unrestricted reflection.
-
-```csharp
-var options = LuaHostOptions.Restricted with
-{
-    Clr = new LuaClrOptions
-    {
-        Capabilities = LuaClrCapabilities.TypeDiscovery |
-            LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
-        AllowedAssemblyNames = ["Example.Contracts"],
-        AllowedTypeNames = ["Example.Contracts.Point"],
-        AllowedMemberNames = ["Example.Contracts.Point.Translate"],
-        InstallGlobalModule = true,
-    },
-};
-using var host = new LuaHost(options);
-var result = host.RunUtf8(
-    "local p = clr.new('Example.Contracts.Point', 1, 2); return p:Translate(3)");
-```
-
-The installed `clr` module provides deterministic type discovery and construction, explicit
-member access and invocation, disposable event subscriptions, `Task`/`ValueTask` awaiting,
-cancellation, and idempotent disposal. Allowlisted userdata also supports properties, fields,
-indexers, operators, and bound method calls. Delegate conversion and event callbacks require
-separate allowlists and preserve Lua state ownership. See the [CLR interoperation guide](docs/clr-interop.md)
-for conversion, overload, NativeAOT, trimming, and deployment details.
-
-Native Lua C modules are not supported because Lunil does not expose the Lua C ABI.
-
-## Typed syntax analysis in 0.12.0
-
-Typed facades remove grammar-shape and child-order assumptions from common source analysis. The
-walker below finds constant UTF-8 `require` requests, including parenthesized and shorthand string
-calls. `IsComplete` is false when a facade contains recovery nodes or missing tokens; `Node` always
-provides the underlying lossless syntax for advanced handling.
-
-```csharp
-using Lunil.Core.Text;
-using Lunil.Syntax.Parsing;
-
-var syntax = LuaParser.Parse(SourceText.FromUtf8("local m = require 'game.player'"));
-var walker = new RequireWalker(syntax.Source);
-walker.Visit(syntax.Root);
-
-sealed class RequireWalker(SourceText source) : LuaSyntaxWalker
-{
-    public override void VisitCallExpression(LuaCallExpressionSyntax call)
-    {
-        if (!call.IsMethodCall &&
-            call.Callee?.TryGetIdentifierToken(out var identifier) == true &&
-            identifier.GetText(source) == "require" &&
-            call.Arguments.FirstOrDefault()?.TryGetConstantString(out var module) == true)
-        {
-            Console.WriteLine(module);
-        }
-
-        base.VisitCallExpression(call);
-    }
-}
-```
-
-
-## Stable symbol keys in 0.12.0
-
-Use a logical module name—not an absolute host path—when persisting symbol or function keys. The
-serialized value can be stored and reconstructed in a later snapshot. Whitespace, comments, and
-unrelated declarations do not change named keys; renames, module changes, and lexical-owner changes
-are allowed to produce new keys. Annotation declarations use the same canonical format through
-`LuaCompilationResult.GetAnnotationKey`.
-
-```csharp
-using System.Linq;
-using Lunil.Compiler;
-using Lunil.Semantics.Binding;
-
-var moduleName = "game/player";
-var compilation = new LuaCompiler().CompileUtf8(
-    "local health = 100",
-    sourceName: "game/player.lua");
-var semanticModel = compilation.SemanticModel;
-var symbol = semanticModel.Symbols.Single(symbol => symbol.Name == "health");
-var key = semanticModel.GetSymbolKey(symbol, moduleName);
-var persisted = new LuaSymbolKey(key.Value);
-var current = semanticModel.ResolveSymbolKey(persisted, moduleName);
-```
-
-## Call graph and reference queries in 0.12.0
-
-`LuaAnalysisResult.CallGraph` retains resolved, dynamic, unresolved, and unreachable call sites.
-Each edge includes its containing function, callee and receiver types, direct symbol/name, optional
-module request, and a statically resolved function target when one exists. Reference queries preserve
-local/upvalue identity and provide a separate name-based path for implicit `_ENV` globals.
-
-```csharp
-using System.Linq;
-using Lunil.Compiler;
-
-var compilation = new LuaCompiler().CompileUtf8("""
-    local function tick() return 1 end
-    return tick()
-    """);
-var tick = compilation.SemanticModel.Symbols.Single(symbol => symbol.Name == "tick");
-var references = compilation.SemanticModel.FindReferences(tick);
-var call = compilation.Analysis.CallGraph.Edges.Single();
-```
-
-For a completed `LuaWorkspaceResult`, `FindReferences(LuaSymbolKey)`,
-`FindGlobalReferences(string)`, and `GetCallGraph()` add module/source identities, stable function
-keys, and conservative module-export targets. Reassigned module aliases are not reported as static
-module targets.
-
-The [static analysis embedding guide](docs/static-analysis-embedding.md) and its
-[executable sample](samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs) cover UTF-8 byte
-spans versus UTF-16 editor positions, diagnostic phases, stable snapshot identities, CFGs,
-workspace cycles, cache invalidation, lifetime, concurrency, and production budgets.
+Lunil does not expose the Lua C ABI, so native Lua C modules are not supported.
 
 ## Quick start
 
-### Requirements
+### Run the CLI
 
-- [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0) or a compatible .NET 10
-  patch release;
-- Git when building from source.
+Install the [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0), or a compatible
+.NET 10 patch release. Then download the archive for your RID from the
+[Lunil 0.12.1 release](https://github.com/dlqw/Lunil/releases/tag/v0.12.1), extract it, and run:
 
-### CLI
+```bash
+./lunil --version
+./lunil run app.lua -- one two
+./lunil check app.lua --module-root . --warnings-as-errors
+./lunil build app.lua --target chunk --output app.luac
+./lunil dump app.lua --kind analysis --format json
+```
 
-Install stable `0.12.1` from the configured GitHub Packages source, or run from a checkout:
+On Windows, use `lunil.exe`. If GitHub Packages is already configured as a NuGet source, the CLI is
+also available as a .NET tool:
 
 ```bash
 dotnet tool install --global Lunil.Cli --version 0.12.1
 lunil --version
-
-lunil run app.lua -- one two
-lunil check app.lua --module-root . --warnings-as-errors
-lunil build app.lua --target chunk --output app.luac
-lunil dump app.lua --kind analysis --format json
 ```
 
 Use `-` for source stdin, `@arguments.rsp` for UTF-8 response files, and `lunil.json` for project
-defaults. See the [CLI reference](docs/cli.md) for commands, profiles, diagnostics, and exit codes.
+defaults. See the [command-line reference](docs/cli.pub.md) for all commands and options.
 
-### Build from source
+### Embed the runtime
 
-```bash
-git clone https://github.com/dlqw/Lunil.git
-cd Lunil
-dotnet restore Lunil.sln
-dotnet build Lunil.sln --configuration Release --no-restore
-dotnet test Lunil.sln --configuration Release --no-build --no-restore
-```
-
-## Embed Lunil
-
-Reference the stable hosting package:
+Reference `Lunil.Hosting` `0.12.1` from your configured package source or a downloaded release
+package:
 
 ```xml
 <PackageReference Include="Lunil.Hosting" Version="0.12.1" />
@@ -273,22 +89,14 @@ Compile and execute through a reusable restricted host:
 using Lunil.Hosting;
 using Lunil.Runtime.Execution;
 
-const string lua = """
-    local total = 0
-    for i = 1, 10 do
-        total = total + i
-    end
-    return total
-    """;
-
 using var host = new LuaHost(LuaHostOptions.Restricted);
-var run = host.RunUtf8(lua, "@examples/sum.lua");
+var run = host.RunUtf8("return 40 + 2", "@examples/answer.lua");
 
 if (!run.CompilationSucceeded)
 {
     foreach (var diagnostic in run.Compilation.Diagnostics)
     {
-        Console.Error.WriteLine($"{diagnostic.Phase} {diagnostic.Code}: {diagnostic.Message}");
+        Console.Error.WriteLine($"{diagnostic.Code}: {diagnostic.Message}");
     }
     return;
 }
@@ -298,71 +106,85 @@ if (run.Execution?.Signal != LuaVmSignal.Completed)
     throw new InvalidOperationException("Lua execution did not complete.");
 }
 
-Console.WriteLine(run.Execution.Values[0].AsInteger()); // 55
+Console.WriteLine(run.Execution.Values[0].AsInteger()); // 42
 ```
 
-`LuaHostOptions.ExecutionBackend` can require the interpreter or dynamic JIT. The default `Auto`
-policy uses the verified JIT when dynamic code is available and the reference interpreter
-otherwise. Lower-level compiler, syntax, analysis, workspace, IR, runtime, and standard-library
-packages are also available independently.
+`LuaHostOptions.ExecutionBackend` selects `Auto`, `Interpreter`, or `Jit`. `Auto` uses the verified
+JIT when dynamic code is available and the reference interpreter otherwise.
 
-## Architecture
+### Build from source
+
+```bash
+git clone https://github.com/dlqw/Lunil.git
+cd Lunil
+dotnet restore Lunil.sln
+dotnet build Lunil.sln --configuration Release --no-restore
+dotnet test Lunil.sln --configuration Release --no-build --no-restore
+```
+
+## Execution model
 
 ```mermaid
 flowchart LR
-    Source[Lua source bytes] --> Compiler[Compiler + analysis]
-    Chunk[PUC Lua 5.4 chunk] --> Reader[Chunk reader + verifier]
+    Source[Lua source] --> Compiler[Compiler + analysis]
+    Chunk[Versioned PUC chunk] --> Reader[Reader + verifier]
     Compiler --> IR[Verified canonical IR]
     Reader --> IR
     IR --> Interpreter[Reference interpreter]
-    IR --> Tier1[CoreCLR Tier 1]
-    Tier1 --> Tier2[Tier 2 specialization]
-    Tier2 --> Entry[Function or loop entry]
-    Interpreter --> Runtime[Lua runtime + logical GC]
-    Entry --> Runtime
+    IR --> JIT[CoreCLR JIT]
+    Interpreter --> Runtime[Managed runtime]
+    JIT --> Runtime
 ```
 
-All execution paths share canonical program counters, exact instruction accounting, resource
-budgets, safe points, debug behavior, invalidation, and fallback semantics.
+Interpreter and JIT execution share canonical program counters, instruction accounting, resource
+budgets, safe points, invalidation, and fallback semantics.
 
 ## Compatibility
 
-- Language target: Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets are available.
-- Runtime target: .NET 10.
-- Release RIDs: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
-- Binary chunks: bounded Lua 5.4 format with explicit target validation; incompatible numeric
-  layouts are rejected rather than truncated.
-- Stable line: `0.12.x` (current release `0.12.1`); public APIs from `0.11.0` remain usable by
-  existing hosts.
+| Surface | Supported contract |
+| --- | --- |
+| Stable release | `0.12.1` |
+| Language | Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets |
+| Runtime | .NET 10 |
+| Release RIDs | `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64` |
+| Binary chunks | Version-specific, bounded PUC formats with structural and target validation |
+| Dynamic code unavailable | Compiler, analysis, standard libraries, and interpreter remain available |
 
-CLR compatibility changes are documented in the [0.11.0 migration guide](docs/migration-0.11.0.md);
-the opt-in 0.12.0 deployment path is covered by [Signed patch bundles](docs/hot-update.md).
-.NET NativeAOT remains supported as a host deployment mode; see [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md).
+## Performance snapshot
+
+The published `0.10.0` `win-x64` dataset runs identical Lua source across eight workloads and six
+balanced rounds. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
+
+| Comparison | Geomean throughput ratio |
+| --- | ---: |
+| **Lunil Auto JIT 0.10.0 / MoonSharp 2.0.0** | **21.796x** |
+| Lunil Auto JIT 0.10.0 / PUC Lua 5.4.8 | 1.475x |
+
+Results, pinned engine versions, environment details, and commands are in the
+[machine-readable dataset](benchmarks/results/0.10.0-performance.json).
+
+![Lunil 0.10.0 runtime comparison](assets/performance/0.10.0-runtime-overview.svg)
 
 ## Documentation
 
-| Document | Purpose |
-| --- | --- |
-| [CLR interoperation](docs/clr-interop.md) | Allowlist configuration, construction, conversion, ownership, and deployment |
-| [Signed patch bundles](docs/hot-update.md) | Patch trust, target isolation and quiescence, game-loop safe points, multi-State ring rollout, durable recovery journals, and CLI workflows |
-| [CLI reference](docs/cli.md) | Commands, configuration, profiles, diagnostics, and exit codes |
-| [.NET NativeAOT and trimming](docs/nativeaot-build-integration.md) | Host integration, trimming annotations, and publish verification |
-| [PUC Lua prototype import](docs/puc-prototype-import.md) | Importing validated PUC Lua 5.4 binary prototypes |
-| [Changelogs](changelogs/) | Community-facing release notes by version |
+| Document | Type | Purpose |
+| --- | --- | --- |
+| [Command-line reference](docs/cli.pub.md) | Reference | Commands, configuration, profiles, diagnostics, and exit codes |
+| [Configure CLR interoperation](docs/clr-interop.pub.md) | How-to | Allowlist setup, callbacks, timers, stable resources, and deployment |
+| [CLR interoperation reference](docs/clr-interop-reference.pub.md) | Reference | Lua functions, conversions, policies, gauges, limits, and ownership contracts |
+| [CLR bridge lifecycles](docs/clr-interop-lifecycle.pub.md) | Explanation | Capability boundaries, state ownership, async admission, and generation fencing |
+| [Deploy signed patch bundles](docs/hot-update.pub.md) | How-to | Bundle creation, preparation, publication, migration, rollout, and recovery |
+| [Signed patch bundle reference](docs/hot-update-reference.pub.md) | Reference | Manifest, trust, replay, migration, limits, statuses, stores, and telemetry |
+| [Hot-update publication](docs/hot-update-lifecycle.pub.md) | Explanation | Atomic publication, identity migration, generations, rings, and durability |
+| [Embed static analysis](docs/static-analysis-embedding.pub.md) | How-to | Syntax, semantic data, stable keys, CFGs, call graphs, and workspaces |
+| [Publish with NativeAOT and trimming](docs/nativeaot-build-integration.pub.md) | How-to | Interpreter fallback, SDK publishing, and metadata preservation |
+| [Import PUC Lua 5.4 prototypes](docs/puc-prototype-import.pub.md) | How-to | Validated binary-chunk conversion to canonical IR |
+| [Migration guides](docs/migration-0.11.0.pub.md) | How-to | Historical changes for [0.8.0](docs/migration-0.8.0.pub.md), [0.10.0](docs/migration-0.10.0.pub.md), and 0.11.0 |
 
-## Contributing
-
-Issues and focused pull requests are welcome. Work on a `feature/*`, `perf/*`, `fix/*`, or `docs/*`
-branch,
-add tests appropriate to the impact, and run build, tests, formatting, and relevant documentation
-checks before requesting review.
+Every guide has an English and Simplified Chinese counterpart linked at the top of the page.
 
 ## Security
 
-Please report suspected vulnerabilities through
+Report suspected vulnerabilities through
 [GitHub private vulnerability reporting](https://github.com/dlqw/Lunil/security/advisories/new),
 not a public issue.
-
-## License
-
-Lunil is licensed under the [MIT License](LICENSE).

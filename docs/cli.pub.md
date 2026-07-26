@@ -1,11 +1,15 @@
 # Lunil command-line reference
 
-`Lunil.Cli` exposes Lunil's compiler, workspace, host, and binary-chunk contracts through the `lunil` .NET tool and executable.
+[简体中文](cli.zh-CN.pub.md)
+
+`Lunil.Cli` exposes Lunil's compiler, workspace, host, and binary-chunk contracts through the
+`lunil` .NET tool and executable. Use this reference to look up commands, options, defaults, and
+exit codes.
 
 Signed update bundles are available through `lunil patch pack`, `verify`, `inspect`, `diff`, and
 `dry-run`. Verification actions accept either one `--public-key`/`--key-id` pair or a versioned
 multi-key `--trust-store` with rotation and revocation windows. See the
-[signed patch bundle guide](hot-update.md) for trust and resource boundaries.
+[signed patch bundle reference](hot-update-reference.pub.md) for trust and resource boundaries.
 `patch inspect` reports the signed `updateIntent`, canonical `requiredCapabilities`, and exact-match
 `requiredTargetLabels` claims.
 
@@ -25,13 +29,56 @@ lunil dump <input> [--kind <kind>] [--format text|json] [options]
 - `dump` supports `summary`, `syntax`, `annotations`, `analysis`, `ir`, and `chunk` in text or `lunil.dump.v1` JSON. `--output -`, or no output path, writes to stdout.
 - `--lua-version 5.1|5.2|5.3|5.4|5.5` chooses the language and chunk contract. Unsupported identities fail with a diagnostic rather than selecting Lua 5.4.
 
-`--output` is valid only for `build` and `dump`; `--target` and `--strip-debug` only for `build`; `--kind` and `--format` only for `dump`. The only build target is `chunk`. Legacy AOT target inputs fail with `LUNIL0006`, phase `removed-feature`, and exit code `2`.
+`--output` is valid for `build`, `dump`, and `patch pack`, but its contract is command-specific:
+`build` and `patch pack` require a filesystem path, while only `dump` accepts `-` for stdout.
+`--target` and `--strip-debug` apply only to `build`; `--kind` and `--format` apply only to `dump`.
+The only build target is `chunk`. Legacy AOT target inputs fail with `LUNIL0006`, phase
+`removed-feature`, and exit code `2`.
+
+## Options
+
+| Option | Value/default | Applies to | Description |
+| --- | --- | --- | --- |
+| `-h`, `--help` | Flag | All | Show global help and command-specific additions. |
+| `--version` | Flag | All | Print the Lunil version. |
+| `--config` | Path | All | Read an explicit `lunil.json`. Cannot be combined with `--no-config`. |
+| `--no-config` | Flag | All | Disable `lunil.json` discovery. |
+| `--diagnostic-format` | `text` (default), `json` | All | Select stderr diagnostic serialization. |
+| `--module-root` | Repeatable path | Source commands | Add a module resolver and sandbox root. |
+| `--path-pattern` | `?.lua`, `?/init.lua` | Source commands | Add a Lua `?` path pattern. |
+| `--module-name` | Name | `run`, single-root `check`, `build`, `dump` | Override the root logical module name. |
+| `--profile` | `trusted` (default), `sandbox`, `deterministic` | All | Select the host capability profile; `restricted` is accepted as an alias for `sandbox`. |
+| `--trusted` | Flag | All | Select the trusted profile. |
+| `--sandbox` | Flag | All | Select the root-confined read-only profile. |
+| `--deterministic` | Flag | All | Select sandbox capabilities with deterministic time and hashing. |
+| `--lua-version` | `5.4` (default); `5.1`–`5.5` | Source/chunk commands | Select the language and chunk contract. |
+| `--execution` | `auto` (default), `interpreter`, `jit` | All | Select the execution backend used by `run`. |
+| `--warnings-as-errors` | Flag | Source commands | Promote analysis warnings to errors. |
+| `--no-warnings-as-errors` | Flag | Source commands | Override an enabled configuration/environment setting. |
+| `-o`, `--output` | Path | `build` | Write a chunk file, or one `.luac` per module when the path denotes a directory; stdout lists each emitted path. |
+| `-o`, `--output` | Path or `-` | `dump` | Write the dump to a file; omit the option or use `-` to write the dump payload to stdout. |
+| `-o`, `--output` | Path | `patch pack` | Write the signed bundle to the path; stdout prints that bundle path. |
+| `--target` | `chunk` (default) | `build` | Select the build target. |
+| `--strip-debug` | `false` (default) | `build` | Remove chunk debug data. |
+| `--kind` | `summary` (default), `syntax`, `annotations`, `analysis`, `ir`, `chunk` | `dump` | Select the dump view. |
+| `--format` | `text` (default), `json` | `dump` | Select dump serialization. |
+| `--key-id` | Identifier | `patch` | Select the signing or verification key identity. |
+| `--private-key` | PEM path | `patch pack` | Read the ECDSA P-256 private key. |
+| `--public-key` | PEM path | Patch verification actions | Read one ECDSA P-256 public key. |
+| `--trust-store` | JSON path | Patch verification actions | Replace `--public-key`/`--key-id` with a versioned multi-key store. |
+| `--maximum-input-bytes` | `67108864` | All | Bound each input and resolved module. |
+| `--maximum-instructions` | `100000000` | `run` | Bound VM instructions per execution. |
+| `--maximum-stack-slots` | `1000000` | `run` | Bound VM stack slots. |
+| `--maximum-call-depth` | `20000` | `run` | Bound Lua call depth. |
+| `--maximum-heap-bytes` | `268435456` | `run` | Bound logical Lua heap bytes. |
 
 ## Inputs and modules
 
 `-` reads one UTF-8 source document from stdin; binary chunks are file-only. `--module-name` overrides the root logical name. `--module-root` and `--path-pattern` are repeatable; patterns default to `?.lua` and `?/init.lua`. Static direct-global literal `require` calls use the same workspace module graph as API-based compilation.
 
-Program output and emitted paths use stdout; diagnostics use stderr. `--maximum-input-bytes` bounds every input and resolved module.
+`run` program output uses stdout. `build` and `patch pack` print emitted filesystem paths to stdout;
+`dump` writes its payload there only when `--output` is omitted or set to `-`. Diagnostics use
+stderr. `--maximum-input-bytes` bounds every input and resolved module.
 
 ## Configuration
 

@@ -1,8 +1,10 @@
 # Migrating from Lunil 0.7.0 to 0.8.0
 
+[简体中文](migration-0.8.0.zh-CN.pub.md)
+
 Lunil 0.8 removes the Lua persisted/static AOT product. Runtime source/chunk compilation, the reference interpreter, managed JIT execution, loop OSR, and .NET NativeAOT/trimming deployment remain available.
 
-## Removed Lua AOT surface
+## 1. Remove the Lua AOT surface
 
 The following 0.7.x capabilities have no compatibility shim:
 
@@ -13,7 +15,7 @@ The following 0.7.x capabilities have no compatibility shim:
 
 Remove `Lunil.Build` references and `LunilCompile` items. There is no configuration flag that re-enables static or persisted Lua AOT.
 
-## Runtime execution replacement
+## 2. Replace runtime execution
 
 Compile and run source through the hosting API:
 
@@ -29,7 +31,7 @@ Lower-level integrations can execute a verified canonical module through `LuaInt
 
 JIT selection is a runtime optimization, not a persisted-artifact mode. If dynamic code is unavailable, `Auto` and `PreferJit` use the reference interpreter.
 
-## Removed build inputs
+## 3. Remove legacy build inputs
 
 Build output supports `chunk` only. These legacy inputs are rejected:
 
@@ -41,10 +43,10 @@ LUNIL_BUILD_TARGET=aot
 
 Each returns `LUNIL0006`, phase `removed-feature`, and exit code `2`; the CLI does not silently select another backend.
 
-## .NET NativeAOT remains supported
+## 4. Keep .NET NativeAOT deployment
 
-.NET NativeAOT publishes the managed host and is distinct from the removed Lua AOT product. Standard SDK properties such as `PublishAot` and `PublishTrimmed` are supported. See [.NET NativeAOT and trimming](nativeaot-build-integration.md) for publication examples.
+.NET NativeAOT publishes the managed host and is distinct from the removed Lua AOT product. Standard SDK properties such as `PublishAot` and `PublishTrimmed` are supported. See [.NET NativeAOT and trimming](nativeaot-build-integration.pub.md) for publication examples.
 
-## Other compatibility changes
+## 5. Account for other compatibility changes
 
 `LuaCompiledExit.InstructionsConsumed` uses `long` end to end, avoiding an instruction-count overflow beyond `Int32.MaxValue`.
