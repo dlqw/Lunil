@@ -1,19 +1,18 @@
-# 静态分析嵌入指南
+# 如何嵌入 Lunil 静态分析
 
-[English](static-analysis-embedding.md)
+[English](static-analysis-embedding.pub.md)
 
-本指南面向把 Lunil 用作编译器与代码智能库的宿主。仓库中的可执行 sample 是本文的可编译事实来源：
+本指南说明如何在现有 .NET host 中把 Lunil 用作编译器与代码智能库。仓库中的 sample 提供完整的
+可执行示例：
 
 ```bash
 dotnet run --project samples/Lunil.StaticAnalysis.Embedding -c Release
-dotnet test tests/Lunil.Workspace.Tests/Lunil.Workspace.Tests.csproj -c Release \
-  --filter FullyQualifiedName~StaticAnalysisEmbeddingSampleTests
 ```
 
 该 sample 会编译一个带 annotation 的单文件，输出 semantic/analysis index，连续三次分析一个
-双模块循环依赖 workspace，展示 cache 复用与失效，并由 solution test 实际执行。
+双模块循环依赖 workspace，并展示 cache 复用与失效。
 
-## 配置统一管线
+## 1. 配置统一管线
 
 `LuaCompilerOptions.LanguageVersion` 是单文件 compilation 的权威语言契约；
 `LuaWorkspaceOptions.LanguageVersion` 是 workspace 的权威契约，并会把内部 compiler 对齐到该版本。
@@ -50,7 +49,7 @@ var result = new LuaCompiler(compilerOptions).CompileUtf8(
 执行或持久化 canonical IR 前必须检查 `Succeeded`。存在 warning 或可恢复源码错误时，静态分析结果
 仍可能有用，因此应将 diagnostic 与 snapshot 一同保存，而不是直接丢弃整个结果。
 
-## Byte span 与编辑器位置
+## 2. 将 Byte span 转换为编辑器位置
 
 `SourceText` 保存 UTF-8 byte。所有 `TextSpan` 都是半开 UTF-8 byte 区间 `[Start, End)`，不是
 UTF-16 字符串索引。必须通过所属 source 转换 offset：
@@ -64,7 +63,7 @@ SourceLocation end = result.Source.Text.GetLocation(span.End);
 `Utf16Column`；一基 UI 则应像 sample 的 `FormatSpan` 一样对两者加一。不得把 span 应用到另一个
 source snapshot。
 
-## 关联 semantic 与 analysis 数据
+## 3. 关联 semantic 与 analysis 数据
 
 `LuaSymbol.Id` 与 `LuaFunctionInfo.Id` 只在本次 compilation 内有效。在同一个 result 内：
 
@@ -86,7 +85,7 @@ var later = anotherResult.SemanticModel.ResolveSymbolKey(key, "game.player");
 都可以产生新 key。Class、alias 与 enum 使用 `LuaCompilationResult.GetAnnotationKey` 和
 `ResolveAnnotationKey`。
 
-## 读取 CFG、调用与类型声明
+## 4. 读取 CFG、调用与类型声明
 
 每个 `LuaFunctionAnalysis` 都提供推断 function type、return pack、flow iteration、widening 状态和
 `LuaControlFlowGraph`。判断活跃路径应读取 `block.IsReachable`，不能假设所有生成 block 都可达。
@@ -97,7 +96,7 @@ function 和可选 target function。
 `LuaAnnotationDocument.Annotations` 是 syntax 视图。类型消费使用前者，需要保留精确 directive 与
 source span 的工具使用后者。
 
-## 使用可复用 workspace
+## 5. 使用可复用 workspace
 
 `LuaModuleIdentity` 应使用逻辑 module 名称，`SourceIdentity` 应使用稳定的源码来源字符串：
 
@@ -128,7 +127,7 @@ Module name 是 `require` graph identity。`SourceIdentity` 用于诊断与持�
 `?/init.lua` 映射请求。`game.player` 会对应 `game/player.lua` 或 `game/player/init.lua`。自定义 resolver
 应对相同请求返回相同逻辑 module，并正确响应 cancellation。
 
-## 循环、cache 复用与失效
+## 6. 处理循环、cache 复用与失效
 
 Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed-point 分析的分量。对每个 module
 应保留 exported type/hash、`FixedPointIterationCount` 与 `WasWidened`，同时保留 fixed-point 达到上限
@@ -142,7 +141,7 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
 `FindReferences(LuaSymbolKey)`、`FindGlobalReferences(string)` 与 `GetCallGraph()` 可跨完整 workspace
 投影代码索引，并附带 module/source identity 与稳定 containing-function key。
 
-## 生命周期、并发、诊断与预算
+## 7. 管理生命周期、并发、诊断与预算
 
 - Compilation/workspace result 是不可变 snapshot，可以并发读取。
 - `LuaWorkspace` 接受并发调用，但会串行化顶层 operation 以保持 cache 顺序；`MaximumParallelism`
@@ -157,5 +156,8 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
   module/dependency/source/cache/fixed-point/diagnostic 预算。预算耗尽或 widening 是明确的分析状态，
   不能当作精确成功结果。
 
-以上全部操作的完整可编译实现位于
-[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)。
+可编译的
+[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
+演示 compilation、annotation 与 semantic inspection、稳定 symbol/reference key、CFG、带 cache invalidation 的
+workspace 复用、跨 workspace reference 与 call graph。Resolver 自定义、key re-resolution、global-reference
+query、`ClearCache()` 与 concurrent-operation integration 是本页描述的 API 契约，但该 sample 未演示这些操作。

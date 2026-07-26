@@ -216,7 +216,7 @@ internal static class LunilCli
     private static string GetHelp(CliCommand command)
     {
         const string global = """
-Lunil Lua 5.4 compiler, analyzer, runner, and chunk builder
+Lunil Lua 5.1–5.5 compiler, analyzer, runner, and chunk builder
 
 Usage:
   lunil run <input|-> [options] [-- script-args...]
@@ -259,7 +259,7 @@ Configuration precedence is defaults < lunil.json < LUNIL_* environment < CLI.
 
 run options:
   Arguments after '--' become main-chunk varargs and the global arg table.
-  Source input is workspace-preflighted; PUC Lua 5.4 chunks execute directly.
+  Source input is workspace-preflighted; PUC chunks for the selected Lua version execute directly.
 """,
             CliCommand.Check => global + """
 
@@ -270,7 +270,7 @@ check options:
 
 build options:
   -o, --output <path>             Required output file/directory.
-      --target <chunk>            Build a PUC Lua 5.4 chunk (default: chunk).
+      --target <chunk>            Build a PUC chunk for the selected Lua version (default: chunk).
       --strip-debug               Strip chunk debug data.
 """,
             CliCommand.Dump => global + """
