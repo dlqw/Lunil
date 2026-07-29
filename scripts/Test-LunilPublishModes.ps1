@@ -21,18 +21,26 @@ $modes = @(
     @{
         Name = 'single-file-trimmed'
         Properties = @('-p:PublishAot=false', '-p:PublishTrimmed=true', '-p:PublishSingleFile=true', '-p:EnableCompressionInSingleFile=true')
+        RestoreProperties = @()
     },
     @{
         Name = 'ready-to-run'
         Properties = @('-p:PublishAot=false', '-p:PublishTrimmed=false', '-p:PublishReadyToRun=true')
+        RestoreProperties = @('-p:LunilReadyToRunPublish=true')
     }
 )
 
-& dotnet restore $project --runtime $RuntimeIdentifier
-if ($LASTEXITCODE -ne 0) { throw "Publish-mode restore failed for $RuntimeIdentifier." }
-
 foreach ($mode in $modes) {
     & dotnet build-server shutdown | Out-Null
+    $restoreArguments = @(
+        'restore', $project,
+        '--runtime', $RuntimeIdentifier
+    ) + $mode.RestoreProperties
+    & dotnet @restoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$($mode.Name) restore failed for $RuntimeIdentifier."
+    }
+
     $outputDirectory = Join-Path $repositoryRoot "artifacts/publish/$RuntimeIdentifier/$($mode.Name)"
     if (Test-Path -LiteralPath $outputDirectory) {
         Remove-Item -LiteralPath $outputDirectory -Recurse -Force

@@ -94,16 +94,6 @@ function New-PatchSigningKeyPair {
     }
 }
 
-$requiresNativeAotRestore = $Modes -contains 'NativeAot'
-if ($requiresNativeAotRestore) {
-    & dotnet restore $project --runtime $RuntimeIdentifier -p:LunilNativeAotPublish=true
-    if ($LASTEXITCODE -ne 0) { throw "NativeAOT CLI restore failed for $RuntimeIdentifier." }
-}
-else {
-    & dotnet restore $project --runtime $RuntimeIdentifier
-    if ($LASTEXITCODE -ne 0) { throw "CLI publish-mode restore failed for $RuntimeIdentifier." }
-}
-
 foreach ($mode in $Modes) {
     & dotnet build-server shutdown | Out-Null
     $modeName = $mode.ToLowerInvariant()
@@ -117,6 +107,20 @@ foreach ($mode in $Modes) {
         'SingleFileTrimmed' { @('-p:PublishAot=false', '-p:PublishTrimmed=true', '-p:PublishSingleFile=true', '-p:EnableCompressionInSingleFile=true') }
         'ReadyToRun' { @('-p:PublishAot=false', '-p:PublishTrimmed=false', '-p:PublishReadyToRun=true') }
     }
+    $restoreProperties = switch ($mode) {
+        'NativeAot' { @('-p:LunilNativeAotPublish=true') }
+        'SingleFileTrimmed' { @() }
+        'ReadyToRun' { @('-p:LunilReadyToRunPublish=true') }
+    }
+    $restoreArguments = @(
+        'restore', $project,
+        '--runtime', $RuntimeIdentifier
+    ) + $restoreProperties
+    & dotnet @restoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$mode CLI restore failed for $RuntimeIdentifier."
+    }
+
     $arguments = @(
         'publish', $project,
         '--configuration', $Configuration,

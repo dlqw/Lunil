@@ -6,7 +6,7 @@
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       SkipGetTargetFrameworkProperties="true"
-                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish;LunilReadyToRunPublish"
                       AdditionalProperties="TargetFramework=net9.0" />
   </ItemGroup>
 
