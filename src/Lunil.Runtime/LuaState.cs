@@ -38,7 +38,7 @@ public sealed class LuaState
                 "The state language version is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MainThreadInitialStackCapacity);
+        LunilGuard.Positive(options.MainThreadInitialStackCapacity);
         LanguageVersion = options.LanguageVersion;
         var features = LuaVersionFeatureTable.Get(LanguageVersion);
         ArithmeticStringCoercionProducesFloat = features.ArithmeticStringCoercionProducesFloat;
@@ -161,7 +161,7 @@ public sealed class LuaState
     /// </summary>
     public bool TryGetModule(string name, out LuaModuleRecord? module)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         if (!_loadedModules.TryGetValue(name, out var registration))
         {
             module = null;
@@ -190,7 +190,9 @@ public sealed class LuaState
             _ = TryGetModule(name, out _);
         }
 
-        return _loadedModules.Keys.Order(StringComparer.Ordinal).ToArray();
+        return _loadedModules.Keys
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
     }
 
     public LuaTable? GetTypeMetatable(LuaValueKind kind) =>
@@ -227,7 +229,7 @@ public sealed class LuaState
 
     public void SetGlobal(string name, LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         Globals.Set(
             LuaValue.FromString(Strings.GetOrCreate(Encoding.UTF8.GetBytes(name))),
             value);
@@ -258,14 +260,14 @@ public sealed class LuaState
 
     public LuaValue GetGlobal(string name)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         return Globals.Get(LuaValue.FromString(
             Strings.GetOrCreate(Encoding.UTF8.GetBytes(name))));
     }
 
     public LuaClosure CreateMainClosure(LuaIrModule module)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (!LuaLanguageVersions.IsKnown(module.LanguageVersion))
         {
             throw new LuaRuntimeException("Cannot load a module with an invalid Lua language version.");
@@ -366,7 +368,7 @@ public sealed class LuaState
 
     internal void AttachLoadedModuleCache(LuaTable loaded)
     {
-        ArgumentNullException.ThrowIfNull(loaded);
+        LunilGuard.NotNull(loaded);
         if (!ReferenceEquals(loaded.Owner, Heap))
         {
             throw new LuaRuntimeException("package.loaded must belong to its Lua state");
@@ -393,8 +395,8 @@ public sealed class LuaState
         LuaValue cachedValue,
         LuaIrModule? module)
     {
-        ArgumentNullException.ThrowIfNull(name);
-        if (!Enum.IsDefined(loaderKind))
+        LunilGuard.NotNull(name);
+        if (!LunilEnum.IsDefined(loaderKind))
         {
             throw new ArgumentOutOfRangeException(nameof(loaderKind));
         }
@@ -440,13 +442,13 @@ public sealed class LuaState
 
     internal LuaValue GetLoadedModuleCacheValue(string name)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         return _loadedModuleCache?.Get(GetModuleCacheKey(name)) ?? LuaValue.Nil;
     }
 
     internal void SetLoadedModuleCacheValue(string name, LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         if (_loadedModuleCache is null)
         {
             throw new InvalidOperationException("The package.loaded table is not attached.");
@@ -457,7 +459,7 @@ public sealed class LuaState
 
     internal void RestoreLoadedModule(LuaModuleRecord record)
     {
-        ArgumentNullException.ThrowIfNull(record);
+        LunilGuard.NotNull(record);
         if (_loadedModuleCache is null || !ModuleCacheValuesMatch(
             _loadedModuleCache.Get(GetModuleCacheKey(record.Name)),
             record.CachedValue))

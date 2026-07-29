@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.Core;
 using Lunil.IR.Canonical;
@@ -21,18 +19,18 @@ public sealed partial class LuaHost : IDisposable
     private readonly LuaExecutor _interpreterExecutor;
     private readonly object _jitLock = new();
     private readonly object _executionGate = new();
-    private LuaJitExecutor? _jitExecutor;
+    private ILuaHostJitBackend? _jitExecutor;
     private int _disposed;
 
     public LuaHost(LuaHostOptions? options = null)
     {
         var configured = options ?? LuaHostOptions.Default;
-        ArgumentNullException.ThrowIfNull(configured.Compiler);
-        ArgumentNullException.ThrowIfNull(configured.State);
-        ArgumentNullException.ThrowIfNull(configured.Execution);
-        ArgumentNullException.ThrowIfNull(configured.Jit);
-        ArgumentNullException.ThrowIfNull(configured.Workspace);
-        ArgumentNullException.ThrowIfNull(configured.Clr);
+        LunilGuard.NotNull(configured.Compiler);
+        LunilGuard.NotNull(configured.State);
+        LunilGuard.NotNull(configured.Execution);
+        LunilGuard.NotNull(configured.Jit);
+        LunilGuard.NotNull(configured.Workspace);
+        LunilGuard.NotNull(configured.Clr);
         if (!LuaLanguageVersions.IsKnown(configured.LanguageVersion))
         {
             throw new ArgumentOutOfRangeException(
@@ -56,33 +54,32 @@ public sealed partial class LuaHost : IDisposable
                 LanguageVersion = configured.LanguageVersion,
             },
         };
-        if (!Enum.IsDefined(Options.Profile))
+        if (!LunilEnum.IsDefined(Options.Profile))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The host profile is invalid.");
         }
 
-        if (!Enum.IsDefined(Options.ExecutionBackend))
+        if (!LunilEnum.IsDefined(Options.ExecutionBackend))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options),
                 "The host execution backend is invalid.");
         }
 
-        if (!Enum.IsDefined(Options.Jit.Policy))
+        if (!LunilEnum.IsDefined(Options.Jit.Policy))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The JIT policy is invalid.");
         }
 
         if (Options.ExecutionBackend == LuaHostExecutionBackend.Jit &&
-            Options.Jit.Policy == LuaJitPolicy.InterpreterOnly)
+            Options.Jit.Policy == LuaHostJitPolicy.InterpreterOnly)
         {
             throw new ArgumentException(
                 "The JIT backend cannot use the interpreter-only JIT policy.",
                 nameof(options));
         }
 
-        IsDynamicCodeAvailable = RuntimeFeature.IsDynamicCodeSupported &&
-            RuntimeFeature.IsDynamicCodeCompiled;
+        IsDynamicCodeAvailable = LunilRuntimeFeature.IsDynamicCodeAvailable;
         SelectedExecutionBackend = ResolveExecutionBackend(
             Options.ExecutionBackend,
             IsDynamicCodeAvailable,
@@ -126,7 +123,7 @@ public sealed partial class LuaHost : IDisposable
     /// Gets JIT statistics after the JIT executor has been initialized, or null when the host uses
     /// the interpreter or has not executed any code yet.
     /// </summary>
-    public LuaJitStatistics? JitStatistics => _jitExecutor?.Statistics;
+    public LuaHostJitStatistics? JitStatistics => _jitExecutor?.Statistics;
 
     public LuaCompiler Compiler { get; }
 
@@ -180,7 +177,7 @@ public sealed partial class LuaHost : IDisposable
         LuaCompilationResult compilation,
         ReadOnlySpan<LuaValue> arguments = default)
     {
-        ArgumentNullException.ThrowIfNull(compilation);
+        LunilGuard.NotNull(compilation);
         if (!compilation.Succeeded || compilation.Module is null)
         {
             throw new ArgumentException(
@@ -195,7 +192,7 @@ public sealed partial class LuaHost : IDisposable
         LuaIrModule module,
         ReadOnlySpan<LuaValue> arguments = default)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         lock (_executionGate)
         {
             ThrowIfDisposed();
@@ -247,6 +244,61 @@ public sealed partial class LuaHost : IDisposable
         }
     }
 
+    internal LuaExecutionResult StartThread(
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+                ? GetJitExecutor().Start(
+                    State,
+                    thread,
+                    maximumInstructionCount,
+                    arguments)
+                : _interpreterExecutor.Start(
+                    State,
+                    thread,
+                    maximumInstructionCount,
+                    arguments);
+        }
+    }
+
+    internal LuaExecutionResult ResumeThread(
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+                ? GetJitExecutor().Resume(
+                    State,
+                    thread,
+                    maximumInstructionCount,
+                    arguments)
+                : _interpreterExecutor.Resume(
+                    State,
+                    thread,
+                    maximumInstructionCount,
+                    arguments);
+        }
+    }
+
+    internal LuaExecutionResult CloseThread(LuaThread thread)
+    {
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
+                ? GetJitExecutor().Close(State, thread)
+                : _interpreterExecutor.Close(State, thread);
+        }
+    }
+
     public void Dispose()
     {
         lock (_executionGate)
@@ -256,7 +308,7 @@ public sealed partial class LuaHost : IDisposable
                 return;
             }
 
-            LuaJitExecutor? jit;
+            ILuaHostJitBackend? jit;
             lock (_jitLock)
             {
                 jit = _jitExecutor;
@@ -276,27 +328,26 @@ public sealed partial class LuaHost : IDisposable
             ? GetJitExecutor().Execute(State, closure, arguments)
             : _interpreterExecutor.Execute(State, closure, arguments);
 
-    private LuaJitExecutor GetJitExecutor()
+    private ILuaHostJitBackend GetJitExecutor()
     {
         lock (_jitLock)
         {
             ThrowIfDisposed();
-            return _jitExecutor ??= new LuaJitExecutor(Options.Jit with
-            {
-                Interpreter = Options.Execution,
-            });
+            return _jitExecutor ??= LuaHostJitBackendFactory.Create(
+                Options.Jit,
+                Options.Execution);
         }
     }
 
     private void ThrowIfDisposed() =>
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        LunilGuard.NotDisposed(Volatile.Read(ref _disposed) != 0, this);
 
     private static LuaHostExecutionBackend ResolveExecutionBackend(
         LuaHostExecutionBackend requested,
         bool isDynamicCodeAvailable,
-        LuaJitPolicy jitPolicy) => requested switch
+        LuaHostJitPolicy jitPolicy) => requested switch
         {
-            LuaHostExecutionBackend.Auto when jitPolicy == LuaJitPolicy.InterpreterOnly =>
+            LuaHostExecutionBackend.Auto when jitPolicy == LuaHostJitPolicy.InterpreterOnly =>
                 LuaHostExecutionBackend.Interpreter,
             LuaHostExecutionBackend.Auto => isDynamicCodeAvailable
                 ? LuaHostExecutionBackend.Jit

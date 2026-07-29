@@ -80,10 +80,10 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
         string directory,
         LuaPatchFileDistributedBarrierStoreOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        LunilGuard.NotNullOrWhiteSpace(directory);
         _directory = Path.GetFullPath(directory);
         _options = options ?? LuaPatchFileDistributedBarrierStoreOptions.Default;
-        ArgumentNullException.ThrowIfNull(_options.TimeProvider);
+        LunilGuard.NotNull(_options.TimeProvider);
         if (_options.MaximumStateBytes <= 0 || _options.MaximumStateBytes > int.MaxValue ||
             _options.MaximumParticipantCount <= 0 || _options.MaximumBarrierCount <= 0 ||
             _options.MaximumMessageBytes <= 0 ||
@@ -103,7 +103,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
         LuaPatchDistributedBarrierRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        LunilGuard.NotNull(request);
         var normalized = Normalize(request);
         cancellationToken.ThrowIfCancellationRequested();
         EnsureDirectory();
@@ -260,7 +260,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
         ValidateText(request.TargetRevision, nameof(request.TargetRevision));
         ValidateText(request.ParticipantId, nameof(request.ParticipantId));
         var manifestIdentity = NormalizeManifestIdentity(request.PatchManifestIdentity);
-        if (!Enum.IsDefined(request.Signal))
+        if (!LunilEnum.IsDefined(request.Signal))
         {
             throw Error(
                 LuaPatchDistributedBarrierErrorCode.InvalidRequest,
@@ -282,7 +282,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
 
         var participants = request.Participants
             .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
+            .OrderBy(static value => value, StringComparer.Ordinal)
             .ToImmutableArray();
         if (participants.Length != request.Participants.Length)
         {
@@ -463,7 +463,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
             }
             else if (prepared.Count >= state.RequiredParticipantCount)
             {
-                selected = prepared.Order(StringComparer.Ordinal)
+                selected = prepared.OrderBy(static value => value, StringComparer.Ordinal)
                     .Take(state.RequiredParticipantCount)
                     .ToImmutableArray();
                 decision = LuaPatchDistributedBarrierDecision.Apply;
@@ -493,10 +493,10 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
 
         return state with
         {
-            PreparedParticipants = prepared.Order(StringComparer.Ordinal).ToImmutableArray(),
+            PreparedParticipants = prepared.OrderBy(static value => value, StringComparer.Ordinal).ToImmutableArray(),
             SelectedParticipants = selected,
-            HealthyParticipants = healthy.Order(StringComparer.Ordinal).ToImmutableArray(),
-            FailedParticipants = failed.Order(StringComparer.Ordinal).ToImmutableArray(),
+            HealthyParticipants = healthy.OrderBy(static value => value, StringComparer.Ordinal).ToImmutableArray(),
+            FailedParticipants = failed.OrderBy(static value => value, StringComparer.Ordinal).ToImmutableArray(),
             Decision = decision,
             UpdatedAt = now,
             HealthDeadline = healthDeadline,
@@ -544,7 +544,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
             }
 
             var bytes = new byte[(int)stream.Length];
-            stream.ReadExactly(bytes);
+            LunilStream.ReadExactly(stream, bytes);
             if (bytes[^1] != (byte)'\n')
             {
                 throw Error(
@@ -623,7 +623,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
                 stream.Flush(flushToDisk: true);
             }
 
-            File.Move(temporaryPath, path, overwrite: true);
+            LuaPatchDurableFileSystem.ReplaceFile(temporaryPath, path);
             LuaPatchDurableFileSystem.FlushDirectory(_directory);
         }
         catch (LuaPatchDistributedBarrierException)
@@ -666,7 +666,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
             }
 
             lastException = exception;
-            if (!contention || Stopwatch.GetElapsedTime(started) >= _options.WriterLockTimeout)
+            if (!contention || LunilStopwatch.GetElapsedTime(started) >= _options.WriterLockTimeout)
             {
                 throw Error(
                     LuaPatchDistributedBarrierErrorCode.WriterUnavailable,
@@ -710,13 +710,13 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
 
     private string GetStatePath(string rolloutId, string ringName)
     {
-        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+        var key = LunilConvert.ToHexString(LunilCryptography.Sha256(Encoding.UTF8.GetBytes(
             rolloutId + "\0" + ringName)));
         return Path.Combine(_directory, key + ".json");
     }
 
     private static string ComputeHash(LuaPatchDistributedBarrierFileState state) =>
-        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+        LunilConvert.ToHexString(LunilCryptography.Sha256(JsonSerializer.SerializeToUtf8Bytes(
             state,
             LuaPatchJsonContext.Default.LuaPatchDistributedBarrierFileState)));
 
@@ -753,7 +753,7 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
             state.Participants.Any(participant => !IsValidStoredText(participant)) ||
             state.RequiredParticipantCount <= 0 ||
             state.RequiredParticipantCount > state.Participants.Length ||
-            !Enum.IsDefined(state.Decision) || state.CreatedAt > state.UpdatedAt ||
+            !LunilEnum.IsDefined(state.Decision) || state.CreatedAt > state.UpdatedAt ||
             !IsValidBarrierTimeout(TimeSpan.FromTicks(state.PreparationTimeoutTicks)) ||
             !IsValidBarrierTimeout(TimeSpan.FromTicks(state.HealthTimeoutTicks)) ||
             state.PreparationDeadline - state.CreatedAt !=
@@ -814,10 +814,10 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
         Encoding.UTF8.GetByteCount(value) <= _options.MaximumIdentityBytes;
 
     private static bool IsOrdinallySorted(ImmutableArray<string> values) =>
-        !values.IsDefault && values.SequenceEqual(values.Order(StringComparer.Ordinal));
+        !values.IsDefault && values.SequenceEqual(values.OrderBy(static value => value, StringComparer.Ordinal));
 
     private static bool IsCanonicalManifestIdentity(string? value) =>
-        value is not null && value.Length == SHA256.HashSizeInBytes * 2 &&
+        value is not null && value.Length == LunilCryptography.Sha256HashSize * 2 &&
         value.All(static character => character is >= '0' and <= '9' or >= 'A' and <= 'F');
 
     private void ValidateText(string value, string name)
@@ -849,10 +849,10 @@ public sealed class LuaPatchFileDistributedBarrierStore : ILuaPatchDistributedBa
 
         try
         {
-            var bytes = Convert.FromHexString(value);
-            if (bytes.Length == SHA256.HashSizeInBytes)
+            var bytes = LunilConvert.FromHexString(value);
+            if (bytes.Length == LunilCryptography.Sha256HashSize)
             {
-                return Convert.ToHexString(bytes);
+                return LunilConvert.ToHexString(bytes);
             }
         }
         catch (FormatException)

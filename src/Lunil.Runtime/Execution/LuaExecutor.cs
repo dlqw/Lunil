@@ -35,11 +35,27 @@ public sealed class LuaExecutor
         ReadOnlySpan<LuaValue> arguments = default) =>
         _engine.Start(state, thread, arguments);
 
+    /// <summary>Starts a coroutine with an invocation-specific instruction limit.</summary>
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _engine.Start(state, thread, maximumInstructionCount, arguments);
+
     public LuaExecutionResult Resume(
         LuaState state,
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default) =>
         _engine.Resume(state, thread, arguments);
+
+    /// <summary>Resumes a coroutine with an invocation-specific instruction limit.</summary>
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _engine.Resume(state, thread, maximumInstructionCount, arguments);
 
     public LuaExecutionResult Close(LuaState state, LuaThread thread) =>
         _engine.Close(state, thread);

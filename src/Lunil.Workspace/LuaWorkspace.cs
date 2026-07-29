@@ -31,7 +31,7 @@ public sealed class LuaWorkspace : IDisposable
         ILuaModuleResolver? resolver = null)
     {
         var configured = options ?? LuaWorkspaceOptions.Default;
-        ArgumentNullException.ThrowIfNull(configured.Compiler);
+        LunilGuard.NotNull(configured.Compiler);
         Options = configured with
         {
             Compiler = configured.Compiler with
@@ -50,7 +50,7 @@ public sealed class LuaWorkspace : IDisposable
         IEnumerable<LuaWorkspaceDocument> roots,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(roots);
+        LunilGuard.NotNull(roots);
         EnterOperation();
         var gateAcquired = false;
         try
@@ -379,7 +379,7 @@ public sealed class LuaWorkspace : IDisposable
     {
         lock (_lifetimeLock)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            LunilGuard.NotDisposed(_disposed, this);
             _activeOperations++;
         }
     }
@@ -669,7 +669,7 @@ public sealed class LuaWorkspace : IDisposable
         ref long sourceBytes,
         ICollection<LuaWorkspaceDiagnostic> diagnostics)
     {
-        ArgumentNullException.ThrowIfNull(document);
+        LunilGuard.NotNull(document);
         if (documents.TryGetValue(document.Module.Name, out var existing))
         {
             if (!ReferenceEquals(existing, document) &&
@@ -878,15 +878,15 @@ public sealed class LuaWorkspace : IDisposable
     private static string HashType(LuaType type) => HashText(type.DisplayName);
 
     private static string HashText(string value) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+        LunilCryptography.Sha256Hex(Encoding.UTF8.GetBytes(value)).ToLowerInvariant();
 
     private static string HashBytes(ReadOnlySpan<byte> value) =>
-        Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
+        LunilCryptography.Sha256Hex(value).ToLowerInvariant();
 
     private static void ValidateOptions(LuaWorkspaceOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options.Compiler);
-        ArgumentNullException.ThrowIfNull(options.SuppressedDiagnosticCodes);
+        LunilGuard.NotNull(options.Compiler);
+        LunilGuard.NotNull(options.SuppressedDiagnosticCodes);
         if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
         {
             throw new ArgumentOutOfRangeException(
@@ -894,16 +894,16 @@ public sealed class LuaWorkspace : IDisposable
                 options.LanguageVersion,
                 "The workspace language version is invalid.");
         }
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumModuleCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDependencyCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumSourceBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumParallelism);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumFixedPointIterations);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumCacheEntryCount);
-        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumDiagnosticCount, 2);
-        if (!Enum.IsDefined(options.UnresolvedModuleSeverity) ||
-            !Enum.IsDefined(options.DynamicRequireSeverity) ||
-            !Enum.IsDefined(options.FixedPointSeverity))
+        LunilGuard.Positive(options.MaximumModuleCount);
+        LunilGuard.Positive(options.MaximumDependencyCount);
+        LunilGuard.Positive(options.MaximumSourceBytes);
+        LunilGuard.Positive(options.MaximumParallelism);
+        LunilGuard.Positive(options.MaximumFixedPointIterations);
+        LunilGuard.Positive(options.MaximumCacheEntryCount);
+        LunilGuard.GreaterThanOrEqual(options.MaximumDiagnosticCount, 2);
+        if (!LunilEnum.IsDefined(options.UnresolvedModuleSeverity) ||
+            !LunilEnum.IsDefined(options.DynamicRequireSeverity) ||
+            !LunilEnum.IsDefined(options.FixedPointSeverity))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "A workspace severity is invalid.");
         }

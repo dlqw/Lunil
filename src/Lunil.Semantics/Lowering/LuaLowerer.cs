@@ -15,7 +15,7 @@ public static class LuaLowerer
 {
     public static LuaLoweringResult Lower(LuaSemanticModel semanticModel)
     {
-        ArgumentNullException.ThrowIfNull(semanticModel);
+        LunilGuard.NotNull(semanticModel);
         if (semanticModel.Diagnostics.Any(static diagnostic =>
                 diagnostic.Severity == DiagnosticSeverity.Error))
         {
@@ -1020,7 +1020,7 @@ public static class LuaLowerer
                 [
                     .. _activeSymbolIds.Select(symbolId => _symbolRegisters[symbolId])
                         .Concat(_activeSyntheticCloseRegisters)
-                        .Order(),
+                        .OrderBy(static value => value),
                 ];
 
             private void LowerExpressionList(LuaSyntaxNode list, int destination, int resultCount)

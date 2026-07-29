@@ -7,10 +7,10 @@ public sealed record LuaSourceDocument
 {
     public LuaSourceDocument(SourceText text, string? sourceName = null)
     {
-        ArgumentNullException.ThrowIfNull(text);
+        LunilGuard.NotNull(text);
         if (sourceName is not null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(sourceName);
+            LunilGuard.NotNullOrWhiteSpace(sourceName);
         }
 
         Text = text;

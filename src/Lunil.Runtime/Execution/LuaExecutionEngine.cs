@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -29,9 +30,9 @@ internal sealed class LuaExecutionEngine
     {
         _options = options ?? LuaInterpreterOptions.Default;
         _instructionExecutor = instructionExecutor ?? _referenceInstructionExecutor;
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumInstructionCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumStackSlots);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumCallDepth);
+        LunilGuard.Positive(_options.MaximumInstructionCount);
+        LunilGuard.Positive(_options.MaximumStackSlots);
+        LunilGuard.Positive(_options.MaximumCallDepth);
     }
 
     public LuaExecutionResult Execute(
@@ -39,8 +40,8 @@ internal sealed class LuaExecutionEngine
         LuaClosure closure,
         ReadOnlySpan<LuaValue> arguments = default)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(closure);
         lock (state.ExecutionGate)
         {
             state.Heap.ValidateValue(LuaValue.FromFunction(closure));
@@ -69,7 +70,7 @@ internal sealed class LuaExecutionEngine
         ReadOnlySpan<LuaValue> arguments = default,
         Lua54ChunkReaderOptions? readerOptions = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         lock (state.ExecutionGate)
         {
             return Execute(state, state.LoadBinaryChunk(binaryChunk, readerOptions), arguments);
@@ -80,8 +81,16 @@ internal sealed class LuaExecutionEngine
         LuaState state,
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default)
+        => Start(state, thread, _options.MaximumInstructionCount, arguments);
+
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
+        ValidateInstructionLimit(maximumInstructionCount);
         lock (state.ExecutionGate)
         {
             ValidateThreadEntry(state, thread);
@@ -90,7 +99,12 @@ internal sealed class LuaExecutionEngine
                 throw new LuaRuntimeException("Cannot start a coroutine that has already started.");
             }
 
-            return RunScheduler(state, thread, arguments, yieldableRoot: true);
+            return RunScheduler(
+                state,
+                thread,
+                arguments,
+                yieldableRoot: true,
+                maximumInstructionCount: maximumInstructionCount);
         }
     }
 
@@ -98,14 +112,27 @@ internal sealed class LuaExecutionEngine
         LuaState state,
         LuaThread thread,
         ReadOnlySpan<LuaValue> arguments = default)
+        => Resume(state, thread, _options.MaximumInstructionCount, arguments);
+
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
+        ValidateInstructionLimit(maximumInstructionCount);
         lock (state.ExecutionGate)
         {
             ValidateThreadEntry(state, thread);
             if (thread.Status == LuaThreadStatus.New && !thread.Started)
             {
-                return RunScheduler(state, thread, arguments, yieldableRoot: true);
+                return RunScheduler(
+                    state,
+                    thread,
+                    arguments,
+                    yieldableRoot: true,
+                    maximumInstructionCount: maximumInstructionCount);
             }
 
             if (thread.Status != LuaThreadStatus.Suspended)
@@ -113,14 +140,19 @@ internal sealed class LuaExecutionEngine
                 throw new LuaRuntimeException($"Cannot resume a {FormatStatus(thread)} coroutine.");
             }
 
-            return RunScheduler(state, thread, arguments, yieldableRoot: true);
+            return RunScheduler(
+                state,
+                thread,
+                arguments,
+                yieldableRoot: true,
+                maximumInstructionCount: maximumInstructionCount);
         }
     }
 
     public LuaExecutionResult Close(LuaState state, LuaThread thread)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(thread);
         lock (state.ExecutionGate)
         {
             state.Heap.ValidateValue(LuaValue.FromThread(thread));
@@ -163,7 +195,8 @@ internal sealed class LuaExecutionEngine
         LuaThread root,
         ReadOnlySpan<LuaValue> arguments,
         bool yieldableRoot,
-        bool activateThread = true)
+        bool activateThread = true,
+        long? maximumInstructionCount = null)
     {
         if (_schedulerNestingDepth >= MaximumCStackDepth)
         {
@@ -177,7 +210,10 @@ internal sealed class LuaExecutionEngine
         state.Heap.AddPermanentRoot(root);
         try
         {
-            var scheduler = new LuaScheduler(root, yieldableRoot);
+            var scheduler = new LuaScheduler(
+                root,
+                yieldableRoot,
+                maximumInstructionCount ?? _options.MaximumInstructionCount);
             if (activateThread)
             {
                 ActivateThread(state, scheduler, root, arguments);
@@ -196,7 +232,7 @@ internal sealed class LuaExecutionEngine
                     activation.ForcedResult = null;
                     if (CompleteThread(scheduler, thread, forcedResult, out var forcedExecutionResult))
                     {
-                        return forcedExecutionResult!;
+                        return RecordInstructionCount(forcedExecutionResult!, scheduler);
                     }
 
                     continue;
@@ -229,7 +265,7 @@ internal sealed class LuaExecutionEngine
                         pendingError,
                         out var pendingErrorResult))
                     {
-                        return pendingErrorResult!;
+                        return RecordInstructionCount(pendingErrorResult!, scheduler);
                     }
 
                     continue;
@@ -261,7 +297,7 @@ internal sealed class LuaExecutionEngine
                                 unprotectedError,
                                 out var unwindResult))
                         {
-                            return unwindResult!;
+                            return RecordInstructionCount(unwindResult!, scheduler);
                         }
                     }
                     catch (LuaRuntimeException exception)
@@ -275,7 +311,7 @@ internal sealed class LuaExecutionEngine
                                 MaterializeError(state, exception),
                                 out var closeResult))
                             {
-                                return closeResult!;
+                                return RecordInstructionCount(closeResult!, scheduler);
                             }
 
                             continue;
@@ -300,7 +336,7 @@ internal sealed class LuaExecutionEngine
                     scheduler.Transfer = LuaSchedulerTransfer.None;
                     if (CompleteYield(scheduler, thread, out var rootYieldedResult))
                     {
-                        return rootYieldedResult!;
+                        return RecordInstructionCount(rootYieldedResult!, scheduler);
                     }
 
                     continue;
@@ -340,7 +376,7 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler.InstructionLimit - scheduler.TotalInstructionCount,
                                 scheduler);
                             activation.ExecutionContext = executionContext;
                         }
@@ -350,7 +386,7 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler.InstructionLimit - scheduler.TotalInstructionCount,
                                 scheduler);
                         }
                         pendingInstructionContext = executionContext;
@@ -404,7 +440,7 @@ internal sealed class LuaExecutionEngine
                                 this,
                                 state,
                                 thread,
-                                _options.MaximumInstructionCount - activation.InstructionCount,
+                                scheduler.InstructionLimit - scheduler.TotalInstructionCount,
                                 scheduler);
                             pendingInstructionContext = executionContext;
                             exit = _referenceInstructionExecutor.Execute(
@@ -447,7 +483,7 @@ internal sealed class LuaExecutionEngine
                                         "The interpreter instruction budget was exceeded.")),
                                     out var budgetResult))
                                 {
-                                    return budgetResult!;
+                                    return RecordInstructionCount(budgetResult!, scheduler);
                                 }
 
                                 continue;
@@ -526,7 +562,7 @@ internal sealed class LuaExecutionEngine
 
                     if (FailThread(state, scheduler, thread, error, out var errorResult))
                     {
-                        return errorResult!;
+                        return RecordInstructionCount(errorResult!, scheduler);
                     }
 
                     continue;
@@ -537,7 +573,7 @@ internal sealed class LuaExecutionEngine
                     scheduler.Transfer = LuaSchedulerTransfer.None;
                     if (CompleteYield(scheduler, thread, out var yieldedResult))
                     {
-                        return yieldedResult!;
+                        return RecordInstructionCount(yieldedResult!, scheduler);
                     }
 
                     continue;
@@ -560,7 +596,7 @@ internal sealed class LuaExecutionEngine
                 {
                     if (CompleteThread(scheduler, thread, result.Value, out var completedResult))
                     {
-                        return completedResult!;
+                        return RecordInstructionCount(completedResult!, scheduler);
                     }
 
                     state.Heap.SafePoint();
@@ -590,9 +626,9 @@ internal sealed class LuaExecutionEngine
         LuaFrame frame,
         int programCounter)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         if (!ReferenceEquals(context.ExecutionEngine, this) ||
             !ReferenceEquals(context.Thread, thread))
         {
@@ -601,8 +637,8 @@ internal sealed class LuaExecutionEngine
         }
 
         var instructions = frame.Function.Instructions;
-        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+        LunilGuard.NotNegative(programCounter);
+        LunilGuard.LessThan(
             programCounter,
             instructions.Length);
         if (frame.ProgramCounter != programCounter)
@@ -633,8 +669,8 @@ internal sealed class LuaExecutionEngine
         }
 
         var instructions = frame.Function.Instructions;
-        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+        LunilGuard.NotNegative(programCounter);
+        LunilGuard.LessThan(
             programCounter,
             instructions.Length);
         var instructionArray = ImmutableCollectionsMarshal.AsArray(instructions)!;
@@ -822,40 +858,47 @@ internal sealed class LuaExecutionEngine
 
         frame.DebugHookCheckedProgramCounter = frame.ProgramCounter;
         frame.DispatchedDebugHookEvent = hookEvent;
-        LuaValuePair arguments = default;
-        arguments[0] = LuaValue.FromString(state.GetDebugHookEventString(hookEvent));
-        arguments[1] = line < 0 ? LuaValue.Nil : LuaValue.FromInteger(line);
-        ReadOnlySpan<LuaValue> argumentSpan = arguments;
-        var hook = thread.DebugHook;
-        thread.IsRunningDebugHook = true;
-        if (hook.TryGetClosure() is { } closure)
-        {
-            var hookFrame = PushFrame(
-                thread,
-                closure,
-                argumentSpan,
-                Math.Max(frame.Top, frame.Base + frame.Function.RegisterCount),
-                expectedResults: 0,
-                isDebugHook: true);
-            hookFrame.Continuation.IsYieldBarrier = true;
-            return true;
-        }
-
+        var arguments = ArrayPool<LuaValue>.Shared.Rent(2);
         try
         {
-            var native = hook.TryGetNativeFunction() ??
-                throw new LuaRuntimeException("invalid hook function");
-            if (native.StepBody is not null)
+            arguments[0] = LuaValue.FromString(state.GetDebugHookEventString(hookEvent));
+            arguments[1] = line < 0 ? LuaValue.Nil : LuaValue.FromInteger(line);
+            ReadOnlySpan<LuaValue> argumentSpan = arguments.AsSpan(0, 2);
+            var hook = thread.DebugHook;
+            thread.IsRunningDebugHook = true;
+            if (hook.TryGetClosure() is { } closure)
             {
-                throw new LuaRuntimeException("resumable native functions cannot be debug hooks");
+                var hookFrame = PushFrame(
+                    thread,
+                    closure,
+                    argumentSpan,
+                    Math.Max(frame.Top, frame.Base + frame.Function.RegisterCount),
+                    expectedResults: 0,
+                    isDebugHook: true);
+                hookFrame.Continuation.IsYieldBarrier = true;
+                return true;
             }
 
-            _ = InvokeNativeBody(state, hook, argumentSpan);
-            return false;
+            try
+            {
+                var native = hook.TryGetNativeFunction() ??
+                    throw new LuaRuntimeException("invalid hook function");
+                if (native.StepBody is not null)
+                {
+                    throw new LuaRuntimeException("resumable native functions cannot be debug hooks");
+                }
+
+                _ = InvokeNativeBody(state, hook, argumentSpan);
+                return false;
+            }
+            finally
+            {
+                thread.IsRunningDebugHook = false;
+            }
         }
         finally
         {
-            thread.IsRunningDebugHook = false;
+            ArrayPool<LuaValue>.Shared.Return(arguments, clearArray: true);
         }
     }
 
@@ -1333,8 +1376,8 @@ internal sealed class LuaExecutionEngine
 
     private static void ValidateThreadEntry(LuaState state, LuaThread thread)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(thread);
         state.Heap.ValidateValue(LuaValue.FromThread(thread));
         if (thread.Entry.Kind != LuaValueKind.Function)
         {
@@ -2326,7 +2369,7 @@ internal sealed class LuaExecutionEngine
         var function = functionVersion.Function;
         var instructionCost = functionVersion.FramelessInstructionCount;
         var remainingInstructions = context?.RemainingInstructionCount ??
-            _options.MaximumInstructionCount - scheduler!.Current.InstructionCount;
+            scheduler!.InstructionLimit - scheduler.TotalInstructionCount;
         if (remainingInstructions < instructionCost)
         {
             // Enter the ordinary frame so a short remaining budget retains the exact callee PC.
@@ -2493,9 +2536,9 @@ internal sealed class LuaExecutionEngine
         int argumentCount,
         int expectedResults)
     {
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
+        LunilGuard.NotNull(closure);
         if (!ReferenceEquals(thread.CurrentFrame, frame) ||
             !ReferenceEquals(
                 LuaCodegenAbiV2.ReadRegisterUnchecked(
@@ -2546,10 +2589,10 @@ internal sealed class LuaExecutionEngine
         int functionRegister,
         int argumentCount)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
+        LunilGuard.NotNull(closure);
         if (!ReferenceEquals(thread.CurrentFrame, frame) ||
             !ReferenceEquals(
                 LuaCodegenAbiV2.ReadRegisterUnchecked(
@@ -5375,10 +5418,24 @@ internal sealed class LuaExecutionEngine
             [new LuaUpvalue(state.Heap, callable)]);
     }
 
-    [InlineArray(2)]
-    private struct LuaValuePair
+    private void ValidateInstructionLimit(long maximumInstructionCount)
     {
-        private LuaValue _element0;
+        if (maximumInstructionCount < 1 ||
+            maximumInstructionCount > _options.MaximumInstructionCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumInstructionCount),
+                maximumInstructionCount,
+                $"The invocation instruction limit must be between 1 and " +
+                $"{_options.MaximumInstructionCount}.");
+        }
     }
+
+    private static LuaExecutionResult RecordInstructionCount(
+        LuaExecutionResult result,
+        LuaScheduler scheduler) => result with
+        {
+            ExecutedInstructionCount = scheduler.TotalInstructionCount,
+        };
 
 }

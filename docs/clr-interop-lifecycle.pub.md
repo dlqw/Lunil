@@ -35,7 +35,10 @@ explicit host-controlled boundary.
 CLR userdata, callbacks, tasks, subscriptions, and timers retain their originating `LuaState`.
 Callbacks may enter only through the same per-state execution boundary used by the interpreter and
 JIT. `AnyThreadWhenIdle` permits a non-owner thread to claim an idle state atomically, but it does
-not permit concurrent entry, re-entry of a busy state, or yielding through a CLR callback.
+not permit concurrent entry or re-entry of a busy state. Direct bridge callbacks cannot yield.
+`LuaGameLoopHost` is the explicit scheduling exception: void delegate callbacks and host-polled
+timers attached to it run as yieldable Lua coroutines and resume through later matching ticks while
+remaining inside the same state-owner boundary.
 
 Timers follow the same rule by avoiding worker threads entirely. The host polls them while the
 state is idle, making scheduling cost and callback entry part of the game loop's explicit budget.

@@ -81,8 +81,8 @@ public sealed class LuaPatchEcdsaSigner : ILuaPatchSigner
 
     public LuaPatchEcdsaSigner(string keyId, ECDsa key)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(keyId);
-        ArgumentNullException.ThrowIfNull(key);
+        LunilGuard.NotNullOrWhiteSpace(keyId);
+        LunilGuard.NotNull(key);
         if (key.KeySize != 256)
         {
             throw new ArgumentException("The patch signing key must use the P-256 curve.", nameof(key));
@@ -98,12 +98,12 @@ public sealed class LuaPatchEcdsaSigner : ILuaPatchSigner
 
     public byte[] SignDigest(ReadOnlySpan<byte> digest)
     {
-        if (digest.Length != SHA256.HashSizeInBytes)
+        if (digest.Length != LunilCryptography.Sha256HashSize)
         {
             throw new ArgumentException("The patch digest must be SHA-256.", nameof(digest));
         }
 
-        return _key.SignHash(digest, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        return _key.SignHash(digest.ToArray());
     }
 }
 
@@ -113,12 +113,12 @@ public sealed class LuaPatchEcdsaTrustStore : ILuaPatchSignatureTrustPolicy
 
     public LuaPatchEcdsaTrustStore(IEnumerable<LuaPatchTrustedEcdsaKey> keys)
     {
-        ArgumentNullException.ThrowIfNull(keys);
+        LunilGuard.NotNull(keys);
         var builder = ImmutableDictionary.CreateBuilder<string, TrustedKey>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
-            ArgumentNullException.ThrowIfNull(key);
-            ArgumentException.ThrowIfNullOrWhiteSpace(key.KeyId);
+            LunilGuard.NotNull(key);
+            LunilGuard.NotNullOrWhiteSpace(key.KeyId);
             if (key.ValidFrom is { } validFrom && key.ValidUntil is { } validUntil &&
                 validUntil <= validFrom)
             {
@@ -221,7 +221,7 @@ public sealed class LuaPatchEcdsaTrustStore : ILuaPatchSignatureTrustPolicy
         DateTimeOffset verificationTime)
     {
         if (!EvaluateTrust(algorithm, keyId, verificationTime).Trusted ||
-            digest.Length != SHA256.HashSizeInBytes ||
+            digest.Length != LunilCryptography.Sha256HashSize ||
             !_keys.TryGetValue(keyId, out var trustedKey))
         {
             return false;
@@ -232,10 +232,7 @@ public sealed class LuaPatchEcdsaTrustStore : ILuaPatchSignatureTrustPolicy
             using var key = ECDsa.Create();
             key.ImportSubjectPublicKeyInfo(trustedKey.SubjectPublicKeyInfo, out var bytesRead);
             return bytesRead == trustedKey.SubjectPublicKeyInfo.Length && key.KeySize == 256 &&
-                key.VerifyHash(
-                    digest,
-                    signature,
-                    DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+                key.VerifyHash(digest.ToArray(), signature.ToArray());
         }
         catch (CryptographicException)
         {

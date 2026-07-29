@@ -7,7 +7,7 @@ binary-chunk 契约。本页是信息型参考；需要查找命令、选项、�
 
 签名更新 bundle 可通过 `lunil patch pack`、`verify`、`inspect`、`diff` 和 `dry-run` 使用。
 验证操作接受一组 `--public-key`/`--key-id`，或使用带 key 轮换与撤销窗口的版本化
-`--trust-store`。信任与资源边界见[签名 Patch Bundle 参考](hot-update-reference.zh-CN.pub.md)。
+`--trust-store`。信任与资源边界见[签名 Patch Bundle 参考](signed-patch-bundles.zh-CN.pub.md)。
 `patch inspect` 会报告签名的 `updateIntent`、canonical `requiredCapabilities` 和精确匹配的
 `requiredTargetLabels` claim。
 

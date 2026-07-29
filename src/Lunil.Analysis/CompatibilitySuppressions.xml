@@ -1,0 +1,52 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0005</DiagnosticId>
+    <Target>M:Lunil.Analysis.LuaLiteralType.{Clone}$</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaCallKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaCallResolutionStatus</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaControlFlowBlockKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaControlFlowEdgeKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaLiteralKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaTypeDeclarationKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaTypeKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+</Suppressions>

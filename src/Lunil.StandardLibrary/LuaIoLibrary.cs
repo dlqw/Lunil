@@ -962,7 +962,7 @@ internal sealed class LuaFileHandle : IDisposable
         }
 
         _stream.Write(bytes);
-        if (BufferMode == "no" || BufferMode == "line" && bytes.Contains((byte)'\n'))
+        if (BufferMode == "no" || BufferMode == "line" && bytes.IndexOf((byte)'\n') >= 0)
         {
             _stream.Flush();
         }

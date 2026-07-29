@@ -12,7 +12,7 @@ public sealed record LuaPatchDependencyPlan(
 {
     public static LuaPatchDependencyPlan Create(IEnumerable<LuaPatchEntry> entries)
     {
-        ArgumentNullException.ThrowIfNull(entries);
+        LunilGuard.NotNull(entries);
         var modules = new Dictionary<string, LuaPatchEntry>(StringComparer.Ordinal);
         foreach (var entry in entries.Where(static entry =>
             entry.Kind != LuaPatchEntryKind.CompanionData))
@@ -167,7 +167,7 @@ public sealed record LuaPatchDependencyPlan(
             result.Add(component);
         }
 
-        foreach (var module in edges.Keys.Order(StringComparer.Ordinal))
+        foreach (var module in edges.Keys.OrderBy(static value => value, StringComparer.Ordinal))
         {
             if (!indices.ContainsKey(module))
             {

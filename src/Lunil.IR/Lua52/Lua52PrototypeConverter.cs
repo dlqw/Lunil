@@ -16,7 +16,7 @@ public static class Lua52PrototypeConverter
 
     public static LuaIrModule Convert(Lua52Chunk chunk)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         return Lua53PrototypeConverter.Convert(Translate(chunk), LuaLanguageVersion.Lua52);
     }
 

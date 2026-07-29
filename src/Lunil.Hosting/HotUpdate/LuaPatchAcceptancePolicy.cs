@@ -147,7 +147,7 @@ public sealed record LuaPatchAcceptancePolicy
         LuaPatchSignerIdentity verifiedSigner,
         DateTimeOffset? utcNow)
     {
-        ArgumentNullException.ThrowIfNull(verifiedSigner);
+        LunilGuard.NotNull(verifiedSigner);
         return EvaluateCore(manifest, verifiedSigner, utcNow);
     }
 
@@ -156,16 +156,16 @@ public sealed record LuaPatchAcceptancePolicy
         LuaPatchSignerIdentity? verifiedSigner,
         DateTimeOffset? utcNow)
     {
-        ArgumentNullException.ThrowIfNull(manifest);
-        ArgumentException.ThrowIfNullOrWhiteSpace(TargetBuild);
-        ArgumentException.ThrowIfNullOrWhiteSpace(CurrentRevision);
-        ArgumentException.ThrowIfNullOrWhiteSpace(RuntimeAbi);
+        LunilGuard.NotNull(manifest);
+        LunilGuard.NotNullOrWhiteSpace(TargetBuild);
+        LunilGuard.NotNullOrWhiteSpace(CurrentRevision);
+        LunilGuard.NotNullOrWhiteSpace(RuntimeAbi);
         if (MaximumFutureSkew < TimeSpan.Zero)
         {
             throw new InvalidOperationException("MaximumFutureSkew cannot be negative.");
         }
 
-        if (!Enum.IsDefined(manifest.UpdateIntent))
+        if (!LunilEnum.IsDefined(manifest.UpdateIntent))
         {
             throw new ArgumentException("The patch update intent is invalid.", nameof(manifest));
         }
@@ -207,7 +207,7 @@ public sealed record LuaPatchAcceptancePolicy
             var classifiedIntent = RevisionClassifier(
                 manifest.BaseRevision,
                 manifest.TargetRevision);
-            if (!Enum.IsDefined(classifiedIntent))
+            if (!LunilEnum.IsDefined(classifiedIntent))
             {
                 throw new InvalidOperationException(
                     "RevisionClassifier returned an invalid update intent.");
@@ -327,7 +327,7 @@ public sealed record LuaPatchAcceptancePolicy
         ILuaPatchReplayStore replayStore,
         DateTimeOffset? utcNow = null)
     {
-        ArgumentNullException.ThrowIfNull(verifiedSigner);
+        LunilGuard.NotNull(verifiedSigner);
         return TryReserveCore(manifest, verifiedSigner, scope, replayStore, utcNow);
     }
 
@@ -338,8 +338,8 @@ public sealed record LuaPatchAcceptancePolicy
         ILuaPatchReplayStore replayStore,
         DateTimeOffset? utcNow)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
-        ArgumentNullException.ThrowIfNull(replayStore);
+        LunilGuard.NotNullOrWhiteSpace(scope);
+        LunilGuard.NotNull(replayStore);
         var now = utcNow ?? DateTimeOffset.UtcNow;
         // The durable store owns replay state for this path. A legacy lookup is intentionally
         // excluded so an incomplete reservation can be rebound after a process restart.
@@ -359,7 +359,7 @@ public sealed record LuaPatchAcceptancePolicy
             manifest.PatchId,
             manifest.Nonce,
             now);
-        if (!Enum.IsDefined(reservation.Status) ||
+        if (!LunilEnum.IsDefined(reservation.Status) ||
             (reservation.Status == LuaPatchReplayReservationStatus.Reserved) !=
             (reservation.Reservation is not null))
         {

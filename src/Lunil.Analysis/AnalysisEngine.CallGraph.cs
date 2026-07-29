@@ -17,7 +17,7 @@ internal sealed partial class AnalysisEngine
     private LuaCallGraph BuildCallGraph() => new(
         _semantics.Functions
             .Select(static function => function.Id)
-            .Order()
+            .OrderBy(static value => value)
             .ToImmutableArray(),
         _callSites.Values
             .OrderBy(static site => site.Span.Start)

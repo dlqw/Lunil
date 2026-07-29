@@ -147,6 +147,17 @@ public sealed class LuaJitExecutor : IDisposable
         return _engine.Start(state, thread, arguments);
     }
 
+    /// <summary>Starts a coroutine with an invocation-specific instruction limit.</summary>
+    public LuaExecutionResult Start(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        ThrowIfDisposed();
+        return _engine.Start(state, thread, maximumInstructionCount, arguments);
+    }
+
     public LuaExecutionResult Resume(
         LuaState state,
         LuaThread thread,
@@ -154,6 +165,17 @@ public sealed class LuaJitExecutor : IDisposable
     {
         ThrowIfDisposed();
         return _engine.Resume(state, thread, arguments);
+    }
+
+    /// <summary>Resumes a coroutine with an invocation-specific instruction limit.</summary>
+    public LuaExecutionResult Resume(
+        LuaState state,
+        LuaThread thread,
+        long maximumInstructionCount,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        ThrowIfDisposed();
+        return _engine.Resume(state, thread, maximumInstructionCount, arguments);
     }
 
     public LuaExecutionResult Close(LuaState state, LuaThread thread)

@@ -1,0 +1,19 @@
+{
+  "name": "Lunil.Unity.Fixture.Editor",
+  "rootNamespace": "Lunil.Unity.Fixture.Editor",
+  "references": [
+    "Lunil.Unity",
+    "Lunil.Unity.Fixture"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

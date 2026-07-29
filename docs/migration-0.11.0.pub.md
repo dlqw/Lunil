@@ -6,12 +6,12 @@ The 0.11 line adds an additive, opt-in, capability-controlled CLR bridge to `Lun
 Existing hosts keep the same compiler, language-version, runtime, standard-library, and execution
 behavior because `LuaHostOptions.Clr` defaults to `LuaClrOptions.Disabled`.
 
-## 1. Leave existing hosts unchanged
+## No action for existing hosts
 
 Existing hosts do not receive a `clr` global and do not grant discovery, construction, member access,
 callbacks, events, async waiting, or disposal. The stable 0.10 API remains valid on 0.11.
 
-## 2. Opt in with exact allowlists
+## Opt in with exact allowlists
 
 ```csharp
 using var host = new LuaHost(LuaHostOptions.Restricted with
@@ -39,6 +39,5 @@ Use `ThreadPolicy` to choose callback admission and `OwnConstructedObjects` to c
 ownership. The bridge searches only already-loaded assemblies and never falls back to unrestricted
 reflection.
 
-See the [CLR interoperation reference](clr-interop-reference.pub.md) for conversion, callbacks,
-async, ownership, and error contracts, and the [configuration guide](clr-interop.pub.md) for
-deployment steps.
+See [CLR interoperation](clr-interop.pub.md) for conversion, callbacks, async, ownership, errors, and
+deployment rules.

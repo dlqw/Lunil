@@ -37,4 +37,36 @@ public sealed class LuaNumberParserTests
     {
         Assert.False(LuaNumberParser.TryParseString(Encoding.ASCII.GetBytes(text), out _));
     }
+
+    [Theory]
+    [InlineData(1.0, -1074)]
+    [InlineData(1.0, -1022)]
+    [InlineData(1.5, -1023)]
+    [InlineData(1.0, 1023)]
+    [InlineData(1.0, 1024)]
+    [InlineData(double.MaxValue, 1)]
+    [InlineData(double.Epsilon, -1)]
+    [InlineData(-0.0, 2048)]
+    public void PortableScaleBMatchesTheRuntimeAtNumericBoundaries(
+        double value,
+        int exponent)
+    {
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(Math.ScaleB(value, exponent)),
+            BitConverter.DoubleToInt64Bits(LunilMath.ScaleB(value, exponent)));
+    }
+
+    [Theory]
+    [InlineData("0x1p-1074", double.Epsilon)]
+    [InlineData("0x1p-1075", 0.0)]
+    [InlineData("0x1.fffffffffffffp1023", double.MaxValue)]
+    [InlineData("0x1p1024", double.PositiveInfinity)]
+    public void ParsesHexadecimalFloatScaleBoundaries(string text, double expected)
+    {
+        Assert.True(LuaNumberParser.TryParseString(Encoding.ASCII.GetBytes(text), out var value));
+        Assert.Equal(LuaNumberKind.Float, value.Kind);
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(expected),
+            BitConverter.DoubleToInt64Bits(value.Float));
+    }
 }

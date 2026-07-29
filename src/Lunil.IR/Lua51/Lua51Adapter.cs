@@ -222,9 +222,9 @@ public static class Lua51PrototypeConverter
     public static LuaIrModule Convert(ReadOnlySpan<byte> bytes, Lua51ChunkReaderOptions? options = null) => Convert(Lua51ChunkReader.Read(bytes, options));
     public static LuaIrModule Convert(Lua51Chunk chunk)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         var environmentRequirements = new Dictionary<Lua51Prototype, bool>(
-            ReferenceEqualityComparer.Instance);
+            LunilReferenceEqualityComparer.Instance);
         AnalyzeEnvironmentRequirements(chunk.MainPrototype, environmentRequirements);
         var main = Translate(chunk.MainPrototype, default, environmentRequirements);
         return Lua53PrototypeConverter.Convert(new Lua53Chunk(
@@ -533,7 +533,7 @@ public static class Lua51CanonicalPrototypeWriter
     }
     public static Lua51Chunk CreateChunk(LuaIrModule module, int functionId, bool stripDebug = false)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua51) throw new InvalidDataException("Lua 5.1 writer requires a Lua 5.1 module.");
         var source = Lua53CanonicalPrototypeWriter.CreateChunk(module with { LanguageVersion = LuaLanguageVersion.Lua53 }, functionId);
         var environmentIndexes = FindEnvironmentUpvalueIndexes(module);

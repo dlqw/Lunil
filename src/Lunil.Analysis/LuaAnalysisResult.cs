@@ -48,8 +48,8 @@ public sealed record LuaAnalysisResult(
         LuaSemanticModel semanticModel,
         LuaAnnotationDocument annotations)
     {
-        ArgumentNullException.ThrowIfNull(semanticModel);
-        ArgumentNullException.ThrowIfNull(annotations);
+        LunilGuard.NotNull(semanticModel);
+        LunilGuard.NotNull(annotations);
         return new LuaAnalysisResult(
             semanticModel,
             annotations,

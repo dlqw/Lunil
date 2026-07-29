@@ -9,7 +9,7 @@ exit codes.
 Signed update bundles are available through `lunil patch pack`, `verify`, `inspect`, `diff`, and
 `dry-run`. Verification actions accept either one `--public-key`/`--key-id` pair or a versioned
 multi-key `--trust-store` with rotation and revocation windows. See the
-[signed patch bundle reference](hot-update-reference.pub.md) for trust and resource boundaries.
+[signed patch bundle reference](signed-patch-bundles.pub.md) for trust and resource boundaries.
 `patch inspect` reports the signed `updateIntent`, canonical `requiredCapabilities`, and exact-match
 `requiredTargetLabels` claims.
 

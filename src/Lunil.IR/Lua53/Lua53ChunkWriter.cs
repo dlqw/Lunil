@@ -11,7 +11,7 @@ public static class Lua53ChunkWriter
 
     public static byte[] Write(Lua53Chunk chunk, bool stripDebugInformation = false)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         var buffer = new ArrayBufferWriter<byte>();
         var writer = new Writer(buffer, chunk.Target, stripDebugInformation);
         writer.WriteChunk(chunk);
@@ -191,7 +191,7 @@ public static class Lua53ChunkWriter
 
         private void WriteInt(int value)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            LunilGuard.NotNegative(value);
             Span<byte> bytes = stackalloc byte[4];
             if (_target.ByteOrder == Lua53ByteOrder.LittleEndian)
             {

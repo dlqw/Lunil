@@ -15,11 +15,83 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $expectedVersion = (& (Join-Path $PSScriptRoot 'Get-LunilVersion.ps1')).Trim()
 $project = Join-Path $repositoryRoot 'src/Lunil.Cli/Lunil.Cli.csproj'
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $executableName = if ($RuntimeIdentifier.StartsWith('win-', [StringComparison]::Ordinal)) {
     'lunil.exe'
 }
 else {
     'lunil'
+}
+
+function ConvertTo-Pem {
+    param(
+        [Parameter(Mandatory)]
+        [string] $Label,
+
+        [Parameter(Mandatory)]
+        [byte[]] $Der
+    )
+
+    $base64 = [Convert]::ToBase64String($Der)
+    $lines = for ($offset = 0; $offset -lt $base64.Length; $offset += 64) {
+        $length = [Math]::Min(64, $base64.Length - $offset)
+        $base64.Substring($offset, $length)
+    }
+    "-----BEGIN $Label-----`n$($lines -join "`n")`n-----END $Label-----`n"
+}
+
+function New-PatchSigningKeyPair {
+    param(
+        [Parameter(Mandatory)]
+        [string] $PrivateKeyPath,
+
+        [Parameter(Mandatory)]
+        [string] $PublicKeyPath
+    )
+
+    $key = [System.Security.Cryptography.ECDsa]::Create(
+        [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+    try {
+        $parameters = $key.ExportParameters($true)
+        if ($parameters.D.Length -ne 32 -or
+            $parameters.Q.X.Length -ne 32 -or
+            $parameters.Q.Y.Length -ne 32) {
+            throw 'The generated P-256 signing key has unexpected parameter lengths.'
+        }
+
+        # RFC 5915 ECPrivateKey with named-curve and public-key fields.
+        $privateDer = [byte[]](@(
+            0x30, 0x77,
+            0x02, 0x01, 0x01,
+            0x04, 0x20
+        ) + $parameters.D + @(
+            0xA0, 0x0A,
+            0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07,
+            0xA1, 0x44,
+            0x03, 0x42, 0x00, 0x04
+        ) + $parameters.Q.X + $parameters.Q.Y)
+
+        # RFC 5480 SubjectPublicKeyInfo for id-ecPublicKey / prime256v1.
+        $publicDer = [byte[]](@(
+            0x30, 0x59,
+            0x30, 0x13,
+            0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
+            0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07,
+            0x03, 0x42, 0x00, 0x04
+        ) + $parameters.Q.X + $parameters.Q.Y)
+
+        [System.IO.File]::WriteAllText(
+            $PrivateKeyPath,
+            (ConvertTo-Pem -Label 'EC PRIVATE KEY' -Der $privateDer),
+            $utf8NoBom)
+        [System.IO.File]::WriteAllText(
+            $PublicKeyPath,
+            (ConvertTo-Pem -Label 'PUBLIC KEY' -Der $publicDer),
+            $utf8NoBom)
+    }
+    finally {
+        $key.Dispose()
+    }
 }
 
 foreach ($mode in $Modes) {
@@ -31,15 +103,31 @@ foreach ($mode in $Modes) {
     }
 
     $properties = switch ($mode) {
-        'NativeAot' { @('-p:PublishAot=true', '-p:PublishTrimmed=true') }
+        'NativeAot' { @('-p:LunilNativeAotPublish=true', '-p:PublishTrimmed=true') }
         'SingleFileTrimmed' { @('-p:PublishAot=false', '-p:PublishTrimmed=true', '-p:PublishSingleFile=true', '-p:EnableCompressionInSingleFile=true') }
         'ReadyToRun' { @('-p:PublishAot=false', '-p:PublishTrimmed=false', '-p:PublishReadyToRun=true') }
     }
+    $restoreProperties = switch ($mode) {
+        'NativeAot' { @('-p:LunilNativeAotPublish=true') }
+        'SingleFileTrimmed' { @() }
+        'ReadyToRun' { @('-p:LunilReadyToRunPublish=true') }
+    }
+    $restoreArguments = @(
+        'restore', $project,
+        '--runtime', $RuntimeIdentifier
+    ) + $restoreProperties
+    & dotnet @restoreArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$mode CLI restore failed for $RuntimeIdentifier."
+    }
+
     $arguments = @(
         'publish', $project,
         '--configuration', $Configuration,
+        '--framework', 'net10.0',
         '--runtime', $RuntimeIdentifier,
         '--self-contained', 'true',
+        '--no-restore',
         '-p:ContinuousIntegrationBuild=true',
         '-p:TreatWarningsAsErrors=true',
         '--output', $outputDirectory
@@ -52,10 +140,22 @@ foreach ($mode in $Modes) {
         throw "$mode CLI executable was not produced: $executable"
     }
 
-    Set-Content -LiteralPath (Join-Path $outputDirectory 'app.lua') -Encoding utf8NoBOM -Value "print(os.time()); print('LUNIL_CLI_PUBLISH_OK')"
-    Set-Content -LiteralPath (Join-Path $outputDirectory 'warning.lua') -Encoding utf8NoBOM -Value "return 'text' + 1"
-    Set-Content -LiteralPath (Join-Path $outputDirectory 'lunil.json') -Encoding utf8NoBOM -Value '{ "profile": "deterministic", "diagnosticFormat": "json" }'
-    Set-Content -LiteralPath (Join-Path $outputDirectory 'run.rsp') -Encoding utf8NoBOM -Value 'run "app.lua"'
+    [System.IO.File]::WriteAllText(
+        (Join-Path $outputDirectory 'app.lua'),
+        "print(os.time()); print('LUNIL_CLI_PUBLISH_OK')",
+        $utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $outputDirectory 'warning.lua'),
+        "return 'text' + 1",
+        $utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $outputDirectory 'lunil.json'),
+        '{ "profile": "deterministic", "diagnosticFormat": "json" }',
+        $utf8NoBom)
+    [System.IO.File]::WriteAllText(
+        (Join-Path $outputDirectory 'run.rsp'),
+        'run "app.lua"',
+        $utf8NoBom)
 
     Push-Location $outputDirectory
     try {
@@ -73,8 +173,18 @@ foreach ($mode in $Modes) {
             throw "$mode CLI response/config/run smoke failed: $runOutput"
         }
 
-        $diagnostics = (& $executable check warning.lua --warnings-as-errors 2>&1 | Out-String)
-        if ($LASTEXITCODE -ne 1 -or $diagnostics -notmatch '"schema"\s*:\s*"lunil.diagnostics.v1"') {
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $diagnostics = (& $executable check warning.lua --warnings-as-errors 2>&1 |
+                ForEach-Object { $_.ToString() } |
+                Out-String)
+            $diagnosticsExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($diagnosticsExitCode -ne 1 -or $diagnostics -notmatch '"schema"\s*:\s*"lunil.diagnostics.v1"') {
             throw "$mode CLI JSON diagnostics smoke failed: $diagnostics"
         }
 
@@ -84,8 +194,13 @@ foreach ($mode in $Modes) {
         }
 
         New-Item -ItemType Directory -Path 'patch-payload' -Force | Out-Null
-        Set-Content -LiteralPath 'patch-payload/main.lua' -Encoding utf8NoBOM -Value "return 42"
-        Set-Content -LiteralPath 'patch-manifest.json' -Encoding utf8NoBOM -Value @'
+        [System.IO.File]::WriteAllText(
+            (Join-Path $outputDirectory 'patch-payload/main.lua'),
+            'return 42',
+            $utf8NoBom)
+        [System.IO.File]::WriteAllText(
+            (Join-Path $outputDirectory 'patch-manifest.json'),
+            @'
 {
   "formatVersion": 1,
   "patchId": "publish-smoke",
@@ -112,21 +227,14 @@ foreach ($mode in $Modes) {
     }
   ]
 }
-'@
-        $patchKey = [System.Security.Cryptography.ECDsa]::Create(
-            [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
-        try {
-            [System.IO.File]::WriteAllText(
-                (Join-Path $outputDirectory 'patch-private.pem'),
-                $patchKey.ExportECPrivateKeyPem())
-            [System.IO.File]::WriteAllText(
-                (Join-Path $outputDirectory 'patch-public.pem'),
-                $patchKey.ExportSubjectPublicKeyInfoPem())
-        }
-        finally {
-            $patchKey.Dispose()
-        }
-        Set-Content -LiteralPath 'patch-trust.json' -Encoding utf8NoBOM -Value @'
+'@,
+            $utf8NoBom)
+        New-PatchSigningKeyPair `
+            -PrivateKeyPath (Join-Path $outputDirectory 'patch-private.pem') `
+            -PublicKeyPath (Join-Path $outputDirectory 'patch-public.pem')
+        [System.IO.File]::WriteAllText(
+            (Join-Path $outputDirectory 'patch-trust.json'),
+            @'
 {
   "schema": "lunil.patch-trust.v1",
   "keys": [
@@ -138,7 +246,8 @@ foreach ($mode in $Modes) {
     }
   ]
 }
-'@
+'@,
+            $utf8NoBom)
         & $executable patch pack patch-manifest.json patch-payload `
             --output patch.lpatch --private-key patch-private.pem --key-id publish-smoke |
             Out-Null

@@ -15,7 +15,7 @@ public static class Lua54CanonicalPrototypeWriter
         int functionId,
         Lua54ChunkTarget? target = null)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua54)
         {
             throw new InvalidDataException(
@@ -31,7 +31,7 @@ public static class Lua54CanonicalPrototypeWriter
         int functionId,
         Lua54ChunkTarget? target = null)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua55)
         {
             throw new InvalidDataException("Lua 5.5 adapter carrier requires Lua 5.5 canonical IR.");
@@ -1066,7 +1066,7 @@ public static class Lua54CanonicalPrototypeWriter
         private static bool[][] AnalyzeRegisterLiveness(
             ModuleConverter owner,
             LuaIrFunction function,
-            IReadOnlySet<int> capturedRegisters)
+            HashSet<int> capturedRegisters)
         {
             var instructionCount = function.Instructions.Length;
             var liveBefore = CreateLivenessMatrix(instructionCount, function.RegisterCount);

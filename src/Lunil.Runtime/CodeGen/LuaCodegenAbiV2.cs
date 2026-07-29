@@ -22,8 +22,8 @@ public static class LuaCodegenAbiV2
         int functionId,
         int registerCount)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(frame);
         return context.IsBackendGenerationCurrent() &&
             LuaCodegenAbiV1.CanExecuteCompiled(context) &&
             frame.Function.Id == functionId &&
@@ -40,7 +40,7 @@ public static class LuaCodegenAbiV2
         int registerCount,
         int headerProgramCounter)
     {
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(thread);
         return frame.ProgramCounter == headerProgramCounter &&
             CanExecuteCompiledFrame(context, frame, functionId, registerCount) &&
             ReferenceEquals(context.Thread, thread) &&
@@ -58,9 +58,9 @@ public static class LuaCodegenAbiV2
         LuaThread thread,
         LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         if (!context.IsBackendGenerationCurrent())
         {
             return LuaCompiledExitReason.BackendInvalidated;
@@ -127,8 +127,8 @@ public static class LuaCodegenAbiV2
 
     public static bool CanSkipClose(LuaThread thread, LuaFrame frame, int register)
     {
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         var absolute = frame.Base + register;
         if (thread.HasOpenUpvalueAtOrAbove(absolute))
         {
@@ -171,7 +171,7 @@ public static class LuaCodegenAbiV2
         int operation,
         int operandRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         var resolution = LuaRuntimeOperations.Unary(
             context.State,
             (LuaIrUnaryOperator)operation,
@@ -242,7 +242,7 @@ public static class LuaCodegenAbiV2
         int leftRegister,
         int rightRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         var binary = (LuaIrBinaryOperator)operation;
         var left = ReadRegisterUnchecked(thread, frame, leftRegister);
         var right = ReadRegisterUnchecked(thread, frame, rightRegister);

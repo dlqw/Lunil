@@ -577,7 +577,7 @@ internal sealed class LuaValueWindow : IReadOnlyList<LuaValue>
 
     public void Clear(int maximumRetainedCapacity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(maximumRetainedCapacity);
+        LunilGuard.NotNegative(maximumRetainedCapacity);
         Clear();
         if (_values.Length > maximumRetainedCapacity)
         {

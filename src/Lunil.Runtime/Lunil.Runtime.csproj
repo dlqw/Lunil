@@ -1,11 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+    <LunilPortableLibrary>true</LunilPortableLibrary>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

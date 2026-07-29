@@ -73,8 +73,8 @@ public readonly record struct LuaOperationResolution
 
     public LuaValue GetArgument(int index)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(index);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, ArgumentCount);
+        LunilGuard.NotNegative(index);
+        LunilGuard.LessThan(index, ArgumentCount);
         if (_overflowArguments is not null)
         {
             return _overflowArguments[index];
@@ -118,7 +118,7 @@ public readonly record struct LuaOperationResolution
         LuaValue[] arguments,
         LuaResultTransform transform = LuaResultTransform.None)
     {
-        ArgumentNullException.ThrowIfNull(arguments);
+        LunilGuard.NotNull(arguments);
         return new(true, LuaValue.Nil, callable, arguments, transform);
     }
 

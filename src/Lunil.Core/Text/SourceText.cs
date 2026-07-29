@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 
 namespace Lunil.Core.Text;
@@ -24,7 +23,7 @@ public sealed class SourceText
 
     public static SourceText FromUtf8(string text)
     {
-        ArgumentNullException.ThrowIfNull(text);
+        LunilGuard.NotNull(text);
         return new SourceText(Encoding.UTF8.GetBytes(text));
     }
 
@@ -44,8 +43,8 @@ public sealed class SourceText
 
     public TextSpan GetLineSpan(int line)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(line);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(line, _lineStarts.Length);
+        LunilGuard.NotNegative(line);
+        LunilGuard.LessThan(line, _lineStarts.Length);
 
         var start = _lineStarts[line];
         var end = line + 1 < _lineStarts.Length ? _lineStarts[line + 1] : _bytes.Length;
@@ -67,8 +66,8 @@ public sealed class SourceText
 
     public SourceLocation GetLocation(int byteOffset)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(byteOffset);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(byteOffset, _bytes.Length);
+        LunilGuard.NotNegative(byteOffset);
+        LunilGuard.LessThanOrEqual(byteOffset, _bytes.Length);
 
         var line = Array.BinarySearch(_lineStarts, byteOffset);
         if (line < 0)
@@ -110,10 +109,10 @@ public sealed class SourceText
         var count = 0;
         while (!bytes.IsEmpty)
         {
-            var status = Rune.DecodeFromUtf8(bytes, out var rune, out var consumed);
-            if (status == OperationStatus.Done)
+            var consumed = GetValidUtf8SequenceLength(bytes);
+            if (consumed > 0)
             {
-                count += rune.Utf16SequenceLength;
+                count += consumed == 4 ? 2 : 1;
                 bytes = bytes[consumed..];
                 continue;
             }
@@ -127,4 +126,46 @@ public sealed class SourceText
 
         return count;
     }
+
+    private static int GetValidUtf8SequenceLength(ReadOnlySpan<byte> bytes)
+    {
+        var first = bytes[0];
+        if (first <= 0x7f)
+        {
+            return 1;
+        }
+
+        if (first is >= 0xc2 and <= 0xdf)
+        {
+            return bytes.Length >= 2 && IsContinuation(bytes[1]) ? 2 : 0;
+        }
+
+        if (bytes.Length >= 3 && first is >= 0xe0 and <= 0xef)
+        {
+            var second = bytes[1];
+            var validSecond = first switch
+            {
+                0xe0 => second is >= 0xa0 and <= 0xbf,
+                0xed => second is >= 0x80 and <= 0x9f,
+                _ => IsContinuation(second),
+            };
+            return validSecond && IsContinuation(bytes[2]) ? 3 : 0;
+        }
+
+        if (bytes.Length >= 4 && first is >= 0xf0 and <= 0xf4)
+        {
+            var second = bytes[1];
+            var validSecond = first switch
+            {
+                0xf0 => second is >= 0x90 and <= 0xbf,
+                0xf4 => second is >= 0x80 and <= 0x8f,
+                _ => IsContinuation(second),
+            };
+            return validSecond && IsContinuation(bytes[2]) && IsContinuation(bytes[3]) ? 4 : 0;
+        }
+
+        return 0;
+    }
+
+    private static bool IsContinuation(byte value) => value is >= 0x80 and <= 0xbf;
 }

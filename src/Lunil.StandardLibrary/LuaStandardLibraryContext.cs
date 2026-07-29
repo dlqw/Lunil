@@ -20,7 +20,7 @@ internal sealed class LuaStandardLibraryContext
         LuaState state,
         LuaStandardLibraryOptions? options)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         var context = new LuaStandardLibraryContext(options ?? LuaStandardLibraryOptions.Default);
         Contexts.Remove(state);
         Contexts.Add(state, context);

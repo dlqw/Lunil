@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>0.12.1</VersionPrefix>
+    <VersionPrefix>0.13.0</VersionPrefix>
     <Product>Lunil</Product>
     <Authors>rdququ</Authors>
     <Description>Lunil versioned Lua compiler and runtime component.</Description>
@@ -28,5 +28,14 @@
     <None Include="$(MSBuildThisFileDirectory)README.zh-CN.md" Pack="true" PackagePath="\" Link="README.zh-CN.md" />
     <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Link="LICENSE" />
     <None Include="$(MSBuildThisFileDirectory)assets/lunil-logo.svg" Pack="true" PackagePath="assets/" Link="assets/lunil-logo.svg" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(LunilPortableLibrary)' == 'true' and '$(MSBuildProjectName)' != 'Lunil.Core'">
+    <Compile Include="$(MSBuildThisFileDirectory)src/Lunil.Core/Compatibility/GlobalCompatibilityUsings.cs"
+             Link="Compatibility/GlobalCompatibilityUsings.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(LunilPortableLibrary)' == 'true' and '$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="System.Collections.Immutable" Version="10.0.0" />
   </ItemGroup>
 </Project>

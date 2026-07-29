@@ -13,7 +13,7 @@ public static class Lua55ChunkWriter
 
     public static byte[] Write(Lua54Chunk chunk, bool stripDebugInformation = false)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         Lua54ChunkVerifier.ThrowIfInvalid(chunk);
         var output = new ArrayBufferWriter<byte>();
         new Writer(output, chunk.Target, stripDebugInformation).WriteChunk(
@@ -189,7 +189,7 @@ public static class Lua55ChunkWriter
 
         private void WriteInt(int value)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            LunilGuard.NotNegative(value);
             WriteSize((uint)value);
         }
 

@@ -12,8 +12,8 @@ public static class LuaAnnotationSymbolKeyExtensions
         LuaAnnotationSyntax annotation,
         string moduleIdentity)
     {
-        ArgumentNullException.ThrowIfNull(compilation);
-        ArgumentNullException.ThrowIfNull(annotation);
+        LunilGuard.NotNull(compilation);
+        LunilGuard.NotNull(annotation);
         if (!compilation.Annotations.Annotations.Any(candidate => ReferenceEquals(candidate, annotation)))
         {
             throw new ArgumentException(
@@ -50,7 +50,7 @@ public static class LuaAnnotationSymbolKeyExtensions
         LuaSymbolKey key,
         string moduleIdentity)
     {
-        ArgumentNullException.ThrowIfNull(compilation);
+        LunilGuard.NotNull(compilation);
         foreach (var annotation in compilation.Annotations.Annotations)
         {
             if (TryGetDeclaration(annotation, out _) &&

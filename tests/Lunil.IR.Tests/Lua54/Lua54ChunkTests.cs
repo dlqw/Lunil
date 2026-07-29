@@ -327,6 +327,40 @@ public sealed class Lua54ChunkTests
     }
 
     [Fact]
+    public void VerifierRejectsEmptyCodeWithoutThrowingAnIndexException()
+    {
+        var prototype = CreatePrototype() with
+        {
+            Code = [],
+            LineInfo = [],
+            AbsoluteLineInfo = [],
+        };
+        var chunk = new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype);
+
+        var errors = Lua54ChunkVerifier.Verify(chunk);
+
+        Assert.Contains(errors, error => error.Message.Contains(
+            "at least one instruction", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VerifierRejectsUnknownOpcodeWithoutCallingOpcodeMetadata()
+    {
+        var prototype = CreatePrototype() with
+        {
+            Code = [new Lua54Instruction(uint.MaxValue)],
+            LineInfo = [0],
+            AbsoluteLineInfo = [],
+        };
+        var chunk = new Lua54Chunk(Lua54ChunkTarget.Host, 0, prototype);
+
+        var errors = Lua54ChunkVerifier.Verify(chunk);
+
+        Assert.Contains(errors, error => error.Message.Contains(
+            "Unknown opcode", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void VerifierRejectsUnpairedMetamethodAndOutOfRangeRegisters()
     {
         var prototype = CreatePrototype() with

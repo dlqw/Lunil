@@ -6,7 +6,7 @@ public static class LuaPatchManifestSerializer
 {
     public static byte[] Serialize(LuaPatchManifest manifest)
     {
-        ArgumentNullException.ThrowIfNull(manifest);
+        LunilGuard.NotNull(manifest);
         return JsonSerializer.SerializeToUtf8Bytes(
             manifest,
             LuaPatchJsonContext.Default.LuaPatchManifest);

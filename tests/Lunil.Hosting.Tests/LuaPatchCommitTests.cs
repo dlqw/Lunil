@@ -36,7 +36,7 @@ public sealed class LuaPatchCommitTests
             {
                 JitWarmup = new LuaPatchJitWarmupOptions
                 {
-                    ExecutorOptions = new LuaJitWarmupOptions
+                    ExecutorOptions = new LuaHostJitWarmupOptions
                     {
                         MaximumFunctions = 16,
                         IncludeTier2 = false,
@@ -96,7 +96,7 @@ public sealed class LuaPatchCommitTests
                 JitWarmup = new LuaPatchJitWarmupOptions
                 {
                     FailureBehavior = behavior,
-                    ExecutorOptions = new LuaJitWarmupOptions
+                    ExecutorOptions = new LuaHostJitWarmupOptions
                     {
                         MaximumDuration = TimeSpan.FromTicks(1),
                         IncludeTier2 = false,
@@ -131,7 +131,7 @@ public sealed class LuaPatchCommitTests
                 {
                     FailureBehavior = LuaPatchJitWarmupFailureBehavior.RequireSuccess,
                     MaximumTotalFunctions = 1,
-                    ExecutorOptions = new LuaJitWarmupOptions { IncludeTier2 = false },
+                    ExecutorOptions = new LuaHostJitWarmupOptions { IncludeTier2 = false },
                 },
             });
 
@@ -2053,7 +2053,7 @@ public sealed class LuaPatchCommitTests
         {
             LanguageVersion = languageVersion,
             ExecutionBackend = backend,
-            Jit = LuaJitExecutorOptions.Default with
+            Jit = LuaHostJitOptions.Default with
             {
                 FunctionEntryThreshold = 1,
                 BackedgeThreshold = 1,

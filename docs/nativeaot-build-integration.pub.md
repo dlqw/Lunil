@@ -1,25 +1,67 @@
-# How to publish with .NET NativeAOT and trimming
+# Publish Lunil with .NET NativeAOT and trimming
 
 [简体中文](nativeaot-build-integration.zh-CN.pub.md)
 
-This guide shows how to run Lunil in .NET NativeAOT, trimmed, and other deployments where dynamic
-code is unavailable. It describes publishing a managed host, not a Lua AOT backend.
+This how-to publishes a managed Lunil host when dynamic code is unavailable. NativeAOT is an
+application deployment mode, not a Lua AOT backend: Lua source and verified PUC chunks still compile
+to canonical IR and run through the interpreter.
 
-## 1. Select the available execution path
+## 1. Configure the host
 
-When dynamic code is unavailable, `LuaCompiler`, `LuaWorkspace`, `LuaInterpreter`, the runtime,
-standard libraries, the hosting interpreter path, and the CLI `run`, `check`, `build --target
-chunk`, and `dump` commands remain available. PUC Lua chunks still pass format and structural
-verification before import.
+Use `Lunil.Hosting` and select the interpreter explicitly when one configuration must work across
+CoreCLR and NativeAOT:
 
-`LuaJitExecutor` checks `RuntimeFeature.IsDynamicCodeSupported`. When it is `false`, `Auto` and
-`PreferJit` use the canonical interpreter; they do not initialize `Reflection.Emit` or treat Lua
-input as a precompiled artifact. Persisted/static Lua AOT, `Lunil.Build`, static registries, and CIL
-artifact loaders are not current product interfaces.
+```csharp
+using var host = new LuaHost(new LuaHostOptions
+{
+    ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+});
+```
 
-## 2. Publish the application
+`Auto` also selects the interpreter when dynamic code is unavailable. Explicit `Jit` requires the
+.NET 10 dynamic-code backend and throws `PlatformNotSupportedException` in NativeAOT.
 
-Reference the Lunil packages your application needs and use standard SDK properties:
+## 2. Generate CLR bindings
+
+Reflection-based discovery is not an AOT contract. Request exact bindings and configure the bridge
+with `LuaClrBindingMode.RegistryOnly`:
+
+```csharp
+using Lunil.Hosting;
+
+[assembly: LuaClrGenerateBinding(
+    typeof(App.ScoreService),
+    nameof(App.ScoreService.Add))]
+
+var registry = new LuaClrBindingRegistry();
+new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+
+var typeName = typeof(App.ScoreService).FullName!;
+var assemblyName = typeof(App.ScoreService).Assembly.GetName().Name!;
+
+using var host = new LuaHost(LuaHostOptions.Restricted with
+{
+    ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+    Clr = new LuaClrOptions
+    {
+        Capabilities = LuaClrCapabilities.TypeDiscovery |
+            LuaClrCapabilities.MemberAccess,
+        AllowedAssemblyNames = [assemblyName],
+        AllowedTypeNames = [typeName],
+        AllowedMemberNames = [$"{typeName}.Add"],
+        BindingRegistry = registry,
+        BindingMode = LuaClrBindingMode.RegistryOnly,
+        InstallGlobalModule = true,
+    },
+});
+```
+
+The `Lunil.Hosting` package includes the generator analyzer. Generated invokers cover the requested
+constructors and members without application-owned runtime reflection annotations. Capabilities and
+exact assembly, type, member, delegate, and event allowlists still apply. See
+[AOT CLR bindings](aot-bindings.pub.md).
+
+## 3. Enable NativeAOT publishing
 
 ```xml
 <PropertyGroup>
@@ -31,31 +73,33 @@ Reference the Lunil packages your application needs and use standard SDK propert
 </PropertyGroup>
 ```
 
+Ship `.lua` or `.luac` inputs as ordinary application content or resources. No Lunil MSBuild task or
+static Lua artifact registry is required.
+
+## 4. Publish the target RID
+
 ```powershell
-# .NET NativeAOT
 dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
   -p:PublishAot=true -p:PublishTrimmed=true
-
-# Trimmed self-contained single file
-dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
-  -p:PublishTrimmed=true -p:PublishSingleFile=true
-
-# ReadyToRun/CoreCLR (dynamic code remains available)
-dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
-  -p:PublishReadyToRun=true
 ```
 
-Ship Lua source or `.luac` files as ordinary application content or resources, then pass them to
-`LuaCompiler` or the chunk reader at runtime. No additional MSBuild task or static Lua registry is
-required.
+For trimmed CoreCLR deployments, use normal SDK modes:
 
-## 3. Preserve required application metadata
+```powershell
+dotnet publish app.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishTrimmed=true -p:PublishSingleFile=true
+```
 
-- Lunil does not expose the Lua C ABI, so native Lua C modules are unsupported.
-- When dynamic code is unavailable, JIT-only telemetry does not report successful compilation;
-  treat execution as the interpreter path.
-- Reflection-based host extensions must preserve their own reachable members with linker metadata.
-- CLR bridge consumers must preserve public constructors, members, and delegate signatures for
-  every allowlisted application type, for example with `DynamicDependency`. The bridge preserves
-  its interpreted delegate callback adapter and generic task-result metadata. Missing application
-  metadata still causes bridge access to fail closed.
+ReadyToRun remains a CoreCLR deployment and may use the JIT when dynamic code is available.
+
+## Compatibility boundaries
+
+- Lunil does not expose the Lua C ABI; native Lua C modules are unsupported.
+- Portable Hosting does not load or probe `Lunil.CodeGen.Cil`.
+- Application reflection outside generated bindings must preserve its own reachable metadata.
+- Closed generics, delegates, events, collection projection, and ref/out shapes must be requested and
+  allowed explicitly; unsupported generator shapes fail at build time.
+- Missing generated bindings or allowlist entries fail closed at runtime.
+
+Validate the published executable on every RID it ships, including CLR calls, game-loop scheduling,
+signed patch publication, trimming, and application content loading.

@@ -1,0 +1,23 @@
+{
+  "name": "Lunil.Unity.Fixture",
+  "rootNamespace": "Lunil.Unity.Fixture",
+  "references": [
+    "Lunil.Unity"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Lunil.Core.dll",
+    "Lunil.Compiler.dll",
+    "Lunil.Hosting.dll",
+    "Lunil.IR.dll",
+    "Lunil.Runtime.dll",
+    "System.Collections.Immutable.dll"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

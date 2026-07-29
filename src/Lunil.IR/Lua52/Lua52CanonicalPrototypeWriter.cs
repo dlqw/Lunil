@@ -27,7 +27,7 @@ public static class Lua52CanonicalPrototypeWriter
         int functionId,
         bool stripDebug = false)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua52)
         {
             throw new InvalidDataException("Lua 5.2 writer requires a Lua 5.2 canonical module.");

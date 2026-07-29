@@ -225,7 +225,7 @@ public static class LuaNumberParser
                     (negativeExponent ? -explicitExponent : explicitExponent));
         }
 
-        return Math.ScaleB(result, exponentCorrection);
+        return LunilMath.ScaleB(result, exponentCorrection);
     }
 
     private static ReadOnlySpan<byte> TrimAsciiWhitespace(ReadOnlySpan<byte> text)

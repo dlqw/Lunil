@@ -24,10 +24,15 @@ if (Test-Path -LiteralPath $OutputDirectory) {
     Remove-Item -LiteralPath $OutputDirectory -Recurse -Force
 }
 
+& dotnet restore $project --runtime $RuntimeIdentifier -p:LunilNativeAotPublish=true
+if ($LASTEXITCODE -ne 0) { throw "NativeAOT restore failed for $RuntimeIdentifier." }
+
 & dotnet publish $project --configuration $Configuration `
+    --framework net10.0 `
     --runtime $RuntimeIdentifier --self-contained true `
-    -p:PublishAot=true -p:PublishTrimmed=true `
+    -p:LunilNativeAotPublish=true -p:PublishTrimmed=true `
     -p:ContinuousIntegrationBuild=true -p:TreatWarningsAsErrors=true `
+    --no-restore `
     --output $OutputDirectory
 if ($LASTEXITCODE -ne 0) { throw "NativeAOT publish failed for $RuntimeIdentifier." }
 

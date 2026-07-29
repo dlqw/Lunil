@@ -748,7 +748,9 @@ internal sealed partial class AnalysisEngine
                 break;
             case LuaClassType parameterClass when argument is LuaClassType argumentClass &&
                 parameterClass.Name == argumentClass.Name:
-                foreach (var pair in parameterClass.TypeArguments.Zip(argumentClass.TypeArguments))
+                foreach (var pair in parameterClass.TypeArguments.Zip(
+                    argumentClass.TypeArguments,
+                    static (first, second) => (First: first, Second: second)))
                 {
                     InferGenericArguments(pair.First, pair.Second, substitutions);
                 }

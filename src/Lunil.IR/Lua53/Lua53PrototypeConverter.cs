@@ -19,9 +19,9 @@ public static class Lua53PrototypeConverter
 
     internal static LuaIrModule Convert(Lua53Chunk chunk, LuaLanguageVersion languageVersion)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         var prototypes = new List<PrototypeEntry>();
-        var ids = new Dictionary<Lua53Prototype, int>(ReferenceEqualityComparer.Instance);
+        var ids = new Dictionary<Lua53Prototype, int>(LunilReferenceEqualityComparer.Instance);
         AddPrototype(chunk.MainPrototype, -1, prototypes, ids);
 
         var functions = ImmutableArray.CreateBuilder<LuaIrFunction>(prototypes.Count);

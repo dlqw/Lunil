@@ -47,6 +47,19 @@ function Write-NormalizedText([string] $Path, [string] $Text) {
         [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-OrdinalUniqueStrings([object[]] $Values) {
+    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($value in $Values) {
+        if ($null -ne $value) {
+            [void]$unique.Add([string]$value)
+        }
+    }
+    $result = [string[]]::new($unique.Count)
+    $unique.CopyTo($result)
+    [Array]::Sort($result, [StringComparer]::Ordinal)
+    return $result
+}
+
 function Get-NormalizedEntryPath([string] $Path) {
     if ($Path -match '^package/services/metadata/core-properties/[^/]+\.psmdcp$') {
         return 'package/services/metadata/core-properties/<generated>.psmdcp'
@@ -99,12 +112,17 @@ function Get-PackageDocument([string] $Path) {
             $dependencies = [Collections.Generic.List[object]]::new()
             foreach ($dependency in @($group.SelectNodes("*[local-name()='dependency']") |
                 Sort-Object id)) {
-                if ([string]$dependency.version -ne $Version) {
+                $dependencyId = [string] $dependency.id
+                $dependencyVersion = [string] $dependency.version
+                $isLunilDependency = $dependencyId.StartsWith(
+                    'Lunil.',
+                    [StringComparison]::Ordinal)
+                if ($isLunilDependency -and $dependencyVersion -ne $Version) {
                     throw "Package $id dependency $($dependency.id) is $($dependency.version); expected $Version."
                 }
                 $dependencies.Add([ordered]@{
-                    Id = [string] $dependency.id
-                    Version = '{version}'
+                    Id = $dependencyId
+                    Version = if ($isLunilDependency) { '{version}' } else { $dependencyVersion }
                     Exclude = [string] $dependency.exclude
                 })
             }
@@ -114,12 +132,12 @@ function Get-PackageDocument([string] $Path) {
             })
         }
 
-        $packageTypes = @($metadata.SelectNodes(
+        $packageTypes = @(Get-OrdinalUniqueStrings @($metadata.SelectNodes(
             "*[local-name()='packageTypes']/*[local-name()='packageType']") |
-            ForEach-Object { [string] $_.name } | Sort-Object)
-        $assets = @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
-            ForEach-Object { Get-NormalizedEntryPath $_.FullName } |
-            Sort-Object -Unique)
+            ForEach-Object { [string] $_.name }))
+        $assets = @(Get-OrdinalUniqueStrings @($archive.Entries |
+            Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+            ForEach-Object { Get-NormalizedEntryPath $_.FullName }))
         return [ordered]@{
             Id = $id
             Authors = [string] $metadata.authors
@@ -142,9 +160,9 @@ function Get-PackageDocument([string] $Path) {
 function Get-SymbolAssets([string] $Path) {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
-        return @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
-            ForEach-Object { Get-NormalizedEntryPath $_.FullName } |
-            Sort-Object -Unique)
+        return @(Get-OrdinalUniqueStrings @($archive.Entries |
+            Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+            ForEach-Object { Get-NormalizedEntryPath $_.FullName }))
     }
     finally {
         $archive.Dispose()
@@ -197,6 +215,7 @@ return result.Succeeded ? 0 : 1;
   <packageSources>
     <clear />
     <add key="local-lunil" value="$($packageRoot.Replace('&', '&amp;'))" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
 </configuration>
 "@
@@ -208,6 +227,131 @@ return result.Succeeded ? 0 : 1;
     & dotnet run --project (Join-Path $consumerRoot 'PackageConsumer.csproj') `
         --configuration Release --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'Running the all-packages consumer failed.' }
+
+    $portableRoot = Join-Path $consumerRoot 'portable'
+    New-Item -ItemType Directory -Path $portableRoot -Force | Out-Null
+    Write-NormalizedText (Join-Path $portableRoot 'PortableConsumer.csproj') @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Lunil.Hosting" Version="$Version" />
+  </ItemGroup>
+</Project>
+"@
+    Write-NormalizedText (Join-Path $portableRoot 'Program.cs') @'
+using System.Reflection;
+using System.Runtime.Versioning;
+using Lunil.Hosting;
+
+var framework = typeof(LuaHost).Assembly
+    .GetCustomAttribute<TargetFrameworkAttribute>()?
+    .FrameworkName;
+if (framework != ".NETStandard,Version=v2.1")
+{
+    return 2;
+}
+
+using var host = new LuaHost();
+var result = host.RunUtf8("return 40 + 2", "=portable-package-consumer");
+return !host.IsDynamicCodeAvailable &&
+    host.SelectedExecutionBackend == LuaHostExecutionBackend.Interpreter &&
+    result.Succeeded &&
+    result.Execution!.Values[0].AsInteger() == 42
+        ? 0
+        : 3;
+'@
+    Copy-Item -LiteralPath (Join-Path $consumerRoot 'NuGet.Config') `
+        -Destination (Join-Path $portableRoot 'NuGet.Config')
+    & dotnet restore (Join-Path $portableRoot 'PortableConsumer.csproj') `
+        --configfile (Join-Path $portableRoot 'NuGet.Config')
+    if ($LASTEXITCODE -ne 0) { throw 'Restoring the net8 portable package consumer failed.' }
+    & dotnet run --project (Join-Path $portableRoot 'PortableConsumer.csproj') `
+        --configuration Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw 'Running the net8 portable package consumer failed.' }
+
+    $bindingRoot = Join-Path $consumerRoot 'binding-csharp9'
+    New-Item -ItemType Directory -Path $bindingRoot -Force | Out-Null
+    Write-NormalizedText (Join-Path $bindingRoot 'BindingConsumer.csproj') @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Lunil.Hosting" Version="$Version" />
+  </ItemGroup>
+</Project>
+"@
+    Write-NormalizedText (Join-Path $bindingRoot 'Program.cs') @'
+using System;
+using Lunil.Hosting;
+using Lunil.Runtime.Values;
+
+[assembly: LuaClrGenerateBinding(
+    typeof(PackageBindingConsumer.Target),
+    nameof(PackageBindingConsumer.Target.Add))]
+
+namespace PackageBindingConsumer
+{
+    public static class Program
+    {
+        public static int Main()
+        {
+            var registry = new LuaClrBindingRegistry();
+            new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+            var typeName = typeof(Target).FullName!;
+            using (var host = new LuaHost(new LuaHostOptions
+            {
+                InstallStandardLibrary = false,
+                Clr = new LuaClrOptions
+                {
+                    Capabilities = LuaClrCapabilities.Construction | LuaClrCapabilities.MemberAccess,
+                    AllowedAssemblyNames = System.Collections.Immutable.ImmutableArray.Create(
+                        typeof(Target).Assembly.GetName().Name!),
+                    AllowedTypeNames = System.Collections.Immutable.ImmutableArray.Create(typeName),
+                    AllowedMemberNames = System.Collections.Immutable.ImmutableArray.Create(
+                        typeName + "." + nameof(Target.Add)),
+                    BindingRegistry = registry,
+                    BindingMode = LuaClrBindingMode.RegistryOnly,
+                },
+            }))
+            {
+                var target = LuaValue.FromUserdata(host.ClrBridge.CreateInstance(
+                    typeName, new[] { LuaValue.FromInteger(40) }));
+                return host.ClrBridge.InvokeMember(target, nameof(Target.Add),
+                    new[] { LuaValue.FromInteger(2) }).ReturnValue.AsInteger() == 42 ? 0 : 2;
+            }
+        }
+    }
+
+    public sealed class Target
+    {
+        private readonly long value;
+        public Target(long value) { this.value = value; }
+        public long Add(long amount) { return value + amount; }
+    }
+}
+'@
+    Copy-Item -LiteralPath (Join-Path $consumerRoot 'NuGet.Config') `
+        -Destination (Join-Path $bindingRoot 'NuGet.Config')
+    & dotnet restore (Join-Path $bindingRoot 'BindingConsumer.csproj') `
+        --configfile (Join-Path $bindingRoot 'NuGet.Config')
+    if ($LASTEXITCODE -ne 0) { throw 'Restoring the packaged binding-generator consumer failed.' }
+    & dotnet run --project (Join-Path $bindingRoot 'BindingConsumer.csproj') `
+        --configuration Release --no-restore
+    if ($LASTEXITCODE -ne 0) { throw 'Running the packaged C# 9 binding-generator consumer failed.' }
 
     $toolPath = Join-Path $consumerRoot 'tools'
     & dotnet tool install Lunil.Cli --tool-path $toolPath --version $Version `
@@ -253,8 +397,8 @@ $nupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.nu
     Sort-Object Name)
 $snupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.snupkg" |
     Sort-Object Name)
-if ($nupkgs.Count -ne 13 -or $snupkgs.Count -ne 13) {
-    throw "Expected 13 NuGet and 13 symbol packages for $Version; found $($nupkgs.Count) and $($snupkgs.Count)."
+if ($nupkgs.Count -ne 14 -or $snupkgs.Count -ne 14) {
+    throw "Expected 14 NuGet and 14 symbol packages for $Version; found $($nupkgs.Count) and $($snupkgs.Count)."
 }
 
 $packages = [Collections.Generic.List[object]]::new()
@@ -277,10 +421,14 @@ $manifest = [ordered]@{
 }
 # Keep the reviewed package manifest byte-for-byte stable across Windows
 # PowerShell 5.1 and PowerShell 7, whose pretty-printer spacing differs.
-$manifestText = ConvertTo-NormalizedText ($manifest | ConvertTo-Json -Depth 10 -Compress)
+$manifestJson = $manifest | ConvertTo-Json -Depth 10 -Compress
+# Windows PowerShell escapes HTML-sensitive characters while PowerShell 7 does not. These
+# characters are ordinary JSON string content in the normalized generated-entry placeholder.
+$manifestJson = $manifestJson.Replace('\u003c', '<').Replace('\u003e', '>').Replace('\u0026', '&')
+$manifestText = ConvertTo-NormalizedText $manifestJson
 if ($Update) {
     Write-NormalizedText $baselinePath $manifestText
-    Write-Host "Updated the reviewed 13-package baseline at $baselinePath."
+    Write-Host "Updated the reviewed 14-package baseline at $baselinePath."
 }
 else {
     if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) {
@@ -290,7 +438,7 @@ else {
     if (-not [string]::Equals($expected, $manifestText, [StringComparison]::Ordinal)) {
         throw "NuGet package metadata, dependencies, or assets differ from api/$compatibilityLine/packages.json."
     }
-    Write-Host "Verified the reviewed 13-package metadata, dependency, and asset baseline for $compatibilityLine."
+    Write-Host "Verified the reviewed 14-package metadata, dependency, and asset baseline for $compatibilityLine."
 }
 
 Invoke-ConsumerSmoke $packages.ToArray()

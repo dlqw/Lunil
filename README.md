@@ -5,186 +5,166 @@
 <h1 align="center">Lunil</h1>
 
 <p align="center">
-  A correctness-first, versioned Lua compiler, analysis toolchain, and managed runtime for .NET.
+  Versioned Lua 5.1–5.5 compilation, analysis, and managed execution for .NET, Unity, and Godot.
 </p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+  <strong>English</strong> · <a href="https://github.com/dlqw/Lunil/blob/v0.13.0/README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases/tag/v0.12.1"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.12.1-16a34a?style=flat-square"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e?style=flat-square"></a>
-  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet">
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.13.0-16a34a?style=flat-square"></a>
+  <img alt=".NET 10 and .NET Standard 2.1" src="https://img.shields.io/badge/.NET-10%20%7C%20Standard%202.1-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil compiles Lua source and versioned PUC Lua binary chunks into one verified canonical IR. The
-same IR runs through a reference interpreter or a profile-guided CoreCLR JIT. Lua 5.4.8 is the
-default language contract; explicit Lua 5.1, 5.2, 5.3, and 5.5 contracts are also available.
+Lunil is a pure C# Lua toolchain. Lua 5.4.8 is the default contract, with explicit Lua 5.1,
+5.2, 5.3, and 5.5 modes. Source and versioned binary chunks lower to one verified canonical IR,
+then run through the portable interpreter or the profile-guided .NET 10 JIT.
 
-> [!NOTE]
-> `0.12.1` is the current stable release and targets .NET 10. NativeAOT and trimmed applications use
-> the interpreter when dynamic code is unavailable.
+## What 0.13 adds
 
-## What Lunil provides
+- `netstandard2.1` compiler, analysis, runtime, standard-library, workspace, and hosting assets.
+- `LuaGameLoopHost`, a bounded Update/FixedUpdate scheduler with frame-boundary publication,
+  cancellation, timers, persistence, and engine service injection.
+- C# source-generated CLR binding registries for NativeAOT, IL2CPP, and trimming-safe hosts.
+- An offline Unity Package Manager package for **Unity 2022.3 LTS and Unity 6**.
+- A `Lunil.Godot` package and addon for **Godot 4.4 and 4.6 .NET**.
+- Signed patch preparation and atomic publication through the same engine-neutral boundary.
 
-- **Versioned Lua behavior** — source parsing, standard libraries, runtime semantics, and binary
-  chunks follow the selected Lua 5.1–5.5 contract.
-- **Verified compilation** — lossless UTF-8 syntax, binding, type and flow analysis, canonical
-  lowering, and independent IR verification.
-- **Code intelligence** — typed syntax facades, annotations, stable symbol/function keys,
-  references, control-flow graphs, call graphs, and reusable workspaces.
-- **Managed execution** — explicit Lua values, tables, closures, coroutines, resource budgets,
-  logical GC, an interpreter, and an adaptive JIT.
-- **Controlled embedding** — trusted, restricted, and deterministic host profiles plus a
-  capability-controlled, exact-allowlist CLR bridge.
-- **Production updates** — signed patch bundles, atomic game-loop publication, state/resource
-  migration, multi-State rollouts, and durable recovery journals.
-- **Portable deployment** — release bundles for Windows, Linux, and macOS on x64 and Arm64, with
-  .NET NativeAOT and trimming support.
+## Platform support
 
-Lunil does not expose the Lua C ABI, so native Lua C modules are not supported.
+| Host | Support | Execution |
+| --- | --- | --- |
+| .NET 10 | Stable | Auto JIT or interpreter |
+| `netstandard2.1` consumers | Stable | Interpreter; no dynamic-code probing |
+| Unity 2022.3 LTS | Stable | Editor/Mono and IL2CPP |
+| Unity 6 (`6000.0`, `6000.3`) | Stable | Editor/Mono and IL2CPP |
+| Godot 4.4 and 4.6 .NET desktop | Stable | Interpreter |
+| Godot 4.4 and 4.6 Android | Stable | Interpreter |
+| Godot iOS | Preview | Export requires the official macOS toolchain |
 
-## Quick start
+Unity IL2CPP coverage includes Windows and Android execution, WebGL browser execution, and iOS
+generated-player compilation. See the engine references for the exact version and platform matrix.
 
-### Run the CLI
+## Install
 
-Install the [.NET SDK 10.0.103](https://dotnet.microsoft.com/download/dotnet/10.0), or a compatible
-.NET 10 patch release. Then download the archive for your RID from the
-[Lunil 0.12.1 release](https://github.com/dlqw/Lunil/releases/tag/v0.12.1), extract it, and run:
+Packages are attached to each [GitHub Release](https://github.com/dlqw/Lunil/releases). Download all
+`*.nupkg` assets into a local source; with the GitHub CLI:
 
 ```bash
-./lunil --version
-./lunil run app.lua -- one two
-./lunil check app.lua --module-root . --warnings-as-errors
-./lunil build app.lua --target chunk --output app.luac
-./lunil dump app.lua --kind analysis --format json
+gh release download v0.13.0 --repo dlqw/Lunil --pattern "*.nupkg" --dir .lunil-packages
+gh release download v0.13.0 --repo dlqw/Lunil --pattern "com.dlqw.lunil-0.13.0.tgz" --dir .lunil-engine-assets
+gh release download v0.13.0 --repo dlqw/Lunil --pattern "Lunil.Godot.addon-0.13.0.zip" --dir .lunil-engine-assets
 ```
 
-On Windows, use `lunil.exe`. If GitHub Packages is already configured as a NuGet source, the CLI is
-also available as a .NET tool:
+Add both the release directory and NuGet.org to `NuGet.Config` so third-party dependencies remain
+available:
+
+```xml
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+    <add key="lunil-release" value="./.lunil-packages" />
+  </packageSources>
+</configuration>
+```
+
+Install the CLI or reference the host:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.12.1
+dotnet tool install --global Lunil.Cli --version 0.13.0
 lunil --version
 ```
 
-Use `-` for source stdin, `@arguments.rsp` for UTF-8 response files, and `lunil.json` for project
-defaults. See the [command-line reference](docs/cli.pub.md) for all commands and options.
-
-### Embed the runtime
-
-Reference `Lunil.Hosting` `0.12.1` from your configured package source or a downloaded release
-package:
-
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.12.1" />
+<PackageReference Include="Lunil.Hosting" Version="0.13.0" />
 ```
 
-Compile and execute through a reusable restricted host:
+Unity users install `.lunil-engine-assets/com.dlqw.lunil-0.13.0.tgz` with Package Manager. Godot
+users install the `Lunil.Godot` NuGet package, extract
+`.lunil-engine-assets/Lunil.Godot.addon-0.13.0.zip`, and copy its `addons/lunil` directory into the
+project as `res://addons/lunil`.
+
+## Run Lua from .NET
 
 ```csharp
 using Lunil.Hosting;
 using Lunil.Runtime.Execution;
 
 using var host = new LuaHost(LuaHostOptions.Restricted);
-var run = host.RunUtf8("return 40 + 2", "@examples/answer.lua");
+var run = host.RunUtf8("return 6 * 7", "@examples/answer.lua");
 
 if (!run.CompilationSucceeded)
-{
-    foreach (var diagnostic in run.Compilation.Diagnostics)
-    {
-        Console.Error.WriteLine($"{diagnostic.Code}: {diagnostic.Message}");
-    }
-    return;
-}
-
-if (run.Execution?.Signal != LuaVmSignal.Completed)
-{
+    throw new InvalidOperationException(string.Join("\n", run.Compilation.Diagnostics));
+var execution = run.Execution;
+if (execution is null || execution.Signal != LuaVmSignal.Completed)
     throw new InvalidOperationException("Lua execution did not complete.");
-}
 
-Console.WriteLine(run.Execution.Values[0].AsInteger()); // 42
+Console.WriteLine(execution.Values[0].AsInteger()); // 42
 ```
 
-`LuaHostOptions.ExecutionBackend` selects `Auto`, `Interpreter`, or `Jit`. `Auto` uses the verified
-JIT when dynamic code is available and the reference interpreter otherwise.
+On .NET 10, `LuaHostExecutionBackend.Auto` selects the JIT when dynamic code is available. The
+portable asset and AOT runtimes select the interpreter without loading or probing the JIT assembly.
 
-### Build from source
+## Drive a game loop
 
-```bash
-git clone https://github.com/dlqw/Lunil.git
-cd Lunil
-dotnet restore Lunil.sln
-dotnet build Lunil.sln --configuration Release --no-restore
-dotnet test Lunil.sln --configuration Release --no-build --no-restore
+```csharp
+using var loop = new LuaGameLoopHost(new LuaGameLoopHostOptions
+{
+    HostOptions = LuaHostOptions.Restricted with
+    {
+        ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+    },
+});
+
+var script = loop.Host.CompileUtf8(
+    "counter=1; coroutine.yield(); counter=counter+1; return counter");
+var operation = loop.Start(script);
+loop.Tick();
+loop.Tick();
+Console.WriteLine(operation.Values[0].AsInteger()); // 2
 ```
 
-## Execution model
+`Tick` and `TickFixed` must run on the construction thread. Background callbacks are marshalled
+through `ILuaGameLoopDispatcher`; patches use `PublishAtFrameBoundary` for atomic visibility.
 
-```mermaid
-flowchart LR
-    Source[Lua source] --> Compiler[Compiler + analysis]
-    Chunk[Versioned PUC chunk] --> Reader[Reader + verifier]
-    Compiler --> IR[Verified canonical IR]
-    Reader --> IR
-    IR --> Interpreter[Reference interpreter]
-    IR --> JIT[CoreCLR JIT]
-    Interpreter --> Runtime[Managed runtime]
-    JIT --> Runtime
-```
+## Samples
 
-Interpreter and JIT execution share canonical program counters, instruction accounting, resource
-budgets, safe points, invalidation, and fallback semantics.
-
-## Compatibility
-
-| Surface | Supported contract |
+| Sample | Open or run |
 | --- | --- |
-| Stable release | `0.12.1` |
-| Language | Lua 5.4.8 by default; explicit Lua 5.1–5.5 targets |
-| Runtime | .NET 10 |
-| Release RIDs | `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64` |
-| Binary chunks | Version-specific, bounded PUC formats with structural and target validation |
-| Dynamic code unavailable | Compiler, analysis, standard libraries, and interpreter remain available |
+| [Portable host](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.Portable.Hosting) | `dotnet run --project samples/Lunil.Portable.Hosting` |
+| [Unity 2022.3](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.Unity.2022.3) | Open directly with Unity 2022.3 LTS |
+| [Unity 6](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.Unity.6) | Open directly with Unity 6 |
+| [Godot 4.4](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.Godot.4.4) | Open directly with Godot 4.4.1 .NET |
+| [Godot 4.6](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.Godot.4.6) | Open directly with Godot 4.6.3 .NET |
+| [Static analysis embedding](https://github.com/dlqw/Lunil/tree/v0.13.0/samples/Lunil.StaticAnalysis.Embedding) | `dotnet run --project samples/Lunil.StaticAnalysis.Embedding` |
 
-## Performance snapshot
-
-The published `0.10.0` `win-x64` dataset runs identical Lua source across eight workloads and six
-balanced rounds. PUC Lua 5.4.8 is normalized to `1.000x`; higher is faster.
-
-| Comparison | Geomean throughput ratio |
-| --- | ---: |
-| **Lunil Auto JIT 0.10.0 / MoonSharp 2.0.0** | **21.796x** |
-| Lunil Auto JIT 0.10.0 / PUC Lua 5.4.8 | 1.475x |
-
-Results, pinned engine versions, environment details, and commands are in the
-[machine-readable dataset](benchmarks/results/0.10.0-performance.json).
-
-![Lunil 0.10.0 runtime comparison](assets/performance/0.10.0-runtime-overview.svg)
+The Unity projects are independent: the 2022.3 sample does not require an upgrade through Unity 6.
 
 ## Documentation
 
-| Document | Type | Purpose |
-| --- | --- | --- |
-| [Command-line reference](docs/cli.pub.md) | Reference | Commands, configuration, profiles, diagnostics, and exit codes |
-| [Configure CLR interoperation](docs/clr-interop.pub.md) | How-to | Allowlist setup, callbacks, timers, stable resources, and deployment |
-| [CLR interoperation reference](docs/clr-interop-reference.pub.md) | Reference | Lua functions, conversions, policies, gauges, limits, and ownership contracts |
-| [CLR bridge lifecycles](docs/clr-interop-lifecycle.pub.md) | Explanation | Capability boundaries, state ownership, async admission, and generation fencing |
-| [Deploy signed patch bundles](docs/hot-update.pub.md) | How-to | Bundle creation, preparation, publication, migration, rollout, and recovery |
-| [Signed patch bundle reference](docs/hot-update-reference.pub.md) | Reference | Manifest, trust, replay, migration, limits, statuses, stores, and telemetry |
-| [Hot-update publication](docs/hot-update-lifecycle.pub.md) | Explanation | Atomic publication, identity migration, generations, rings, and durability |
-| [Embed static analysis](docs/static-analysis-embedding.pub.md) | How-to | Syntax, semantic data, stable keys, CFGs, call graphs, and workspaces |
-| [Publish with NativeAOT and trimming](docs/nativeaot-build-integration.pub.md) | How-to | Interpreter fallback, SDK publishing, and metadata preservation |
-| [Import PUC Lua 5.4 prototypes](docs/puc-prototype-import.pub.md) | How-to | Validated binary-chunk conversion to canonical IR |
-| [Migration guides](docs/migration-0.11.0.pub.md) | How-to | Historical changes for [0.8.0](docs/migration-0.8.0.pub.md), [0.10.0](docs/migration-0.10.0.pub.md), and 0.11.0 |
+| Document | Type |
+| --- | --- |
+| [Portable hosting](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/portable-hosting.pub.md) | How-to |
+| [Engine-neutral game-loop hosting](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/game-engine-hosting.pub.md) | How-to |
+| [Unity hosting](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/unity-hosting.pub.md) · [Unity reference](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/unity-reference.pub.md) | How-to · Reference |
+| [Godot hosting](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/godot-hosting.pub.md) · [Godot reference](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/godot-reference.pub.md) | How-to · Reference |
+| [AOT CLR bindings](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/aot-bindings.pub.md) | How-to |
+| [CLR interoperation](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/clr-interop.pub.md) · [Contracts](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/clr-interop-reference.pub.md) · [Lifecycle model](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/clr-interop-lifecycle.pub.md) | How-to · Reference · Explanation |
+| [Signed patch bundles](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/signed-patch-bundles.pub.md) · [Deployment](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/deploy-signed-patch-bundles.pub.md) · [Publication model](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/signed-patch-publication.pub.md) | Reference · How-to · Explanation |
+| [CLI](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/cli.pub.md) | Reference |
+| [.NET NativeAOT and trimming](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/nativeaot-build-integration.pub.md) | How-to |
+| [Static analysis embedding](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/static-analysis-embedding.pub.md) | How-to |
+| [PUC Lua prototype import](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/puc-prototype-import.pub.md) | Reference |
+| [Migrate to 0.13](https://github.com/dlqw/Lunil/blob/v0.13.0/docs/migration-0.13.0.pub.md) | Migration guide |
 
-Every guide has an English and Simplified Chinese counterpart linked at the top of the page.
+## Compatibility
 
-## Security
-
-Report suspected vulnerabilities through
-[GitHub private vulnerability reporting](https://github.com/dlqw/Lunil/security/advisories/new),
-not a public issue.
+- Default language: Lua 5.4.8; explicit Lua 5.1–5.5 contracts remain available.
+- Stable line: `0.13.x`; migration from 0.12 is documented and existing .NET 10 host entry points
+  remain source compatible unless the migration guide states otherwise.
+- Release bundles: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
+- CLR interoperation is opt-in and fail-closed. Trusted .NET hosts may explicitly select
+  `RegistryThenReflection`; NativeAOT, IL2CPP, and trimming use generated `RegistryOnly` bindings.

@@ -278,7 +278,7 @@ public static class Lua53ChunkReader
         {
             4 => ReadUnsignedInt32(),
             8 => ReadUnsignedInt64(),
-            _ => throw new UnreachableException(),
+            _ => throw new LunilUnreachableException(),
         };
 
         private int ReadSignedInt32() => _target.ByteOrder == Lua53ByteOrder.LittleEndian
@@ -300,7 +300,7 @@ public static class Lua53ChunkReader
                 (4, Lua53ByteOrder.BigEndian) => BinaryPrimitives.ReadInt32BigEndian(bytes),
                 (8, Lua53ByteOrder.LittleEndian) => BinaryPrimitives.ReadInt64LittleEndian(bytes),
                 (8, Lua53ByteOrder.BigEndian) => BinaryPrimitives.ReadInt64BigEndian(bytes),
-                _ => throw new UnreachableException(),
+                _ => throw new LunilUnreachableException(),
             };
 
         private static double ReadNumber(ReadOnlySpan<byte> bytes, Lua53ByteOrder byteOrder) =>
@@ -316,7 +316,7 @@ public static class Lua53ChunkReader
                     BinaryPrimitives.ReadInt32BigEndian(bytes)),
                 (8, Lua53ByteOrder.BigEndian) => BitConverter.Int64BitsToDouble(
                     BinaryPrimitives.ReadInt64BigEndian(bytes)),
-                _ => throw new UnreachableException(),
+                _ => throw new LunilUnreachableException(),
             };
 
         private void Expect(ReadOnlySpan<byte> expected, string reason)

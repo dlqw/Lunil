@@ -5,7 +5,7 @@ public sealed record LuaModuleIdentity
 {
     public LuaModuleIdentity(string name)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        LunilGuard.NotNullOrWhiteSpace(name);
         if (name.Contains('\0', StringComparison.Ordinal))
         {
             throw new ArgumentException("A module identity cannot contain a null character.", nameof(name));

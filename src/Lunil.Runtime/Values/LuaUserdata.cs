@@ -93,8 +93,8 @@ public sealed class LuaUserdata : LuaGcObject
 
     private static long CalculateLogicalSize(int userValueCount, long payloadLogicalSize)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(userValueCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(payloadLogicalSize);
+        LunilGuard.NotNegative(userValueCount);
+        LunilGuard.NotNegative(payloadLogicalSize);
         return checked(64 + userValueCount * 16L + payloadLogicalSize);
     }
 }
@@ -104,7 +104,7 @@ public sealed class LuaLightUserdata
 {
     public LuaLightUserdata(object identity)
     {
-        ArgumentNullException.ThrowIfNull(identity);
+        LunilGuard.NotNull(identity);
         Identity = identity;
     }
 

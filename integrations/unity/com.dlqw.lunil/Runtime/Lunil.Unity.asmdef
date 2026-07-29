@@ -1,0 +1,28 @@
+{
+  "name": "Lunil.Unity",
+  "rootNamespace": "Lunil.Unity",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Lunil.Core.dll",
+    "Lunil.Syntax.dll",
+    "Lunil.EmmyLua.dll",
+    "Lunil.Semantics.dll",
+    "Lunil.Analysis.dll",
+    "Lunil.IR.dll",
+    "Lunil.Compiler.dll",
+    "Lunil.Runtime.dll",
+    "Lunil.StandardLibrary.dll",
+    "Lunil.Workspace.dll",
+    "Lunil.Hosting.dll",
+    "Microsoft.Bcl.TimeProvider.dll",
+    "System.Collections.Immutable.dll"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

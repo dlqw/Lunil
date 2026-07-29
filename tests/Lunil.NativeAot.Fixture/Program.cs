@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
@@ -8,6 +7,13 @@ using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.Workspace;
+
+[assembly: LuaClrGenerateBinding(
+    typeof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue),
+    nameof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue.Value),
+    nameof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue.Add),
+    nameof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue.Async))]
+[assembly: LuaClrGenerateBinding(typeof(Func<int, int>))]
 
 namespace Lunil.NativeAot.Fixture;
 
@@ -102,6 +108,34 @@ public static class Program
                 Console.Error.WriteLine("NativeAOT JIT fallback policy is invalid.");
                 return 5;
             }
+
+            using var autoHost = new LuaHost(new LuaHostOptions
+            {
+                ExecutionBackend = LuaHostExecutionBackend.Auto,
+            });
+            var hostResult = autoHost.RunUtf8("return 6 * 7", "=nativeaot-host");
+            if (autoHost.IsDynamicCodeAvailable ||
+                autoHost.SelectedExecutionBackend != LuaHostExecutionBackend.Interpreter ||
+                autoHost.JitStatistics is not null ||
+                !hostResult.Succeeded ||
+                hostResult.Execution?.Values[0].AsInteger() != 42)
+            {
+                Console.Error.WriteLine("NativeAOT host fallback policy is invalid.");
+                return 5;
+            }
+
+            try
+            {
+                using var _ = new LuaHost(new LuaHostOptions
+                {
+                    ExecutionBackend = LuaHostExecutionBackend.Jit,
+                });
+                Console.Error.WriteLine("NativeAOT host accepted a required dynamic-code backend.");
+                return 5;
+            }
+            catch (PlatformNotSupportedException)
+            {
+            }
         }
 
         if (!VerifyClrInterop())
@@ -110,10 +144,16 @@ public static class Program
             return 6;
         }
 
+        if (!VerifyGameLoop())
+        {
+            Console.Error.WriteLine("The NativeAOT game-loop contract is invalid.");
+            return 7;
+        }
+
         if (!VerifyReplayStore())
         {
             Console.Error.WriteLine("The NativeAOT replay-store contract is invalid.");
-            return 7;
+            return 8;
         }
 
         Console.WriteLine("LUNIL_NATIVEAOT_OK");
@@ -148,15 +188,32 @@ public static class Program
                 compilation.Diagnostics.Select(static diagnostic => diagnostic.Message)));
     }
 
-    [DynamicDependency(
-        DynamicallyAccessedMemberTypes.PublicConstructors |
-        DynamicallyAccessedMemberTypes.PublicMethods |
-        DynamicallyAccessedMemberTypes.PublicProperties,
-        typeof(ClrFixtureValue))]
+    private static bool VerifyGameLoop()
+    {
+        using var game = new LuaGameLoopHost(new LuaGameLoopHostOptions
+        {
+            HostOptions = new LuaHostOptions
+            {
+                ExecutionBackend = LuaHostExecutionBackend.Interpreter,
+            },
+        });
+        var operation = game.Start(game.Host.CompileUtf8(
+            "local value=40; coroutine.yield(value); return value+2",
+            "=nativeaot-game-loop"));
+        var yielded = game.Tick();
+        var completed = game.Tick();
+        return yielded.Succeeded && completed.Succeeded &&
+            yielded.ExecutedInstructionCount > 0 &&
+            operation.Status == LuaGameLoopOperationStatus.Completed &&
+            operation.Values[0].AsInteger() == 42;
+    }
+
     private static bool VerifyClrInterop()
     {
         var typeName = typeof(ClrFixtureValue).FullName!;
         var delegateName = typeof(Func<int, int>).FullName!;
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
         using var host = new LuaHost(new LuaHostOptions
         {
             ExecutionBackend = LuaHostExecutionBackend.Interpreter,
@@ -178,6 +235,8 @@ public static class Program
                     $"{typeName}.Async",
                 ],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = registry,
+                BindingMode = LuaClrBindingMode.RegistryOnly,
                 InstallGlobalModule = true,
             },
         });

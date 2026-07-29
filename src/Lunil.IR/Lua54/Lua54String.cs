@@ -21,7 +21,7 @@ public sealed class Lua54String : IEquatable<Lua54String>
 
     public static Lua54String FromUtf8(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new Lua54String(Encoding.UTF8.GetBytes(value));
     }
 
@@ -30,12 +30,7 @@ public sealed class Lua54String : IEquatable<Lua54String>
 
     public override bool Equals(object? obj) => Equals(obj as Lua54String);
 
-    public override int GetHashCode()
-    {
-        var hash = new HashCode();
-        hash.AddBytes(AsSpan());
-        return hash.ToHashCode();
-    }
+    public override int GetHashCode() => LunilByteHash.Compute(AsSpan());
 
     public override string ToString() => Encoding.UTF8.GetString(AsSpan());
 }

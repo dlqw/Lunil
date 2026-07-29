@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Numerics;
 using System.Text;
-using System.Buffers;
 using Lunil.Core;
 using Lunil.IR.Lua52;
 using Lunil.IR.Lua51;
@@ -17,8 +16,6 @@ namespace Lunil.StandardLibrary;
 
 internal static class LuaStringLibrary
 {
-    private static readonly SearchValues<byte> PatternSpecials =
-        SearchValues.Create("^$*+?.([%-"u8);
     private static readonly LuaNativeFunction GMatchIterator = new("string.gmatch", GMatchNext);
 
     public static LuaTable Install(LuaState state)
@@ -203,7 +200,10 @@ internal static class LuaStringLibrary
         }
 
         var anchored = pattern.Length != 0 && pattern[0] == (byte)'^';
-        var match = new LuaPatternMatcher(source, pattern).Find((int)initial - 1, anchored);
+        Span<LuaPatternCapture> captureBuffer =
+            stackalloc LuaPatternCapture[LuaPatternMatcher.MaximumCaptures];
+        var match = new LuaPatternMatcher(source, pattern, captureBuffer)
+            .Find((int)initial - 1, anchored);
         if (match is null)
         {
             return [LuaValue.Nil];
@@ -248,7 +248,10 @@ internal static class LuaStringLibrary
             return LuaNativeStep.Completed();
         }
 
-        var match = new LuaPatternMatcher(source, pattern).Find((int)offset, anchored: false);
+        Span<LuaPatternCapture> captureBuffer =
+            stackalloc LuaPatternCapture[LuaPatternMatcher.MaximumCaptures];
+        var matcher = new LuaPatternMatcher(source, pattern, captureBuffer);
+        var match = matcher.Find((int)offset, anchored: false);
         while (match is not null && match.End == lastEnd)
         {
             if (++offset > source.Length)
@@ -256,7 +259,7 @@ internal static class LuaStringLibrary
                 return LuaNativeStep.Completed();
             }
 
-            match = new LuaPatternMatcher(source, pattern).Find((int)offset, anchored: false);
+            match = matcher.Find((int)offset, anchored: false);
         }
 
         if (match is null)
@@ -349,7 +352,9 @@ internal static class LuaStringLibrary
         var source = sourceValue.AsString().AsSpan();
         var pattern = patternValue.AsString().AsSpan();
         var anchored = pattern.Length != 0 && pattern[0] == (byte)'^';
-        var matcher = new LuaPatternMatcher(source, pattern);
+        Span<LuaPatternCapture> captureBuffer =
+            stackalloc LuaPatternCapture[LuaPatternMatcher.MaximumCaptures];
+        var matcher = new LuaPatternMatcher(source, pattern, captureBuffer);
         while ((!resumedReplacement || !anchored) &&
             count < maximum && scan <= source.Length)
         {
@@ -677,6 +682,17 @@ internal static class LuaStringLibrary
         return source;
     }
 
-    private static bool HasPatternSpecials(ReadOnlySpan<byte> pattern) =>
-        pattern.IndexOfAny(PatternSpecials) >= 0;
+    private static bool HasPatternSpecials(ReadOnlySpan<byte> pattern)
+    {
+        foreach (var value in pattern)
+        {
+            if (value is (byte)'^' or (byte)'$' or (byte)'*' or (byte)'+' or (byte)'?' or
+                (byte)'.' or (byte)'(' or (byte)'[' or (byte)'%' or (byte)'-')
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

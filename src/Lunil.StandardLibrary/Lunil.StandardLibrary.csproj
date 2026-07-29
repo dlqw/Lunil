@@ -8,7 +8,8 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+    <LunilPortableLibrary>true</LunilPortableLibrary>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

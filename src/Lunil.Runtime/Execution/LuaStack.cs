@@ -13,8 +13,8 @@ public sealed class LuaStack
 
     internal LuaStack(LuaThread owner, int initialCapacity = 128)
     {
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(initialCapacity);
+        LunilGuard.NotNull(owner);
+        LunilGuard.Positive(initialCapacity);
         _owner = owner;
         _values = new LuaValue[initialCapacity];
     }
@@ -25,14 +25,14 @@ public sealed class LuaStack
     {
         get
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(index);
+            LunilGuard.NotNegative(index);
             EnsureCapacity(index + 1);
             return _values[index];
         }
 
         set
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(index);
+            LunilGuard.NotNegative(index);
             _owner.Owner.ValidateValue(value);
             _owner.Owner.WriteBarrierBack(_owner, value);
             EnsureCapacity(index + 1);
@@ -56,7 +56,7 @@ public sealed class LuaStack
 
     public void EnsureCapacity(int required)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(required);
+        LunilGuard.NotNegative(required);
         if (required <= _values.Length)
         {
             return;
@@ -76,8 +76,8 @@ public sealed class LuaStack
 
     public void Clear(int start, int length)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(start);
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        LunilGuard.NotNegative(start);
+        LunilGuard.NotNegative(length);
         if (length == 0)
         {
             return;
@@ -89,8 +89,8 @@ public sealed class LuaStack
 
     internal void Traverse(int start, int end, LuaGcVisitor visitor)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(start);
-        ArgumentOutOfRangeException.ThrowIfLessThan(end, start);
+        LunilGuard.NotNegative(start);
+        LunilGuard.GreaterThanOrEqual(end, start);
         var boundedEnd = Math.Min(end, _values.Length);
         for (var index = start; index < boundedEnd; index++)
         {
@@ -100,8 +100,8 @@ public sealed class LuaStack
 
     internal ReadOnlySpan<LuaValue> AsReadOnlySpan(int start, int length)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(start);
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        LunilGuard.NotNegative(start);
+        LunilGuard.NotNegative(length);
         EnsureCapacity(checked(start + length));
         return _values.AsSpan(start, length);
     }

@@ -25,9 +25,9 @@ public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
     internal LuaString(LuaHeap owner, byte[] bytes, int length, bool bytesArePooled)
         : base(owner, CalculateLogicalSize(length))
     {
-        ArgumentNullException.ThrowIfNull(bytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, bytes.Length);
+        LunilGuard.NotNull(bytes);
+        LunilGuard.NotNegative(length);
+        LunilGuard.LessThanOrEqual(length, bytes.Length);
         _bytes = bytes;
         _length = length;
         _hashCode = ComputeHashCode(bytes.AsSpan(0, length));
@@ -65,11 +65,7 @@ public sealed class LuaString : LuaGcObject, IEquatable<LuaString>
     }
 
     internal static int ComputeHashCode(ReadOnlySpan<byte> bytes)
-    {
-        var hash = new HashCode();
-        hash.AddBytes(bytes);
-        return hash.ToHashCode();
-    }
+        => LunilByteHash.Compute(bytes);
 
     internal static long CalculateLogicalSize(long byteLength) =>
         checked(LogicalOverhead + byteLength);
@@ -124,9 +120,9 @@ public sealed class LuaStringPool
 
     internal LuaString GetOrCreateOwned(byte[] bytes, int length, bool bytesArePooled)
     {
-        ArgumentNullException.ThrowIfNull(bytes);
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, bytes.Length);
+        LunilGuard.NotNull(bytes);
+        LunilGuard.NotNegative(length);
+        LunilGuard.LessThanOrEqual(length, bytes.Length);
         if (length <= MaximumInternedLength)
         {
             try
@@ -168,7 +164,7 @@ public sealed class LuaStringPool
         bool textFirst,
         out LuaString result)
     {
-        ArgumentNullException.ThrowIfNull(text);
+        LunilGuard.NotNull(text);
         if (!ReferenceEquals(text.Owner, _heap) ||
             !text.IsAlive ||
             text.Length > MaximumInternedLength ||

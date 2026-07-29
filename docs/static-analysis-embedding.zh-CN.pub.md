@@ -2,15 +2,23 @@
 
 [English](static-analysis-embedding.pub.md)
 
-本指南说明如何在现有 .NET host 中把 Lunil 用作编译器与代码智能库。仓库中的 sample 提供完整的
-可执行示例：
+本指南说明如何在宿主中把 Lunil 用作编译器与代码智能库。开始前应已有一个引用 Lunil compiler、
+analysis 与 workspace package 的 .NET 应用。
+
+## 前置条件
+
+- 使用所选 Lunil package asset 支持的 .NET SDK；
+- 为 source document 准备稳定的逻辑 module name 与 source identity；
+- 面向不可信或大型 workspace 时显式配置 analysis budget。
+
+可随时运行完整 sample，并将输出与自己的集成进行比较：
 
 ```bash
 dotnet run --project samples/Lunil.StaticAnalysis.Embedding -c Release
 ```
 
-该 sample 会编译一个带 annotation 的单文件，输出 semantic/analysis index，连续三次分析一个
-双模块循环依赖 workspace，并展示 cache 复用与失效。
+该 sample 会编译一个带 annotation 的单文件，输出 semantic/analysis index，并在双模块循环依赖
+workspace 中展示 cache 复用与失效。
 
 ## 1. 配置统一管线
 
@@ -49,7 +57,7 @@ var result = new LuaCompiler(compilerOptions).CompileUtf8(
 执行或持久化 canonical IR 前必须检查 `Succeeded`。存在 warning 或可恢复源码错误时，静态分析结果
 仍可能有用，因此应将 diagnostic 与 snapshot 一同保存，而不是直接丢弃整个结果。
 
-## 2. 将 Byte span 转换为编辑器位置
+## 2. 将 byte span 转换为编辑器位置
 
 `SourceText` 保存 UTF-8 byte。所有 `TextSpan` 都是半开 UTF-8 byte 区间 `[Start, End)`，不是
 UTF-16 字符串索引。必须通过所属 source 转换 offset：
@@ -141,7 +149,7 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
 `FindReferences(LuaSymbolKey)`、`FindGlobalReferences(string)` 与 `GetCallGraph()` 可跨完整 workspace
 投影代码索引，并附带 module/source identity 与稳定 containing-function key。
 
-## 7. 管理生命周期、并发、诊断与预算
+## 7. 应用生命周期、并发、诊断与预算规则
 
 - Compilation/workspace result 是不可变 snapshot，可以并发读取。
 - `LuaWorkspace` 接受并发调用，但会串行化顶层 operation 以保持 cache 顺序；`MaximumParallelism`
@@ -156,8 +164,11 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
   module/dependency/source/cache/fixed-point/diagnostic 预算。预算耗尽或 widening 是明确的分析状态，
   不能当作精确成功结果。
 
-可编译的
-[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
-演示 compilation、annotation 与 semantic inspection、稳定 symbol/reference key、CFG、带 cache invalidation 的
-workspace 复用、跨 workspace reference 与 call graph。Resolver 自定义、key re-resolution、global-reference
-query、`ClearCache()` 与 concurrent-operation integration 是本页描述的 API 契约，但该 sample 未演示这些操作。
+## 预期结果
+
+宿主现在可以生成带稳定 source location、symbol key、call graph 与 diagnostic 的不可变 compilation/
+workspace snapshot，并在预算内复用 cache。
+[`Lunil.StaticAnalysis.Embedding` sample](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
+展示了带 annotation 的单文件 compilation、semantic/analysis index 输出、byte span 格式化，以及循环
+workspace 中的 cache 复用与失效。其余 stable key、resolver、跨 workspace index、cache control、并发
+与 disposal 契约应按本指南接入需要这些能力的宿主。

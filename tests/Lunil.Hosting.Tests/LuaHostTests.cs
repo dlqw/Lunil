@@ -144,7 +144,7 @@ public sealed class LuaHostTests
         using var host = new LuaHost(new LuaHostOptions
         {
             ExecutionBackend = backend,
-            Jit = LuaJitExecutorOptions.Default with
+            Jit = LuaHostJitOptions.Default with
             {
                 FunctionEntryThreshold = 1,
                 SynchronousCompilation = true,
@@ -694,7 +694,7 @@ public sealed class LuaHostTests
             {
                 MaximumInstructionCount = 10_000,
             },
-            Jit = LuaJitExecutorOptions.Default with
+            Jit = LuaHostJitOptions.Default with
             {
                 FunctionEntryThreshold = 1,
                 BackedgeThreshold = 1,
@@ -1114,7 +1114,7 @@ public sealed class LuaHostTests
             LuaHostOptions.Default with
             {
                 ExecutionBackend = backend,
-                Jit = LuaJitExecutorOptions.Default with
+                Jit = LuaHostJitOptions.Default with
                 {
                     FunctionEntryThreshold = 1,
                     BackedgeThreshold = 1,

@@ -10,8 +10,8 @@ public static class Lua54ChunkVerifier
 {
     public static ImmutableArray<Lua54VerificationError> Verify(Lua54Chunk chunk)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
-        ArgumentNullException.ThrowIfNull(chunk.MainPrototype);
+        LunilGuard.NotNull(chunk);
+        LunilGuard.NotNull(chunk.MainPrototype);
 
         var errors = ImmutableArray.CreateBuilder<Lua54VerificationError>();
         if (chunk.MainUpvalueCount != chunk.MainPrototype.Upvalues.Length)
@@ -121,7 +121,7 @@ public static class Lua54ChunkVerifier
         for (var index = 0; index < prototype.Constants.Length; index++)
         {
             var constant = prototype.Constants[index];
-            if (!Enum.IsDefined(constant.Kind))
+            if (!LunilEnum.IsDefined(constant.Kind))
             {
                 Add(errors, path, $"Constant {index} has unknown kind {constant.Kind}.");
             }
@@ -254,6 +254,11 @@ public static class Lua54ChunkVerifier
         bool allowLua55Extensions,
         ImmutableArray<Lua54VerificationError>.Builder errors)
     {
+        if (prototype.Code.IsEmpty)
+        {
+            return;
+        }
+
         bool Register(int register) => (uint)register < prototype.MaximumStackSize;
         bool RegisterRange(int start, int count) =>
             count >= 0 && start >= 0 && (long)start + count <= prototype.MaximumStackSize;
@@ -626,6 +631,12 @@ public static class Lua54ChunkVerifier
             {
                 Add(errors, path, "Test instructions must be followed by JMP.", pc);
             }
+        }
+
+        if (prototype.Code.Any(static instruction =>
+                !Lua54OpcodeInfo.IsDefined(instruction.Opcode)))
+        {
+            return;
         }
 
         VerifyControlFlowTargets(prototype, path, errors);

@@ -21,7 +21,7 @@ public sealed partial class LuaHost
         LuaModuleReloadOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(name);
         options ??= LuaModuleReloadOptions.Default;
         ValidateReloadOptions(options);
 
@@ -303,7 +303,11 @@ public sealed partial class LuaHost
             Encoding.UTF8.GetBytes(name)));
         LuaValue[] arguments = [moduleName, loaderData];
         return SelectedExecutionBackend == LuaHostExecutionBackend.Jit
-            ? GetJitExecutor().Start(State, thread, arguments)
+            ? GetJitExecutor().Start(
+                State,
+                thread,
+                Options.Execution.MaximumInstructionCount,
+                arguments)
             : _interpreterExecutor.Start(State, thread, arguments);
     }
 
@@ -383,14 +387,14 @@ public sealed partial class LuaHost
 
     private static void ValidateReloadOptions(LuaModuleReloadOptions options)
     {
-        if (!Enum.IsDefined(options.CachePolicy))
+        if (!LunilEnum.IsDefined(options.CachePolicy))
         {
             throw new ArgumentOutOfRangeException(nameof(options));
         }
 
         if (options.SourcePath is not null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(options.SourcePath);
+            LunilGuard.NotNullOrWhiteSpace(options.SourcePath);
         }
 
         if ((options.CachePolicy == LuaModuleReloadCachePolicy.Custom) !=
@@ -705,16 +709,16 @@ public sealed partial class LuaHost
             CollectPrevious(
                 previous,
                 previousModule,
-                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                new HashSet<object>(LunilReferenceEqualityComparer.Instance),
                 previousSlots);
             CollectCandidates(
                 candidate,
                 candidateModule,
-                new HashSet<object>(ReferenceEqualityComparer.Instance),
+                new HashSet<object>(LunilReferenceEqualityComparer.Instance),
                 candidateVersions);
             if (additionalCandidates is not null)
             {
-                var visitedCandidates = new HashSet<object>(ReferenceEqualityComparer.Instance);
+                var visitedCandidates = new HashSet<object>(LunilReferenceEqualityComparer.Instance);
                 foreach (var additionalCandidate in additionalCandidates)
                 {
                     CollectCandidates(
@@ -892,7 +896,7 @@ public sealed partial class LuaHost
                     versions.Add(version.LogicalKey, candidates);
                 }
 
-                if (!candidates.Contains(version, ReferenceEqualityComparer.Instance))
+                if (!candidates.Contains(version, LunilReferenceEqualityComparer.Instance))
                 {
                     candidates.Add(version);
                 }

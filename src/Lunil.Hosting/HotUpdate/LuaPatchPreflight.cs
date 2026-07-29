@@ -47,7 +47,7 @@ public static class LuaPatchPreflight
         ILuaPatchCanonicalIrDecoder? canonicalIrDecoder = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(bundle);
+        LunilGuard.NotNull(bundle);
         var configured = (hostOptions ?? LuaHostOptions.Default) with
         {
             LanguageVersion = bundle.Manifest.LanguageVersion,

@@ -56,7 +56,7 @@ public readonly record struct Lua54Constant
 
     public static Lua54Constant FromString(Lua54String value, bool isShort)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new Lua54Constant(
             isShort ? Lua54ConstantKind.ShortString : Lua54ConstantKind.LongString,
             0,

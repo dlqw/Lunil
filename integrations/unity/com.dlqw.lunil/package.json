@@ -1,0 +1,16 @@
+{
+  "name": "com.dlqw.lunil",
+  "version": "0.13.0",
+  "displayName": "Lunil",
+  "description": "Portable Lua 5.1-5.5 compiler, runtime, hosting, and Unity lifecycle integration.",
+  "unity": "2022.3",
+  "author": {
+    "name": "rdququ",
+    "url": "https://github.com/dlqw"
+  },
+  "keywords": [
+    "lua",
+    "scripting",
+    "hot-update"
+  ]
+}

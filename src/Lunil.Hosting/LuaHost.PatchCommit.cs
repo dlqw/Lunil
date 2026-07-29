@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
-using Lunil.CodeGen.Cil.Jit;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
@@ -35,8 +34,8 @@ public sealed partial class LuaHost
     /// <summary>Registers the live version for a host-owned state schema.</summary>
     public void SetPatchStateSchemaVersion(string schemaId, string version)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(schemaId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(version);
+        LunilGuard.NotNullOrWhiteSpace(schemaId);
+        LunilGuard.NotNullOrWhiteSpace(version);
         lock (_executionGate)
         {
             ThrowIfDisposed();
@@ -52,7 +51,7 @@ public sealed partial class LuaHost
 
     public bool TryGetPatchStateSchemaVersion(string schemaId, out string? version)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(schemaId);
+        LunilGuard.NotNullOrWhiteSpace(schemaId);
         lock (_executionGate)
         {
             ThrowIfDisposed();
@@ -69,7 +68,7 @@ public sealed partial class LuaHost
         LuaPatchPrepareOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(bundle);
+        LunilGuard.NotNull(bundle);
         var snapshot = SnapshotPrepareOptions(options ?? LuaPatchPrepareOptions.Default);
         if (snapshot.PreparationLimiter is { } limiter)
         {
@@ -103,7 +102,7 @@ public sealed partial class LuaHost
         LuaPatchPrepareOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(bundle);
+        LunilGuard.NotNull(bundle);
         var snapshot = SnapshotPrepareOptions(options ?? LuaPatchPrepareOptions.Default);
         if (snapshot.PreparationLimiter is not { } limiter)
         {
@@ -170,7 +169,7 @@ public sealed partial class LuaHost
         LuaPatchTelemetry.Complete(activity, LuaPatchPrepareStatus.Deferred.ToString(), message);
         LuaPatchTelemetry.RecordPreparation(
             LuaPatchPrepareStatus.Deferred.ToString(),
-            Stopwatch.GetElapsedTime(startedTimestamp));
+            LunilStopwatch.GetElapsedTime(startedTimestamp));
         return new LuaPatchPrepareResult(
             LuaPatchPrepareStatus.Deferred,
             null,
@@ -228,7 +227,7 @@ public sealed partial class LuaHost
                     "lunil.patch.jit_warmup.failed_functions",
                     warmup.Modules.Sum(static module => module.Warmup?.FailedFunctionCount ?? 0));
             }
-            var duration = Stopwatch.GetElapsedTime(started);
+            var duration = LunilStopwatch.GetElapsedTime(started);
             LuaPatchTelemetry.Complete(activity, result.Status.ToString(), result.Message);
             LuaPatchTelemetry.RecordPreparation(result.Status.ToString(), duration);
             return result;
@@ -236,7 +235,7 @@ public sealed partial class LuaHost
         catch (Exception exception) when (IsRecoverablePatchException(exception))
         {
             LuaPatchTelemetry.Failed(activity, exception);
-            LuaPatchTelemetry.RecordPreparation("Exception", Stopwatch.GetElapsedTime(started));
+            LuaPatchTelemetry.RecordPreparation("Exception", LunilStopwatch.GetElapsedTime(started));
             throw;
         }
     }
@@ -340,8 +339,8 @@ public sealed partial class LuaHost
         LuaPatchCommitOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(preparedPatch);
-        ArgumentNullException.ThrowIfNull(updateWindow);
+        LunilGuard.NotNull(preparedPatch);
+        LunilGuard.NotNull(updateWindow);
         options ??= LuaPatchCommitOptions.Default;
         ValidateDuration(options.MaximumPauseDuration, allowInfinite: true, nameof(options));
         if (!ReferenceEquals(preparedPatch.Owner, this))
@@ -375,7 +374,7 @@ public sealed partial class LuaHost
             LuaPatchTelemetry.Failed(activity, exception);
             LuaPatchTelemetry.RecordCommit(
                 "Exception",
-                Stopwatch.GetElapsedTime(started),
+                LunilStopwatch.GetElapsedTime(started),
                 rollbackAttempted: false);
             throw;
         }
@@ -426,9 +425,9 @@ public sealed partial class LuaHost
         CancellationToken cancellationToken,
         TimeProvider? timeProvider = null)
     {
-        ArgumentNullException.ThrowIfNull(preparedPatch);
-        ArgumentNullException.ThrowIfNull(updateWindow);
-        ArgumentNullException.ThrowIfNull(options);
+        LunilGuard.NotNull(preparedPatch);
+        LunilGuard.NotNull(updateWindow);
+        LunilGuard.NotNull(options);
         if (!ReferenceEquals(preparedPatch.Owner, this))
         {
             throw new ArgumentException(
@@ -523,7 +522,7 @@ public sealed partial class LuaHost
                 results,
                 "At least one module changed after patch preparation.",
                 SideEffectsMayHaveOccurred: false,
-                Stopwatch.GetElapsedTime(started)));
+                LunilStopwatch.GetElapsedTime(started)));
         }
 
         if (preparedPatch.MigrationSchema is { } liveSchema &&
@@ -965,8 +964,8 @@ public sealed partial class LuaHost
 
     private static LuaPatchPrepareOptions SnapshotPrepareOptions(LuaPatchPrepareOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(options.TimeProvider);
+        LunilGuard.NotNull(options);
+        LunilGuard.NotNull(options.TimeProvider);
         LuaPatchPreparationLimiter.ValidateWaitTimeout(options.PreparationWaitTimeout);
         var acceptanceConfigured = options.AcceptancePolicy is not null;
         if (acceptanceConfigured != (options.ReplayStore is not null) ||
@@ -979,7 +978,7 @@ public sealed partial class LuaHost
 
         if (options.ReplayScope is not null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(options.ReplayScope);
+            LunilGuard.NotNullOrWhiteSpace(options.ReplayScope);
         }
 
         return options with
@@ -1051,12 +1050,12 @@ public sealed partial class LuaHost
             return result;
         }
 
-        if (!Enum.IsDefined(configured.FailureBehavior))
+        if (!LunilEnum.IsDefined(configured.FailureBehavior))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "JIT warmup failure behavior is invalid.");
         }
 
-        ArgumentNullException.ThrowIfNull(configured.ExecutorOptions);
+        LunilGuard.NotNull(configured.ExecutorOptions);
         ValidateJitWarmupOptions(configured);
         var started = Stopwatch.GetTimestamp();
         if (SelectedExecutionBackend != LuaHostExecutionBackend.Jit || !IsDynamicCodeAvailable)
@@ -1077,7 +1076,7 @@ public sealed partial class LuaHost
                             null,
                             null,
                             null)).ToImmutableArray(),
-                    Stopwatch.GetElapsedTime(started)),
+                    LunilStopwatch.GetElapsedTime(started)),
             };
         }
 
@@ -1123,12 +1122,12 @@ public sealed partial class LuaHost
 
             try
             {
-                LuaJitProfileRemapResult? remap = null;
+                LuaHostJitProfileRemapResult? remap = null;
                 if (result.PreparedPatch.JitWarmupSources?.TryGetValue(
                     module.ModuleName,
                     out var previous) == true)
                 {
-                    remap = LuaJitProfileRemapper.Remap(
+                    remap = executor.RemapProfile(
                         previous,
                         module.Module,
                         executor.ExportProfile(previous));
@@ -1148,8 +1147,8 @@ public sealed partial class LuaHost
                     }
 
                     var import = executor.ImportProfile(module.Module, remap.Payload!);
-                    if (import.Status is LuaJitProfileImportStatus.Rejected or
-                        LuaJitProfileImportStatus.Incompatible)
+                    if (import.Status is LuaHostJitProfileImportStatus.Rejected or
+                        LuaHostJitProfileImportStatus.Incompatible)
                     {
                         modules.Add(new LuaPatchJitWarmupModuleResult(
                             module.ModuleName,
@@ -1203,12 +1202,12 @@ public sealed partial class LuaHost
                 remainingFunctions -= warmup.Functions.Length;
                 var moduleStatus = warmup.Status switch
                 {
-                    LuaJitWarmupStatus.Completed when
+                    LuaHostJitWarmupStatus.Completed when
                         warmup.CandidateFunctionCount > warmup.SelectedFunctionCount =>
                         LuaPatchJitWarmupStatus.BudgetLimited,
-                    LuaJitWarmupStatus.Completed => LuaPatchJitWarmupStatus.Completed,
-                    LuaJitWarmupStatus.TimedOut => LuaPatchJitWarmupStatus.TimedOut,
-                    LuaJitWarmupStatus.Disabled => LuaPatchJitWarmupStatus.NotApplicable,
+                    LuaHostJitWarmupStatus.Completed => LuaPatchJitWarmupStatus.Completed,
+                    LuaHostJitWarmupStatus.TimedOut => LuaPatchJitWarmupStatus.TimedOut,
+                    LuaHostJitWarmupStatus.Disabled => LuaPatchJitWarmupStatus.NotApplicable,
                     _ => LuaPatchJitWarmupStatus.CompletedWithFailures,
                 };
                 modules.Add(new LuaPatchJitWarmupModuleResult(
@@ -1253,7 +1252,7 @@ public sealed partial class LuaHost
         var warmupResult = new LuaPatchJitWarmupResult(
             overall,
             moduleResults,
-            Stopwatch.GetElapsedTime(started));
+            LunilStopwatch.GetElapsedTime(started));
         if (configured.FailureBehavior == LuaPatchJitWarmupFailureBehavior.RequireSuccess &&
             !warmupResult.Succeeded)
         {
@@ -1319,7 +1318,7 @@ public sealed partial class LuaHost
         long started,
         TimeSpan maximumDuration) => maximumDuration == Timeout.InfiniteTimeSpan
         ? Timeout.InfiniteTimeSpan
-        : maximumDuration - Stopwatch.GetElapsedTime(started);
+        : maximumDuration - LunilStopwatch.GetElapsedTime(started);
 
     private static Dictionary<string, TAdapter>? SnapshotAdapters<TAdapter>(
         IReadOnlyDictionary<string, TAdapter>? adapters,
@@ -1335,7 +1334,7 @@ public sealed partial class LuaHost
         var snapshot = new Dictionary<string, TAdapter>(StringComparer.Ordinal);
         foreach (var pair in adapters)
         {
-            ArgumentNullException.ThrowIfNull(pair.Value);
+            LunilGuard.NotNull(pair.Value);
             var adapterId = getId(pair.Value);
             if (string.IsNullOrWhiteSpace(pair.Key) ||
                 !string.Equals(pair.Key, adapterId, StringComparison.Ordinal))
@@ -1381,7 +1380,7 @@ public sealed partial class LuaHost
             return Timeout.InfiniteTimeSpan;
         }
 
-        var remaining = timeout - Stopwatch.GetElapsedTime(started);
+        var remaining = timeout - LunilStopwatch.GetElapsedTime(started);
         return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
     }
 
@@ -1392,7 +1391,7 @@ public sealed partial class LuaHost
         window.MaximumDuration != Timeout.InfiniteTimeSpan &&
         window.Elapsed >= window.MaximumDuration ||
         commitBudget != Timeout.InfiniteTimeSpan &&
-        Stopwatch.GetElapsedTime(commitStarted) >= commitBudget;
+        LunilStopwatch.GetElapsedTime(commitStarted) >= commitBudget;
 
     private static bool IsRecoverablePatchException(Exception exception) =>
         exception is not OperationCanceledException and
@@ -1530,7 +1529,7 @@ public sealed partial class LuaHost
             modules,
             message,
             sideEffectsMayHaveOccurred,
-            Stopwatch.GetElapsedTime(started));
+            LunilStopwatch.GetElapsedTime(started));
     }
 
     private static LuaPatchCommitResult EmptyCommitResult(
@@ -1555,7 +1554,7 @@ public sealed partial class LuaHost
             0)).ToImmutableArray(),
         message,
         SideEffectsMayHaveOccurred: false,
-        Stopwatch.GetElapsedTime(started));
+        LunilStopwatch.GetElapsedTime(started));
 
     internal sealed record PatchCommitSessionPreparation(
         PatchCommitSession? Session,
@@ -1700,7 +1699,7 @@ public sealed partial class LuaHost
                 committed,
                 null,
                 SideEffectsMayHaveOccurred: false,
-                Stopwatch.GetElapsedTime(_started));
+                LunilStopwatch.GetElapsedTime(_started));
         }
 
         public LuaPatchCommitResult Rollback(
@@ -1754,7 +1753,7 @@ public sealed partial class LuaHost
         }
 
         private void ThrowIfDisposed() =>
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            LunilGuard.NotDisposed(_disposed, this);
     }
 
     internal sealed class PatchModuleTransaction : IDisposable

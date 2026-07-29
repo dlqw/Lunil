@@ -22,6 +22,9 @@ ownership 契约。配置步骤见 [如何配置 CLR 互操作](clr-interop.zh-C
 | `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])` | 创建由 Host 轮询的 timer。 |
 | `clr.cancel_timer(timer)` | 无需通用 disposal capability 即可取消 timer。 |
 | `clr.dispose(value)` | 幂等释放 bridge userdata 或 subscription。 |
+| `clr.generic(definitionName, typeArgumentNames...)` | 解析显式注册的 closed generic type。 |
+| `clr.next(iterator)` | 推进一个有边界的 projected iterator。 |
+| `clr.link_iterator(iterator, cancellation)` | 把 iterator disposal 连接到 bridge cancellation。 |
 
 构造出的 userdata 也可通过普通 Lua indexing 与 call 访问 allowlisted property、field、method、
 indexer 与 CLR operator。Method 查询返回 bound function；`object.method(x)` 与 `object:method(x)`
@@ -46,12 +49,19 @@ Candidate 会按参数数量、optional/default 参数和 host-side named argume
 `object` fallback。CLR rectangular array 与 jagged array 递归转为从 1 开始的嵌套 table。不支持的值
 产生 `NoMatchingConstructor` 或 `NoMatchingMember`。
 
-CLR enum 返回 Lua 时为名称 string。CLR `decimal` 变为 Lua float，可能损失精度。不超过
-`long.MaxValue` 的 `ulong` 变为 Lua integer；更大的值以 `InvocationFailed` 失败。需要保留 enum
-flag、decimal 或无符号 64 位值的完整 CLR representation 时，应使用 allowlisted 应用 value type。
+`EnumRepresentation` 默认为准确 name string，也可使用 underlying integer 或 `{ name, value }`
+table。`DecimalRepresentation` 默认为 invariant exact string；`ExactInteger` 只接受能由 Lua integer
+表示的整数值，`LossyFloat` 则显式允许精度损失。不超过 `long.MaxValue` 的 `ulong` 变为 Lua
+integer，更大的值会明确失败。
 
-带 `ref`/`out` 参数的 method 先返回普通结果，再按参数顺序返回 ref/out 值。`Task` 与
-`ValueTask` 结果变为 `LuaClrTask`。`LuaClrCancellation` 转换为 `CancellationToken`；nil 映射到
+`CollectionProjection` 默认为 `TablesAndIterators`：list 与 dictionary 投影为 table，其他 enumerable
+投影为有边界 iterator；`Userdata` 会关闭 projection。`ConversionLimits` 限制递归深度、总 item、估算
+byte，并拒绝 cycle。
+
+带 `ref`/`out` 参数的 method 使用 `RefOutRepresentation`。默认
+`PositionalAndNamedTable` 返回 positional value 和以稳定 CLR parameter 名为 key 的 table；
+`Positional` 与 `NamedTable` 只选择一种 representation。`Task` 与 `ValueTask` 结果变为
+`LuaClrTask`。`LuaClrCancellation` 转换为 `CancellationToken`；nil 映射到
 `CancellationToken.None`。CLR exception 变为 `LuaClrException`/可捕获 Lua error。
 `IncludeExceptionMessages` 控制是否暴露 Host exception message。
 
@@ -59,7 +69,9 @@ flag、decimal 或无符号 64 位值的完整 CLR representation 时，应使�
 
 - `LuaClrBridge.CreateDelegate` 在创建 delegate 前验证每个参数与返回类型。
 - `LuaClrSubscription.Dispose` 是幂等的，会解除 handler 并释放 Lua callback。
-- Callback 不能 yield；进入遵循 `ThreadPolicy` 与所属 `LuaState` 执行边界。
+- 直接通过 bridge 调用的 callback 不能 yield。绑定到 `LuaGameLoopHost` 的 void delegate callback 或
+  host-polled timer 可以 yield，因为 game-loop Host 会将其作为已调度 coroutine 运行，并在之后匹配的
+  tick 恢复。进入仍遵循 `ThreadPolicy` 与所属 `LuaState` 执行边界。
 - 调用 thread 存在 `SynchronizationContext` 且 task 未完成时，`clr.await` 以 `AsyncFailed` 拒绝等待。
 - 非 active 的 generation-owned task 以 `AsyncGenerationClosed` 失败；底层 CLR `Task` 不会被取消。
 
@@ -86,7 +98,7 @@ Timer 数量、单次 poll dispatch、duration 与 catch-up 上限会在调度�
 `TimeProvider` 的 monotonic timestamp。从 busy state 或非 owner thread dispatch 会 fail closed；callback 使用
 Host 的 interpreter budget。
 
-## Ownership 与 NativeAOT
+## Ownership 与 Binding Mode
 
 `LuaClrObject` 默认拥有构造出的 `IDisposable` instance，最多调用一次 `Dispose`。Host-owned instance
 应设置 `OwnConstructedObjects=false`。Userdata、callback、subscription、task、timer 与 stable-resource
@@ -97,6 +109,7 @@ userdata 都属于一个 `LuaState`，不能移动到其他 state。
 `IDisposable` 或 `IAsyncDisposable` resource 在最后一个 lease 结束后释放；non-owning handle 只关闭
 access。
 
-Trimming 与 NativeAOT 应用必须保留所有 allowlisted 应用 constructor、member 和 delegate signature。
-Lunil 会保留自身的 delegate callback adapter 与 `Task<TResult>.Result` metadata。应用 metadata
-缺失时 fail closed。
+`RegistryThenReflection` 是 trusted .NET Host 的 compatibility 默认值，仍要求准确 allowlist。
+`RegistryOnly` 要求 `LuaClrOptions.BindingRegistry` 且绝不 fallback 到 reflection，适用于 NativeAOT、
+Unity IL2CPP、严格 trimming 与 deterministic Host。生成 binding 在缺少匹配 capability 与 allowlist
+时不会授予访问权限。

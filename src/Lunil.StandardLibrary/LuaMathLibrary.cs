@@ -116,7 +116,7 @@ internal static class LuaMathLibrary
             return [LuaValue.FromFloat(value), LuaValue.FromInteger(0)];
         }
 
-        var exponent = Math.ILogB(Math.Abs(value)) + 1;
+        var exponent = LunilMath.ILogB(Math.Abs(value)) + 1;
         return
         [
             LuaValue.FromFloat(value / Math.Pow(2, exponent)),
@@ -125,7 +125,7 @@ internal static class LuaMathLibrary
     }
 
     private static LuaValue[] Ldexp(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.ScaleB(
+        [LuaValue.FromFloat(LunilMath.ScaleB(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "ldexp"),
             checked((int)LuaLibraryHelpers.CheckInteger(arguments, 1, "ldexp"))))];
 
@@ -196,7 +196,7 @@ internal static class LuaMathLibrary
         }
 
         var @base = LuaLibraryHelpers.CheckNumber(arguments, 1, "log");
-        var result = @base == 2 ? Math.Log2(number) :
+        var result = @base == 2 ? LunilMath.Log2(number) :
             @base == 10 ? Math.Log10(number) : Math.Log(number) / Math.Log(@base);
         return [LuaValue.FromFloat(result)];
     }
@@ -429,11 +429,11 @@ internal static class LuaMathLibrary
             var state1 = _state[1];
             var state2 = _state[2] ^ state0;
             var state3 = _state[3] ^ state1;
-            var result = BitOperations.RotateLeft(state1 * 5, 7) * 9;
+            var result = LunilBitOperations.RotateLeft(state1 * 5, 7) * 9;
             _state[0] = state0 ^ state3;
             _state[1] = state1 ^ state2;
             _state[2] = state2 ^ (state1 << 17);
-            _state[3] = BitOperations.RotateLeft(state3, 45);
+            _state[3] = LunilBitOperations.RotateLeft(state3, 45);
             return result;
         }
 

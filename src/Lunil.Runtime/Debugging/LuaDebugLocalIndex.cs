@@ -13,7 +13,7 @@ internal sealed class LuaDebugLocalIndex
 
     internal LuaDebugLocalIndex(LuaIrFunction function)
     {
-        ArgumentNullException.ThrowIfNull(function);
+        LunilGuard.NotNull(function);
         _instructionCount = function.Instructions.Length;
         if (_instructionCount == 0)
         {
@@ -34,7 +34,7 @@ internal sealed class LuaDebugLocalIndex
             }
         }
 
-        _boundaries = [.. boundaries.Order()];
+        _boundaries = [.. boundaries.OrderBy(static value => value)];
         _localsByBoundary = new LuaIrLocalVariable[_boundaries.Length][];
         for (var boundaryIndex = 0; boundaryIndex < _boundaries.Length; boundaryIndex++)
         {

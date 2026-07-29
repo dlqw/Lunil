@@ -16,7 +16,7 @@ public static class Lua53CanonicalPrototypeWriter
         int functionId,
         Lua53ChunkTarget? target = null)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         if (module.LanguageVersion != LuaLanguageVersion.Lua53)
         {
             throw new InvalidDataException(
@@ -608,7 +608,7 @@ public static class Lua53CanonicalPrototypeWriter
 
         private static int EncodeFloatingByte(int value)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            LunilGuard.NotNegative(value);
             if (value < 8)
             {
                 return value;

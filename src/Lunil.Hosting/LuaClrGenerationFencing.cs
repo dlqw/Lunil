@@ -71,11 +71,11 @@ internal sealed class LuaClrCallbackRegistration
 
     public void AttachSubscription(Action subscribe, Action unsubscribe)
     {
-        ArgumentNullException.ThrowIfNull(subscribe);
-        ArgumentNullException.ThrowIfNull(unsubscribe);
+        LunilGuard.NotNull(subscribe);
+        LunilGuard.NotNull(unsubscribe);
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(
+            LunilGuard.NotDisposed(
                 State == LuaClrGenerationState.Closed,
                 this);
 
@@ -249,6 +249,7 @@ public sealed partial class LuaClrBridge
             var registration = new LuaClrCallbackRegistration(callback, module, state);
             _callbackRegistrations.Add(new WeakReference<LuaClrCallbackRegistration>(registration));
             _generationUpdate?.Track(registration);
+            _callbackScheduler?.Register(registration);
             return registration;
         }
     }
@@ -333,8 +334,8 @@ public sealed partial class LuaClrBridge
         IEnumerable<LuaIrModule> previousModules,
         IEnumerable<LuaIrModule> candidateModules)
     {
-        ArgumentNullException.ThrowIfNull(previousModules);
-        ArgumentNullException.ThrowIfNull(candidateModules);
+        LunilGuard.NotNull(previousModules);
+        LunilGuard.NotNull(candidateModules);
         lock (_callbackGate)
         {
             if (_generationUpdate is not null)
@@ -416,11 +417,11 @@ public sealed partial class LuaClrBridge
         private readonly List<LuaClrTimerRegistration> _pendingTimers = [];
         private readonly List<LuaClrTimerRegistration> _retiredTimers = [];
         private readonly HashSet<LuaThread> _pendingThreads =
-            new(ReferenceEqualityComparer.Instance);
+            new(LunilReferenceEqualityComparer.Instance);
         private readonly HashSet<LuaThread> _retiredThreads =
-            new(ReferenceEqualityComparer.Instance);
+            new(LunilReferenceEqualityComparer.Instance);
         private readonly Dictionary<LuaThread, LuaIrModule> _transferredThreads =
-            new(ReferenceEqualityComparer.Instance);
+            new(LunilReferenceEqualityComparer.Instance);
         private bool _applied;
         private bool _completed;
 
@@ -432,10 +433,10 @@ public sealed partial class LuaClrBridge
             _bridge = bridge;
             _previousModules = new HashSet<LuaIrModule>(
                 previousModules,
-                ReferenceEqualityComparer.Instance);
+                LunilReferenceEqualityComparer.Instance);
             _candidateModules = new HashSet<LuaIrModule>(
                 candidateModules,
-                ReferenceEqualityComparer.Instance);
+                LunilReferenceEqualityComparer.Instance);
             _bridge._state.ThreadCreated += TrackCreatedThread;
         }
 
@@ -470,9 +471,9 @@ public sealed partial class LuaClrBridge
             LuaClrTimer candidateTimer,
             LuaIrModule candidateModule)
         {
-            ArgumentNullException.ThrowIfNull(previousTimer);
-            ArgumentNullException.ThrowIfNull(candidateTimer);
-            ArgumentNullException.ThrowIfNull(candidateModule);
+            LunilGuard.NotNull(previousTimer);
+            LunilGuard.NotNull(candidateTimer);
+            LunilGuard.NotNull(candidateModule);
             lock (_bridge._callbackGate)
             {
                 ThrowIfCompleted();
@@ -503,8 +504,8 @@ public sealed partial class LuaClrBridge
 
         public void TransferCoroutine(LuaThread thread, LuaIrModule candidateModule)
         {
-            ArgumentNullException.ThrowIfNull(thread);
-            ArgumentNullException.ThrowIfNull(candidateModule);
+            LunilGuard.NotNull(thread);
+            LunilGuard.NotNull(candidateModule);
             lock (_bridge._callbackGate)
             {
                 ThrowIfCompleted();
@@ -823,7 +824,7 @@ public sealed partial class LuaClrBridge
             }
         }
 
-        private void ThrowIfCompleted() => ObjectDisposedException.ThrowIf(_completed, this);
+        private void ThrowIfCompleted() => LunilGuard.NotDisposed(_completed, this);
 
         public void StopTrackingThreads() =>
             _bridge._state.ThreadCreated -= TrackCreatedThread;

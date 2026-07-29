@@ -24,7 +24,7 @@ public sealed class LuaInMemoryModuleResolver : ILuaModuleResolver
 
     public LuaInMemoryModuleResolver(IEnumerable<LuaWorkspaceDocument> documents)
     {
-        ArgumentNullException.ThrowIfNull(documents);
+        LunilGuard.NotNull(documents);
         _documents = documents.ToImmutableDictionary(
             static document => document.Module.Name,
             StringComparer.Ordinal);
@@ -35,7 +35,7 @@ public sealed class LuaInMemoryModuleResolver : ILuaModuleResolver
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(
+        return new ValueTask<LuaWorkspaceDocument?>(
             _documents.GetValueOrDefault(request.RequestedName));
     }
 }
@@ -58,7 +58,7 @@ public sealed class LuaFileSystemModuleResolver : ILuaModuleResolver
 
     public LuaFileSystemModuleResolver(LuaFileSystemModuleResolverOptions options)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        LunilGuard.NotNull(options);
         if (options.RootDirectories.IsDefaultOrEmpty)
         {
             throw new ArgumentException("At least one module root is required.", nameof(options));
@@ -75,7 +75,7 @@ public sealed class LuaFileSystemModuleResolver : ILuaModuleResolver
                 nameof(options));
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumFileBytes);
+        LunilGuard.Positive(options.MaximumFileBytes);
 
         _roots = [.. options.RootDirectories.Select(Path.GetFullPath)
             .Distinct(GetPathComparer())
@@ -88,7 +88,7 @@ public sealed class LuaFileSystemModuleResolver : ILuaModuleResolver
         LuaModuleResolutionRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        LunilGuard.NotNull(request);
         cancellationToken.ThrowIfCancellationRequested();
         if (!IsSafeRequestedName(request.RequestedName))
         {
@@ -146,7 +146,7 @@ public sealed class LuaFileSystemModuleResolver : ILuaModuleResolver
             !Path.IsPathRooted(relative);
     }
 
-    private static StringComparer GetPathComparer() => OperatingSystem.IsWindows()
+    private static StringComparer GetPathComparer() => LunilOperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 }

@@ -12,7 +12,7 @@ public sealed class LuaTypeRelations
         IEnumerable<LuaTypeDeclaration>? declarations = null,
         int maximumUnionMemberCount = 32)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumUnionMemberCount);
+        LunilGuard.Positive(maximumUnionMemberCount);
         _maximumUnionMemberCount = maximumUnionMemberCount;
         _declarations = (declarations ?? [])
             .GroupBy(static declaration => declaration.Name, StringComparer.Ordinal)
@@ -26,7 +26,7 @@ public sealed class LuaTypeRelations
 
     public LuaType Union(IEnumerable<LuaType> types)
     {
-        ArgumentNullException.ThrowIfNull(types);
+        LunilGuard.NotNull(types);
         var result = new List<LuaType>();
         foreach (var type in types)
         {
@@ -57,7 +57,7 @@ public sealed class LuaTypeRelations
 
     public static LuaType Intersection(IEnumerable<LuaType> types)
     {
-        ArgumentNullException.ThrowIfNull(types);
+        LunilGuard.NotNull(types);
         var result = new List<LuaType>();
         foreach (var type in types)
         {
@@ -94,8 +94,8 @@ public sealed class LuaTypeRelations
 
     public bool IsAssignable(LuaType source, LuaType target)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(target);
+        LunilGuard.NotNull(source);
+        LunilGuard.NotNull(target);
         return IsAssignable(source, target, new HashSet<(LuaType Source, LuaType Target)>());
     }
 
@@ -141,8 +141,8 @@ public sealed class LuaTypeRelations
         LuaType type,
         IReadOnlyDictionary<string, LuaType> substitutions)
     {
-        ArgumentNullException.ThrowIfNull(type);
-        ArgumentNullException.ThrowIfNull(substitutions);
+        LunilGuard.NotNull(type);
+        LunilGuard.NotNull(substitutions);
         return type switch
         {
             LuaGenericParameterType parameter when substitutions.TryGetValue(parameter.Name, out var value) => value,
@@ -200,8 +200,8 @@ public sealed class LuaTypeRelations
 
     public LuaTableField? FindField(LuaType type, string name)
     {
-        ArgumentNullException.ThrowIfNull(type);
-        ArgumentNullException.ThrowIfNull(name);
+        LunilGuard.NotNull(type);
+        LunilGuard.NotNull(name);
         return FindField(type, name, new HashSet<string>(StringComparer.Ordinal));
     }
 
@@ -433,7 +433,9 @@ public sealed class LuaTypeRelations
         if (string.Equals(source.Name, target.Name, StringComparison.Ordinal))
         {
             return source.TypeArguments.Length == target.TypeArguments.Length &&
-                source.TypeArguments.Zip(target.TypeArguments)
+                source.TypeArguments.Zip(
+                    target.TypeArguments,
+                    static (first, second) => (First: first, Second: second))
                     .All(pair => IsAssignable(pair.First, pair.Second, visiting));
         }
 

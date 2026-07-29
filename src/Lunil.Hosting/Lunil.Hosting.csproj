@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+    <LunilPortableLibrary>true</LunilPortableLibrary>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <Description>Reusable compiler, runtime, capability, and execution host for Lunil.</Description>
@@ -9,12 +10,31 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
+    <ProjectReference Include="..\Lunil.Hosting.Generators\Lunil.Hosting.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish;LunilReadyToRunPublish" />
+    <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
+    <ProjectReference Include="..\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj"
+                      Condition="'$(TargetFramework)' == 'net10.0'" />
     <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />
     <ProjectReference Include="..\Lunil.IR\Lunil.IR.csproj" />
     <ProjectReference Include="..\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\Lunil.StandardLibrary\Lunil.StandardLibrary.csproj" />
     <ProjectReference Include="..\Lunil.Workspace\Lunil.Workspace.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Lunil.Hosting.Generators\bin\$(Configuration)\netstandard2.0\Lunil.Hosting.Generators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="Microsoft.Bcl.TimeProvider" Version="10.0.0" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />
+    <PackageReference Include="System.Text.Json" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

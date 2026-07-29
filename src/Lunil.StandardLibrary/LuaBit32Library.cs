@@ -61,7 +61,7 @@ internal static class LuaBit32Library
                 '&' => result & ToUInt(value),
                 '|' => result | ToUInt(value),
                 '^' => result ^ ToUInt(value),
-                _ => throw new UnreachableException(),
+                _ => throw new LunilUnreachableException(),
             };
         }
 

@@ -1,0 +1,29 @@
+; Engine configuration file.
+; Generated projects preserve this fixture input verbatim.
+
+config_version=5
+
+[application]
+
+config/name="Lunil.Godot.Fixture"
+config/icon="res://icon.svg"
+run/main_scene="res://Main.tscn"
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=360
+
+[dotnet]
+
+project/assembly_name="Lunil.Godot.Fixture"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/lunil/plugin.cfg")
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true

@@ -122,7 +122,7 @@ internal static class ControlFlowGraphBuilder
                     .OrderBy(static edge => edge.TargetBlockId)
                     .ThenBy(static edge => edge.Kind)
                     .ToImmutableArray(),
-                predecessors[block.Id].Distinct().Order().ToImmutableArray(),
+                predecessors[block.Id].Distinct().OrderBy(static value => value).ToImmutableArray(),
                 reachable.Contains(block.Id))).ToImmutableArray();
             return new LuaControlFlowGraph(
                 _function.Id,

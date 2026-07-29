@@ -7,8 +7,8 @@ public abstract class LuaGcObject
 {
     protected LuaGcObject(LuaHeap owner, long logicalSize)
     {
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(logicalSize);
+        LunilGuard.NotNull(owner);
+        LunilGuard.Positive(logicalSize);
         Owner = owner;
         LogicalSize = logicalSize;
         ObjectId = owner.Register(this);

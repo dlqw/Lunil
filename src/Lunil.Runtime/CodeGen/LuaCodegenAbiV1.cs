@@ -37,15 +37,15 @@ public static class LuaCodegenAbiV1
         int firstRegister,
         int count)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        LunilGuard.NotNegative(count);
         ValidateRegisterRange(frame, firstRegister, count);
         thread.Stack.Clear(frame.Base + firstRegister, count);
     }
 
     public static void SetFrameTop(LuaThread thread, LuaFrame frame, int registerCount)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(registerCount);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+        LunilGuard.NotNegative(registerCount);
+        LunilGuard.LessThanOrEqual(
             registerCount,
             frame.Function.RegisterCount);
         LuaExecutionEngine.SetFrameTop(thread, frame, checked(frame.Base + registerCount));
@@ -62,9 +62,9 @@ public static class LuaCodegenAbiV1
         LuaFrame frame,
         int constant)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(constant);
+        LunilGuard.NotNegative(constant);
         var constants = frame.Function.Constants;
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(constant, constants.Length);
+        LunilGuard.LessThan(constant, constants.Length);
         if (constants[constant].Kind == LuaIrConstantKind.String)
         {
             return LuaValue.FromString(
@@ -116,7 +116,7 @@ public static class LuaCodegenAbiV1
 
     public static bool CanExecuteCompiled(LuaExecutionContext context)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         return !context.HasExactDebugHooks && context.IsDebugModeCurrent();
     }
 
@@ -126,7 +126,7 @@ public static class LuaCodegenAbiV1
         LuaFrame frame,
         int programCounter)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         context.ExecutionEngine?.ObserveCodegenInstruction(
             context,
             thread,
@@ -146,10 +146,10 @@ public static class LuaCodegenAbiV1
         int programCounter,
         int backedgeCount)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(frame);
-        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(backedgeCount);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(frame);
+        LunilGuard.NotNegative(programCounter);
+        LunilGuard.Positive(backedgeCount);
         context.ExecutionEngine?.ObserveLoopOsrBackedges(
             frame,
             programCounter,
@@ -162,7 +162,7 @@ public static class LuaCodegenAbiV1
         LuaFrame frame,
         int programCounter)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         var executionEngine = context.ExecutionEngine ??
             throw new InvalidOperationException(
                 "The execution context is not attached to an execution engine.");
@@ -171,8 +171,8 @@ public static class LuaCodegenAbiV1
 
     public static void CommitProgramCounter(LuaFrame frame, int programCounter)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+        LunilGuard.NotNegative(programCounter);
+        LunilGuard.LessThanOrEqual(
             programCounter,
             frame.Function.Instructions.Length);
         frame.ProgramCounter = programCounter;
@@ -180,17 +180,17 @@ public static class LuaCodegenAbiV1
 
     private static void ValidateRegister(LuaFrame frame, int register)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(register);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(
+        LunilGuard.NotNegative(register);
+        LunilGuard.LessThan(
             register,
             frame.Function.RegisterCount);
     }
 
     private static void ValidateRegisterRange(LuaFrame frame, int firstRegister, int count)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(firstRegister);
+        LunilGuard.NotNegative(firstRegister);
         var registerCount = frame.Function.RegisterCount;
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(firstRegister, registerCount);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(count, registerCount - firstRegister);
+        LunilGuard.LessThanOrEqual(firstRegister, registerCount);
+        LunilGuard.LessThanOrEqual(count, registerCount - firstRegister);
     }
 }

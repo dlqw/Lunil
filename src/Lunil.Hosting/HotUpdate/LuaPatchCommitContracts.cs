@@ -3,7 +3,6 @@ using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
-using Lunil.CodeGen.Cil.Jit;
 
 namespace Lunil.Hosting;
 
@@ -117,7 +116,8 @@ public sealed record LuaPatchJitWarmupOptions
 
     public LuaPatchJitWarmupFailureBehavior FailureBehavior { get; init; }
 
-    public LuaJitWarmupOptions ExecutorOptions { get; init; } = LuaJitWarmupOptions.Default;
+    public LuaHostJitWarmupOptions ExecutorOptions { get; init; } =
+        LuaHostJitWarmupOptions.Default;
 
     /// <summary>Total functions compiled across every module in one prepared patch.</summary>
     public int MaximumTotalFunctions { get; init; } = 1_024;
@@ -133,7 +133,7 @@ public sealed record LuaPatchJitWarmupModuleResult(
     int IncompatibleFunctionCount,
     int AddedFunctionCount,
     int RemovedFunctionCount,
-    LuaJitWarmupResult? Warmup,
+    LuaHostJitWarmupResult? Warmup,
     string? DiagnosticCode,
     string? Message)
 {
@@ -333,7 +333,7 @@ public sealed class LuaPatchUpdateWindow : IDisposable
 
     public TimeSpan MaximumDuration { get; }
 
-    public TimeSpan Elapsed => System.Diagnostics.Stopwatch.GetElapsedTime(StartedTimestamp);
+    public TimeSpan Elapsed => LunilStopwatch.GetElapsedTime(StartedTimestamp);
 
     public bool IsActive => Volatile.Read(ref _owner) is not null;
 

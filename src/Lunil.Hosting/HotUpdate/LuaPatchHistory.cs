@@ -99,9 +99,9 @@ public sealed class LuaPatchHistory
         DateTimeOffset recordedAt,
         TimeSpan duration)
     {
-        ArgumentNullException.ThrowIfNull(result);
-        ArgumentException.ThrowIfNullOrWhiteSpace(patchId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(targetRevision);
+        LunilGuard.NotNull(result);
+        LunilGuard.NotNullOrWhiteSpace(patchId);
+        LunilGuard.NotNullOrWhiteSpace(targetRevision);
         var targets = result.Targets.Select(static target => new LuaPatchHistoryTargetEntry(
             target.TargetId,
             target.Commit.Status,
