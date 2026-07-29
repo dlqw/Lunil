@@ -1,11 +1,10 @@
-# 如何导入 PUC Lua 5.4 prototype
+# PUC Lua 5.4 prototype 导入参考
 
 [English](puc-prototype-import.pub.md)
 
-本指南说明如何把 PUC Lua 5.4 binary chunk 导入 canonical IR。生成的 module 可通过与源码编译
-结果相同的 interpreter 和 JIT 契约执行。
+输入：PUC Lua 5.4 binary chunk。输出：canonical IR。
 
-## 1. 导入 chunk
+## 导入管线
 
 ```text
 binary bytes
@@ -19,7 +18,7 @@ binary bytes
 
 Prototype 使用父函数先于子函数的 preorder 连续编号。转换器先固定整棵树的 function id，再逐函数生成指令和 raw-PC → canonical-PC 映射，最后修补控制流边与 debug-local 范围。因此一个扩展成多条 canonical 指令的 PUC opcode 仍有稳定的 continuation PC。
 
-## 2. 保留指令语义
+## 指令语义
 
 - register、constant、upvalue、closure、table 和 unary 指令直接映射，或使用位于 PUC `MaximumStackSize` 之后的三个保留 scratch register 展开。
 - `MMBIN`、`MMBINI`、`MMBINK` 与前置算术/fallback 合成一个可恢复 `Binary`；负 shift immediate 会选择 `__shl`/`__shr` 并调整 operand 顺序。
@@ -30,7 +29,7 @@ Prototype 使用父函数先于子函数的 preorder 连续编号。转换器先
 - `FORPREP`/`FORLOOP` 支持 PUC integer counter 和 float limit 两种形式；integer counter 以 `ulong` 解释其 64 位 payload，覆盖完整 `long.MinValue` 到 `long.MaxValue` 范围。
 - `TBC`/`CLOSE`、普通 return 和 tail call 进入统一的可恢复 close/continuation ABI。
 
-## 3. 验证不可信输入
+## 不可信输入 invariant
 
 chunk verifier 在转换前拒绝：
 

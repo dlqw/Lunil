@@ -49,7 +49,7 @@ public static class LuaWorkspaceCodeIndex
         this LuaWorkspaceResult workspace,
         LuaSymbolKey key)
     {
-        ArgumentNullException.ThrowIfNull(workspace);
+        LunilGuard.NotNull(workspace);
         var result = ImmutableArray.CreateBuilder<LuaWorkspaceReference>();
         foreach (var module in workspace.Modules)
         {
@@ -78,8 +78,8 @@ public static class LuaWorkspaceCodeIndex
         this LuaWorkspaceResult workspace,
         string name)
     {
-        ArgumentNullException.ThrowIfNull(workspace);
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        LunilGuard.NotNull(workspace);
+        LunilGuard.NotNullOrWhiteSpace(name);
         return workspace.Modules
             .SelectMany(module => module.Compilation.SemanticModel
                 .FindGlobalReferences(name)
@@ -93,7 +93,7 @@ public static class LuaWorkspaceCodeIndex
     /// <summary>Builds a stable workspace-wide call graph from module analysis results.</summary>
     public static LuaWorkspaceCallGraph GetCallGraph(this LuaWorkspaceResult workspace)
     {
-        ArgumentNullException.ThrowIfNull(workspace);
+        LunilGuard.NotNull(workspace);
         var functions = ImmutableArray.CreateBuilder<LuaWorkspaceFunction>();
         var edges = ImmutableArray.CreateBuilder<LuaWorkspaceCallSite>();
         foreach (var module in workspace.Modules)

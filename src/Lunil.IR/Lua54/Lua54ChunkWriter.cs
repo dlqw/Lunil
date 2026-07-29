@@ -12,7 +12,7 @@ public static class Lua54ChunkWriter
 
     public static byte[] Write(Lua54Chunk chunk, bool stripDebugInformation = false)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         if (chunk.SourceFormat != Lunil.Core.LuaChunkFormat.Lua54)
         {
             throw new InvalidDataException(
@@ -197,7 +197,7 @@ public static class Lua54ChunkWriter
 
         private void WriteInt(int value)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            LunilGuard.NotNegative(value);
             WriteSize((uint)value);
         }
 

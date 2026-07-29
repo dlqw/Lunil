@@ -21,7 +21,7 @@ public sealed class LuaBufferedConsole : ILuaConsole
     {
         lock (_sync)
         {
-            _standardOutput.AddRange(bytes.Span);
+            _standardOutput.AddRange(bytes.ToArray());
         }
     }
 
@@ -37,7 +37,7 @@ public sealed class LuaBufferedConsole : ILuaConsole
     {
         lock (_sync)
         {
-            _standardError.AddRange(bytes.Span);
+            _standardError.AddRange(bytes.ToArray());
         }
     }
 

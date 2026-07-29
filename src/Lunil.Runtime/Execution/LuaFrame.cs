@@ -132,7 +132,7 @@ public sealed class LuaFrame
         bool isHidden = false,
         LuaFunctionVersion? functionVersion = null)
     {
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(closure);
         Closure = closure;
         FunctionVersion = functionVersion ?? closure.FunctionVersion;
         Base = @base;

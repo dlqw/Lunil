@@ -23,6 +23,9 @@ and ownership contracts of Lunil's CLR bridge. For setup steps, see
 | `clr.timer(callback, dueMs [, periodMs [, policy [, maxCatchUp]]])` | Creates a host-polled timer. |
 | `clr.cancel_timer(timer)` | Cancels a timer without the general disposal capability. |
 | `clr.dispose(value)` | Idempotently disposes bridge userdata or a subscription. |
+| `clr.generic(definitionName, typeArgumentNames...)` | Resolves an explicitly registered closed generic type. |
+| `clr.next(iterator)` | Advances one bounded projected iterator. |
+| `clr.link_iterator(iterator, cancellation)` | Links iterator disposal to bridge cancellation. |
 
 Constructed userdata also exposes allowlisted properties, fields, methods, indexers, and CLR
 operators through ordinary Lua indexing and calls. Method lookup returns a bound function;
@@ -49,22 +52,31 @@ by Lua tables, `LuaValue`, compatible CLR userdata, and primitive `object` fallb
 arrays and jagged arrays become recursively nested one-based tables. Unsupported values produce
 `NoMatchingConstructor` or `NoMatchingMember`.
 
-CLR enums return to Lua as name strings. CLR `decimal` becomes a Lua float and can lose precision.
-`ulong` through `long.MaxValue` becomes a Lua integer; a larger value fails with `InvocationFailed`.
-Use an allowlisted application value type when enum flags, decimal values, or unsigned 64-bit values
-must retain their full CLR representation.
+`EnumRepresentation` defaults to exact name strings and can instead use underlying integers or
+`{ name, value }` tables. `DecimalRepresentation` defaults to invariant exact strings;
+`ExactInteger` accepts only integral values representable by Lua integers, while `LossyFloat`
+explicitly permits precision loss. `ulong` through `long.MaxValue` becomes a Lua integer; larger
+values fail explicitly.
 
-Methods with `ref`/`out` parameters return the ordinary result followed by ref/out values in
-parameter order. `Task` and `ValueTask` results become `LuaClrTask`. `LuaClrCancellation` converts to
-`CancellationToken`; nil maps to `CancellationToken.None`. CLR exceptions become
-`LuaClrException`/catchable Lua errors. `IncludeExceptionMessages` controls whether host exception
-messages are exposed.
+`CollectionProjection` defaults to `TablesAndIterators`: lists and dictionaries become tables and
+other enumerables become bounded iterators. `Userdata` disables projection. `ConversionLimits`
+bounds recursive depth, total items, estimated bytes, and rejects cycles.
+
+Methods with `ref`/`out` parameters use `RefOutRepresentation`. The default
+`PositionalAndNamedTable` returns positional values plus a table keyed by stable CLR parameter names;
+`Positional` and `NamedTable` select one representation. `Task` and `ValueTask` results become
+`LuaClrTask`. `LuaClrCancellation` converts to `CancellationToken`; nil maps to
+`CancellationToken.None`. CLR exceptions become `LuaClrException`/catchable Lua errors.
+`IncludeExceptionMessages` controls whether host exception messages are exposed.
 
 ## Callback and task contracts
 
 - `LuaClrBridge.CreateDelegate` validates every parameter and return type before creating a delegate.
 - `LuaClrSubscription.Dispose` is idempotent, detaches the handler, and releases the Lua callback.
-- Callbacks cannot yield. Entry follows `ThreadPolicy` and the owning `LuaState` execution boundary.
+- A callback invoked directly through the bridge cannot yield. A void delegate callback or
+  host-polled timer attached to `LuaGameLoopHost` can yield because the game-loop host runs it as a
+  scheduled coroutine and resumes it on a later matching tick. Entry still follows `ThreadPolicy`
+  and the owning `LuaState` execution boundary.
 - `clr.await` rejects an incomplete task with `AsyncFailed` when the calling thread has a
   `SynchronizationContext`.
 - Inactive generation-owned tasks fail with `AsyncGenerationClosed`; the underlying CLR `Task` is
@@ -93,7 +105,7 @@ Timer count, per-poll dispatch, duration, and catch-up limits are validated befo
 Scheduling uses the configured `TimeProvider` monotonic timestamp. Dispatch from a busy state or a
 non-owner thread fails closed, and callbacks use the host's interpreter budgets.
 
-## Ownership and NativeAOT
+## Ownership and binding modes
 
 `LuaClrObject` owns constructed `IDisposable` instances by default and calls `Dispose` at most once.
 Set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions,
@@ -104,6 +116,7 @@ lease for the invocation; event subscriptions retain one until unsubscribe. Disp
 access. An owned `IDisposable` or `IAsyncDisposable` resource is released after its final lease;
 non-owning handles only close access.
 
-Trimming and NativeAOT applications must preserve every allowlisted application constructor,
-member, and delegate signature. Lunil preserves its delegate callback adapter and
-`Task<TResult>.Result` metadata. Missing application metadata fails closed.
+`RegistryThenReflection` is the compatibility default for trusted .NET hosts and still requires
+exact allowlists. `RegistryOnly` requires `LuaClrOptions.BindingRegistry` and never falls back to
+reflection; it is the binding mode for NativeAOT, Unity IL2CPP, strict trimming, and deterministic
+hosts. Generated bindings do not grant access without matching capabilities and allowlists.

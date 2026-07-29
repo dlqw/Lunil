@@ -27,7 +27,7 @@ public static class LuaCodegenAbiV3
         int hashCapacityBits,
         int arrayCapacity)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         var allocationHint = frame.GetOrCreateTableAllocationHint(
             frame.ProgramCounter);
         WriteRegisterAndExtendTop(
@@ -149,7 +149,7 @@ public static class LuaCodegenAbiV3
         int destinationRegister,
         int functionId)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         WriteRegisterAndExtendTop(
             thread,
             frame,
@@ -205,8 +205,8 @@ public static class LuaCodegenAbiV3
         int targetRegister,
         int keyRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -294,8 +294,8 @@ public static class LuaCodegenAbiV3
         int targetRegister,
         int keyRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -372,8 +372,8 @@ public static class LuaCodegenAbiV3
         int keyRegister,
         int valueRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -498,8 +498,8 @@ public static class LuaCodegenAbiV3
         int keyRegister,
         int valueRegister)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -546,7 +546,7 @@ public static class LuaCodegenAbiV3
         long integerKey,
         out LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -581,7 +581,7 @@ public static class LuaCodegenAbiV3
         long integerKey,
         LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -619,7 +619,7 @@ public static class LuaCodegenAbiV3
         LuaValue key,
         out LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -664,7 +664,7 @@ public static class LuaCodegenAbiV3
         LuaValue key,
         LuaValue value)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var table = cachedTable;
         if (table is null)
         {
@@ -731,7 +731,7 @@ public static class LuaCodegenAbiV3
         int functionRegister,
         int expectedFunctionId)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var function = LuaCodegenAbiV2.ReadRegisterUnchecked(thread, frame, functionRegister);
         var closure = function.TryGetClosure();
         return closure is not null && closure.Function.Id == expectedFunctionId &&
@@ -746,7 +746,7 @@ public static class LuaCodegenAbiV3
         int argumentCount,
         int expectedResults)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         var closure = LuaCodegenAbiV2.ReadRegisterUnchecked(
             thread,
             frame,
@@ -784,7 +784,7 @@ public static class LuaCodegenAbiV3
         LuaThread thread,
         LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         return ReferenceEquals(thread.CurrentFrame, frame) &&
             context.State.Heap.PendingFinalizerCount == 0;
     }
@@ -794,9 +794,9 @@ public static class LuaCodegenAbiV3
         LuaThread thread,
         LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         if (!ReferenceEquals(context.Thread, thread) ||
             !ReferenceEquals(thread.CurrentFrame, frame))
         {
@@ -872,8 +872,8 @@ public static class LuaCodegenAbiV3
         LuaExecutionContext context,
         LuaThread thread)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(thread);
         if (!ReferenceEquals(context.Thread, thread) || context.ExecutionEngine is not { } engine)
         {
             throw new InvalidOperationException(
@@ -901,7 +901,7 @@ public enum LuaCodegenPicExecutionResult : byte
 public sealed class LuaCodegenTableSiteCache
 {
     private const int MaximumEntries = 4;
-    private readonly Lock _gate = new();
+    private readonly LunilLock _gate = new();
     private MetamethodEntry[] _metamethodEntries = [];
     private FieldEntry[] _fieldEntries = [];
     private ILuaCodegenTablePicCounterSink? _counters;
@@ -917,13 +917,13 @@ public sealed class LuaCodegenTableSiteCache
 
     internal LuaCodegenTableSiteCache(ILuaCodegenTablePicCounterSink counters)
     {
-        ArgumentNullException.ThrowIfNull(counters);
+        LunilGuard.NotNull(counters);
         BindCounters(counters);
     }
 
     internal void BindCounters(ILuaCodegenTablePicCounterSink counters)
     {
-        ArgumentNullException.ThrowIfNull(counters);
+        LunilGuard.NotNull(counters);
         _sampleCounters = counters.SupportsWeightedSampling;
         Volatile.Write(ref _counters, counters);
     }
@@ -1242,15 +1242,15 @@ public sealed class LuaCodegenCallSiteCache
         string expectedModuleContentId,
         Func<LuaIrModule, string> getModuleContentId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(expectedModuleContentId);
-        ArgumentNullException.ThrowIfNull(getModuleContentId);
+        LunilGuard.NotNullOrEmpty(expectedModuleContentId);
+        LunilGuard.NotNull(getModuleContentId);
         _expectedModuleContentId = expectedModuleContentId;
         _getModuleContentId = getModuleContentId;
     }
 
     internal bool TryMatchOrAdd(LuaClosure closure)
     {
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(closure);
         var functionVersion = closure.FunctionVersion;
         var matchedClosure = Volatile.Read(ref _matchedClosure);
         if (matchedClosure is not null &&
@@ -1314,7 +1314,7 @@ public sealed class LuaCodegenCallSiteCache
 
     internal void SetDirectBackendEntry(object entry, long functionGeneration)
     {
-        ArgumentNullException.ThrowIfNull(entry);
+        LunilGuard.NotNull(entry);
         var reference = Volatile.Read(ref _directBackendEntry);
         if (reference is null)
         {

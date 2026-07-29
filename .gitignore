@@ -11,6 +11,15 @@ TestResults/
 *.user
 *.suo
 
+# Engine sample editor state
+.godot/
+samples/Lunil.Godot*/*.csproj.old
+samples/Lunil.Unity.*/Library/
+samples/Lunil.Unity.*/Temp/
+samples/Lunil.Unity.*/Logs/
+samples/Lunil.Unity.*/UserSettings/
+samples/Lunil.Unity.*/MemoryCaptures/
+
 # Compiler caches
 .lunil-cache/
 

@@ -220,7 +220,7 @@ public sealed class LuaPatchCoordinatorTests
             {
                 JitWarmup = new LuaPatchJitWarmupOptions
                 {
-                    ExecutorOptions = new LuaJitWarmupOptions
+                    ExecutorOptions = new LuaHostJitWarmupOptions
                     {
                         MaximumFunctions = 16,
                         IncludeTier2 = false,
@@ -2176,7 +2176,7 @@ public sealed class LuaPatchCoordinatorTests
     private static LuaHost CreateHost(string source) => CreateHost(
         source,
         LuaHostExecutionBackend.Interpreter,
-        LuaJitExecutorOptions.Default.MaximumCodeCacheBytes);
+        LuaHostJitOptions.Default.MaximumCodeCacheBytes);
 
     private static LuaHost CreateHost(
         string source,
@@ -2185,9 +2185,9 @@ public sealed class LuaPatchCoordinatorTests
         LuaHostOptions.Default with
         {
             ExecutionBackend = backend,
-            Jit = LuaJitExecutorOptions.Default with
+            Jit = LuaHostJitOptions.Default with
             {
-                Policy = LuaJitPolicy.PreferJit,
+                Policy = LuaHostJitPolicy.PreferJit,
                 FunctionEntryThreshold = 1,
                 BackedgeThreshold = 1,
                 SynchronousCompilation = true,
@@ -2212,7 +2212,7 @@ public sealed class LuaPatchCoordinatorTests
             {
                 JitWarmup = new LuaPatchJitWarmupOptions
                 {
-                    ExecutorOptions = new LuaJitWarmupOptions { IncludeTier2 = false },
+                    ExecutorOptions = new LuaHostJitWarmupOptions { IncludeTier2 = false },
                 },
             });
         Assert.True(prepared.Succeeded, prepared.Message);

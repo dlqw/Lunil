@@ -20,13 +20,13 @@ public readonly record struct LuaSyntaxElement
 
     public static implicit operator LuaSyntaxElement(LuaSyntaxNode node)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         return new LuaSyntaxElement(node, null);
     }
 
     public static implicit operator LuaSyntaxElement(LuaSyntaxToken token)
     {
-        ArgumentNullException.ThrowIfNull(token);
+        LunilGuard.NotNull(token);
         return new LuaSyntaxElement(null, token);
     }
 }

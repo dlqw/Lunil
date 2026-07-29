@@ -16,7 +16,7 @@ public sealed class LuaPatchStableResourceHandle : IDisposable
         object resource,
         bool ownsResource = true)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(resourceId);
+        LunilGuard.NotNullOrWhiteSpace(resourceId);
         if (resourceId.Length > 4096 || resourceId.Contains('\0'))
         {
             throw new ArgumentOutOfRangeException(
@@ -24,7 +24,7 @@ public sealed class LuaPatchStableResourceHandle : IDisposable
                 "A stable patch resource identity must contain 1 to 4096 non-null characters.");
         }
 
-        ArgumentNullException.ThrowIfNull(resource);
+        LunilGuard.NotNull(resource);
         ResourceId = resourceId;
         _resource = resource;
         OwnsResource = ownsResource;
@@ -64,7 +64,7 @@ public sealed class LuaPatchStableResourceHandle : IDisposable
         {
             lock (_gate)
             {
-                ObjectDisposedException.ThrowIf(_disposed, this);
+                LunilGuard.NotDisposed(_disposed, this);
                 return _resource!;
             }
         }
@@ -78,7 +78,7 @@ public sealed class LuaPatchStableResourceHandle : IDisposable
     {
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            LunilGuard.NotDisposed(_disposed, this);
             _activeLeaseCount = checked(_activeLeaseCount + 1);
             return new LuaPatchStableResourceLease(this, _resource!);
         }
@@ -175,7 +175,7 @@ public sealed class LuaPatchStableResourceLease : IDisposable
         {
             lock (_gate)
             {
-                ObjectDisposedException.ThrowIf(_owner is null, this);
+                LunilGuard.NotDisposed(_owner is null, this);
                 return _resource!;
             }
         }

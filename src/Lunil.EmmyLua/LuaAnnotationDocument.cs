@@ -14,7 +14,7 @@ public sealed record LuaAnnotationDocument(
 {
     public static LuaAnnotationDocument Empty(SourceText source, LuaAnnotationDialect dialect)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(source);
         return new LuaAnnotationDocument(
             source,
             dialect,

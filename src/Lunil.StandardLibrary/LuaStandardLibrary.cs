@@ -12,7 +12,7 @@ public static class LuaStandardLibrary
         LuaState state,
         LuaStandardLibraryOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         var globals = InstallBasic(state, options);
         var coroutine = InstallCoroutine(state);
@@ -111,7 +111,7 @@ public static class LuaStandardLibrary
         LuaState state,
         LuaStandardLibraryOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaBasicLibrary.Install(state, options);
     }
@@ -119,7 +119,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected math module into the global environment.</summary>
     public static LuaTable InstallMath(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaMathLibrary.Install(state);
     }
@@ -127,7 +127,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected UTF-8 module into the global environment.</summary>
     public static LuaTable InstallUtf8(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaUtf8Library.Install(state);
     }
@@ -135,7 +135,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected table module into the global environment.</summary>
     public static LuaTable InstallTable(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaTableLibrary.Install(state);
     }
@@ -143,7 +143,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected string module and string metatable.</summary>
     public static LuaTable InstallString(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaStringLibrary.Install(state);
     }
@@ -151,7 +151,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected package module and global require function.</summary>
     public static LuaTable InstallPackage(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaPackageLibrary.Install(state);
     }
@@ -161,7 +161,7 @@ public static class LuaStandardLibrary
         LuaState state,
         LuaStandardLibraryOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaIoLibrary.Install(state, options);
     }
@@ -171,7 +171,7 @@ public static class LuaStandardLibrary
         LuaState state,
         LuaStandardLibraryOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaOsLibrary.Install(state, options);
     }
@@ -179,7 +179,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected debug module and runtime hook bridge.</summary>
     public static LuaTable InstallDebug(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return LuaDebugLibrary.Install(state);
     }
@@ -187,7 +187,7 @@ public static class LuaStandardLibrary
     /// <summary>Installs the version-selected coroutine module into the global environment.</summary>
     public static LuaTable InstallCoroutine(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         EnsureImplemented(state);
         return state.InstallCoroutineModule();
     }

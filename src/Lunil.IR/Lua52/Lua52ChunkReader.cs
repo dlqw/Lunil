@@ -268,7 +268,7 @@ public static class Lua52ChunkReader
             8 => _target.ByteOrder == Lua52ByteOrder.LittleEndian
                 ? BinaryPrimitives.ReadUInt64LittleEndian(ReadBytes(8))
                 : BinaryPrimitives.ReadUInt64BigEndian(ReadBytes(8)),
-            _ => throw new UnreachableException(),
+            _ => throw new LunilUnreachableException(),
         };
 
         private double ReadNumber(ReadOnlySpan<byte> bytes) => bytes.Length switch
@@ -279,7 +279,7 @@ public static class Lua52ChunkReader
             8 when _target.ByteOrder == Lua52ByteOrder.LittleEndian =>
                 BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(bytes)),
             8 => BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(bytes)),
-            _ => throw new UnreachableException(),
+            _ => throw new LunilUnreachableException(),
         };
 
         private byte ReadByte()

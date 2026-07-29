@@ -18,8 +18,8 @@ public sealed class LuaPatchPreparationLimiter
 
     public LuaPatchPreparationLimiter(int maximumConcurrency, int maximumQueueLength)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrency);
-        ArgumentOutOfRangeException.ThrowIfNegative(maximumQueueLength);
+        LunilGuard.Positive(maximumConcurrency);
+        LunilGuard.NotNegative(maximumQueueLength);
         MaximumConcurrency = maximumConcurrency;
         MaximumQueueLength = maximumQueueLength;
         _slots = new SemaphoreSlim(maximumConcurrency, maximumConcurrency);

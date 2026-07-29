@@ -1,0 +1,20 @@
+{
+  "name": "Lunil.Unity.Editor",
+  "rootNamespace": "Lunil.Unity.Editor",
+  "references": [
+    "Lunil.Unity"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Lunil.Hosting.dll"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

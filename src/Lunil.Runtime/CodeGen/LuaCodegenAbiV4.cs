@@ -17,14 +17,14 @@ public static class LuaCodegenAbiV4
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetProgramCounter(LuaFrame frame, int programCounter)
     {
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(frame);
         frame.ProgramCounter = programCounter;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static long GetInstructionsConsumed(LuaExecutionContext context)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         return context.InstructionsConsumed;
     }
 
@@ -43,10 +43,10 @@ public static class LuaCodegenAbiV4
         int argumentCount,
         int expectedResults)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(caller);
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(context);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(caller);
+        LunilGuard.NotNull(cache);
         return context.ExecutionEngine?.TryExecuteDirectCall(
             context,
             thread,
@@ -61,7 +61,7 @@ public static class LuaCodegenAbiV4
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CanExecuteBoundDirectCall(LuaExecutionContext context)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        LunilGuard.NotNull(context);
         return context.State.Heap.PendingFinalizerCount == 0;
     }
 
@@ -71,7 +71,7 @@ public static class LuaCodegenAbiV4
         LuaCodegenCallSiteCache cache,
         int expectedFunctionId)
     {
-        ArgumentNullException.ThrowIfNull(cache);
+        LunilGuard.NotNull(cache);
         var closure = function.TryGetClosure();
         return closure is not null && closure.Function.Id == expectedFunctionId &&
             cache.TryMatchOrAdd(closure);

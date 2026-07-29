@@ -18,7 +18,7 @@ public static class LuaBinder
         LuaParseResult syntax,
         LuaBinderOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(syntax);
+        LunilGuard.NotNull(syntax);
         options ??= LuaBinderOptions.Default with
         {
             LanguageVersion = syntax.LanguageVersion,
@@ -44,9 +44,9 @@ public static class LuaBinder
                 "The binder language version is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumActiveLocalsPerFunction);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumUpvaluesPerFunction);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
+        LunilGuard.Positive(options.MaximumActiveLocalsPerFunction);
+        LunilGuard.Positive(options.MaximumUpvaluesPerFunction);
+        LunilGuard.Positive(options.MaximumDiagnosticCount);
     }
 
     private sealed class Implementation

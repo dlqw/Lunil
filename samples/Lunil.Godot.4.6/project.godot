@@ -1,0 +1,17 @@
+; Open this directory with the Godot 4.6.3 .NET editor.
+
+config_version=5
+
+[application]
+
+config/name="Lunil Godot Sample"
+run/main_scene="res://Main.tscn"
+
+[dotnet]
+
+project/assembly_name="Lunil.Godot.Sample"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

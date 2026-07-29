@@ -5,9 +5,35 @@ namespace Lunil.Hosting;
 
 internal static class LuaPatchDurableFileSystem
 {
+    private const uint MoveFileReplaceExisting = 0x1;
+    private const uint MoveFileWriteThrough = 0x8;
+
+    public static void ReplaceFile(string source, string destination)
+    {
+        if (LunilOperatingSystem.IsWindows())
+        {
+            if (!WindowsMoveFileEx(
+                    source,
+                    destination,
+                    MoveFileReplaceExisting | MoveFileWriteThrough))
+            {
+                throw new IOException(
+                    $"Windows atomic replace failed for '{destination}'.",
+                    new Win32Exception(LunilMarshal.GetLastPInvokeError()));
+            }
+
+            return;
+        }
+
+        if (UnixRename(source, destination) != 0)
+        {
+            throw NativeIoException("rename", destination);
+        }
+    }
+
     public static void FlushDirectory(string directory)
     {
-        if (OperatingSystem.IsWindows())
+        if (LunilOperatingSystem.IsWindows())
         {
             // .NET does not expose opening a Windows directory with backup semantics. Callers
             // flush the replaced file before atomic same-volume rename; NTFS/ReFS own the final
@@ -36,7 +62,7 @@ internal static class LuaPatchDurableFileSystem
 
     private static IOException NativeIoException(string operation, string path)
     {
-        var error = Marshal.GetLastPInvokeError();
+        var error = LunilMarshal.GetLastPInvokeError();
         return new IOException(
             $"Unix {operation} failed for durable directory '{path}'.",
             new Win32Exception(error));
@@ -54,6 +80,18 @@ internal static class LuaPatchDurableFileSystem
 
     [DllImport("libc", EntryPoint = "close", ExactSpelling = true)]
     private static extern int UnixClose(int descriptor);
+
+    [DllImport("libc", EntryPoint = "rename", SetLastError = true, ExactSpelling = true)]
+    private static extern int UnixRename(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string source,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string destination);
+
+    [DllImport("kernel32.dll", EntryPoint = "MoveFileExW", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WindowsMoveFileEx(
+        string existingFileName,
+        string newFileName,
+        uint flags);
 #pragma warning restore SYSLIB1054
 #pragma warning restore CA2101
 }

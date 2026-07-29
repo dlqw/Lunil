@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks Condition="'$(LunilReleaseBaseline)' != 'true'">net8.0;net10.0</TargetFrameworks>
+    <TargetFramework Condition="'$(LunilReleaseBaseline)' == 'true'">net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <NoWarn>$(NoWarn);CS8600;CS8613;CS8625</NoWarn>
+    <LunilSourceRoot Condition="'$(LunilSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\src</LunilSourceRoot>
+    <DefineConstants Condition="'$(LunilReleaseBaseline)' == 'true'">$(DefineConstants);LUNIL_RELEASE_BASELINE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(LunilSourceRoot)\Lunil.Hosting\Lunil.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(LunilReleaseBaseline)' != 'true'">
+    <Compile Include="..\..\integrations\unity\com.dlqw.lunil\Runtime\LuaScriptAsset.cs"
+             Link="Adapters\Unity\LuaScriptAsset.cs" />
+    <Compile Include="..\..\integrations\unity\com.dlqw.lunil\Runtime\LuaUnityServices.cs"
+             Link="Adapters\Unity\LuaUnityServices.cs" />
+    <Compile Include="..\..\src\Lunil.Godot\LuaGodotScriptResource.cs"
+             Link="Adapters\Godot\LuaGodotScriptResource.cs" />
+    <Compile Include="..\..\src\Lunil.Godot\LuaGodotServices.cs"
+             Link="Adapters\Godot\LuaGodotServices.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0' or '$(LunilReleaseBaseline)' == 'true'">
+    <Compile Remove="EngineStubs.cs" />
+  </ItemGroup>
+
+</Project>

@@ -93,14 +93,24 @@ host.State.SetGlobal("world_session", LuaValue.FromUserdata(userdata));
 继续 allowlist 该 resource 的 runtime type 与所访问 member。在签名 patch manifest 中，对其 module-cache
 path 使用 `HostResource + Continue` migration rule；candidate module 必须在该 path 放入
 placeholder，不得构造第二个 native resource。发布与 rollback 行为见
-[热更新生命周期原理](hot-update-lifecycle.zh-CN.pub.md) 和
-[patch manifest 参考](hot-update-reference.zh-CN.pub.md)。
+[热更新生命周期原理](signed-patch-publication.zh-CN.pub.md) 和
+[patch manifest 参考](signed-patch-bundles.zh-CN.pub.md)。
 
-## 5. 准备 trimming 与 NativeAOT 发布
+## 5. 选择 Binding Mode
 
-使用 `DynamicDependency` 等 linker metadata 保留每个 allowlisted 应用 type 的 public constructor、
-member 和 delegate signature。Lunil 会保留自身的 delegate callback adapter 与
-`Task<TResult>.Result` metadata，但应用 metadata 缺失时仍会 fail closed。完整发布流程见
+Trusted .NET Host 可以使用 `LuaClrBindingMode.RegistryThenReflection`：它保留准确 allowlist，并对
+registry 中没有的 entry 使用 reflection。NativeAOT、Unity IL2CPP、严格 trimming 与 deterministic
+Host 应生成准确 binding，通过 `LuaClrOptions.BindingRegistry` 传入 `LuaClrBindingRegistry`，并选择
+`LuaClrBindingMode.RegistryOnly`。缺少 registry entry 时会直接 fail closed，不会使用 reflection。
+
+声明 request、注册生成 provider、配置 allowlist 与生成 Unity linker metadata 的步骤见
+[生成 AOT-safe CLR binding](aot-bindings.zh-CN.pub.md)。
+
+## 6. 准备 trimming 与 NativeAOT 发布
+
+在 trimmed 应用中使用 `RegistryThenReflection` 时，应通过 `DynamicDependency` 等 linker metadata
+保留被反射的 public constructor、member 与 delegate signature。生成的 `RegistryOnly` invoker 不需要
+应用自有的 runtime reflection metadata。完整发布流程见
 [如何使用 .NET NativeAOT 与 trimming 发布](nativeaot-build-integration.zh-CN.pub.md)。
 
 配置完成后，bridge 只暴露已请求的 CLR 表面。`NoMatchingConstructor`、`NoMatchingMember`、

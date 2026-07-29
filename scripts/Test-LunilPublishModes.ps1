@@ -28,6 +28,9 @@ $modes = @(
     }
 )
 
+& dotnet restore $project --runtime $RuntimeIdentifier
+if ($LASTEXITCODE -ne 0) { throw "Publish-mode restore failed for $RuntimeIdentifier." }
+
 foreach ($mode in $modes) {
     & dotnet build-server shutdown | Out-Null
     $outputDirectory = Join-Path $repositoryRoot "artifacts/publish/$RuntimeIdentifier/$($mode.Name)"
@@ -38,8 +41,10 @@ foreach ($mode in $modes) {
     $arguments = @(
         'publish', $project,
         '--configuration', $Configuration,
+        '--framework', 'net10.0',
         '--runtime', $RuntimeIdentifier,
         '--self-contained', 'true',
+        '--no-restore',
         '-p:ContinuousIntegrationBuild=true',
         '-p:TreatWarningsAsErrors=true',
         '--output', $outputDirectory

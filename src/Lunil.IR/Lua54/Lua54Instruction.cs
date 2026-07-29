@@ -68,8 +68,8 @@ public readonly record struct Lua54Instruction(uint RawValue)
     {
         EnsureMode(opcode, Lua54InstructionMode.ASignedBx);
         EnsureRange(a, MaximumA, nameof(a));
-        ArgumentOutOfRangeException.ThrowIfLessThan(signedBx, -SignedBxOffset);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(signedBx, MaximumBx - SignedBxOffset);
+        LunilGuard.GreaterThanOrEqual(signedBx, -SignedBxOffset);
+        LunilGuard.LessThanOrEqual(signedBx, MaximumBx - SignedBxOffset);
         return new Lua54Instruction(
             (uint)opcode | ((uint)a << 7) | ((uint)(signedBx + SignedBxOffset) << 15));
     }
@@ -84,8 +84,8 @@ public readonly record struct Lua54Instruction(uint RawValue)
     public static Lua54Instruction CreateSignedJump(Lua54Opcode opcode, int signedJump)
     {
         EnsureMode(opcode, Lua54InstructionMode.SignedJump);
-        ArgumentOutOfRangeException.ThrowIfLessThan(signedJump, -SignedJumpOffset);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(signedJump, MaximumAx - SignedJumpOffset);
+        LunilGuard.GreaterThanOrEqual(signedJump, -SignedJumpOffset);
+        LunilGuard.LessThanOrEqual(signedJump, MaximumAx - SignedJumpOffset);
         return new Lua54Instruction(
             (uint)opcode | ((uint)(signedJump + SignedJumpOffset) << 7));
     }
@@ -103,7 +103,7 @@ public readonly record struct Lua54Instruction(uint RawValue)
 
     private static void EnsureRange(int value, int maximum, string parameterName)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(value, parameterName);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(value, maximum, parameterName);
+        LunilGuard.NotNegative(value, parameterName);
+        LunilGuard.LessThanOrEqual(value, maximum, parameterName);
     }
 }

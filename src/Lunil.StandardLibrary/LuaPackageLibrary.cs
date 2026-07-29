@@ -109,7 +109,7 @@ internal static class LuaPackageLibrary
     }
 
     private static string DefaultNativePath =>
-        OperatingSystem.IsWindows() ? "?.dll" : "?.so";
+        LunilOperatingSystem.IsWindows() ? "?.dll" : "?.so";
 
     private static LuaNativeStep Require(
         LuaNativeCallContext context,

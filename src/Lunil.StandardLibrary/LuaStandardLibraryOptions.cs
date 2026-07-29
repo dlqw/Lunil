@@ -293,7 +293,7 @@ public sealed class SystemLuaOperatingSystem : ILuaOperatingSystem
         bool redirectOutput,
         bool redirectInput = false)
     {
-        var windows = OperatingSystem.IsWindows();
+        var windows = LunilOperatingSystem.IsWindows();
         var info = new System.Diagnostics.ProcessStartInfo
         {
             FileName = windows ? "cmd.exe" : "/bin/sh",

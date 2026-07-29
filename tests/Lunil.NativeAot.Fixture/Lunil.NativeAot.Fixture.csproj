@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Exe</OutputType>
+    <PublishAot Condition="'$(LunilNativeAotPublish)' == 'true'">true</PublishAot>
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TrimMode>full</TrimMode>
@@ -11,6 +12,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Lunil.Hosting.Generators\Lunil.Hosting.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish" />
     <ProjectReference Include="..\..\src\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Compiler\Lunil.Compiler.csproj" />
     <ProjectReference Include="..\..\src\Lunil.Hosting\Lunil.Hosting.csproj" />

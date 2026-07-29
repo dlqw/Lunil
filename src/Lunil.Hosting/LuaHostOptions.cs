@@ -1,4 +1,3 @@
-using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
 using Lunil.Core;
 using Lunil.Runtime;
@@ -69,7 +68,7 @@ public sealed record LuaHostOptions
     /// Gets tiered-JIT configuration. <see cref="Execution"/> always supplies the interpreter
     /// fallback budgets so both backends enforce the same execution limits.
     /// </summary>
-    public LuaJitExecutorOptions Jit { get; init; } = LuaJitExecutorOptions.Default;
+    public LuaHostJitOptions Jit { get; init; } = LuaHostJitOptions.Default;
 
     public LuaWorkspaceOptions Workspace { get; init; } = LuaWorkspaceOptions.Default;
 

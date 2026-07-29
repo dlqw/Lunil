@@ -44,7 +44,7 @@ internal static class LuaCoroutineModule
 
     public static LuaTable CreateModule(LuaState state)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         var module = state.CreateTable();
         Set(state, module, "create", LuaValue.FromFunction(CreateDescriptor));
         Set(state, module, "resume", LuaValue.FromFunction(ResumeDescriptor));

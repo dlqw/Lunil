@@ -197,7 +197,7 @@ public static class LuaPatchMigrationSchemaSerializer
         LuaPatchMigrationSchema schema,
         LuaPatchResourceLimits? resourceLimits = null)
     {
-        ArgumentNullException.ThrowIfNull(schema);
+        LunilGuard.NotNull(schema);
         resourceLimits ??= LuaPatchResourceLimits.Default;
         resourceLimits.Validate();
         Validate(schema, moduleNames: null, resourceLimits);
@@ -257,7 +257,7 @@ public static class LuaPatchMigrationSchemaSerializer
         LuaPatchBundle bundle,
         LuaPatchResourceLimits? resourceLimits = null)
     {
-        ArgumentNullException.ThrowIfNull(bundle);
+        LunilGuard.NotNull(bundle);
         resourceLimits ??= LuaPatchResourceLimits.Default;
         resourceLimits.Validate();
         var entries = bundle.Entries.Where(static entry =>
@@ -287,7 +287,7 @@ public static class LuaPatchMigrationSchemaSerializer
 
     internal static void Validate(
         LuaPatchMigrationSchema schema,
-        IReadOnlySet<string>? moduleNames,
+        HashSet<string>? moduleNames,
         LuaPatchResourceLimits resourceLimits)
     {
         if (schema.FormatVersion != LuaPatchMigrationSchemaFormat.CurrentVersion)
@@ -391,7 +391,7 @@ public static class LuaPatchMigrationSchemaSerializer
             {
                 var targetPath = LuaPatchStatePath.Parse(rule.TargetPath);
                 _ = LuaPatchStatePath.Parse(rule.SourcePath ?? rule.TargetPath);
-                if (!Enum.IsDefined(rule.Kind) || !targets.Add(rule.TargetPath))
+                if (!LunilEnum.IsDefined(rule.Kind) || !targets.Add(rule.TargetPath))
                 {
                     throw Error(
                         LuaPatchMigrationSchemaErrorCode.DuplicateRule,
@@ -429,8 +429,8 @@ public static class LuaPatchMigrationSchemaSerializer
             foreach (var resource in module.Resources)
             {
                 if (string.IsNullOrWhiteSpace(resource.ResourceId) ||
-                    !Enum.IsDefined(resource.Kind) ||
-                    !Enum.IsDefined(resource.Disposition) ||
+                    !LunilEnum.IsDefined(resource.Kind) ||
+                    !LunilEnum.IsDefined(resource.Disposition) ||
                     !resources.Add(resource.ResourceId))
                 {
                     throw Error(
@@ -542,7 +542,7 @@ internal readonly record struct LuaPatchStatePath(ImmutableArray<string> Segment
 {
     public static LuaPatchStatePath Parse(string path)
     {
-        ArgumentNullException.ThrowIfNull(path);
+        LunilGuard.NotNull(path);
         if (path.Length == 0)
         {
             return new LuaPatchStatePath([]);

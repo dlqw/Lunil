@@ -27,8 +27,8 @@ public static class LuaDebugApi
         LuaDebugHookMask mask,
         int count)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(thread);
         state.Heap.ValidateValue(LuaValue.FromThread(thread));
         if (!hook.IsNil && hook.Kind != LuaValueKind.Function)
         {
@@ -141,7 +141,7 @@ public static class LuaDebugApi
 
     public static LuaValue GetFunction(LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(frame);
         return frame.DebugFunctionOverride.IsNil
             ? LuaValue.FromFunction(frame.Closure)
             : frame.DebugFunctionOverride;
@@ -149,7 +149,7 @@ public static class LuaDebugApi
 
     public static int GetCurrentLine(LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(frame);
         if (!frame.DebugFunctionOverride.IsNil)
         {
             return -1;
@@ -167,8 +167,8 @@ public static class LuaDebugApi
 
     public static int GetCurrentLine(LuaThread thread, LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         if (!frame.DebugFunctionOverride.IsNil)
         {
             return -1;
@@ -189,8 +189,8 @@ public static class LuaDebugApi
 
     public static LuaDebugLocal? GetLocal(LuaThread thread, LuaFrame frame, int index)
     {
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNull(frame);
         if (!frame.DebugFunctionOverride.IsNil)
         {
             return null;
@@ -273,7 +273,7 @@ public static class LuaDebugApi
             lines.Add(function.LastLineDefined);
         }
 
-        return lines.Distinct().Order();
+        return lines.Distinct().OrderBy(static value => value);
     }
 
     private static ReadOnlySpan<LuaIrLocalVariable> ActiveLocals(

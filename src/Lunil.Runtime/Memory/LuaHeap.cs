@@ -15,19 +15,19 @@ public sealed class LuaHeap
     private readonly LuaHeapOptions _options;
     private readonly List<LuaGcObject> _objects = [];
     private readonly HashSet<LuaGcObject> _youngObjects =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly Dictionary<LuaGcObject, int> _permanentRoots =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly Dictionary<long, LuaValue> _handles = [];
     private readonly Queue<LuaGcObject> _gray = [];
     private readonly HashSet<LuaGcObject> _grayAgain =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly HashSet<LuaGcObject> _remembered =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly HashSet<LuaGcObject> _rememberedDuringFullCycle =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly Dictionary<LuaTable, LuaWeakMode> _weakTables =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private readonly Queue<PendingFinalizer> _pendingFinalizers = [];
     private readonly LuaGcVisitor _visitor;
     private LuaGcObject[] _sweepCandidates = [];
@@ -45,10 +45,10 @@ public sealed class LuaHeap
     {
         Identity = Interlocked.Increment(ref s_nextHeapIdentity);
         _options = options ?? LuaHeapOptions.Default;
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaximumLogicalBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.StepSizeBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.StepObjectBudget);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MinorCyclesBeforeMajor);
+        LunilGuard.Positive(_options.MaximumLogicalBytes);
+        LunilGuard.Positive(_options.StepSizeBytes);
+        LunilGuard.Positive(_options.StepObjectBudget);
+        LunilGuard.Positive(_options.MinorCyclesBeforeMajor);
         Mode = _options.InitialMode;
         _visitor = new LuaGcVisitor(this);
         HashSeed = _options.HashSeed ?? RandomNumberGenerator.GetInt32(int.MinValue, int.MaxValue);
@@ -112,7 +112,7 @@ public sealed class LuaHeap
 
     internal long Register(LuaGcObject value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         var nextBytes = checked(LogicalBytes + value.LogicalSize);
         if (nextBytes > _options.MaximumLogicalBytes)
         {
@@ -175,7 +175,7 @@ public sealed class LuaHeap
 
     internal void SafePoint(int stepObjectBudget)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepObjectBudget);
+        LunilGuard.Positive(stepObjectBudget);
         if (!IsRunning)
         {
             return;
@@ -206,7 +206,7 @@ public sealed class LuaHeap
             objectBudget = _options.StepObjectBudget;
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(objectBudget);
+        LunilGuard.Positive(objectBudget);
         if (Phase == LuaGcPhase.Paused)
         {
             BeginCycle(Mode == LuaGcMode.Generational &&
@@ -279,7 +279,7 @@ public sealed class LuaHeap
         Action<LuaGcObject, LuaValue> callback,
         int maximumCount = int.MaxValue)
     {
-        ArgumentNullException.ThrowIfNull(callback);
+        LunilGuard.NotNull(callback);
         return RunPendingFinalizers(
             (target, finalizer) =>
             {
@@ -293,8 +293,8 @@ public sealed class LuaHeap
         Func<LuaGcObject, LuaValue, bool> callback,
         int maximumCount = int.MaxValue)
     {
-        ArgumentNullException.ThrowIfNull(callback);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumCount);
+        LunilGuard.NotNull(callback);
+        LunilGuard.Positive(maximumCount);
         var count = 0;
         while (count < maximumCount && _pendingFinalizers.TryDequeue(out var pending))
         {
@@ -486,7 +486,7 @@ public sealed class LuaHeap
 
     internal LuaValue GetHandleValue(long id)
     {
-        ObjectDisposedException.ThrowIf(
+        LunilGuard.NotDisposed(
             !_handles.TryGetValue(id, out var value),
             typeof(LuaHandle));
         return value;
@@ -495,7 +495,7 @@ public sealed class LuaHeap
     internal void SetHandleValue(long id, LuaValue value)
     {
         ValidateValue(value);
-        ObjectDisposedException.ThrowIf(!_handles.ContainsKey(id), typeof(LuaHandle));
+        LunilGuard.NotDisposed(!_handles.ContainsKey(id), typeof(LuaHandle));
 
         _handles[id] = value;
         if (Phase != LuaGcPhase.Paused)

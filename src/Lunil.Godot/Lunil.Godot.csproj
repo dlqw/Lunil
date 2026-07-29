@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GodotProjectDir>$(MSBuildProjectDirectory)</GodotProjectDir>
+    <Description>Godot 4.4-4.6 .NET lifecycle, resource, signal, and game-loop integration for Lunil.</Description>
+    <PackageTags>lua;lua54;godot;game-engine;hosting</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="GodotSharp" Version="4.4.1" />
+    <PackageReference Include="Godot.SourceGenerators" Version="4.4.1" PrivateAssets="all" />
+    <ProjectReference Include="..\Lunil.Hosting\Lunil.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -19,12 +19,12 @@ internal static class LuaPatchFileLock
                 FileShare.Read,
                 bufferSize: 1,
                 FileOptions.WriteThrough);
-            if (!OperatingSystem.IsWindows())
+            if (!LunilOperatingSystem.IsWindows())
             {
                 var descriptor = stream.SafeFileHandle.DangerousGetHandle().ToInt32();
                 if (UnixFlock(descriptor, UnixLockExclusive | UnixLockNonBlocking) != 0)
                 {
-                    var error = Marshal.GetLastPInvokeError();
+                    var error = LunilMarshal.GetLastPInvokeError();
                     exception = new IOException(
                         $"Unix flock failed for '{path}'.",
                         new Win32Exception(error));

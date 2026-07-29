@@ -5,6 +5,7 @@ using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.Semantics.Binding;
 using Lunil.Semantics.Lowering;
+using Lunil.StandardLibrary;
 using Lunil.Syntax.Parsing;
 
 namespace Lunil.Runtime.Tests.Execution;
@@ -168,6 +169,35 @@ public sealed class LuaInterpreterTests
         Assert.Throws<LuaRuntimeException>(() =>
             interpreter.Execute(state, state.CreateMainClosure(module)));
         Assert.Equal(LuaThreadStatus.Error, state.MainThread.Status);
+    }
+
+    [Fact]
+    public void CoroutineTurnsReportInstructionUsageAndHonorInvocationSpecificLimits()
+    {
+        var module = Compile("coroutine.yield(1); return 2");
+        var state = new LuaState();
+        LuaStandardLibrary.InstallAll(state);
+        var executor = new LuaExecutor(new LuaExecutorOptions
+        {
+            Interpreter = LuaInterpreterOptions.Default with
+            {
+                MaximumInstructionCount = 100,
+            },
+        });
+        var thread = state.CreateThread(state.CreateMainClosure(module));
+
+        var yielded = executor.Start(state, thread, 50);
+        var completed = executor.Resume(state, thread, 50);
+
+        Assert.Equal(LuaVmSignal.Yielded, yielded.Signal);
+        Assert.InRange(yielded.ExecutedInstructionCount, 1, 50);
+        Assert.Equal(LuaVmSignal.Completed, completed.Signal);
+        Assert.InRange(completed.ExecutedInstructionCount, 1, 50);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            executor.Start(
+                state,
+                state.CreateThread(state.CreateMainClosure(module)),
+                101));
     }
 
     [Fact]

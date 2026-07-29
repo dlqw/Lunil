@@ -391,8 +391,8 @@ public static class LuaTypedSyntaxExtensions
     /// <summary>Gets the UTF-8 text covered by a syntax token's byte span.</summary>
     public static string GetText(this LuaSyntaxToken token, SourceText source)
     {
-        ArgumentNullException.ThrowIfNull(token);
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(token);
+        LunilGuard.NotNull(source);
         return Encoding.UTF8.GetString(source.GetSpan(token.Span));
     }
 
@@ -401,7 +401,7 @@ public static class LuaTypedSyntaxExtensions
         this LuaSyntaxNode node,
         [NotNullWhen(true)] out LuaCallExpressionSyntax? call)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         if (node.Kind is LuaSyntaxKind.CallExpression or LuaSyntaxKind.MethodCallExpression)
         {
             call = new LuaCallExpressionSyntax(node);
@@ -417,7 +417,7 @@ public static class LuaTypedSyntaxExtensions
         this LuaSyntaxNode node,
         [NotNullWhen(true)] out LuaMemberAccessExpressionSyntax? member)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         if (node.Kind is LuaSyntaxKind.MemberAccessExpression or LuaSyntaxKind.MethodCallExpression)
         {
             member = new LuaMemberAccessExpressionSyntax(node);
@@ -433,7 +433,7 @@ public static class LuaTypedSyntaxExtensions
         this LuaSyntaxNode node,
         [NotNullWhen(true)] out LuaFunctionDeclarationSyntax? function)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         var isFunction = node.Kind is
             LuaSyntaxKind.FunctionDeclarationStatement or
             LuaSyntaxKind.LocalFunctionDeclarationStatement or
@@ -459,7 +459,7 @@ public static class LuaTypedSyntaxExtensions
         this LuaSyntaxNode node,
         [NotNullWhen(true)] out LuaExpressionSyntax? expression)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         if (IsExpressionKind(node.Kind))
         {
             expression = LuaExpressionSyntax.Create(node);
@@ -473,7 +473,7 @@ public static class LuaTypedSyntaxExtensions
     /// <summary>Tries to decode a syntax node as a valid UTF-8 constant Lua string.</summary>
     public static bool TryGetConstantString(this LuaSyntaxNode node, out string value)
     {
-        ArgumentNullException.ThrowIfNull(node);
+        LunilGuard.NotNull(node);
         return LuaExpressionSyntax.Create(node).TryGetConstantString(out value);
     }
 

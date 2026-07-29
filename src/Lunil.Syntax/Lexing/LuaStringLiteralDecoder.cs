@@ -17,8 +17,8 @@ public static class LuaStringLiteralDecoder
         LuaSyntaxToken token,
         LuaLanguageVersion languageVersion)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(token);
+        LunilGuard.NotNull(source);
+        LunilGuard.NotNull(token);
 
         if (token.Kind is not (LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral))
         {

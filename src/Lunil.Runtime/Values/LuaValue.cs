@@ -79,49 +79,49 @@ public readonly struct LuaValue : IEquatable<LuaValue>
 
     public static LuaValue FromString(LuaString value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromTable(LuaTable value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromFunction(LuaClosure value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromFunction(LuaNativeFunction value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromFunction(LuaNativeClosure value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromThread(LuaThread value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromUserdata(LuaUserdata value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 
     public static LuaValue FromLightUserdata(LuaLightUserdata value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return new LuaValue(value, 0);
     }
 

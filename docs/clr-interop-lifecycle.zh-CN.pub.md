@@ -30,7 +30,9 @@ Host 明确控制的边界恢复 Lua。
 
 CLR userdata、callback、task、subscription 和 timer 都保留创建它们的 `LuaState`。Callback 只能经由
 interpreter 与 JIT 共用的 per-state 执行边界进入。`AnyThreadWhenIdle` 允许非 owner thread 原子占用
-idle state，但不允许并发进入、重入 busy state 或经 CLR callback yield。
+idle state，但不允许并发进入或重入 busy state。直接 bridge callback 不能 yield；
+`LuaGameLoopHost` 是明确的调度例外：绑定到它的 void delegate callback 与 host-polled timer 会作为
+yieldable Lua coroutine 运行，并通过之后匹配的 tick 恢复，同时仍处于同一个 state-owner 边界内。
 
 Timer 通过完全不使用 worker thread 遵循同一规则。Host 在 state idle 时轮询 timer，使调度成本与
 callback 进入都成为游戏循环的明确预算。

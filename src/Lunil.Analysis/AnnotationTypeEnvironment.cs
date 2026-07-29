@@ -23,7 +23,7 @@ internal sealed class AnnotationTypeEnvironment
         _document = document;
         _context = context;
         CollectRawDeclarations();
-        foreach (var name in _rawDeclarations.Keys.Order(StringComparer.Ordinal))
+        foreach (var name in _rawDeclarations.Keys.OrderBy(static value => value, StringComparer.Ordinal))
         {
             ResolveDeclaration(name);
         }
@@ -185,7 +185,9 @@ internal sealed class AnnotationTypeEnvironment
                         _declarations.Values,
                         _context.Options.MaximumUnionMemberCount).Substitute(
                         alias.Target,
-                        alias.TypeParameters.Zip(arguments).ToDictionary(
+                        alias.TypeParameters.Zip(
+                            arguments,
+                            static (first, second) => (First: first, Second: second)).ToDictionary(
                             static pair => pair.First.Name,
                             static pair => pair.Second,
                             StringComparer.Ordinal))),

@@ -13,7 +13,7 @@ public static class LuaAnnotationLexer
         TextSpan span,
         LuaAnnotationOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(source);
         options ??= LuaAnnotationOptions.Default;
         ValidateOptions(options);
         if (span.End > source.Length)
@@ -30,29 +30,29 @@ public static class LuaAnnotationLexer
         LuaAnnotationOptions options,
         int maximumDiagnosticCount)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(maximumDiagnosticCount);
+        LunilGuard.NotNegative(maximumDiagnosticCount);
         return new Implementation(source, span, options, maximumDiagnosticCount).Lex();
     }
 
     internal static void ValidateOptions(LuaAnnotationOptions options)
     {
-        if (!Enum.IsDefined(options.Dialect))
+        if (!LunilEnum.IsDefined(options.Dialect))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The annotation dialect is invalid.");
         }
 
-        if (!Enum.IsDefined(options.SyntaxDiagnosticSeverity))
+        if (!LunilEnum.IsDefined(options.SyntaxDiagnosticSeverity))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options),
                 "The annotation diagnostic severity is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumAnnotationCount);
-        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumTokensPerAnnotation, 2);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumTypeDepth);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
-        ArgumentNullException.ThrowIfNull(options.SuppressedDiagnosticCodes);
+        LunilGuard.Positive(options.MaximumAnnotationCount);
+        LunilGuard.GreaterThanOrEqual(options.MaximumTokensPerAnnotation, 2);
+        LunilGuard.Positive(options.MaximumTypeDepth);
+        LunilGuard.Positive(options.MaximumDiagnosticCount);
+        LunilGuard.NotNull(options.SuppressedDiagnosticCodes);
     }
 
     private sealed class Implementation

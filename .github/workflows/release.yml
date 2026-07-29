@@ -99,12 +99,27 @@ jobs:
           ./scripts/Test-PackageCompatibility.ps1
           -Version '${{ needs.validate.outputs.version }}'
           -PackageDirectory artifacts/packages -NoPack
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Build Unity package and Godot addon
+        shell: pwsh
+        run: |
+          $version = '${{ needs.validate.outputs.version }}'
+          ./scripts/New-UnityPackage.ps1 -Version $version `
+            -OutputDirectory artifacts/engine/unity
+          ./scripts/New-GodotAddon.ps1 -Version $version `
+            -OutputDirectory artifacts/engine/godot
+          Copy-Item "artifacts/engine/unity/com.dlqw.lunil-$version.tgz" artifacts/packages/
+          Copy-Item "artifacts/engine/godot/Lunil.Godot.addon-$version.zip" artifacts/packages/
       - uses: actions/upload-artifact@v7
         with:
           name: release-nuget
           path: |
             artifacts/packages/*.nupkg
             artifacts/packages/*.snupkg
+            artifacts/packages/*.tgz
+            artifacts/packages/Lunil.Godot.addon-*.zip
           if-no-files-found: error
 
   publish:
@@ -137,7 +152,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg \
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg \
             --repo '${{ github.repository }}' --verify-tag --generate-notes --prerelease \
             --title 'Lunil ${{ needs.validate.outputs.version }}'
       - name: Create stable GitHub release
@@ -145,6 +160,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.nupkg artifacts/*.snupkg \
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg \
             --repo '${{ github.repository }}' --verify-tag --generate-notes \
             --title 'Lunil ${{ needs.validate.outputs.version }}'

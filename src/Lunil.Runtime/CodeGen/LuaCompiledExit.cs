@@ -51,8 +51,8 @@ public readonly record struct LuaCompiledExit
         long instructionsConsumed,
         LuaCompiledExitReason reason)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(programCounter);
-        ArgumentOutOfRangeException.ThrowIfNegative(instructionsConsumed);
+        LunilGuard.NotNegative(programCounter);
+        LunilGuard.NotNegative(instructionsConsumed);
         _instructionsConsumed = instructionsConsumed;
         _programCounter = programCounter;
         _kind = kind;
@@ -202,9 +202,9 @@ public sealed class LuaExecutionContext
         long remainingInstructionCount,
         LuaScheduler? scheduler = null)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(thread);
-        ArgumentOutOfRangeException.ThrowIfNegative(remainingInstructionCount);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(thread);
+        LunilGuard.NotNegative(remainingInstructionCount);
         state.Heap.ValidateValue(Values.LuaValue.FromThread(thread));
         _instructionCountAtEntry = remainingInstructionCount;
         _lastObservedProgramCounter = -1;
@@ -221,7 +221,7 @@ public sealed class LuaExecutionContext
 
     public bool TryReserveInstructions(int instructionCount)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(instructionCount);
+        LunilGuard.Positive(instructionCount);
         if (RemainingInstructionCount < instructionCount)
         {
             return false;
@@ -256,7 +256,7 @@ public sealed class LuaExecutionContext
         LuaBackendGeneration generation,
         long expectedGeneration)
     {
-        ArgumentNullException.ThrowIfNull(generation);
+        LunilGuard.NotNull(generation);
         if (_backendGeneration is not null)
         {
             throw new InvalidOperationException(
@@ -291,7 +291,7 @@ public sealed class LuaExecutionContext
 
     internal void SetExitFrame(LuaFrame frame)
     {
-        ArgumentNullException.ThrowIfNull(frame);
+        LunilGuard.NotNull(frame);
         _exitFrame = frame;
     }
 

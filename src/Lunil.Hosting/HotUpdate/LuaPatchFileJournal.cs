@@ -131,7 +131,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
 
     public LuaPatchFileJournal(string path, LuaPatchFileJournalOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        LunilGuard.NotNullOrWhiteSpace(path);
         _path = System.IO.Path.GetFullPath(path);
         _options = options ?? LuaPatchFileJournalOptions.Default;
         if (_options.MaximumBytes <= 0 || _options.MaximumEntries <= 0 ||
@@ -154,7 +154,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
 
     public void Append(LuaPatchJournalEntry entry)
     {
-        ArgumentNullException.ThrowIfNull(entry);
+        LunilGuard.NotNull(entry);
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -236,7 +236,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         ILuaPatchCrashRecoveryHandler handler,
         TimeProvider? timeProvider = null)
     {
-        ArgumentNullException.ThrowIfNull(handler);
+        LunilGuard.NotNull(handler);
         timeProvider ??= TimeProvider.System;
         var records = GetIncompleteTransactions();
         var results = ImmutableArray.CreateBuilder<LuaPatchRecoveryResult>(records.Length);
@@ -263,7 +263,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                 throw;
             }
 
-            if (!Enum.IsDefined(resolution))
+            if (!LunilEnum.IsDefined(resolution))
             {
                 var exception = new InvalidOperationException(
                     "The crash recovery handler returned an invalid result.");
@@ -662,7 +662,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
             }
             catch (IncompleteJournalTailException)
             {
-                if (Stopwatch.GetElapsedTime(started) >= _options.ConcurrentReadTimeout)
+                if (LunilStopwatch.GetElapsedTime(started) >= _options.ConcurrentReadTimeout)
                 {
                     throw Error(
                         LuaPatchJournalErrorCode.Corrupted,
@@ -675,7 +675,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                 exception.Code == LuaPatchJournalErrorCode.IoFailure &&
                 exception.InnerException is IOException)
             {
-                if (Stopwatch.GetElapsedTime(started) >= _options.ConcurrentReadTimeout)
+                if (LunilStopwatch.GetElapsedTime(started) >= _options.ConcurrentReadTimeout)
                 {
                     throw;
                 }
@@ -709,8 +709,8 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                     "The journal exceeds the configured byte limit.");
             }
 
-            var bytes = GC.AllocateUninitializedArray<byte>((int)lengthOnDisk);
-            stream.ReadExactly(bytes);
+            var bytes = new byte[(int)lengthOnDisk];
+            LunilStream.ReadExactly(stream, bytes);
 
             if (bytes.Length != 0 && bytes[^1] != (byte)'\n')
             {
@@ -778,7 +778,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
                 var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(
                     payload,
                     LuaPatchJsonContext.Default.LuaPatchJournalHashPayload);
-                var expectedHash = Convert.ToHexString(SHA256.HashData(payloadBytes));
+                var expectedHash = LunilConvert.ToHexString(LunilCryptography.Sha256(payloadBytes));
                 if (!string.Equals(expectedHash, entry.Hash, StringComparison.Ordinal))
                 {
                     throw Error(
@@ -831,10 +831,10 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
             string.IsNullOrWhiteSpace(entry.RingName) ||
             string.IsNullOrWhiteSpace(entry.PatchId) ||
             string.IsNullOrWhiteSpace(entry.TargetRevision) ||
-            !Enum.IsDefined(entry.Phase) ||
+            !LunilEnum.IsDefined(entry.Phase) ||
             entry.TargetIds.IsDefaultOrEmpty ||
             entry.TargetIds.Any(string.IsNullOrWhiteSpace) ||
-            !entry.TargetIds.SequenceEqual(entry.TargetIds.Order(StringComparer.Ordinal)) ||
+            !entry.TargetIds.SequenceEqual(entry.TargetIds.OrderBy(static value => value, StringComparer.Ordinal)) ||
             entry.TargetIds.Distinct(StringComparer.Ordinal).Count() != entry.TargetIds.Length ||
             requireStoredFields && (entry.Sequence <= 0 || string.IsNullOrWhiteSpace(entry.Hash)) ||
             !requireStoredFields && (entry.Sequence != 0 || entry.PreviousHash is not null ||
@@ -954,7 +954,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
     }
 
     private static bool IsSha256(string value) =>
-        value.Length == SHA256.HashSizeInBytes * 2 &&
+        value.Length == LunilCryptography.Sha256HashSize * 2 &&
         value.All(static character => character is >= '0' and <= '9' or >= 'A' and <= 'F');
 
     private static bool IsIncomplete(LuaPatchJournalPhase phase) =>
@@ -976,7 +976,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         {
             Sequence = sequence,
             PreviousHash = previousHash,
-            Hash = Convert.ToHexString(SHA256.HashData(payloadBytes)),
+            Hash = LunilConvert.ToHexString(LunilCryptography.Sha256(payloadBytes)),
         };
     }
 
@@ -992,7 +992,7 @@ public sealed class LuaPatchFileJournal : ILuaPatchDeploymentJournal, IDisposabl
         }
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+    private void ThrowIfDisposed() => LunilGuard.NotDisposed(_disposed, this);
 
     private void ThrowIfWriteFaulted()
     {

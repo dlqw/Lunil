@@ -47,16 +47,34 @@ internal sealed class LuaScheduler
 {
     private readonly List<LuaActivation> _activations;
     private int _activeCount;
+    private long _completedInstructionCount;
 
-    public LuaScheduler(LuaThread root, bool yieldableRoot)
+    public LuaScheduler(LuaThread root, bool yieldableRoot, long instructionLimit)
     {
         _activations = [new LuaActivation(root, yieldableRoot)];
         _activeCount = 1;
+        InstructionLimit = instructionLimit;
     }
 
     public int Count => _activeCount;
 
     public LuaActivation Current => _activations[_activeCount - 1];
+
+    public long InstructionLimit { get; }
+
+    public long TotalInstructionCount
+    {
+        get
+        {
+            var total = _completedInstructionCount;
+            for (var index = 0; index < _activeCount; index++)
+            {
+                total = checked(total + _activations[index].InstructionCount);
+            }
+
+            return total;
+        }
+    }
 
     public LuaSchedulerTransfer Transfer { get; set; }
 
@@ -76,7 +94,12 @@ internal sealed class LuaScheduler
         _activeCount++;
     }
 
-    public void Pop() => _activeCount--;
+    public void Pop()
+    {
+        _completedInstructionCount = checked(
+            _completedInstructionCount + Current.InstructionCount);
+        _activeCount--;
+    }
 
     public void RequestYield() => Transfer = LuaSchedulerTransfer.Yield;
 

@@ -5,8 +5,8 @@ public readonly record struct TextSpan
 {
     public TextSpan(int start, int length)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(start);
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        LunilGuard.NotNegative(start);
+        LunilGuard.NotNegative(length);
         _ = checked(start + length);
 
         Start = start;
@@ -21,7 +21,7 @@ public readonly record struct TextSpan
 
     public static TextSpan FromBounds(int start, int end)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(end, start);
+        LunilGuard.GreaterThanOrEqual(end, start);
         return new TextSpan(start, end - start);
     }
 

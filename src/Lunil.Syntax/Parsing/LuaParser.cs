@@ -29,7 +29,7 @@ public static class LuaParser
         LuaLexResult lexResult,
         LuaParserOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(lexResult);
+        LunilGuard.NotNull(lexResult);
         options ??= LuaParserOptions.Default with
         {
             LanguageVersion = lexResult.LanguageVersion,
@@ -55,9 +55,9 @@ public static class LuaParser
                 "The parser language version is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumRecursionDepth);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumNodeCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
+        LunilGuard.Positive(options.MaximumRecursionDepth);
+        LunilGuard.Positive(options.MaximumNodeCount);
+        LunilGuard.Positive(options.MaximumDiagnosticCount);
     }
 
     private sealed class Implementation
@@ -1050,19 +1050,37 @@ public static class LuaParser
 
         private LuaSyntaxToken Current => Peek(0);
 
-        private readonly record struct TokenSet(UInt128 Bits)
+        private readonly record struct TokenSet(ulong LowBits, ulong HighBits)
         {
-            public static TokenSet Create(LuaTokenKind kind) => new(Bit(kind));
+            public static TokenSet Create(LuaTokenKind kind) => default(TokenSet).Add(kind);
 
             public static TokenSet Create(
                 LuaTokenKind kind0,
                 LuaTokenKind kind1,
                 LuaTokenKind kind2) =>
-                new(Bit(kind0) | Bit(kind1) | Bit(kind2));
+                default(TokenSet).Add(kind0).Add(kind1).Add(kind2);
 
-            public bool Contains(LuaTokenKind kind) => (Bits & Bit(kind)) != 0;
+            public bool Contains(LuaTokenKind kind)
+            {
+                var value = (int)kind;
+                return value switch
+                {
+                    >= 0 and < 64 => (LowBits & (1UL << value)) != 0,
+                    >= 64 and < 128 => (HighBits & (1UL << (value - 64))) != 0,
+                    _ => false,
+                };
+            }
 
-            private static UInt128 Bit(LuaTokenKind kind) => UInt128.One << (int)kind;
+            private TokenSet Add(LuaTokenKind kind)
+            {
+                var value = (int)kind;
+                return value switch
+                {
+                    >= 0 and < 64 => this with { LowBits = LowBits | (1UL << value) },
+                    >= 64 and < 128 => this with { HighBits = HighBits | (1UL << (value - 64)) },
+                    _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Token sets support up to 128 token kinds."),
+                };
+            }
         }
 
         private void AddDiagnostic(string code, TextSpan span, string message)

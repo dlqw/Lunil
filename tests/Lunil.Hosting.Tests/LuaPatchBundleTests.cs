@@ -200,6 +200,38 @@ public sealed class LuaPatchBundleTests
         Assert.Equal(LuaPatchErrorCode.ResourceLimitExceeded, exception.Code);
     }
 
+    [Theory]
+    [InlineData("Entries")]
+    [InlineData("RequiredCapabilities")]
+    [InlineData("RequiredTargetLabels")]
+    public void ReaderRejectsNullManifestCollectionsAsFormatErrors(string propertyName)
+    {
+        var manifestBytes = LuaPatchManifestSerializer.Serialize(CreateManifest());
+        var json = Encoding.UTF8.GetString(manifestBytes);
+        var jsonPropertyName = char.ToLowerInvariant(propertyName[0]) + propertyName[1..];
+        json = json.Replace(
+            $"\"{jsonPropertyName}\":[]",
+            $"\"{jsonPropertyName}\":null",
+            StringComparison.Ordinal);
+        Assert.Contains($"\"{jsonPropertyName}\":null", json, StringComparison.Ordinal);
+
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write("LUNILPCH"u8);
+            writer.Write(LuaPatchFormat.CurrentVersion);
+            var malformedManifest = Encoding.UTF8.GetBytes(json);
+            writer.Write(malformedManifest.Length);
+            writer.Write(malformedManifest);
+        }
+        stream.Position = 0;
+
+        var exception = Assert.Throws<LuaPatchFormatException>(() =>
+            LuaPatchBundle.Read(stream, new CapturingTrustPolicy()));
+
+        Assert.Equal(LuaPatchErrorCode.InvalidManifest, exception.Code);
+    }
+
     [Fact]
     public void ReaderEnforcesSigningKeyActivationExpiryAndRevocationAtOneInstant()
     {

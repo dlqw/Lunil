@@ -19,7 +19,7 @@ public readonly record struct LuaSymbolKey
 
     public LuaSymbolKey(string value)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        LunilGuard.NotNullOrWhiteSpace(value);
         if (!IsValid(value))
         {
             throw new ArgumentException("The symbol key has an unsupported format.", nameof(value));
@@ -52,7 +52,7 @@ public readonly record struct LuaSymbolKey
         string normalizedName,
         int ambiguityOrdinal = 0)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(lexicalOwner);
+        LunilGuard.NotNullOrWhiteSpace(lexicalOwner);
         return Create(
             "symbol",
             moduleIdentity,
@@ -70,9 +70,9 @@ public readonly record struct LuaSymbolKey
         string normalizedName,
         int ambiguityOrdinal = 0)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(declarationKind);
-        ArgumentNullException.ThrowIfNull(lexicalOwner);
-        ArgumentException.ThrowIfNullOrWhiteSpace(normalizedName);
+        LunilGuard.NotNullOrWhiteSpace(declarationKind);
+        LunilGuard.NotNull(lexicalOwner);
+        LunilGuard.NotNullOrWhiteSpace(normalizedName);
         if (declarationKind == "main")
         {
             if (lexicalOwner.Length != 0 || normalizedName != "main" || ambiguityOrdinal != 0)
@@ -84,7 +84,7 @@ public readonly record struct LuaSymbolKey
         }
         else
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(lexicalOwner);
+            LunilGuard.NotNullOrWhiteSpace(lexicalOwner);
         }
 
         return Create(
@@ -130,11 +130,11 @@ public readonly record struct LuaSymbolKey
         string normalizedName,
         int ambiguityOrdinal)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(moduleIdentity);
-        ArgumentException.ThrowIfNullOrWhiteSpace(declarationKind);
-        ArgumentNullException.ThrowIfNull(lexicalOwner);
-        ArgumentException.ThrowIfNullOrWhiteSpace(normalizedName);
-        ArgumentOutOfRangeException.ThrowIfNegative(ambiguityOrdinal);
+        LunilGuard.NotNullOrWhiteSpace(moduleIdentity);
+        LunilGuard.NotNullOrWhiteSpace(declarationKind);
+        LunilGuard.NotNull(lexicalOwner);
+        LunilGuard.NotNullOrWhiteSpace(normalizedName);
+        LunilGuard.NotNegative(ambiguityOrdinal);
         return new LuaSymbolKey(
             string.Join(
                 '|',
@@ -149,7 +149,7 @@ public readonly record struct LuaSymbolKey
 
     private static string Escape(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        LunilGuard.NotNull(value);
         return Uri.EscapeDataString(value.Normalize());
     }
 
@@ -237,7 +237,7 @@ internal sealed class LuaStableSymbolIndex
 
     public LuaSymbolKey GetSymbolKey(LuaSymbol symbol)
     {
-        ArgumentNullException.ThrowIfNull(symbol);
+        LunilGuard.NotNull(symbol);
         return _symbolsById.TryGetValue(symbol.Id, out var candidate) &&
             ReferenceEquals(candidate, symbol) &&
             _symbolKeys.TryGetValue(symbol.Id, out var key)
@@ -247,7 +247,7 @@ internal sealed class LuaStableSymbolIndex
 
     public LuaSymbolKey GetFunctionKey(LuaFunctionInfo function)
     {
-        ArgumentNullException.ThrowIfNull(function);
+        LunilGuard.NotNull(function);
         return _functionsById.TryGetValue(function.Id, out var candidate) &&
             ReferenceEquals(candidate, function) &&
             _functionKeys.TryGetValue(function.Id, out var key)
@@ -379,7 +379,7 @@ internal sealed class LuaStableSymbolIndex
 
     private static string NormalizeModuleIdentity(string moduleIdentity)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(moduleIdentity);
+        LunilGuard.NotNullOrWhiteSpace(moduleIdentity);
         return moduleIdentity.Trim().Replace('\\', '/').Normalize();
     }
 
@@ -394,7 +394,7 @@ internal static class LuaStableSymbolIndexCache
 
     public static LuaStableSymbolIndex Get(LuaSemanticModel model, string moduleIdentity)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(moduleIdentity);
+        LunilGuard.NotNullOrWhiteSpace(moduleIdentity);
         var normalized = moduleIdentity.Trim().Replace('\\', '/').Normalize();
         var byModule = Cache.GetValue(
             model,

@@ -63,7 +63,7 @@ public static class LuaHostCapabilityProfiles
     {
         private readonly long _started = Stopwatch.GetTimestamp();
 
-        public double Clock => Stopwatch.GetElapsedTime(_started).TotalSeconds;
+        public double Clock => LunilStopwatch.GetElapsedTime(_started).TotalSeconds;
 
         public DateTimeOffset Now => DateTimeOffset.Now;
 

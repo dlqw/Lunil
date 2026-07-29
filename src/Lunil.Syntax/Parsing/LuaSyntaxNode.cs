@@ -11,7 +11,7 @@ public sealed class LuaSyntaxNode
         IEnumerable<LuaSyntaxElement> children,
         int emptyPosition = 0)
     {
-        ArgumentNullException.ThrowIfNull(children);
+        LunilGuard.NotNull(children);
         Kind = kind;
         Children = children.ToImmutableArray();
         Span = CalculateSpan(Children, includeTrivia: false, emptyPosition);

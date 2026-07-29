@@ -17,6 +17,7 @@ $publicRoots = @(
     'docs',
     'dotnet-tools.json',
     'global.json',
+    'integrations',
     'LICENSE',
     'Lunil.sln',
     'README.md',

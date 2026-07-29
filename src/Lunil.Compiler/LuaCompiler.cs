@@ -22,12 +22,12 @@ public sealed class LuaCompiler
     public LuaCompiler(LuaCompilerOptions? options = null)
     {
         Options = options ?? LuaCompilerOptions.Default;
-        ArgumentNullException.ThrowIfNull(Options.Lexer);
-        ArgumentNullException.ThrowIfNull(Options.Annotations);
-        ArgumentNullException.ThrowIfNull(Options.Analysis);
-        ArgumentNullException.ThrowIfNull(Options.Parser);
-        ArgumentNullException.ThrowIfNull(Options.Binder);
-        ArgumentNullException.ThrowIfNull(Options.Verifier);
+        LunilGuard.NotNull(Options.Lexer);
+        LunilGuard.NotNull(Options.Annotations);
+        LunilGuard.NotNull(Options.Analysis);
+        LunilGuard.NotNull(Options.Parser);
+        LunilGuard.NotNull(Options.Binder);
+        LunilGuard.NotNull(Options.Verifier);
         if (!LuaLanguageVersions.IsKnown(Options.LanguageVersion))
         {
             throw new ArgumentOutOfRangeException(
@@ -67,8 +67,8 @@ public sealed class LuaCompiler
         LuaAnalysisEnvironment analysisEnvironment,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(analysisEnvironment);
+        LunilGuard.NotNull(source);
+        LunilGuard.NotNull(analysisEnvironment);
         cancellationToken.ThrowIfCancellationRequested();
 
         var lexing = LuaLexer.Lex(source.Text, Options.Lexer with

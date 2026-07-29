@@ -36,9 +36,9 @@ public sealed class LuaPatchBundle
         IEnumerable<LuaPatchEntry> entries,
         ILuaPatchSigner signer)
     {
-        ArgumentNullException.ThrowIfNull(manifest);
-        ArgumentNullException.ThrowIfNull(entries);
-        ArgumentNullException.ThrowIfNull(signer);
+        LunilGuard.NotNull(manifest);
+        LunilGuard.NotNull(entries);
+        LunilGuard.NotNull(signer);
         ValidateManifestHeader(manifest, LuaPatchBundleReadOptions.Default, false);
 
         var normalizedEntries = NormalizeEntries(entries);
@@ -47,7 +47,7 @@ public sealed class LuaPatchBundle
             Name = entry.Name,
             ModuleName = entry.ModuleName,
             Kind = entry.Kind,
-            ContentHash = Convert.ToHexString(SHA256.HashData(entry.Content.Span)),
+            ContentHash = LunilConvert.ToHexString(LunilCryptography.Sha256(entry.Content.Span)),
             Length = entry.Content.Length,
             Dependencies = NormalizeDependencies(entry.Dependencies),
         }).ToImmutableArray();
@@ -59,7 +59,7 @@ public sealed class LuaPatchBundle
         };
         _ = LuaPatchDependencyPlan.Create(normalizedEntries);
         var manifestBytes = SerializeManifest(completeManifest);
-        var digest = SHA256.HashData(manifestBytes);
+        var digest = LunilCryptography.Sha256(manifestBytes);
         var signatureBytes = signer.SignDigest(digest);
         if (signatureBytes.Length == 0)
         {
@@ -81,8 +81,8 @@ public sealed class LuaPatchBundle
         ILuaPatchSignatureVerifier signatureVerifier,
         LuaPatchBundleReadOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(signatureVerifier);
+        LunilGuard.NotNull(stream);
+        LunilGuard.NotNull(signatureVerifier);
         options ??= LuaPatchBundleReadOptions.Default;
         ValidateOptions(options);
         var verificationTime = options.UtcNow ?? DateTimeOffset.UtcNow;
@@ -189,7 +189,7 @@ public sealed class LuaPatchBundle
 
             totalEntryBytes += length;
             var content = reader.ReadBytes((int)length);
-            var actualHash = Convert.ToHexString(SHA256.HashData(content));
+            var actualHash = LunilConvert.ToHexString(LunilCryptography.Sha256(content));
             if (!string.Equals(actualHash, descriptor.ContentHash, StringComparison.Ordinal))
             {
                 throw Format(
@@ -216,7 +216,7 @@ public sealed class LuaPatchBundle
             throw Format(LuaPatchErrorCode.Expired, "The patch bundle has expired.");
         }
 
-        var digest = SHA256.HashData(manifestBytes);
+        var digest = LunilCryptography.Sha256(manifestBytes);
         var signatureValid = signatureVerifier is ILuaPatchSignatureTrustPolicy timedTrustPolicy
             ? timedTrustPolicy.VerifyDigest(
                 algorithm,
@@ -242,7 +242,7 @@ public sealed class LuaPatchBundle
 
     public void Write(Stream stream)
     {
-        ArgumentNullException.ThrowIfNull(stream);
+        LunilGuard.NotNull(stream);
         if (!stream.CanWrite)
         {
             throw new ArgumentException("The patch output stream is not writable.", nameof(stream));
@@ -323,7 +323,7 @@ public sealed class LuaPatchBundle
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var dependency in result)
         {
-            if (string.IsNullOrWhiteSpace(dependency.ModuleName) || !Enum.IsDefined(dependency.Kind))
+            if (string.IsNullOrWhiteSpace(dependency.ModuleName) || !LunilEnum.IsDefined(dependency.Kind))
             {
                 throw Format(LuaPatchErrorCode.InvalidManifest, "A patch dependency is invalid.");
             }
@@ -367,6 +367,15 @@ public sealed class LuaPatchBundle
         LuaPatchBundleReadOptions options,
         bool requireCanonicalClaims)
     {
+        if (manifest.RequiredCapabilities.IsDefault ||
+            manifest.RequiredTargetLabels.IsDefault ||
+            manifest.Entries.IsDefault)
+        {
+            throw Format(
+                LuaPatchErrorCode.InvalidManifest,
+                "Patch manifest collections must be canonically encoded arrays.");
+        }
+
         if (manifest.FormatVersion != LuaPatchFormat.CurrentVersion)
         {
             throw Format(LuaPatchErrorCode.UnsupportedFormatVersion, "The manifest format version is unsupported.");
@@ -380,7 +389,7 @@ public sealed class LuaPatchBundle
             string.IsNullOrWhiteSpace(manifest.RuntimeAbi) ||
             string.IsNullOrWhiteSpace(manifest.Nonce) ||
             !LuaLanguageVersions.IsKnown(manifest.LanguageVersion) ||
-            !Enum.IsDefined(manifest.UpdateIntent) ||
+            !LunilEnum.IsDefined(manifest.UpdateIntent) ||
             manifest.CreatedAt == default ||
             manifest.ExpiresAt is { } expiresAt && expiresAt <= manifest.CreatedAt)
         {
@@ -405,10 +414,19 @@ public sealed class LuaPatchBundle
             string? previous = null;
             foreach (var entry in manifest.Entries)
             {
+                if (entry is null || entry.Dependencies.IsDefault)
+                {
+                    throw Format(
+                        LuaPatchErrorCode.InvalidManifest,
+                        "The patch entry manifest is invalid.");
+                }
+
                 ValidateEntryName(entry.Name);
-                if (!names.Add(entry.Name) ||
+                var normalizedDependencies = NormalizeDependencies(entry.Dependencies);
+                if (!normalizedDependencies.SequenceEqual(entry.Dependencies) ||
+                    !names.Add(entry.Name) ||
                     previous is not null && string.CompareOrdinal(previous, entry.Name) >= 0 ||
-                    entry.Length < 0 || entry.ContentHash.Length != SHA256.HashSizeInBytes * 2 ||
+                    entry.Length < 0 || entry.ContentHash.Length != LunilCryptography.Sha256HashSize * 2 ||
                     !entry.ContentHash.All(static character =>
                         character is >= '0' and <= '9' or >= 'A' and <= 'F'))
                 {
@@ -464,7 +482,7 @@ public sealed class LuaPatchBundle
             return [];
         }
 
-        var normalized = capabilities.Order(StringComparer.Ordinal).ToImmutableArray();
+        var normalized = capabilities.OrderBy(static value => value, StringComparer.Ordinal).ToImmutableArray();
         ValidateCapabilities(
             normalized,
             LuaPatchBundleReadOptions.Default.MaximumCapabilityCount,
@@ -623,7 +641,7 @@ public sealed class LuaPatchBundle
 
             try
             {
-                stream.ReadExactly(destination);
+                LunilStream.ReadExactly(stream, destination);
                 _read += destination.Length;
             }
             catch (EndOfStreamException exception)
@@ -642,7 +660,7 @@ public sealed class LuaPatchBundle
                 throw Format(LuaPatchErrorCode.InvalidHeader, "The patch contains a negative length.");
             }
 
-            var bytes = GC.AllocateUninitializedArray<byte>(count);
+            var bytes = new byte[count];
             ReadExactly(bytes);
             return bytes;
         }

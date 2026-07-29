@@ -32,7 +32,7 @@ public sealed class LuaTable : LuaGcObject
         LuaTableAllocationHint? allocationHint = null)
         : base(owner, CalculateLogicalSize(arrayCapacity, hashCapacity))
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(physicalArrayCapacity);
+        LunilGuard.NotNegative(physicalArrayCapacity);
         _array = new PooledArrayPart(
             arrayCapacity,
             Math.Max(arrayCapacity, physicalArrayCapacity));
@@ -46,15 +46,15 @@ public sealed class LuaTable : LuaGcObject
 
     private static long CalculateLogicalSize(int arrayCapacity, int hashCapacity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(arrayCapacity);
-        ArgumentOutOfRangeException.ThrowIfNegative(hashCapacity);
+        LunilGuard.NotNegative(arrayCapacity);
+        LunilGuard.NotNegative(hashCapacity);
         var actualHashCapacity = NormalizeHashCapacity(hashCapacity);
         return checked(64 + arrayCapacity * 16L + actualHashCapacity * BucketLogicalSize);
     }
 
     private static int NormalizeHashCapacity(int requestedCapacity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(requestedCapacity);
+        LunilGuard.NotNegative(requestedCapacity);
         if (requestedCapacity == 0)
         {
             return 0;
@@ -910,7 +910,7 @@ public sealed class LuaTable : LuaGcObject
         var value = GetStringField(LuaMetamethodFacts.GetName(metamethod));
         if (value.IsNil)
         {
-            Interlocked.Or(ref _absentMetamethodMask, bit);
+            LunilInterlocked.Or(ref _absentMetamethodMask, bit);
         }
 
         return value;
@@ -1173,8 +1173,8 @@ public sealed class LuaTable : LuaGcObject
 
         public PooledArrayPart(int count, int capacity)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(count);
-            ArgumentOutOfRangeException.ThrowIfLessThan(capacity, count);
+            LunilGuard.NotNegative(count);
+            LunilGuard.GreaterThanOrEqual(capacity, count);
             Count = count;
             if (capacity == 0)
             {

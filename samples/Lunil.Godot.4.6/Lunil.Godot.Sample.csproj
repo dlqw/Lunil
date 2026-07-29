@@ -1,0 +1,16 @@
+<Project Sdk="Godot.NET.Sdk/4.6.3">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DefaultItemExcludes>$(DefaultItemExcludes);.godot/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="obj/**/*.cs" />
+    <ProjectReference Include="..\..\src\Lunil.Godot\Lunil.Godot.csproj" AdditionalProperties="GodotProjectDir=$(MSBuildProjectDirectory);NoWarn=GD0302" />
+  </ItemGroup>
+
+</Project>

@@ -10,7 +10,7 @@ public static class LuaLexer
 {
     public static LuaLexResult Lex(SourceText source, LuaLexerOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(source);
         options ??= LuaLexerOptions.Default;
         ValidateOptions(options);
 
@@ -28,8 +28,8 @@ public static class LuaLexer
                 "The lexer language version is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumTokenCount, 2);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
+        LunilGuard.GreaterThanOrEqual(options.MaximumTokenCount, 2);
+        LunilGuard.Positive(options.MaximumDiagnosticCount);
     }
 
     private sealed class Implementation

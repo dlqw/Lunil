@@ -8,8 +8,8 @@ public sealed record LuaWorkspaceDocument
 {
     public LuaWorkspaceDocument(LuaModuleIdentity module, LuaSourceDocument source)
     {
-        ArgumentNullException.ThrowIfNull(module);
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(module);
+        LunilGuard.NotNull(source);
         Module = module;
         Source = source.SourceName is null
             ? new LuaSourceDocument(source.Text, CreateDefaultSourceIdentity(module))

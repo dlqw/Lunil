@@ -25,10 +25,10 @@ public static class LuaTypeAnalyzer
         LuaAnalysisOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(semanticModel);
-        ArgumentNullException.ThrowIfNull(annotations);
-        ArgumentNullException.ThrowIfNull(environment);
-        ArgumentNullException.ThrowIfNull(environment.ModuleTypes);
+        LunilGuard.NotNull(semanticModel);
+        LunilGuard.NotNull(annotations);
+        LunilGuard.NotNull(environment);
+        LunilGuard.NotNull(environment.ModuleTypes);
         options ??= LuaAnalysisOptions.Default;
         cancellationToken.ThrowIfCancellationRequested();
         ValidateOptions(options);
@@ -63,22 +63,22 @@ public static class LuaTypeAnalyzer
 
     private static void ValidateOptions(LuaAnalysisOptions options)
     {
-        if (!Enum.IsDefined(options.DiagnosticSeverity))
+        if (!LunilEnum.IsDefined(options.DiagnosticSeverity))
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options),
                 "The analysis diagnostic severity is invalid.");
         }
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumTypeCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumConstraintCount);
-        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumControlFlowBlockCount, 2);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumFlowIterations);
-        ArgumentOutOfRangeException.ThrowIfLessThan(options.MaximumUnionMemberCount, 2);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumTypeDepth);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumGenericInstantiationCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumReturnPackLength);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDiagnosticCount);
-        ArgumentNullException.ThrowIfNull(options.SuppressedDiagnosticCodes);
+        LunilGuard.Positive(options.MaximumTypeCount);
+        LunilGuard.Positive(options.MaximumConstraintCount);
+        LunilGuard.GreaterThanOrEqual(options.MaximumControlFlowBlockCount, 2);
+        LunilGuard.Positive(options.MaximumFlowIterations);
+        LunilGuard.GreaterThanOrEqual(options.MaximumUnionMemberCount, 2);
+        LunilGuard.Positive(options.MaximumTypeDepth);
+        LunilGuard.Positive(options.MaximumGenericInstantiationCount);
+        LunilGuard.Positive(options.MaximumReturnPackLength);
+        LunilGuard.Positive(options.MaximumDiagnosticCount);
+        LunilGuard.NotNull(options.SuppressedDiagnosticCodes);
     }
 }

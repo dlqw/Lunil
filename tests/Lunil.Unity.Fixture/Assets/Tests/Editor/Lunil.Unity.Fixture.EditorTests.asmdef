@@ -1,0 +1,33 @@
+{
+  "name": "Lunil.Unity.Fixture.EditorTests",
+  "rootNamespace": "Lunil.Unity.Fixture.Tests",
+  "references": [
+    "Lunil.Unity",
+    "Lunil.Unity.Editor",
+    "Lunil.Unity.Fixture"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Lunil.Core.dll",
+    "Lunil.Compiler.dll",
+    "Lunil.Hosting.dll",
+    "Lunil.IR.dll",
+    "Lunil.Runtime.dll",
+    "Lunil.Workspace.dll",
+    "System.Collections.Immutable.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

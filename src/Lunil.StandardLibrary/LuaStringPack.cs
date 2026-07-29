@@ -9,7 +9,7 @@ internal static class LuaStringPack
 {
     private const int MaximumIntegerSize = 16;
     private const int NativeAlignment = 8;
-    private static readonly int NativeLongSize = OperatingSystem.IsWindows() ? 4 : 8;
+    private static readonly int NativeLongSize = LunilOperatingSystem.IsWindows() ? 4 : 8;
 
     public static LuaValue Pack(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
@@ -37,7 +37,7 @@ internal static class LuaStringPack
                     {
                         var value = LuaLibraryHelpers.CheckNumber(arguments, argument++, "pack");
                         Span<byte> bytes = stackalloc byte[4];
-                        var bits = BitConverter.SingleToUInt32Bits((float)value);
+                        var bits = LunilBitConverter.SingleToUInt32Bits((float)value);
                         if (option.LittleEndian) BinaryPrimitives.WriteUInt32LittleEndian(bytes, bits);
                         else BinaryPrimitives.WriteUInt32BigEndian(bytes, bits);
                         output.AddRange(bytes.ToArray());
@@ -47,7 +47,7 @@ internal static class LuaStringPack
                     {
                         var value = LuaLibraryHelpers.CheckNumber(arguments, argument++, "pack");
                         Span<byte> bytes = stackalloc byte[8];
-                        var bits = BitConverter.DoubleToUInt64Bits(value);
+                        var bits = LunilBitConverter.DoubleToUInt64Bits(value);
                         if (option.LittleEndian) BinaryPrimitives.WriteUInt64LittleEndian(bytes, bits);
                         else BinaryPrimitives.WriteUInt64BigEndian(bytes, bits);
                         output.AddRange(bytes.ToArray());
@@ -68,7 +68,7 @@ internal static class LuaStringPack
                 case PackKind.ZeroString:
                     {
                         var bytes = LuaLibraryHelpers.CheckStringBytes(arguments, argument++, "pack");
-                        if (bytes.AsSpan().Contains((byte)0))
+                        if (bytes.AsSpan().IndexOf((byte)0) >= 0)
                         {
                             throw LuaLibraryHelpers.BadArgument("pack", argument - 1, "string contains zeros");
                         }
@@ -157,7 +157,7 @@ internal static class LuaStringPack
                         var bits = option.LittleEndian
                             ? BinaryPrimitives.ReadUInt32LittleEndian(span)
                             : BinaryPrimitives.ReadUInt32BigEndian(span);
-                        result.Add(LuaValue.FromFloat(BitConverter.UInt32BitsToSingle(bits)));
+                        result.Add(LuaValue.FromFloat(LunilBitConverter.UInt32BitsToSingle(bits)));
                         offset += 4;
                         break;
                     }
@@ -167,7 +167,7 @@ internal static class LuaStringPack
                         var bits = option.LittleEndian
                             ? BinaryPrimitives.ReadUInt64LittleEndian(span)
                             : BinaryPrimitives.ReadUInt64BigEndian(span);
-                        result.Add(LuaValue.FromFloat(BitConverter.UInt64BitsToDouble(bits)));
+                        result.Add(LuaValue.FromFloat(LunilBitConverter.UInt64BitsToDouble(bits)));
                         offset += 8;
                         break;
                     }

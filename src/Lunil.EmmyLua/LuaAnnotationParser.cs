@@ -9,7 +9,7 @@ public static class LuaAnnotationParser
         LuaLexResult lexing,
         LuaAnnotationOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(lexing);
+        LunilGuard.NotNull(lexing);
         options ??= LuaAnnotationOptions.Default;
         LuaAnnotationLexer.ValidateOptions(options);
         if (!options.Enabled)

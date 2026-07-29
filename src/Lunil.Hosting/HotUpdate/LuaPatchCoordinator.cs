@@ -322,7 +322,7 @@ public sealed class LuaPatchCoordinator
         LuaPatchCoordinatorOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(plan);
+        LunilGuard.NotNull(plan);
         options ??= LuaPatchCoordinatorOptions.Default;
         ValidatePlan(plan, options);
         using var activity = LuaPatchTelemetry.Start(
@@ -373,8 +373,8 @@ public sealed class LuaPatchCoordinator
         LuaPatchCoordinatorOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(rolloutId);
-        ArgumentNullException.ThrowIfNull(ring);
+        LunilGuard.NotNullOrWhiteSpace(rolloutId);
+        LunilGuard.NotNull(ring);
         options ??= LuaPatchCoordinatorOptions.Default;
         ValidateRing(ring, options);
         lock (_gate)
@@ -805,7 +805,7 @@ public sealed class LuaPatchCoordinator
                         LuaPatchJournalPhase.RolledBack);
                 }
 
-                if (!Enum.IsDefined(decision))
+                if (!LunilEnum.IsDefined(decision))
                 {
                     const string message = "The ring health check returned an invalid decision.";
                     targetResults.Clear();
@@ -1041,7 +1041,7 @@ public sealed class LuaPatchCoordinator
                     return false;
                 }
 
-                if (System.Diagnostics.Stopwatch.GetElapsedTime(waitStarted) >= timeout)
+                if (LunilStopwatch.GetElapsedTime(waitStarted) >= timeout)
                 {
                     error = "The distributed barrier wait exceeded its configured timeout.";
                     ReportDistributedFailure(error);
@@ -1236,7 +1236,7 @@ public sealed class LuaPatchCoordinator
                 message)
             {
                 DistributedBarrier = distributedSnapshot,
-                Duration = System.Diagnostics.Stopwatch.GetElapsedTime(started),
+                Duration = LunilStopwatch.GetElapsedTime(started),
             };
             LuaPatchTelemetry.Complete(activity, status.ToString(), message);
             LuaPatchTelemetry.RecordRing(
@@ -1359,8 +1359,8 @@ public sealed class LuaPatchCoordinator
         LuaPatchRolloutPlan plan,
         LuaPatchCoordinatorOptions options)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(plan.RolloutId);
-        ArgumentNullException.ThrowIfNull(options.ResourceLimits);
+        LunilGuard.NotNullOrWhiteSpace(plan.RolloutId);
+        LunilGuard.NotNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
         options.GenerationGuard?.Validate();
         ValidateDistributedBarrier(options);
@@ -1380,7 +1380,7 @@ public sealed class LuaPatchCoordinator
 
         var names = new HashSet<string>(StringComparer.Ordinal);
         var targetIds = new HashSet<string>(StringComparer.Ordinal);
-        var hosts = new HashSet<LuaHost>(ReferenceEqualityComparer.Instance);
+        var hosts = new HashSet<LuaHost>(LunilReferenceEqualityComparer.Instance);
         string? patchIdentity = null;
         foreach (var ring in plan.Rings)
         {
@@ -1415,12 +1415,12 @@ public sealed class LuaPatchCoordinator
         LuaPatchRolloutRing ring,
         LuaPatchCoordinatorOptions options)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ring.Name);
-        ArgumentNullException.ThrowIfNull(options.UpdateWindow);
-        ArgumentNullException.ThrowIfNull(options.Commit);
-        ArgumentNullException.ThrowIfNull(options.TargetLifecycle);
-        ArgumentNullException.ThrowIfNull(options.TimeProvider);
-        ArgumentNullException.ThrowIfNull(options.ResourceLimits);
+        LunilGuard.NotNullOrWhiteSpace(ring.Name);
+        LunilGuard.NotNull(options.UpdateWindow);
+        LunilGuard.NotNull(options.Commit);
+        LunilGuard.NotNull(options.TargetLifecycle);
+        LunilGuard.NotNull(options.TimeProvider);
+        LunilGuard.NotNull(options.ResourceLimits);
         options.ResourceLimits.Validate();
         options.GenerationGuard?.Validate();
         ValidateDistributedBarrier(options);
@@ -1444,13 +1444,13 @@ public sealed class LuaPatchCoordinator
             options.ResourceLimits.MaximumTargetsPerRing);
 
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        var hosts = new HashSet<LuaHost>(ReferenceEqualityComparer.Instance);
+        var hosts = new HashSet<LuaHost>(LunilReferenceEqualityComparer.Instance);
         string? patchIdentity = null;
         foreach (var target in ring.Targets)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(target.TargetId);
-            ArgumentNullException.ThrowIfNull(target.Host);
-            ArgumentNullException.ThrowIfNull(target.PreparedPatch);
+            LunilGuard.NotNullOrWhiteSpace(target.TargetId);
+            LunilGuard.NotNull(target.Host);
+            LunilGuard.NotNull(target.PreparedPatch);
             if (options.RequireTargetIsolation && target.Lifecycle is null)
             {
                 throw new ArgumentException(
@@ -1513,8 +1513,8 @@ public sealed class LuaPatchCoordinator
             return;
         }
 
-        ArgumentNullException.ThrowIfNull(distributed.Store);
-        ArgumentException.ThrowIfNullOrWhiteSpace(distributed.ParticipantId);
+        LunilGuard.NotNull(distributed.Store);
+        LunilGuard.NotNullOrWhiteSpace(distributed.ParticipantId);
         if (distributed.Participants.IsDefaultOrEmpty ||
             distributed.Participants.Any(static participant => string.IsNullOrWhiteSpace(participant)) ||
             distributed.Participants.Distinct(StringComparer.Ordinal).Count() !=
@@ -1564,6 +1564,6 @@ public sealed class LuaPatchCoordinator
         }
     }
 
-    private static string GetPatchIdentity(LuaPatchManifest manifest) => Convert.ToHexString(
-        SHA256.HashData(LuaPatchManifestSerializer.Serialize(manifest)));
+    private static string GetPatchIdentity(LuaPatchManifest manifest) => LunilConvert.ToHexString(
+        LunilCryptography.Sha256(LuaPatchManifestSerializer.Serialize(manifest)));
 }

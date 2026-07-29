@@ -17,7 +17,7 @@ internal static class LuaFunctionEnvironments
 
     public static LuaValue GetEnvironment(LuaState state, LuaValue target)
     {
-        ArgumentNullException.ThrowIfNull(state);
+        LunilGuard.NotNull(state);
         state.Heap.ValidateValue(target);
         return target.Kind switch
         {
@@ -29,8 +29,8 @@ internal static class LuaFunctionEnvironments
 
     public static void SetEnvironment(LuaState state, LuaValue target, LuaTable environment)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(environment);
+        LunilGuard.NotNull(state);
+        LunilGuard.NotNull(environment);
         state.Heap.ValidateValue(target);
         state.Heap.ValidateValue(LuaValue.FromTable(environment));
         switch (target.Kind)
@@ -110,7 +110,7 @@ internal static class LuaFunctionEnvironments
 
     public static LuaValue GetThreadEnvironment(LuaState state, LuaThread thread)
     {
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(thread);
         state.Heap.ValidateValue(LuaValue.FromThread(thread));
         return thread.Environment.IsNil
             ? LuaValue.FromTable(state.Globals)
@@ -119,7 +119,7 @@ internal static class LuaFunctionEnvironments
 
     public static void SetThreadEnvironment(LuaState state, LuaThread thread, LuaTable environment)
     {
-        ArgumentNullException.ThrowIfNull(thread);
+        LunilGuard.NotNull(thread);
         state.Heap.ValidateValue(LuaValue.FromThread(thread));
         thread.Environment = LuaValue.FromTable(environment);
     }
@@ -156,7 +156,7 @@ internal static class LuaFunctionEnvironments
 
     public static bool TryFindEnvironmentUpvalueIndex(LuaClosure closure, out int index)
     {
-        ArgumentNullException.ThrowIfNull(closure);
+        LunilGuard.NotNull(closure);
         var upvalues = closure.Function.Upvalues;
         for (var i = 0; i < upvalues.Length; i++)
         {

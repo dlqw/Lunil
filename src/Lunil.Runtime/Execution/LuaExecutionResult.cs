@@ -12,7 +12,11 @@ public enum LuaVmSignal : byte
 
 public sealed record LuaExecutionResult(
     LuaVmSignal Signal,
-    ImmutableArray<LuaValue> Values);
+    ImmutableArray<LuaValue> Values)
+{
+    /// <summary>Gets the canonical instructions charged by this execution turn.</summary>
+    public long ExecutedInstructionCount { get; init; }
+}
 
 public sealed record LuaInterpreterOptions
 {

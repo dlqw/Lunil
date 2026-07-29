@@ -8,8 +8,8 @@ public static class LuaNumericLiteralDecoder
 {
     public static LuaTokenValue Decode(SourceText source, LuaSyntaxToken token)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(token);
+        LunilGuard.NotNull(source);
+        LunilGuard.NotNull(token);
 
         if (token.Kind != LuaTokenKind.NumericLiteral)
         {

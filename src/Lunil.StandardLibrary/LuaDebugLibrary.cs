@@ -505,7 +505,7 @@ internal static class LuaDebugLibrary
 
         var frames = thread.Frames.Where(static frame => !frame.IsHidden)
             .Reverse().Skip((int)Math.Min(remainingSkip, int.MaxValue)).ToArray();
-        var frameIndexes = new Dictionary<LuaFrame, int>(ReferenceEqualityComparer.Instance);
+        var frameIndexes = new Dictionary<LuaFrame, int>(LunilReferenceEqualityComparer.Instance);
         for (var index = 0; index < thread.Frames.Count; index++)
         {
             frameIndexes.Add(thread.Frames[index], index);

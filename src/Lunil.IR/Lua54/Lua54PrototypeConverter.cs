@@ -16,11 +16,11 @@ public static class Lua54PrototypeConverter
 
     public static LuaIrModule Convert(Lua54Chunk chunk)
     {
-        ArgumentNullException.ThrowIfNull(chunk);
+        LunilGuard.NotNull(chunk);
         Lua54ChunkVerifier.ThrowIfInvalid(chunk);
 
         var prototypes = new List<PrototypeEntry>();
-        var ids = new Dictionary<Lua54Prototype, int>(ReferenceEqualityComparer.Instance);
+        var ids = new Dictionary<Lua54Prototype, int>(LunilReferenceEqualityComparer.Instance);
         AddPrototype(chunk.MainPrototype, parentId: -1, prototypes, ids);
 
         var functions = ImmutableArray.CreateBuilder<LuaIrFunction>(prototypes.Count);

@@ -2,15 +2,23 @@
 
 [简体中文](static-analysis-embedding.zh-CN.pub.md)
 
-This guide shows how to use Lunil as a compiler and code-intelligence library in an existing .NET
-host. The checked-in sample provides a complete executable example:
+This guide shows how to consume Lunil as a compiler and code-intelligence library. It assumes an
+existing .NET application that references the Lunil compiler, analysis, and workspace packages.
+
+## Prerequisites
+
+- A .NET SDK supported by the selected Lunil package assets.
+- Source documents with stable logical module names and source identities.
+- Explicit analysis budgets for untrusted or large workspaces.
+
+Run the complete sample at any time to compare its output with your integration:
 
 ```bash
 dotnet run --project samples/Lunil.StaticAnalysis.Embedding -c Release
 ```
 
-The sample compiles one annotated file, prints semantic and analysis indexes, analyzes a cyclic
-two-module workspace three times, and demonstrates cache reuse and invalidation.
+It compiles one annotated file, prints semantic and analysis indexes, and demonstrates cache reuse
+and invalidation across a cyclic two-module workspace.
 
 ## 1. Configure one pipeline
 
@@ -150,7 +158,7 @@ drops reuse state.
 indexes across the completed workspace and include module/source identities and stable containing
 function keys.
 
-## 7. Manage lifetime, concurrency, diagnostics, and budgets
+## 7. Apply lifetime, concurrency, diagnostic, and budget rules
 
 - Compilation and workspace result objects are immutable snapshots and can be read concurrently.
 - A `LuaWorkspace` accepts concurrent callers but serializes top-level operations to preserve cache
@@ -165,9 +173,12 @@ function keys.
   fixed-point/diagnostic budgets for untrusted or large projects. Treat an exhausted budget or
   widening as explicit analysis state, not as a successful precise result.
 
-The compiling
-[`samples/Lunil.StaticAnalysis.Embedding`](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
-demonstrates compilation, annotation and semantic inspection, stable symbol/reference keys, CFGs,
-workspace reuse with cache invalidation, cross-workspace references, and the call graph. Resolver
-customization, key re-resolution, global-reference queries, `ClearCache()`, and concurrent-operation
-integration are API contracts described on this page but are not exercised by that sample.
+## Expected result
+
+The host now produces immutable compilation and workspace snapshots with stable source locations,
+symbol keys, call graphs, diagnostics, and bounded cache reuse. The
+[`Lunil.StaticAnalysis.Embedding` sample](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
+demonstrates annotated single-file compilation, semantic and analysis index output, byte-span
+formatting, and cache reuse and invalidation in a cyclic workspace. Apply the additional stable-key,
+resolver, cross-workspace index, cache-control, concurrency, and disposal contracts from this guide
+in the host integration that needs them.

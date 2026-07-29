@@ -11,8 +11,8 @@ public sealed record Diagnostic
         TextSpan span,
         string message)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(code);
-        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        LunilGuard.NotNullOrWhiteSpace(code);
+        LunilGuard.NotNullOrWhiteSpace(message);
 
         Code = code;
         Severity = severity;

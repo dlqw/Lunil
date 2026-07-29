@@ -99,7 +99,7 @@ public sealed record LuaPatchGenerationGuardPolicy
 
     public LuaPatchGenerationGuardResult Evaluate(LuaPatchGenerationSnapshot snapshot)
     {
-        ArgumentNullException.ThrowIfNull(snapshot);
+        LunilGuard.NotNull(snapshot);
         Validate();
         snapshot.Validate();
         if (RejectTransitionResidue && snapshot.HasTransitionResidue)
@@ -130,10 +130,10 @@ public sealed record LuaPatchGenerationGuardPolicy
 
     internal void Validate()
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(MaximumStaleCallbackCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(MaximumStaleTaskCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(MaximumStaleTimerCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(MaximumStaleNativeContinuationCount);
+        LunilGuard.NotNegative(MaximumStaleCallbackCount);
+        LunilGuard.NotNegative(MaximumStaleTaskCount);
+        LunilGuard.NotNegative(MaximumStaleTimerCount);
+        LunilGuard.NotNegative(MaximumStaleNativeContinuationCount);
     }
 
     private static string? Check(string kind, int observed, int maximum) => observed > maximum
@@ -187,7 +187,7 @@ public sealed partial class LuaClrBridge
     internal TResult CapturePatchGenerationCounts<TResult>(
         Func<PatchGenerationCounts, TResult> capture)
     {
-        ArgumentNullException.ThrowIfNull(capture);
+        LunilGuard.NotNull(capture);
         lock (_callbackGate)
         {
             PruneGenerationRegistrations();

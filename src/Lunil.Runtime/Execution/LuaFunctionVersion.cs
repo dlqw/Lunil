@@ -12,7 +12,7 @@ public static class LuaFunctionIdentity
 {
     public static string GetLogicalKey(LuaIrModule module, int functionId)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         var function = GetFunction(module, functionId);
         if (function.Id == module.MainFunctionId)
         {
@@ -52,7 +52,7 @@ public static class LuaFunctionIdentity
 
     public static string GetUpvalueLayoutFingerprint(LuaIrFunction function)
     {
-        ArgumentNullException.ThrowIfNull(function);
+        LunilGuard.NotNull(function);
         using var stream = new MemoryStream();
         using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
         {
@@ -66,7 +66,7 @@ public static class LuaFunctionIdentity
             }
         }
 
-        return Convert.ToHexString(SHA256.HashData(stream.ToArray()));
+        return LunilCryptography.Sha256Hex(stream.ToArray());
     }
 
     private static LuaIrFunction GetFunction(LuaIrModule module, int functionId) =>
@@ -186,8 +186,8 @@ internal sealed class LuaModuleRuntimeData
 
     public LuaFunctionVersion GetVersion(int functionId)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(functionId);
-        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(functionId, _versions.Length);
+        LunilGuard.NotNegative(functionId);
+        LunilGuard.LessThan(functionId, _versions.Length);
         if (Volatile.Read(ref _versions[functionId]) is { } existing)
         {
             return existing;

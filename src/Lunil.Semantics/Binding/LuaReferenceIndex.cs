@@ -7,7 +7,7 @@ public partial record LuaSemanticModel
     /// <summary>Finds all reads and writes bound to a symbol in this semantic snapshot.</summary>
     public ImmutableArray<LuaNameReference> FindReferences(LuaSymbol symbol)
     {
-        ArgumentNullException.ThrowIfNull(symbol);
+        LunilGuard.NotNull(symbol);
         if (!Symbols.Any(candidate => ReferenceEquals(candidate, symbol)))
         {
             throw new ArgumentException(
@@ -32,7 +32,7 @@ public partial record LuaSemanticModel
     /// </summary>
     public ImmutableArray<LuaNameReference> FindGlobalReferences(string name)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        LunilGuard.NotNullOrWhiteSpace(name);
         return References
             .Where(reference =>
                 reference.ResolutionKind == LuaNameResolutionKind.Global &&

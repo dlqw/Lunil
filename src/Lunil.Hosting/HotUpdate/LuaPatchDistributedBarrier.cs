@@ -96,7 +96,7 @@ public sealed record LuaPatchDistributedBarrierSnapshot
 
     public bool IsSelected(string participantId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(participantId);
+        LunilGuard.NotNullOrWhiteSpace(participantId);
         return SelectedParticipants.Contains(participantId, StringComparer.Ordinal);
     }
 }

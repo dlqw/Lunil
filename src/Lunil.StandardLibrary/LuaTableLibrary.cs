@@ -823,7 +823,7 @@ internal static class LuaTableLibrary
 
     private static bool UnpackResultCountIsTooLarge(long first, long last)
     {
-        var maximumResultCount = (ulong)Array.MaxLength - 4;
+        var maximumResultCount = (ulong)LunilArray.MaximumLength - 4;
         if (first < 0 && last >= 0)
         {
             var negativeCount = (ulong)(-(first + 1)) + 1;

@@ -96,14 +96,25 @@ host.State.SetGlobal("world_session", LuaValue.FromUserdata(userdata));
 Keep the resource's runtime type and accessed members allowlisted. In the signed patch manifest,
 use a `HostResource + Continue` migration rule for its module-cache path; the candidate module must
 place a placeholder at that path rather than constructing another native resource. See the
-[hot-update lifecycle explanation](hot-update-lifecycle.pub.md) and
-[patch manifest reference](hot-update-reference.pub.md) for publication and rollback behavior.
+[hot-update lifecycle explanation](signed-patch-publication.pub.md) and
+[patch manifest reference](signed-patch-bundles.pub.md) for publication and rollback behavior.
 
-## 5. Prepare trimming and NativeAOT publication
+## 5. Select a binding mode
 
-Preserve the public constructors, members, and delegate signatures of every allowlisted application
-type with linker metadata such as `DynamicDependency`. Lunil preserves its delegate callback
-adapter and `Task<TResult>.Result` metadata, but missing application metadata still fails closed.
+Trusted .NET hosts can use `LuaClrBindingMode.RegistryThenReflection`, which keeps exact allowlists
+while using reflection for entries that are not present in a registry. NativeAOT, Unity IL2CPP,
+strict trimming, and deterministic hosts should generate exact bindings, pass their
+`LuaClrBindingRegistry` through `LuaClrOptions.BindingRegistry`, and select
+`LuaClrBindingMode.RegistryOnly`. A missing registry entry then fails closed without reflection.
+
+Follow [Generate AOT-safe CLR bindings](aot-bindings.pub.md) to declare requests, register the
+generated provider, configure allowlists, and emit Unity linker metadata.
+
+## 6. Prepare trimming and NativeAOT publication
+
+When `RegistryThenReflection` is used in a trimmed application, preserve the reflected public
+constructors, members, and delegate signatures with linker metadata such as `DynamicDependency`.
+Generated `RegistryOnly` invokers do not require application-owned runtime reflection metadata.
 Follow [How to publish with .NET NativeAOT and trimming](nativeaot-build-integration.pub.md) for the
 complete publish procedure.
 

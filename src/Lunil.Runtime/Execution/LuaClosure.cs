@@ -19,7 +19,7 @@ public sealed class LuaClosure : LuaGcObject
             Validate(owner, runtimeData.Module, function, upvalues),
             checked(64 + upvalues.Count * 8L))
     {
-        ArgumentNullException.ThrowIfNull(runtimeData);
+        LunilGuard.NotNull(runtimeData);
         _upvalues = [.. upvalues];
         _functionSlot = new LuaFunctionSlot(runtimeData.GetVersion(function.Id));
     }
@@ -76,7 +76,7 @@ public sealed class LuaClosure : LuaGcObject
 
     public void JoinUpvalue(int index, LuaClosure source, int sourceIndex)
     {
-        ArgumentNullException.ThrowIfNull(source);
+        LunilGuard.NotNull(source);
         if (!ReferenceEquals(Owner, source.Owner))
         {
             throw new LuaRuntimeException("cannot join upvalues from different Lua states");
@@ -89,7 +89,7 @@ public sealed class LuaClosure : LuaGcObject
 
     internal void ReplaceUpvalue(int index, LuaUpvalue upvalue)
     {
-        ArgumentNullException.ThrowIfNull(upvalue);
+        LunilGuard.NotNull(upvalue);
         if ((uint)index >= (uint)_upvalues.Length)
         {
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -121,10 +121,10 @@ public sealed class LuaClosure : LuaGcObject
         LuaIrFunction function,
         IReadOnlyList<LuaUpvalue> upvalues)
     {
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(module);
-        ArgumentNullException.ThrowIfNull(function);
-        ArgumentNullException.ThrowIfNull(upvalues);
+        LunilGuard.NotNull(owner);
+        LunilGuard.NotNull(module);
+        LunilGuard.NotNull(function);
+        LunilGuard.NotNull(upvalues);
         if (upvalues.Count != function.Upvalues.Length)
         {
             throw new ArgumentException("The closure upvalue count does not match its function.", nameof(upvalues));
@@ -437,8 +437,8 @@ public sealed class LuaNativeFunction
         LuaNativeFunctionBody body,
         LuaNativeFunctionKind kind)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(body);
+        LunilGuard.NotNullOrWhiteSpace(name);
+        LunilGuard.NotNull(body);
         Name = name;
         Body = body;
         Kind = kind;
@@ -449,8 +449,8 @@ public sealed class LuaNativeFunction
         LuaNativeFunctionStepBody stepBody,
         LuaNativeFunctionKind kind)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(stepBody);
+        LunilGuard.NotNullOrWhiteSpace(name);
+        LunilGuard.NotNull(stepBody);
         if (!IsCaptureFree(stepBody))
         {
             throw new ArgumentException(
@@ -542,8 +542,8 @@ public sealed class LuaNativeClosure : LuaGcObject
         LuaNativeFunction descriptor,
         ReadOnlySpan<LuaValue> captures)
     {
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentNullException.ThrowIfNull(descriptor);
+        LunilGuard.NotNull(owner);
+        LunilGuard.NotNull(descriptor);
         foreach (var value in captures)
         {
             owner.ValidateValue(value);

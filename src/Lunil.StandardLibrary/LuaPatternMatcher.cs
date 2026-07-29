@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Lunil.Runtime;
 using Lunil.Runtime.Values;
 
@@ -7,22 +6,32 @@ namespace Lunil.StandardLibrary;
 /// <summary>Byte-oriented Lua 5.4 pattern virtual machine.</summary>
 internal ref struct LuaPatternMatcher
 {
-    private const int MaximumCaptures = 32;
+    internal const int MaximumCaptures = 32;
     private const int MaximumDepth = 200;
     private const int Unfinished = -1;
     private const int PositionCapture = -2;
 
     private readonly ReadOnlySpan<byte> _source;
     private readonly ReadOnlySpan<byte> _pattern;
-    private CaptureBuffer _captures;
+    private readonly Span<LuaPatternCapture> _captures;
     private int _captureCount;
     private int _depth;
 
-    public LuaPatternMatcher(ReadOnlySpan<byte> source, ReadOnlySpan<byte> pattern)
+    public LuaPatternMatcher(
+        ReadOnlySpan<byte> source,
+        ReadOnlySpan<byte> pattern,
+        Span<LuaPatternCapture> captures)
     {
+        if (captures.Length < MaximumCaptures)
+        {
+            throw new ArgumentException(
+                $"The pattern capture buffer must contain at least {MaximumCaptures} entries.",
+                nameof(captures));
+        }
+
         _source = source;
         _pattern = pattern;
-        _captures = default;
+        _captures = captures[..MaximumCaptures];
         _captureCount = 0;
         _depth = 0;
     }
@@ -191,7 +200,7 @@ internal ref struct LuaPatternMatcher
             throw new LuaRuntimeException("too many captures");
         }
 
-        _captures[_captureCount++] = new Capture(source, length);
+        _captures[_captureCount++] = new LuaPatternCapture(source, length);
         var result = Match(source, pattern);
         if (result < 0)
         {
@@ -204,11 +213,13 @@ internal ref struct LuaPatternMatcher
     private int EndCapture(int source, int pattern)
     {
         var capture = FindOpenCapture();
-        _captures[capture] = new Capture(_captures[capture].Start, source - _captures[capture].Start);
+        _captures[capture] = new LuaPatternCapture(
+            _captures[capture].Start,
+            source - _captures[capture].Start);
         var result = Match(source, pattern);
         if (result < 0)
         {
-            _captures[capture] = new Capture(_captures[capture].Start, Unfinished);
+            _captures[capture] = new LuaPatternCapture(_captures[capture].Start, Unfinished);
         }
 
         return result;
@@ -454,14 +465,9 @@ internal ref struct LuaPatternMatcher
     private static bool IsAlphaNumeric(byte value) => IsAlpha(value) ||
         value is >= (byte)'0' and <= (byte)'9';
 
-    [InlineArray(MaximumCaptures)]
-    private struct CaptureBuffer
-    {
-        private Capture _element0;
-    }
-
-    private readonly record struct Capture(int Start, int Length);
 }
+
+internal readonly record struct LuaPatternCapture(int Start, int Length);
 
 internal sealed record PatternMatch(int Start, int End, PatternCapture[] Captures);
 

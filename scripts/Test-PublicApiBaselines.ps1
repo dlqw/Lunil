@@ -77,17 +77,35 @@ try {
     & dotnet tool restore
     if ($LASTEXITCODE -ne 0) { throw 'dotnet tool restore failed.' }
 
-    if (-not $NoBuild) {
-        $arguments = @('build', 'Lunil.sln', '--configuration', $Configuration, '--nologo')
-        if ($NoRestore) { $arguments += '--no-restore' }
-        & dotnet @arguments
-        if ($LASTEXITCODE -ne 0) { throw 'Building assemblies for public API validation failed.' }
+    $candidateProjects = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') `
+        -Recurse -Filter 'Lunil.*.csproj' | Sort-Object Name)
+    $projects = [Collections.Generic.List[System.IO.FileInfo]]::new()
+    foreach ($project in $candidateProjects) {
+        $isPackable = (& dotnet msbuild $project.FullName -nologo `
+            -getProperty:IsPackable -p:Configuration=$Configuration).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve IsPackable for $($project.FullName)."
+        }
+        if (-not [string]::Equals($isPackable, 'false', [StringComparison]::OrdinalIgnoreCase)) {
+            $projects.Add($project)
+        }
+    }
+    if ($projects.Count -ne 14) {
+        throw "Expected the active $compatibilityLine package scope to contain 14 projects, found $($projects.Count)."
     }
 
-    $projects = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') `
-        -Recurse -Filter 'Lunil.*.csproj' | Sort-Object Name)
-    if ($projects.Count -ne 13) {
-        throw "Expected the active $compatibilityLine package scope to contain 13 projects, found $($projects.Count)."
+    if (-not $NoBuild) {
+        foreach ($project in $projects) {
+            $arguments = @(
+                'build', $project.FullName,
+                '--configuration', $Configuration,
+                '--nologo')
+            if ($NoRestore) { $arguments += '--no-restore' }
+            & dotnet @arguments
+            if ($LASTEXITCODE -ne 0) {
+                throw "Building $($project.Name) for public API validation failed."
+            }
+        }
     }
 
     $resolvedGeneratedDirectory = [System.IO.Path]::GetFullPath($generatedDirectory)
@@ -104,19 +122,53 @@ try {
 
     $assemblies = [Collections.Generic.List[object]]::new()
     foreach ($project in $projects) {
-        $targetPath = (& dotnet msbuild $project.FullName -nologo `
-            -getProperty:TargetPath -p:Configuration=$Configuration).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
-            throw "Could not resolve the built target for $($project.FullName)."
+        $targetFrameworks = (& dotnet msbuild $project.FullName -nologo `
+            -getProperty:TargetFrameworks -p:Configuration=$Configuration).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve target frameworks for $($project.FullName)."
+        }
+        if ([string]::IsNullOrWhiteSpace($targetFrameworks)) {
+            $targetFrameworks = (& dotnet msbuild $project.FullName -nologo `
+                -getProperty:TargetFramework -p:Configuration=$Configuration).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($targetFrameworks)) {
+                throw "Could not resolve a target framework for $($project.FullName)."
+            }
         }
 
-        $assemblyName = [System.IO.Path]::GetFileNameWithoutExtension($targetPath)
+        $frameworks = @($targetFrameworks.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
+        $inputs = [Collections.Generic.List[string]]::new()
+        $assemblyName = $null
+        foreach ($framework in $frameworks) {
+            $targetPath = (& dotnet msbuild $project.FullName -nologo `
+                -getProperty:TargetPath -p:Configuration=$Configuration `
+                -p:TargetFramework=$framework).Trim()
+            if ($LASTEXITCODE -ne 0 -or
+                -not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+                throw "Could not resolve the built $framework target for $($project.FullName)."
+            }
+
+            $currentAssemblyName = [System.IO.Path]::GetFileNameWithoutExtension($targetPath)
+            if ($null -eq $assemblyName) {
+                $assemblyName = $currentAssemblyName
+            }
+            elseif ($assemblyName -ne $currentAssemblyName) {
+                throw "Target frameworks for $($project.FullName) produced different assembly names."
+            }
+
+            $inputs.Add("$framework=$targetPath")
+        }
+
         $baselineName = "$assemblyName.cs"
         $generatedPath = Join-Path $resolvedGeneratedDirectory $baselineName
-        & dotnet tool run Meziantou.Framework.PublicApiGenerator.Tool -- `
-            --input "net10.0=$targetPath" `
-            --output-file $generatedPath `
-            --omit-auto-generated-comment
+        $generatorArguments = @(
+            'tool', 'run', 'Meziantou.Framework.PublicApiGenerator.Tool', '--')
+        foreach ($input in $inputs) {
+            $generatorArguments += @('--input', $input)
+        }
+        $generatorArguments += @(
+            '--output-file', $generatedPath,
+            '--omit-auto-generated-comment')
+        & dotnet @generatorArguments
         if ($LASTEXITCODE -ne 0) {
             throw "Public API generation failed for $assemblyName."
         }

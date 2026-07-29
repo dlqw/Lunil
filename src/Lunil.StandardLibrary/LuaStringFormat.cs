@@ -29,7 +29,7 @@ internal static class LuaStringFormat
                 : LuaLibraryHelpers.CheckStringBytes(arguments, 0, "format").Length;
             output = new LuaNativeByteBuffer(context.State.Heap, initialCapacity: 0);
             output.ReserveCapacityHint(
-                (int)Math.Min(Array.MaxLength, (long)initialFormatLength + 32));
+                (int)Math.Min(LunilArray.MaximumLength, (long)initialFormatLength + 32));
             index = 0;
             argument = 1;
         }
@@ -247,7 +247,7 @@ internal static class LuaStringFormat
         var index = 0;
         while (index < modifiers.Length && acceptedFlags.Contains((char)modifiers[index]))
         {
-            if (modifiers[..index].Contains(modifiers[index]))
+            if (modifiers[..index].IndexOf(modifiers[index]) >= 0)
             {
                 throw new LuaRuntimeException(languageVersion == LuaLanguageVersion.Lua53
                     ? "invalid format (repeated flags)"
@@ -280,7 +280,7 @@ internal static class LuaStringFormat
             }
         }
 
-        if (index != modifiers.Length || !char.IsAsciiLetter(conversion))
+        if (index != modifiers.Length || !LunilChar.IsAsciiLetter(conversion))
         {
             if (languageVersion == LuaLanguageVersion.Lua53 &&
                 index < modifiers.Length && IsDigit(modifiers[index]))
@@ -332,7 +332,7 @@ internal static class LuaStringFormat
         int argument,
         LuaNativeByteBuffer output)
     {
-        if (hasModifiers && bytes.Contains((byte)0))
+        if (hasModifiers && bytes.IndexOf((byte)0) >= 0)
         {
             throw LuaLibraryHelpers.BadArgument("format", argument - 1, "string contains zeros");
         }
@@ -466,7 +466,7 @@ internal static class LuaStringFormat
         if (conversion is 'g' or 'G')
         {
             var wanted = precision is null or 0 ? (precision == 0 ? 1 : 6) : precision.Value;
-            var digits = mantissa.Count(char.IsAsciiDigit);
+            var digits = mantissa.Count(LunilChar.IsAsciiDigit);
             var leading = mantissa.TrimStart('+', '-').TrimStart('0').StartsWith('.')
                 ? mantissa.SkipWhile(character => character is '+' or '-' or '0' or '.').TakeWhile(character => character == '0').Count()
                 : 0;
@@ -497,7 +497,7 @@ internal static class LuaStringFormat
             return upper ? "-INF" : "-inf";
         }
 
-        var bits = BitConverter.DoubleToUInt64Bits(value);
+        var bits = LunilBitConverter.DoubleToUInt64Bits(value);
         var negative = (bits >> 63) != 0;
         var exponentBits = (int)((bits >> 52) & 0x7ff);
         var mantissa = bits & 0x000f_ffff_ffff_ffffUL;

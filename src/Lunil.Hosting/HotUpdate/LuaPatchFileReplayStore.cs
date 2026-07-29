@@ -96,7 +96,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         string path,
         LuaPatchFileReplayStoreOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        LunilGuard.NotNullOrWhiteSpace(path);
         _path = System.IO.Path.GetFullPath(path);
         _options = options ?? LuaPatchFileReplayStoreOptions.Default;
         if (_options.MaximumBytes <= 0 ||
@@ -161,7 +161,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         DateTimeOffset acquiredAt)
     {
         ValidateReservation(reservation);
-        ArgumentOutOfRangeException.ThrowIfEqual(acquiredAt, default, nameof(acquiredAt));
+        LunilGuard.NotEqual(acquiredAt, default, nameof(acquiredAt));
         var commitLock = TryAcquireCommitLock(reservation);
         if (commitLock is null)
         {
@@ -203,7 +203,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
 
     private void Complete(LuaPatchReplayReservation reservation, DateTimeOffset committedAt)
     {
-        ArgumentOutOfRangeException.ThrowIfEqual(committedAt, default, nameof(committedAt));
+        LunilGuard.NotEqual(committedAt, default, nameof(committedAt));
         lock (_gate)
         {
             using var writerLock = AcquireWriterLock();
@@ -220,7 +220,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
 
     private void Reopen(LuaPatchReplayReservation reservation, DateTimeOffset reopenedAt)
     {
-        ArgumentOutOfRangeException.ThrowIfEqual(reopenedAt, default, nameof(reopenedAt));
+        LunilGuard.NotEqual(reopenedAt, default, nameof(reopenedAt));
         lock (_gate)
         {
             using var writerLock = AcquireWriterLock();
@@ -292,7 +292,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
     private HeldCommitLock? TryAcquireCommitLock(LuaPatchReplayReservation reservation)
     {
         EnsureDirectory(CommitLockDirectory);
-        var name = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+        var name = LunilConvert.ToHexString(LunilCryptography.Sha256(Encoding.UTF8.GetBytes(
             reservation.Scope + "\0" + reservation.ReservationId)));
         var path = System.IO.Path.Combine(CommitLockDirectory, name + ".lock");
         var started = Stopwatch.GetTimestamp();
@@ -392,7 +392,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
             }
 
             var bytes = new byte[checked((int)stream.Length)];
-            stream.ReadExactly(bytes);
+            LunilStream.ReadExactly(stream, bytes);
             if (bytes.Length == 0)
             {
                 return new VerifiedReplayStore([], 0, new Dictionary<(string, string), ReplayState>());
@@ -642,7 +642,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         var bytes = JsonSerializer.SerializeToUtf8Bytes(
             payload,
             LuaPatchJsonContext.Default.LuaPatchReplayHashPayload);
-        return Convert.ToHexString(SHA256.HashData(bytes));
+        return LunilConvert.ToHexString(LunilCryptography.Sha256(bytes));
     }
 
     private void ValidateRecord(LuaPatchReplayRecord record)
@@ -652,7 +652,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
             string.IsNullOrWhiteSpace(record.PatchId) ||
             string.IsNullOrWhiteSpace(record.Nonce) ||
             string.IsNullOrWhiteSpace(record.ReservationId) ||
-            !Enum.IsDefined(record.State) ||
+            !LunilEnum.IsDefined(record.State) ||
             record.Timestamp == default ||
             !IsSha256(record.Hash) ||
             record.PreviousHash is not null && !IsSha256(record.PreviousHash))
@@ -679,10 +679,10 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         string nonce,
         DateTimeOffset timestamp)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
-        ArgumentException.ThrowIfNullOrWhiteSpace(patchId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(nonce);
-        ArgumentOutOfRangeException.ThrowIfEqual(timestamp, default, nameof(timestamp));
+        LunilGuard.NotNullOrWhiteSpace(scope);
+        LunilGuard.NotNullOrWhiteSpace(patchId);
+        LunilGuard.NotNullOrWhiteSpace(nonce);
+        LunilGuard.NotEqual(timestamp, default, nameof(timestamp));
         ValidateIdentityLength(scope, nameof(scope));
         ValidateIdentityLength(patchId, nameof(patchId));
         ValidateIdentityLength(nonce, nameof(nonce));
@@ -690,13 +690,13 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
 
     private void ValidateReservation(LuaPatchReplayReservation reservation)
     {
-        ArgumentNullException.ThrowIfNull(reservation);
+        LunilGuard.NotNull(reservation);
         ValidateIdentity(
             reservation.Scope,
             reservation.PatchId,
             reservation.Nonce,
             reservation.ReservedAt);
-        ArgumentException.ThrowIfNullOrWhiteSpace(reservation.ReservationId);
+        LunilGuard.NotNullOrWhiteSpace(reservation.ReservationId);
         ValidateIdentityLength(reservation.ReservationId, nameof(reservation));
     }
 
@@ -729,7 +729,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
         timeout >= TimeSpan.Zero && timeout <= TimeSpan.FromMinutes(1);
 
     private static bool Elapsed(long started, TimeSpan timeout) =>
-        timeout == TimeSpan.Zero || Stopwatch.GetElapsedTime(started) >= timeout;
+        timeout == TimeSpan.Zero || LunilStopwatch.GetElapsedTime(started) >= timeout;
 
     private void EnsureParentDirectory(string path) =>
         EnsureDirectory(System.IO.Path.GetDirectoryName(path)!);
@@ -744,7 +744,7 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
 
     private static bool IsSha256(string? value) =>
         value is not null &&
-        value.Length == SHA256.HashSizeInBytes * 2 &&
+        value.Length == LunilCryptography.Sha256HashSize * 2 &&
         value.All(static character => character is >= '0' and <= '9' or >= 'A' and <= 'F');
 
     private static LuaPatchReplayStoreException Error(
@@ -772,14 +772,14 @@ public sealed class LuaPatchFileReplayStore : ILuaPatchReplayStore
 
         public void Complete(DateTimeOffset committedAt)
         {
-            ObjectDisposedException.ThrowIf(_lock is null, this);
+            LunilGuard.NotDisposed(_lock is null, this);
             _store.Complete(Reservation, committedAt);
             IsCompleted = true;
         }
 
         public void Reopen(DateTimeOffset reopenedAt)
         {
-            ObjectDisposedException.ThrowIf(_lock is null, this);
+            LunilGuard.NotDisposed(_lock is null, this);
             if (!IsCompleted)
             {
                 return;

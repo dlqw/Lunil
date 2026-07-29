@@ -31,14 +31,14 @@ public static class Lua54ChunkReader
 
     private static void ValidateOptions(Lua54ChunkReaderOptions options)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumChunkBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumPrototypeDepth);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumPrototypeCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumInstructionCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumConstantCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumUpvalueCount);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumStringBytes);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDebugEntryCount);
+        LunilGuard.Positive(options.MaximumChunkBytes);
+        LunilGuard.Positive(options.MaximumPrototypeDepth);
+        LunilGuard.Positive(options.MaximumPrototypeCount);
+        LunilGuard.Positive(options.MaximumInstructionCount);
+        LunilGuard.Positive(options.MaximumConstantCount);
+        LunilGuard.Positive(options.MaximumUpvalueCount);
+        LunilGuard.Positive(options.MaximumStringBytes);
+        LunilGuard.Positive(options.MaximumDebugEntryCount);
     }
 
     private ref struct Reader
@@ -425,7 +425,7 @@ public static class Lua54ChunkReader
                 (4, Lua54ByteOrder.BigEndian) => BinaryPrimitives.ReadInt32BigEndian(bytes),
                 (8, Lua54ByteOrder.LittleEndian) => BinaryPrimitives.ReadInt64LittleEndian(bytes),
                 (8, Lua54ByteOrder.BigEndian) => BinaryPrimitives.ReadInt64BigEndian(bytes),
-                _ => throw new UnreachableException(),
+                _ => throw new LunilUnreachableException(),
             };
 
         private static double ReadNumber(ReadOnlySpan<byte> bytes, Lua54ByteOrder byteOrder) =>
@@ -439,7 +439,7 @@ public static class Lua54ChunkReader
                     BinaryPrimitives.ReadInt64LittleEndian(bytes)),
                 (8, Lua54ByteOrder.BigEndian) => BitConverter.Int64BitsToDouble(
                     BinaryPrimitives.ReadInt64BigEndian(bytes)),
-                _ => throw new UnreachableException(),
+                _ => throw new LunilUnreachableException(),
             };
 
         private static void AddToBudget(

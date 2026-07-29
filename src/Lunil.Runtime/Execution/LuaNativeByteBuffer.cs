@@ -18,13 +18,13 @@ internal sealed class LuaNativeByteBuffer
 
     internal LuaNativeByteBuffer(LuaHeap owner, int initialCapacity)
     {
-        ArgumentNullException.ThrowIfNull(owner);
-        ArgumentOutOfRangeException.ThrowIfNegative(initialCapacity);
+        LunilGuard.NotNull(owner);
+        LunilGuard.NotNegative(initialCapacity);
 
         _ownerIdentity = owner.Identity;
         _maximumLogicalBytes = owner.MaximumLogicalBytes;
         _maximumLength = checked((int)Math.Min(
-            Array.MaxLength,
+            LunilArray.MaximumLength,
             Math.Max(0, owner.MaximumLogicalBytes - LuaString.LogicalOverhead)));
         if (initialCapacity > _maximumLength)
         {
@@ -59,7 +59,7 @@ internal sealed class LuaNativeByteBuffer
 
     internal void AppendRepeated(byte value, int count)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        LunilGuard.NotNegative(count);
         var requiredLength = (long)Length + count;
         if (requiredLength > _maximumLength)
         {
@@ -101,7 +101,7 @@ internal sealed class LuaNativeByteBuffer
     /// </summary>
     internal void ReserveCapacityHint(int capacity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegative(capacity);
+        LunilGuard.NotNegative(capacity);
         EnsureCapacity(Math.Min(capacity, _maximumLength));
     }
 
@@ -120,7 +120,7 @@ internal sealed class LuaNativeByteBuffer
     /// </summary>
     internal LuaString MoveToString(LuaStringPool pool)
     {
-        ArgumentNullException.ThrowIfNull(pool);
+        LunilGuard.NotNull(pool);
         if (pool.OwnerIdentity != _ownerIdentity)
         {
             throw new LuaRuntimeException(

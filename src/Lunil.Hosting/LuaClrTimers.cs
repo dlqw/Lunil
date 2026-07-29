@@ -390,7 +390,7 @@ public sealed partial class LuaClrBridge
     private readonly List<LuaClrTimerRegistration> _timerRegistrations = [];
     private readonly List<LuaClrTimerRegistration> _dueTimerBuffer = [];
     private readonly Dictionary<LuaClrTimerRegistration, int> _timerCatchUpCounts =
-        new(ReferenceEqualityComparer.Instance);
+        new(LunilReferenceEqualityComparer.Instance);
     private long _nextTimerOrder;
 
     /// <summary>Gets the number of live timers admitted by the current generation.</summary>
@@ -409,7 +409,7 @@ public sealed partial class LuaClrBridge
     public LuaClrTimer ScheduleTimer(LuaValue callback, LuaClrTimerOptions options)
     {
         RequireCapability(LuaClrCapabilities.Timers);
-        ArgumentNullException.ThrowIfNull(options);
+        LunilGuard.NotNull(options);
         ValidateTimerOptions(options);
         if (callback.Kind != LuaValueKind.Function || callback.TryGetClosure() is null)
         {
@@ -478,7 +478,24 @@ public sealed partial class LuaClrBridge
     public int DispatchTimers() => DispatchTimers(_options.MaximumTimerDispatchCount);
 
     /// <summary>Dispatches at most <paramref name="maximumCallbacks"/> due timer callbacks.</summary>
-    public int DispatchTimers(int maximumCallbacks)
+    public int DispatchTimers(int maximumCallbacks) => DispatchTimersCore(
+        maximumCallbacks,
+        (callback, arguments) => InvokeLuaCallback(
+            callback,
+            arguments,
+            _timerExecutionOptions));
+
+    internal int DispatchTimersForGameLoop(
+        int maximumCallbacks,
+        Action<LuaValue, LuaValue[]> enqueueCallback)
+    {
+        LunilGuard.NotNull(enqueueCallback);
+        return DispatchTimersCore(maximumCallbacks, enqueueCallback);
+    }
+
+    private int DispatchTimersCore(
+        int maximumCallbacks,
+        Action<LuaValue, LuaValue[]> dispatchCallback)
     {
         RequireCapability(LuaClrCapabilities.Timers);
         if (maximumCallbacks is < 1 || maximumCallbacks > _options.MaximumTimerDispatchCount)
@@ -549,10 +566,9 @@ public sealed partial class LuaClrBridge
                                 _timerCatchUpCounts[registration] = catchUpCount + 1;
                             }
 
-                            InvokeLuaCallback(
+                            dispatchCallback(
                                 registration.Callback,
-                                [LuaValue.FromInteger(tick), LuaValue.FromInteger(missed)],
-                                _timerExecutionOptions);
+                                [LuaValue.FromInteger(tick), LuaValue.FromInteger(missed)]);
                             dispatched++;
                         }
 
@@ -660,7 +676,7 @@ public sealed partial class LuaClrBridge
                 "The CLR timer period must be positive, infinite, or no more than 3650 days.");
         }
 
-        if (!Enum.IsDefined(options.CatchUpPolicy))
+        if (!LunilEnum.IsDefined(options.CatchUpPolicy))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "The timer catch-up policy is invalid.");
         }

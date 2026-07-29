@@ -13,8 +13,8 @@ internal static class AnnotationDocumentParser
         Func<AnnotationParseContext, string, LuaAnnotationSyntax> parseDirective,
         bool applySuppression)
     {
-        ArgumentNullException.ThrowIfNull(lexing);
-        ArgumentNullException.ThrowIfNull(options);
+        LunilGuard.NotNull(lexing);
+        LunilGuard.NotNull(options);
         LuaAnnotationLexer.ValidateOptions(options);
         if (!options.Enabled)
         {

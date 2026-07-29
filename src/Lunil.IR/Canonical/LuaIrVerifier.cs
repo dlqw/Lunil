@@ -23,7 +23,7 @@ public static class LuaIrVerifier
         LuaIrModule module,
         LuaIrVerifierOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(module);
+        LunilGuard.NotNull(module);
         options ??= LuaIrVerifierOptions.Default;
         var errors = ImmutableArray.CreateBuilder<LuaIrVerificationError>();
 
@@ -254,9 +254,9 @@ public static class LuaIrVerifier
                     (uint)instruction.B < (uint)function.Constants.Length &&
                     function.Constants[instruction.B].Kind == LuaIrConstantKind.String),
             LuaIrOpcode.Unary => Register(instruction.A) && Register(instruction.B) &&
-                Enum.IsDefined((LuaIrUnaryOperator)instruction.C),
+                LunilEnum.IsDefined((LuaIrUnaryOperator)instruction.C),
             LuaIrOpcode.Binary => Register(instruction.A) && Register(instruction.B) &&
-                Register(instruction.C) && Enum.IsDefined((LuaIrBinaryOperator)instruction.D),
+                Register(instruction.C) && LunilEnum.IsDefined((LuaIrBinaryOperator)instruction.D),
             LuaIrOpcode.Jump => Target(instruction.B) && CloseBase(instruction.C),
             LuaIrOpcode.JumpIfFalse or LuaIrOpcode.JumpIfTrue =>
                 Register(instruction.A) && Target(instruction.B) &&
@@ -264,7 +264,7 @@ public static class LuaIrVerifier
                     instruction.D == 1 && instruction.C >= 0 &&
                     instruction.C <= function.RegisterCount),
             LuaIrOpcode.Call => Register(instruction.A) && Count(instruction.B) && Count(instruction.C) &&
-                Enum.IsDefined((LuaIrCallKind)instruction.D) &&
+                LunilEnum.IsDefined((LuaIrCallKind)instruction.D) &&
                 (instruction.B < 0 || RegisterRange(instruction.A + 1, instruction.B)) &&
                 (instruction.C < 0 || instruction.C == 0 || RegisterRange(instruction.A, instruction.C)),
             LuaIrOpcode.TailCall => Register(instruction.A) && Count(instruction.B) &&
