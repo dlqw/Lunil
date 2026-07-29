@@ -13,6 +13,7 @@
     <Description>Command-line compiler, analyzer, runner, and Lua chunk builder for Lunil.</Description>
     <PackageTags>lua;lua54;cli;compiler;analysis;dotnet-tool</PackageTags>
     <PublishAot Condition="'$(LunilNativeAotPublish)' == 'true'">true</PublishAot>
+    <SelfContained Condition="'$(LunilNativeAotPublish)' == 'true'">true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
