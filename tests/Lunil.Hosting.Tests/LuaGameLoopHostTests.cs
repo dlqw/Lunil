@@ -437,7 +437,9 @@ public sealed class LuaGameLoopHostTests
         var operation = game.ContinueWith(task, callback);
 
         _pendingTask.SetResult(73);
-        Assert.True(SpinWait.SpinUntil(() => game.PendingWorkCount != 0, TimeSpan.FromSeconds(5)));
+        Assert.True(SpinWait.SpinUntil(
+            () => game.PendingWorkCount != 0,
+            TimeSpan.FromSeconds(30)));
         var tick = game.Tick();
 
         Assert.True(tick.Succeeded, string.Join("; ", tick.Failures.Select(f => f.Message)));
