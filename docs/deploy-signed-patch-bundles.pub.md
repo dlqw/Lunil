@@ -44,7 +44,9 @@ lunil patch verify update.lpatch --trust-store patch-trust.json
 lunil patch dry-run update.lpatch --trust-store patch-trust.json
 ```
 
-Bind acceptance and replay protection to one stable deployment target. The coordinator requires
+Bind acceptance and replay protection to one stable deployment target. `RuntimeAbi` is a
+host-defined application compatibility label, not the Lunil product version; keep it stable only
+across application builds that can safely consume the same patch payloads. The coordinator requires
 `ReplayScope` to equal that target's `TargetId`:
 
 ```csharp
@@ -55,7 +57,7 @@ var prepareOptions = new LuaPatchPrepareOptions
     {
         TargetBuild = currentBuild,
         CurrentRevision = currentRevision,
-        RuntimeAbi = "lunil-0.13",
+        RuntimeAbi = "my-game-runtime-v1",
         AllowedChannels = ["production"],
         GrantedCapabilities = hostPatchCapabilities,
         TargetLabels =

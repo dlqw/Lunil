@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "contractId": "vscode-test",
+  "globals": {},
+  "modules": {},
+  "functions": {
+    "game.run": {
+      "path": "game.run",
+      "parameters": [],
+      "returns": [
+        {
+          "kind": "Number",
+          "name": null,
+          "isNullable": false,
+          "fields": {},
+          "parameters": [],
+          "returns": [],
+          "hasVariadicParameters": false,
+          "hasVariadicReturns": false
+        }
+      ],
+      "hasVariadicParameters": false,
+      "hasVariadicReturns": false,
+      "overloads": [],
+      "effects": "None",
+      "callback": null,
+      "persistence": null,
+      "source": {
+        "uri": "csharp://Game/Run",
+        "line": 1,
+        "column": 1,
+        "implementationUri": "csharp-implementation://Game/Run"
+      }
+    }
+  }
+}

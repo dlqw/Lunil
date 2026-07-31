@@ -8,18 +8,18 @@ process and physics lifecycle. The verified integration targets are Godot 4.4 an
 ## Prerequisites
 
 - A Godot 4.4 or 4.6 .NET project.
-- The `Lunil.Godot` `0.13.0` NuGet package.
-- The `addons/lunil` directory from the 0.13.0 release.
+- The `Lunil.Godot` `0.14.0` NuGet package.
+- The `addons/lunil` directory from the 0.14.0 release.
 
 ## 1. Install the package and addon
 
 Add the package to the Godot C# project:
 
 ```xml
-<PackageReference Include="Lunil.Godot" Version="0.13.0" />
+<PackageReference Include="Lunil.Godot" Version="0.14.0" />
 ```
 
-Download `Lunil.Godot.addon-0.13.0.zip` from the `v0.13.0` GitHub Release, extract it, and copy the
+Download `Lunil.Godot.addon-0.14.0.zip` from the `v0.14.0` GitHub Release, extract it, and copy the
 archive's `addons/lunil` directory into the project as `res://addons/lunil`. Then enable **Lunil**
 under **Project > Project Settings > Plugins**. The addon exposes the `LunilGameLoop` node and
 `LunilScript` resource while the NuGet package supplies their implementation.
@@ -110,7 +110,7 @@ Each sample prints a completion message with result `2` and exits successfully. 
 separate so one editor does not replace the other version's generated `.godot` metadata.
 
 Desktop and Android are stable. Godot iOS support is preview because the official .NET exporter,
-Xcode build, signing, and device execution require macOS. Godot Web is outside the 0.13 support
+Xcode build, signing, and device execution require macOS. Godot Web is outside the 0.14 support
 matrix.
 
 See the [Godot reference](godot-reference.pub.md) for lifecycle and platform details.

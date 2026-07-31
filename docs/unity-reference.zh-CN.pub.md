@@ -7,7 +7,7 @@
 | 字段 | 值 |
 | --- | --- |
 | Package ID | `com.dlqw.lunil` |
-| 版本 | `0.13.0` |
+| 版本 | `0.14.0` |
 | 最低 Unity | `2022.3` |
 | Runtime backend | 可移植解释器 |
 | 默认 CLR mode | 关闭；推荐生成的 `RegistryOnly` |

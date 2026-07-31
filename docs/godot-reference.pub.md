@@ -6,11 +6,16 @@
 
 | Field | Value |
 | --- | --- |
-| NuGet package | `Lunil.Godot` `0.13.0` |
+| NuGet package | `Lunil.Godot` `0.14.0` |
 | Addon path | `res://addons/lunil` |
 | Supported Godot | 4.4 and 4.6 .NET |
 | Runtime backend | Portable interpreter |
 | Default CLR mode | Disabled; generated `RegistryOnly` is recommended |
+
+The addon exposes editor-facing `LunilGameLoop` and `LunilScript` classes. They derive from the
+`Lunil.Godot` NuGet package's `LuaGodotGameLoop` and `LuaGodotScriptResource` public types,
+respectively. Use the addon names for scene/resource creation and the base names when integrating
+directly from C# without the addon wrappers.
 
 ## Platform matrix
 
@@ -21,9 +26,9 @@
 | Linux/macOS desktop | Stable | Export compatibility |
 | Android | Stable | Godot 4.4 uses .NET 8; Godot 4.6 export templates require .NET 9 |
 | iOS | Preview | Official C# exporter and Apple build toolchain require macOS |
-| Web | Not in 0.13 | No compatibility commitment |
+| Web | Not in 0.14 | No compatibility commitment |
 
-## `LuaGodotGameLoop`
+## `LuaGodotGameLoop` and addon `LunilGameLoop`
 
 | Member | Behavior |
 | --- | --- |
@@ -47,7 +52,8 @@ all registered adapters, and `ActiveHostCount` exposes the current count.
 
 ## Resources and services
 
-- `LuaGodotScriptResource`: UTF-8 source plus stable asset and module identities.
+- `LuaGodotScriptResource`: UTF-8 source plus stable asset and module identities. The addon's
+  editor-facing `LunilScript` derives from this type.
 - `LuaGodotAssetResolver`: exact asset, module, and virtual-file resolver over registered resources.
 - `LuaGodotDispatcher`: owner-thread queue with bounded `Drain`; disposal rejects new callbacks.
 - `LuaGodotTimeProvider`: monotonic microsecond timestamps from `Time.GetTicksUsec()`.

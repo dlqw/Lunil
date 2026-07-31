@@ -35,6 +35,8 @@ public enum LuaTypeKind : byte
     Enum,
     Overload,
     Callable,
+    Metatable,
+    Prototype,
 }
 
 /// <summary>Base immutable semantic type produced by static analysis.</summary>
@@ -144,6 +146,29 @@ public sealed record LuaStructuralTableType(
             return $"{{{string.Join(", ", fields)}}}";
         }
     }
+}
+
+/// <summary>
+/// Flow-sensitive table value with an attached metatable. <see cref="BaseType"/> represents raw
+/// storage; effective lookup also consults <see cref="MetatableType"/>.
+/// </summary>
+public sealed record LuaMetatableType(
+    LuaType BaseType,
+    LuaType MetatableType,
+    bool IsPrecise = true) : LuaType(LuaTypeKind.Metatable)
+{
+    public override string DisplayName => BaseType.DisplayName;
+}
+
+/// <summary>Recognized Lua class/prototype table with optional annotation and inheritance facts.</summary>
+public sealed record LuaPrototypeType(
+    string Name,
+    LuaType Shape,
+    ImmutableArray<LuaType> BaseTypes,
+    bool UsesSelfIndex,
+    bool IsPrecise = true) : LuaType(LuaTypeKind.Prototype)
+{
+    public override string DisplayName => Name;
 }
 
 public sealed record LuaTupleType(ImmutableArray<LuaType> Elements) : LuaType(LuaTypeKind.Tuple)

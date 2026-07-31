@@ -92,6 +92,28 @@ public interface ILuaGameLoopPersistentStore
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>Adds deletion and atomic namespace clearing without breaking V1 stores.</summary>
+public interface ILuaGameLoopPersistentStoreV2 : ILuaGameLoopPersistentStore
+{
+    ValueTask<bool> DeleteAsync(
+        string key,
+        CancellationToken cancellationToken = default);
+
+    ValueTask ClearAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>Versioned serialization schema exposed by a persistent host implementation.</summary>
+public sealed record LuaGameLoopPersistenceSchema(
+    string SchemaId,
+    int Version,
+    string? MigrationFunction = null);
+
+/// <summary>Allows tooling to keep runtime persistence schemas and analysis contracts consistent.</summary>
+public interface ILuaGameLoopPersistenceSchemaProvider
+{
+    IReadOnlyCollection<LuaGameLoopPersistenceSchema> PersistenceSchemas { get; }
+}
+
 /// <summary>A binary asset or persistent value lookup that distinguishes missing from empty.</summary>
 public readonly record struct LuaGameLoopReadResult(bool Found, ReadOnlyMemory<byte> Value)
 {

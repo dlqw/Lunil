@@ -13,4 +13,7 @@ public sealed record LuaAnalysisEnvironment
     /// </summary>
     public ImmutableDictionary<string, LuaType> ModuleTypes { get; init; } =
         ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+
+    /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
+    public LuaHostAnalysisContract? HostContract { get; init; }
 }

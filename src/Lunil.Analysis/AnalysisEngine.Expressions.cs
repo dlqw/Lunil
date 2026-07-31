@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Semantics.Binding;
 using Lunil.Syntax.Lexing;
 using Lunil.Syntax.Parsing;
@@ -116,6 +117,20 @@ internal sealed partial class AnalysisEngine
         var key = reference.ResolutionKind == LuaNameResolutionKind.Global
             ? VariableKey.Global(reference.Name)
             : VariableKey.Local(reference.Symbol.Id);
+        if (reference.Symbol.IsCaptured)
+        {
+            if (!_upvalueCells.TryGetValue(reference.Symbol.Id, out var cell))
+            {
+                var initial = state.Types.GetValueOrDefault(
+                    key,
+                    _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
+                cell = new UpvalueCellState(reference.Symbol, initial);
+                _upvalueCells.Add(reference.Symbol.Id, cell);
+            }
+
+            cell.Readers.Add(_currentFunction?.FunctionId ?? 0);
+            state.Types[key] = cell.Type;
+        }
         if (!key.IsGlobal && !state.Assigned.Contains(key))
         {
             _context.AddDiagnostic(
@@ -301,10 +316,13 @@ internal sealed partial class AnalysisEngine
     {
         var target = expression.ChildNodes().Single();
         var targetType = InferExpression(target, state);
+        targetType = ApplyPathNarrowing(target, targetType, state, expression.Span);
         var nameToken = expression.ChildTokens().Last(static token =>
             token.Kind == LuaTokenKind.Identifier);
         var name = GetTokenText(nameToken);
-        return InferMemberType(targetType, name, expression.Span);
+        var result = InferMemberType(targetType, name, expression.Span);
+        RecordPathType(expression, result, state);
+        return result;
     }
 
     private LuaType InferMemberType(LuaType target, string name, Lunil.Core.Text.TextSpan span)
@@ -317,6 +335,16 @@ internal sealed partial class AnalysisEngine
         if (target.Kind == LuaTypeKind.Unknown)
         {
             return LuaTypes.Unknown;
+        }
+
+        if (target is LuaPrototypeType { IsPrecise: false })
+        {
+            return LuaTypes.Any;
+        }
+
+        if (TryInferEffectiveMember(target, name, out var effective))
+        {
+            return effective;
         }
 
         var item = _relations.FindField(target, name);
@@ -338,21 +366,31 @@ internal sealed partial class AnalysisEngine
     {
         var nodes = expression.ChildNodes().ToArray();
         var target = InferExpression(nodes[0], state);
+        target = ApplyPathNarrowing(nodes[0], target, state, expression.Span);
         var index = InferExpression(nodes[1], state);
         if (target.Kind == LuaTypeKind.Any)
         {
             return LuaTypes.Any;
         }
 
+        if (target is LuaMetatableType metatable &&
+            TryInferMetatableIndex(metatable, index, out var metatableResult))
+        {
+            RecordPathType(expression, metatableResult, state);
+            return metatableResult;
+        }
+
         if (target is LuaArrayType array)
         {
             CheckAssignable(index, LuaTypes.Integer, nodes[1].Span, "array index");
+            RecordPathType(expression, array.ElementType, state);
             return array.ElementType;
         }
 
         if (target is LuaMapType map)
         {
             CheckAssignable(index, map.KeyType, nodes[1].Span, "map index");
+            RecordPathType(expression, map.ValueType, state);
             return map.ValueType;
         }
 
@@ -365,30 +403,36 @@ internal sealed partial class AnalysisEngine
                     string.Equals(candidate.Name, name, StringComparison.Ordinal));
                 if (item is not null)
                 {
-                    return item.IsOptional
+                    var fieldType = item.IsOptional
                         ? _relations.Union(item.ValueType, LuaTypes.Nil)
                         : item.ValueType;
+                    RecordPathType(expression, fieldType, state);
+                    return fieldType;
                 }
             }
 
             if (IsIntegerLike(index) && table.ArrayElementType is not null)
             {
+                RecordPathType(expression, table.ArrayElementType, state);
                 return table.ArrayElementType;
             }
 
             if (table.MapKeyType is not null && table.MapValueType is not null)
             {
                 CheckAssignable(index, table.MapKeyType, nodes[1].Span, "table index");
+                RecordPathType(expression, table.MapValueType, state);
                 return table.MapValueType;
             }
         }
 
         if (target is LuaUnionType union)
         {
-            return _relations.Union(union.Types.Select(member => InferIndexedMember(
+            var unionResult = _relations.Union(union.Types.Select(member => InferIndexedMember(
                 member,
                 index,
                 nodes[1].Span)));
+            RecordPathType(expression, unionResult, state);
+            return unionResult;
         }
 
         _context.AddDiagnostic(
@@ -504,12 +548,31 @@ internal sealed partial class AnalysisEngine
             }
         }
 
+        if (InferHostCall(expression, state, out var hostResult))
+        {
+            RecordCallSite(
+                expression,
+                calleeNode,
+                callee,
+                receiver,
+                receiverType,
+                memberName,
+                LuaCallResolutionStatus.Resolved,
+                unresolvedReason: null);
+            return hostResult;
+        }
+
         var argumentTypes = arguments.Select(argument => InferExpression(argument, state)).ToImmutableArray();
+        if (callee is LuaMetatableType && TryGetMetamethodSignatures(callee, "__call", out _))
+        {
+            argumentTypes = [callee, .. argumentTypes];
+        }
         var signatures = GetCallSignatures(callee);
         if (signatures.IsEmpty)
         {
             if (callee.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown or LuaTypeKind.Function)
             {
+                InvalidateEscapedMetatables(arguments, state);
                 RecordCallSite(
                     expression,
                     calleeNode,
@@ -543,6 +606,28 @@ internal sealed partial class AnalysisEngine
             .ToArray();
         var selected = instantiated.FirstOrDefault(signature =>
             IsCallCompatible(signature, argumentTypes)) ?? instantiated[0];
+        if (expression.Kind == LuaSyntaxKind.MethodCallExpression &&
+            !selected.HasImplicitSelf &&
+            (selected.Parameters.IsEmpty ||
+             !string.Equals(selected.Parameters[0].Name, "self", StringComparison.Ordinal)))
+        {
+            _context.AddDiagnostic(
+                "LUA6017",
+                expression.Span,
+                "Colon call supplies an implicit self argument to a function that was declared without self.");
+        }
+        else if (expression.Kind == LuaSyntaxKind.CallExpression &&
+                 calleeNode?.Kind == LuaSyntaxKind.MemberAccessExpression &&
+                 selected.HasImplicitSelf &&
+                 argumentTypes.Length < selected.Parameters.Count(static parameter =>
+                     !parameter.IsOptional && !parameter.IsVararg))
+        {
+            _context.AddDiagnostic(
+                "LUA6018",
+                expression.Span,
+                "Dot call omits the implicit self argument required by a colon-declared method.");
+        }
+
         CheckCall(selected, argumentTypes, expression.Span);
         RecordCallSite(
             expression,
@@ -606,18 +691,25 @@ internal sealed partial class AnalysisEngine
                     .Select(argument => InferExpression(argument, state))
                     .ToArray();
                 if (argumentTypes.FirstOrDefault() is LuaStringLiteralType moduleName &&
-                    _environment.ModuleTypes.TryGetValue(
-                        DecodeLiteral(moduleName),
-                        out var moduleType))
+                    (_environment.ModuleTypes.TryGetValue(
+                         DecodeLiteral(moduleName),
+                         out var moduleType) ||
+                     _hostModuleTypes.TryGetValue(
+                         DecodeLiteral(moduleName),
+                         out moduleType)))
                 {
                     return new LuaTypePack([moduleType]);
                 }
 
                 return new LuaTypePack([LuaTypes.Any]);
             case "setmetatable":
-                return new LuaTypePack([
-                    arguments.Length == 0 ? LuaTypes.Any : InferExpression(arguments[0], state),
-                ]);
+                return InferSetMetatable(expression.Span, arguments, state);
+            case "getmetatable":
+                return InferGetMetatable(arguments, state);
+            case "rawget":
+                return InferRawGet(arguments, state);
+            case "rawset":
+                return InferRawSet(arguments, state);
             case "pcall":
             case "xpcall":
                 foreach (var argument in arguments)
@@ -651,6 +743,13 @@ internal sealed partial class AnalysisEngine
     {
         switch (type)
         {
+            case LuaMetatableType metatable:
+                if (TryGetMetamethodSignatures(metatable, "__call", out var metamethods))
+                {
+                    destination.AddRange(metamethods);
+                }
+
+                break;
             case LuaFunctionType function:
                 destination.Add(function);
                 break;
@@ -850,7 +949,8 @@ internal sealed partial class AnalysisEngine
                 LuaTypeKind.Integer or LuaTypeKind.Float or LuaTypeKind.Number => "number",
                 LuaTypeKind.String => "string",
                 LuaTypeKind.Array or LuaTypeKind.Map or LuaTypeKind.StructuralTable or
-                    LuaTypeKind.Table or LuaTypeKind.Class => "table",
+                    LuaTypeKind.Table or LuaTypeKind.Class or LuaTypeKind.Metatable or
+                    LuaTypeKind.Prototype => "table",
                 LuaTypeKind.Function or LuaTypeKind.Overload or LuaTypeKind.Callable => "function",
                 LuaTypeKind.Thread => "thread",
                 LuaTypeKind.Userdata => "userdata",
@@ -873,6 +973,10 @@ internal sealed partial class AnalysisEngine
             ? _declaredTypes.GetValueOrDefault(key, LuaTypes.Any)
             : baseType;
         var existing = _relations.FindField(constraintType, name);
+        if (existing is null && baseType is LuaPrototypeType)
+        {
+            existing = _relations.FindField(baseType, name);
+        }
         if (existing is not null)
         {
             CheckAssignable(value, existing.ValueType, target.Span, $"member '{name}'");
@@ -880,8 +984,24 @@ internal sealed partial class AnalysisEngine
 
         if (hasVariable)
         {
-            var next = AddOrReplaceField(baseType, name, value);
+            LuaType next;
+            if (name == "__index" && ReferenceEquals(baseType, value))
+            {
+                next = baseType is LuaPrototypeType prototype
+                    ? prototype with { UsesSelfIndex = true }
+                    : new LuaPrototypeType(
+                        symbol.Name,
+                        baseType,
+                        GetPrototypeBaseTypes(baseType),
+                        UsesSelfIndex: true);
+            }
+            else
+            {
+                next = AssignEffectiveMember(baseType, name, value, target.Span);
+            }
+
             AssignVariable(key, symbol, next, target.Span, state);
+            PropagateTableMutation(state, baseType, next, key);
         }
     }
 
@@ -893,6 +1013,15 @@ internal sealed partial class AnalysisEngine
         LuaType next = baseType;
         switch (baseType)
         {
+            case LuaPrototypeType prototype when indexType is LuaStringLiteralType text:
+                next = prototype with
+                {
+                    Shape = AddOrReplaceField(prototype.Shape, DecodeLiteral(text), value),
+                };
+                break;
+            case LuaPrototypeType prototype:
+                next = prototype with { IsPrecise = false };
+                break;
             case LuaArrayType array:
                 CheckAssignable(indexType, LuaTypes.Integer, nodes[1].Span, "array index");
                 CheckAssignable(value, array.ElementType, target.Span, "array element");
@@ -923,11 +1052,17 @@ internal sealed partial class AnalysisEngine
         if (TryGetVariableKey(nodes[0], out var key, out var symbol))
         {
             AssignVariable(key, symbol, next, target.Span, state);
+            PropagateTableMutation(state, baseType, next, key);
         }
     }
 
     private static LuaType AddOrReplaceField(LuaType type, string name, LuaType value)
     {
+        if (type is LuaPrototypeType prototype)
+        {
+            return prototype with { Shape = AddOrReplaceField(prototype.Shape, name, value) };
+        }
+
         var table = type as LuaStructuralTableType ?? new LuaStructuralTableType([], IsOpen: true);
         var items = table.Fields.Where(item => !string.Equals(
             item.Name,
@@ -1005,6 +1140,21 @@ internal sealed partial class AnalysisEngine
             owner = alias.Target;
         }
 
+        if (owner is LuaMetatableType &&
+            !(name == "len" && _semantics.LanguageVersion == LuaLanguageVersion.Lua51) &&
+            TryGetMetamethodSignatures(owner, "__" + name, out var metamethods) &&
+            !metamethods.IsEmpty)
+        {
+            var metamethodSignature = metamethods[0];
+            if (!unary && metamethodSignature.Parameters.Length > 1)
+            {
+                CheckAssignable(operand, metamethodSignature.Parameters[1].Type, span, $"operator '{name}' operand");
+            }
+
+            result = metamethodSignature.Returns.GetElementOrNil(0);
+            return true;
+        }
+
         if (owner is not LuaClassType @class)
         {
             return false;
@@ -1030,5 +1180,628 @@ internal sealed partial class AnalysisEngine
 
         result = signature.Returns.GetElementOrNil(0);
         return true;
+    }
+
+    private bool TryInferEffectiveMember(LuaType target, string name, out LuaType result)
+    {
+        var raw = _relations.FindField(target, name);
+        if (raw is not null)
+        {
+            result = raw.IsOptional
+                ? _relations.Union(raw.ValueType, LuaTypes.Nil)
+                : raw.ValueType;
+            return true;
+        }
+
+        return TryInferEffectiveMember(
+            target,
+            name,
+            new HashSet<LuaType>(LuaTypeReferenceComparer.Instance),
+            depth: 0,
+            out result);
+    }
+
+    private bool TryInferEffectiveMember(
+        LuaType target,
+        string name,
+        HashSet<LuaType> visiting,
+        int depth,
+        out LuaType result)
+    {
+        result = LuaTypes.Unknown;
+        if (depth >= MaximumMetatableLookupDepth || !visiting.Add(target))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (target is LuaUnionType union)
+            {
+                var resolved = union.Types
+                    .Select(member => TryInferEffectiveMember(member, name, visiting, depth + 1, out var item)
+                        ? item
+                        : LuaTypes.Unknown)
+                    .ToArray();
+                result = _relations.Union(resolved);
+                return resolved.Any(static item => item.Kind != LuaTypeKind.Unknown);
+            }
+
+            if (target is not LuaMetatableType metatable)
+            {
+                return false;
+            }
+
+            if (!metatable.IsPrecise)
+            {
+                result = LuaTypes.Any;
+                return true;
+            }
+
+            var raw = _relations.FindField(metatable.BaseType, name);
+            if (raw is not null)
+            {
+                result = raw.IsOptional
+                    ? _relations.Union(raw.ValueType, LuaTypes.Nil)
+                    : raw.ValueType;
+                return true;
+            }
+
+            var index = GetMetatableField(metatable.MetatableType, "__index");
+            if (index is null)
+            {
+                if (!metatable.IsPrecise)
+                {
+                    result = LuaTypes.Any;
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (TryGetFunctionReturns(index.ValueType, out result))
+            {
+                return true;
+            }
+
+            var inherited = _relations.FindField(index.ValueType, name);
+            if (inherited is not null)
+            {
+                result = inherited.IsOptional
+                    ? _relations.Union(inherited.ValueType, LuaTypes.Nil)
+                    : inherited.ValueType;
+                return true;
+            }
+
+            if (TryInferEffectiveMember(index.ValueType, name, visiting, depth + 1, out result))
+            {
+                return true;
+            }
+
+            if (metatable.BaseType is LuaStructuralTableType { IsOpen: true })
+            {
+                result = LuaTypes.Any;
+                return true;
+            }
+
+            if (index.ValueType.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown)
+            {
+                result = index.ValueType.Kind == LuaTypeKind.Any ? LuaTypes.Any : LuaTypes.Unknown;
+                return true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            visiting.Remove(target);
+        }
+    }
+
+    private bool TryInferMetatableIndex(
+        LuaMetatableType metatable,
+        LuaType index,
+        out LuaType result)
+    {
+        if (!metatable.IsPrecise)
+        {
+            result = LuaTypes.Any;
+            return true;
+        }
+
+        if (TryInferRawIndex(metatable.BaseType, index, out result))
+        {
+            return true;
+        }
+
+        var metamethod = GetMetatableField(metatable.MetatableType, "__index");
+        if (metamethod is not null)
+        {
+            if (TryGetFunctionReturns(metamethod.ValueType, out result))
+            {
+                return true;
+            }
+
+            if (TryInferRawIndex(metamethod.ValueType, index, out result))
+            {
+                return true;
+            }
+
+            if (index is LuaStringLiteralType literal &&
+                TryInferEffectiveMember(metamethod.ValueType, DecodeLiteral(literal), out result))
+            {
+                return true;
+            }
+        }
+
+        if (!metatable.IsPrecise)
+        {
+            result = LuaTypes.Any;
+            return true;
+        }
+
+        result = LuaTypes.Unknown;
+        return false;
+    }
+
+    private bool TryInferRawIndex(LuaType target, LuaType index, out LuaType result)
+    {
+        if (target is LuaMetatableType metatable)
+        {
+            target = metatable.BaseType;
+        }
+
+        switch (target)
+        {
+            case LuaArrayType array when IsIntegerLike(index):
+                result = array.ElementType;
+                return true;
+            case LuaMapType map when _relations.IsAssignable(index, map.KeyType):
+                result = map.ValueType;
+                return true;
+            case LuaStructuralTableType table when index is LuaStringLiteralType text:
+                var field = table.Fields.LastOrDefault(candidate =>
+                    string.Equals(candidate.Name, DecodeLiteral(text), StringComparison.Ordinal));
+                if (field is not null)
+                {
+                    result = field.IsOptional
+                        ? _relations.Union(field.ValueType, LuaTypes.Nil)
+                        : field.ValueType;
+                    return true;
+                }
+
+                break;
+            case LuaStructuralTableType table when IsIntegerLike(index) && table.ArrayElementType is not null:
+                result = table.ArrayElementType;
+                return true;
+            case LuaStructuralTableType table when table.MapKeyType is not null && table.MapValueType is not null &&
+                _relations.IsAssignable(index, table.MapKeyType):
+                result = table.MapValueType;
+                return true;
+            case LuaPrimitiveType primitive when primitive.Kind == LuaTypeKind.Any:
+                result = LuaTypes.Any;
+                return true;
+        }
+
+        result = LuaTypes.Unknown;
+        return false;
+    }
+
+    private static bool TryGetFunctionReturns(LuaType type, out LuaType result)
+    {
+        switch (type)
+        {
+            case LuaFunctionType function:
+                result = function.Returns.GetElementOrNil(0);
+                return true;
+            case LuaOverloadType overload when !overload.Signatures.IsEmpty:
+                result = overload.Signatures[0].Returns.GetElementOrNil(0);
+                return true;
+            case LuaCallableType callable when !callable.Signatures.IsEmpty:
+                result = callable.Signatures[0].Returns.GetElementOrNil(0);
+                return true;
+            default:
+                result = LuaTypes.Unknown;
+                return false;
+        }
+    }
+
+    private bool TryGetMetamethodSignatures(
+        LuaType type,
+        string name,
+        out ImmutableArray<LuaFunctionType> signatures)
+    {
+        if (type is LuaMetatableType metatable)
+        {
+            var field = GetMetatableField(metatable.MetatableType, name);
+            signatures = field?.ValueType switch
+            {
+                LuaFunctionType function => [function],
+                LuaOverloadType overload => overload.Signatures,
+                LuaCallableType callable => callable.Signatures,
+                _ => [],
+            };
+            return !signatures.IsEmpty;
+        }
+
+        signatures = [];
+        return false;
+    }
+
+    private LuaTypePack InferSetMetatable(
+        Lunil.Core.Text.TextSpan callSpan,
+        LuaSyntaxNode[] arguments,
+        FlowState state)
+    {
+        if (arguments.Length == 0)
+        {
+            return new LuaTypePack([LuaTypes.Any]);
+        }
+
+        var original = InferExpression(arguments[0], state);
+        var metatable = arguments.Length > 1
+            ? InferExpression(arguments[1], state)
+            : LuaTypes.Nil;
+        var precise = original.Kind is not (LuaTypeKind.Any or LuaTypeKind.Unknown) &&
+            metatable.Kind is not (LuaTypeKind.Any or LuaTypeKind.Unknown);
+        var effective = new LuaMetatableType(
+            original is LuaMetatableType existing ? existing.BaseType : original,
+            metatable,
+            precise);
+        LuaType next = effective;
+        _metatableFacts.Add(new LuaMetatableFact(
+            callSpan,
+            effective.BaseType,
+            metatable,
+            effective,
+            precise));
+        if (TryGetVariableKey(arguments[0], out var key, out var symbol))
+        {
+            AssignVariable(key, symbol, next, arguments[0].Span, state);
+            PropagateTableMutation(state, original, next, key);
+        }
+
+        return new LuaTypePack([next]);
+    }
+
+    private LuaTypePack InferGetMetatable(LuaSyntaxNode[] arguments, FlowState state)
+    {
+        if (arguments.Length == 0)
+        {
+            return new LuaTypePack([LuaTypes.Nil]);
+        }
+
+        var target = InferExpression(arguments[0], state);
+        if (target is not LuaMetatableType metatable)
+        {
+            return new LuaTypePack([target.Kind == LuaTypeKind.Any ? LuaTypes.Any : LuaTypes.Nil]);
+        }
+
+        var protection = GetMetatableField(metatable.MetatableType, "__metatable");
+        return new LuaTypePack([protection?.ValueType ?? metatable.MetatableType]);
+    }
+
+    private LuaTypePack InferRawGet(LuaSyntaxNode[] arguments, FlowState state)
+    {
+        if (arguments.Length < 2)
+        {
+            foreach (var argument in arguments)
+            {
+                _ = InferExpression(argument, state);
+            }
+
+            return new LuaTypePack([LuaTypes.Any]);
+        }
+
+        var target = InferExpression(arguments[0], state);
+        var index = InferExpression(arguments[1], state);
+        return new LuaTypePack([
+            TryInferRawIndex(target, index, out var value) ? value : LuaTypes.Nil,
+        ]);
+    }
+
+    private LuaTypePack InferRawSet(LuaSyntaxNode[] arguments, FlowState state)
+    {
+        if (arguments.Length < 3)
+        {
+            foreach (var argument in arguments)
+            {
+                _ = InferExpression(argument, state);
+            }
+
+            return new LuaTypePack([LuaTypes.Any]);
+        }
+
+        var original = InferExpression(arguments[0], state);
+        var index = InferExpression(arguments[1], state);
+        var value = InferExpression(arguments[2], state);
+        var next = AssignRawIndexType(original, index, value);
+        if (TryGetVariableKey(arguments[0], out var key, out var symbol))
+        {
+            AssignVariable(key, symbol, next, arguments[0].Span, state);
+            PropagateTableMutation(state, original, next, key);
+        }
+
+        return new LuaTypePack([next]);
+    }
+
+    private LuaType AssignEffectiveMember(
+        LuaType type,
+        string name,
+        LuaType value,
+        Lunil.Core.Text.TextSpan span)
+    {
+        if (type is LuaPrototypeType prototype)
+        {
+            return prototype with { Shape = AddOrReplaceField(prototype.Shape, name, value) };
+        }
+
+        if (type is not LuaMetatableType metatable)
+        {
+            return AddOrReplaceField(type, name, value);
+        }
+
+        if (_relations.FindField(metatable.BaseType, name) is not null)
+        {
+            return metatable with { BaseType = AddOrReplaceField(metatable.BaseType, name, value) };
+        }
+
+        var newIndex = GetMetatableField(metatable.MetatableType, "__newindex");
+        if (newIndex?.ValueType is LuaFunctionType function)
+        {
+            if (function.Parameters.Length > 2)
+            {
+                CheckAssignable(value, function.Parameters[2].Type, span, "__newindex value");
+            }
+
+            return metatable;
+        }
+
+        if (newIndex is not null && newIndex.ValueType.Kind is
+            LuaTypeKind.StructuralTable or LuaTypeKind.Map or LuaTypeKind.Metatable)
+        {
+            var updated = AddOrReplaceField(newIndex.ValueType, name, value);
+            return metatable with
+            {
+                MetatableType = AddOrReplaceField(metatable.MetatableType, "__newindex", updated),
+            };
+        }
+
+        return metatable with { BaseType = AddOrReplaceField(metatable.BaseType, name, value) };
+    }
+
+    private LuaType AssignRawIndexType(LuaType type, LuaType index, LuaType value)
+    {
+        if (type is LuaMetatableType metatable)
+        {
+            return metatable with { BaseType = AssignRawIndexType(metatable.BaseType, index, value) };
+        }
+
+        if (index is LuaStringLiteralType text)
+        {
+            return AddOrReplaceField(type, DecodeLiteral(text), value);
+        }
+
+        return type switch
+        {
+            LuaStructuralTableType table => table with
+            {
+                MapKeyType = table.MapKeyType is null ? index : _relations.Union(table.MapKeyType, index),
+                MapValueType = table.MapValueType is null ? value : _relations.Union(table.MapValueType, value),
+            },
+            LuaArrayType array when IsIntegerLike(index) =>
+                new LuaArrayType(_relations.Union(array.ElementType, value)),
+            LuaMapType map => new LuaMapType(
+                _relations.Union(map.KeyType, index),
+                _relations.Union(map.ValueType, value)),
+            _ => new LuaMapType(index, value),
+        };
+    }
+
+    private void PropagateTableMutation(
+        FlowState state,
+        LuaType previous,
+        LuaType next,
+        VariableKey assignedKey)
+    {
+        if (ReferenceEquals(previous, next))
+        {
+            return;
+        }
+
+        foreach (var key in state.Types.Keys.ToArray())
+        {
+            if (key == assignedKey)
+            {
+                continue;
+            }
+
+            var current = state.Types[key];
+            var replaced = ReplaceTypeReference(current, previous, next, depth: 0);
+            if (ReferenceEquals(current, replaced))
+            {
+                continue;
+            }
+
+            state.Types[key] = replaced;
+            if (!key.IsGlobal)
+            {
+                var symbol = _semantics.Symbols.FirstOrDefault(candidate => candidate.Id == key.SymbolId);
+                if (symbol is not null)
+                {
+                    RecordSymbolInference(symbol, replaced);
+                }
+            }
+        }
+    }
+
+    private LuaType ReplaceTypeReference(LuaType current, LuaType previous, LuaType next, int depth)
+    {
+        if (ReferenceEquals(current, previous))
+        {
+            return next;
+        }
+
+        if (depth >= MaximumMetatableLookupDepth)
+        {
+            return current is LuaMetatableType metatable ? metatable with { IsPrecise = false } : current;
+        }
+
+        return current switch
+        {
+            LuaMetatableType metatable => metatable with
+            {
+                BaseType = ReplaceTypeReference(metatable.BaseType, previous, next, depth + 1),
+                MetatableType = ReplaceTypeReference(metatable.MetatableType, previous, next, depth + 1),
+            },
+            LuaPrototypeType prototype => prototype with
+            {
+                Shape = ReplaceTypeReference(prototype.Shape, previous, next, depth + 1),
+                BaseTypes = [.. prototype.BaseTypes.Select(item =>
+                    ReplaceTypeReference(item, previous, next, depth + 1))],
+            },
+            LuaUnionType union => _relations.Union(union.Types.Select(member =>
+                ReplaceTypeReference(member, previous, next, depth + 1))),
+            LuaStructuralTableType table => table with
+            {
+                Fields = [.. table.Fields.Select(field => field with
+                {
+                    KeyType = field.KeyType is null
+                        ? null
+                        : ReplaceTypeReference(field.KeyType, previous, next, depth + 1),
+                    ValueType = ReplaceTypeReference(field.ValueType, previous, next, depth + 1),
+                })],
+            },
+            LuaFunctionType function => function with
+            {
+                Parameters = [.. function.Parameters.Select(parameter => parameter with
+                {
+                    Type = ReplaceTypeReference(parameter.Type, previous, next, depth + 1),
+                })],
+                Returns = (LuaTypePack)ReplaceTypeReference(
+                    function.Returns,
+                    previous,
+                    next,
+                    depth + 1),
+            },
+            LuaTypePack pack => pack with
+            {
+                Head = [.. pack.Head.Select(item =>
+                    ReplaceTypeReference(item, previous, next, depth + 1))],
+                VariadicType = pack.VariadicType is null
+                    ? null
+                    : ReplaceTypeReference(pack.VariadicType, previous, next, depth + 1),
+            },
+            LuaOverloadType overload => overload with
+            {
+                Signatures = [.. overload.Signatures.Select(signature =>
+                    (LuaFunctionType)ReplaceTypeReference(signature, previous, next, depth + 1))],
+            },
+            _ => current,
+        };
+    }
+
+    private void InvalidateEscapedMetatables(IEnumerable<LuaSyntaxNode> arguments, FlowState state)
+    {
+        foreach (var argument in arguments)
+        {
+            if (!TryGetVariableKey(argument, out var key, out var symbol) ||
+                !state.Types.TryGetValue(key, out var current))
+            {
+                continue;
+            }
+
+            var widened = current switch
+            {
+                LuaMetatableType { IsPrecise: true } metatable =>
+                    (LuaType)(metatable with { IsPrecise = false }),
+                LuaPrototypeType { IsPrecise: true } prototype =>
+                    prototype with { IsPrecise = false },
+                _ => current,
+            };
+            if (ReferenceEquals(current, widened))
+            {
+                continue;
+            }
+
+            AssignVariable(key, symbol, widened, argument.Span, state);
+            PropagateTableMutation(state, current, widened, key);
+        }
+    }
+
+    private LuaType ApplyPathNarrowing(
+        LuaSyntaxNode target,
+        LuaType inferred,
+        FlowState state,
+        Lunil.Core.Text.TextSpan accessSpan)
+    {
+        if (!TryGetAccessPath(target, out var path))
+        {
+            return inferred;
+        }
+
+        var wasNarrowed = state.PathTypes.TryGetValue(path, out var narrowed);
+        var input = wasNarrowed ? narrowed! : inferred;
+        var containsNil = input.Kind == LuaTypeKind.Nil ||
+            input is LuaUnionType union && union.Types.Any(static item => item.Kind == LuaTypeKind.Nil);
+        var result = containsNil ? _relations.RemoveNil(input) : input;
+        if (containsNil)
+        {
+            _context.AddDiagnostic(
+                "LUA6020",
+                accessSpan,
+                $"Path '{path.Value}' may be nil before this access.");
+            if (result.Kind == LuaTypeKind.Never)
+            {
+                result = LuaTypes.Unknown;
+            }
+        }
+
+        _nilPaths.Add(new LuaNilPathFact(
+            accessSpan,
+            path.Value,
+            path.HopCount,
+            input,
+            result,
+            wasNarrowed));
+        return result;
+    }
+
+    private void RecordPathType(LuaSyntaxNode expression, LuaType type, FlowState state)
+    {
+        if (TryGetAccessPath(expression, out var path))
+        {
+            state.PathTypes.TryAdd(path, type);
+        }
+    }
+
+    private LuaTableField? GetMetatableField(LuaType metatable, string name)
+    {
+        if (metatable is LuaPrototypeType prototype)
+        {
+            if (_latestPrototypes.TryGetValue(prototype.Name, out var latest))
+            {
+                prototype = latest;
+                metatable = latest;
+            }
+
+            if (name == "__index" && prototype.UsesSelfIndex)
+            {
+                return new LuaTableField("__index", null, prototype, false, true);
+            }
+        }
+
+        return _relations.FindField(metatable, name);
+    }
+
+    private ImmutableArray<LuaType> GetPrototypeBaseTypes(LuaType type)
+    {
+        if (type is not LuaMetatableType metatable)
+        {
+            return [];
+        }
+
+        var index = GetMetatableField(metatable.MetatableType, "__index");
+        return index is null ? [] : [index.ValueType];
     }
 }

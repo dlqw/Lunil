@@ -122,12 +122,40 @@ jobs:
             artifacts/packages/Lunil.Godot.addon-*.zip
           if-no-files-found: error
 
+  vscode:
+    name: VS Code extension packages
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: true
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Build platform-specific VSIX packages
+        shell: pwsh
+        run: ./scripts/Build-VscodeVsix.ps1 -OutputDirectory artifacts/vscode
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-vscode
+          path: |
+            artifacts/vscode/*.vsix
+            artifacts/vscode/*.vsix.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub release and packages
     needs:
       - validate
       - bundles
       - packages
+      - vscode
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -152,7 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg \
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg artifacts/*.vsix artifacts/*.sha256 \
             --repo '${{ github.repository }}' --verify-tag --generate-notes --prerelease \
             --title 'Lunil ${{ needs.validate.outputs.version }}'
       - name: Create stable GitHub release
@@ -160,6 +188,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg \
+          gh release create '${{ github.ref_name }}' artifacts/*.zip artifacts/*.tgz artifacts/*.nupkg artifacts/*.snupkg artifacts/*.vsix artifacts/*.sha256 \
             --repo '${{ github.repository }}' --verify-tag --generate-notes \
             --title 'Lunil ${{ needs.validate.outputs.version }}'

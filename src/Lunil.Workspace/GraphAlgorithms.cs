@@ -22,58 +22,76 @@ internal static class GraphAlgorithms
             }
         }
 
-        var index = 0;
-        var indexes = new Dictionary<string, int>(StringComparer.Ordinal);
-        var lowLinks = new Dictionary<string, int>(StringComparer.Ordinal);
-        var stack = new Stack<string>();
-        var onStack = new HashSet<string>(StringComparer.Ordinal);
-        var raw = new List<ImmutableArray<string>>();
-
-        void Visit(string module)
+        var reverse = modules.ToDictionary(
+            static module => module.Name,
+            static _ => new SortedSet<string>(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+        foreach (var pair in adjacency)
         {
-            indexes[module] = index;
-            lowLinks[module] = index;
-            index++;
-            stack.Push(module);
-            onStack.Add(module);
-
-            foreach (var target in adjacency[module])
+            foreach (var target in pair.Value)
             {
-                if (!indexes.TryGetValue(target, out var targetIndex))
-                {
-                    Visit(target);
-                    lowLinks[module] = Math.Min(lowLinks[module], lowLinks[target]);
-                }
-                else if (onStack.Contains(target))
-                {
-                    lowLinks[module] = Math.Min(lowLinks[module], targetIndex);
-                }
+                reverse[target].Add(pair.Key);
+            }
+        }
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var finishOrder = new List<string>(adjacency.Count);
+        foreach (var root in adjacency.Keys.OrderBy(static name => name, StringComparer.Ordinal))
+        {
+            if (!visited.Add(root))
+            {
+                continue;
             }
 
-            if (lowLinks[module] != indexes[module])
+            var stack = new Stack<(string Module, IEnumerator<string> Targets)>();
+            stack.Push((root, adjacency[root].GetEnumerator()));
+            while (stack.Count != 0)
             {
-                return;
+                var frame = stack.Peek();
+                if (frame.Targets.MoveNext())
+                {
+                    var target = frame.Targets.Current;
+                    if (visited.Add(target))
+                    {
+                        stack.Push((target, adjacency[target].GetEnumerator()));
+                    }
+
+                    continue;
+                }
+
+                frame.Targets.Dispose();
+                stack.Pop();
+                finishOrder.Add(frame.Module);
+            }
+        }
+
+        visited.Clear();
+        var raw = new List<ImmutableArray<string>>();
+        for (var orderIndex = finishOrder.Count - 1; orderIndex >= 0; orderIndex--)
+        {
+            var root = finishOrder[orderIndex];
+            if (!visited.Add(root))
+            {
+                continue;
             }
 
             var component = ImmutableArray.CreateBuilder<string>();
-            string item;
-            do
+            var stack = new Stack<string>();
+            stack.Push(root);
+            while (stack.Count != 0)
             {
-                item = stack.Pop();
-                onStack.Remove(item);
-                component.Add(item);
+                var module = stack.Pop();
+                component.Add(module);
+                foreach (var source in reverse[module].Reverse())
+                {
+                    if (visited.Add(source))
+                    {
+                        stack.Push(source);
+                    }
+                }
             }
-            while (!string.Equals(item, module, StringComparison.Ordinal));
 
             raw.Add(component.OrderBy(static name => name, StringComparer.Ordinal).ToImmutableArray());
-        }
-
-        foreach (var module in adjacency.Keys.OrderBy(static name => name, StringComparer.Ordinal))
-        {
-            if (!indexes.ContainsKey(module))
-            {
-                Visit(module);
-            }
         }
 
         return raw

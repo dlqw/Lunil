@@ -55,6 +55,13 @@ One `LuaCompilationResult` owns a consistent immutable snapshot:
 - `Diagnostics`: ordered diagnostics tagged with `LuaCompilationPhase`;
 - `Module`: canonical IR when compilation reached lowering and verification.
 
+For syntax-only, binding-only, or analysis-only work, reuse `LuaFrontEndSession` instead of running
+the full compiler pipeline. `Process` creates a snapshot at the requested `LuaFrontEndStage` and
+`Advance` continues that same snapshot. The snapshot's `Metrics` reports elapsed time and managed
+allocation by lexing, annotation, parsing, binding, analysis, lowering, and verification operation.
+The session automatically keeps the compact syntax arena only for syntax-only work and avoids a
+redundant tree copy before immediate binding.
+
 Check `Succeeded` before executing or persisting canonical IR. Static-analysis data can still be
 useful when warnings or recoverable source errors are present, so retain diagnostics with the
 snapshot rather than discarding the entire result.
@@ -84,6 +91,11 @@ SourceLocation end = result.Source.Text.GetLocation(span.End);
 - use `FindGlobalReferences(name)` for implicit `_ENV` globals;
 - read `LuaAnalysisResult.CallGraph` instead of reconstructing calls from generic AST children.
 
+Direct `LuaBinder` or `LuaCompiler` consumers that need member/method/literal-index facts must set
+`LuaBinderOptions.CollectCodeReferences = true`, then query `MemberReferences`,
+`UnifiedReferences`, `FindCodeReferences`, and `FindCodeReferenceAt`. `LuaWorkspace` enables this
+automatically. Leave it disabled for standalone pipelines that only need lexical references.
+
 For persistence, generate `LuaSymbolKey` with a logical module identity:
 
 ```csharp
@@ -106,6 +118,11 @@ calls together with their containing function and optional target function.
 `LuaAnalysisResult.TypeDeclarations` is the resolved view of class, alias, and enum directives;
 `LuaAnnotationDocument.Annotations` is the syntax-level view. Use the former for types and the
 latter for tooling that must preserve exact directives and source spans.
+
+The result also exposes `MetatableFacts`, `ObjectModels`, `HostEffects`, `CallbackRegistrations`,
+`PersistenceAccesses`, `UpvalueCells`, and `NilPaths`. Preserve their precision and resolution
+states: dynamic mutation, escaping values, open tables, and dynamic indexes intentionally widen or
+invalidate facts instead of inventing a member, callback, persistence key, or nil-safe path.
 
 ## 5. Analyze a reusable workspace
 
@@ -132,6 +149,17 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
+Set `LuaWorkspaceOptions.HostContract` to a validated schema-1 `LuaHostAnalysisContract` when C++,
+C#, Unity, Godot, or another host injects APIs that are absent from Lua source. The contract adds
+typed globals/modules/functions, overloads, source and implementation locations, callback lifetime,
+side effects, and persistence read/write/delete/clear semantics to standalone and cross-module
+analysis. Use `ToJson()`/`ParseJson()` for interchange and `ToLuaStub()` for inspection.
+
+For a large or long-lived editor workspace, call `AnalyzeCompactAsync` instead. Its compact snapshot
+keeps sharded reference, call, callback, persistence, and global indexes without retaining full
+compiler models, and can materialize a full result on demand. See
+[large-workspace analysis](large-workspaces.pub.md).
+
 The module name is the `require` graph identity. `SourceIdentity` identifies the source origin for
 diagnostics and persistence; it should not be an unstable temporary or absolute deployment path.
 The source content hash is derived from bytes. Keep module names unique in a snapshot.
@@ -156,7 +184,8 @@ drops reuse state.
 
 `FindReferences(LuaSymbolKey)`, `FindGlobalReferences(string)`, and `GetCallGraph()` project code
 indexes across the completed workspace and include module/source identities and stable containing
-function keys.
+function keys. Compact snapshots add `FindCallsToExport`, `FindCallbackRegistrations`, and
+`FindPersistenceSchemas`.
 
 ## 7. Apply lifetime, concurrency, diagnostic, and budget rules
 

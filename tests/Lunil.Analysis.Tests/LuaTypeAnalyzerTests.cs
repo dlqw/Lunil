@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
 using Lunil.EmmyLua;
@@ -70,6 +71,205 @@ public sealed class LuaTypeAnalyzerTests
         Assert.Equal(
             LuaTypes.Integer,
             Assert.Single(inferred.Fields.Where(static item => item.Name == "value")).ValueType);
+    }
+
+    [Fact]
+    public void ResolvesMetatableIndexRawAccessAndAliasMutation()
+    {
+        var result = Analyze(
+            """
+            local prototype = { answer = 42 }
+            local metatable = { __index = prototype }
+            local object = setmetatable({}, metatable)
+            local alias = object
+            local inherited = object.answer
+            alias.extra = 'ok'
+            local propagated = object.extra
+            local rawInherited = rawget(object, 'answer')
+            rawset(object, 'stored', true)
+            local rawStored = rawget(alias, 'stored')
+            local attached = getmetatable(object)
+            return inherited, propagated, rawInherited, rawStored, attached
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6007");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "inherited" && item.InferredType.DisplayName == "42");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "propagated" && item.InferredType.DisplayName == "'ok'");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "rawInherited" && item.InferredType == LuaTypes.Nil);
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "rawStored" && item.InferredType.DisplayName == "true");
+        Assert.IsType<LuaMetatableType>(result.Symbols.Single(static item =>
+            item.Symbol.Name == "object").InferredType);
+        var fact = Assert.Single(result.MetatableFacts);
+        Assert.True(fact.IsPrecise);
+        Assert.IsType<LuaStructuralTableType>(fact.RawType);
+    }
+
+    [Fact]
+    public void AppliesCallOperatorLengthNewIndexAndPairsMetamethods()
+    {
+        var result = Analyze(
+            """
+            local metatable = {
+                __call = function(self, value) return 'called' end,
+                __len = function(self) return 7 end,
+                __add = function(left, right) return 'sum' end,
+                __newindex = function(self, key, value) end,
+                __pairs = function(self)
+                    return function() return 'key', 3 end
+                end
+            }
+            local object = setmetatable({}, metatable)
+            local called = object(1)
+            local length = #object
+            local sum = object + object
+            object.missing = 1
+            local rawMissing = rawget(object, 'missing')
+            for key, value in pairs(object) do
+                local pairKey = key
+                local pairValue = value
+            end
+            return called, length, sum, rawMissing
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6004" or "LUA6007");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "called" && item.InferredType.DisplayName == "'called'");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "length" && item.InferredType.DisplayName == "7");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "sum" && item.InferredType.DisplayName == "'sum'");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "rawMissing" && item.InferredType == LuaTypes.Nil);
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "pairKey" && item.InferredType.DisplayName == "'key'");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "pairValue" && item.InferredType.DisplayName == "3");
+    }
+
+    [Fact]
+    public void FunctionIndexAndDynamicEscapeAreBoundedAndConservative()
+    {
+        var result = Analyze(
+            """
+            local functionIndex = {
+                __index = function(self, key) return 9 end
+            }
+            local object = setmetatable({}, functionIndex)
+            local beforeEscape = object.unknown
+            external_sink(object)
+            local afterEscape = object.dynamic
+            return beforeEscape, afterEscape
+            """);
+
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "beforeEscape" && item.InferredType.DisplayName == "9");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "afterEscape" && item.InferredType == LuaTypes.Any);
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, "integer")]
+    [InlineData(LuaLanguageVersion.Lua52, "7")]
+    [InlineData(LuaLanguageVersion.Lua53, "7")]
+    [InlineData(LuaLanguageVersion.Lua54, "7")]
+    [InlineData(LuaLanguageVersion.Lua55, "7")]
+    public void AppliesVersionSpecificTableLengthMetamethod(
+        LuaLanguageVersion version,
+        string expected)
+    {
+        var result = Analyze(
+            "local o = setmetatable({}, { __len = function() return 7 end }); local n = #o",
+            version: version);
+
+        Assert.Contains(result.Symbols, item =>
+            item.Symbol.Name == "n" && item.InferredType.DisplayName == expected);
+    }
+
+    [Fact]
+    public void RecognizesPrototypeConstructorsMethodsAndImplicitSelf()
+    {
+        var result = Analyze(
+            """
+            local Class = {}
+            Class.__index = Class
+            function Class:new(value)
+                return setmetatable({ value = value }, self)
+            end
+            function Class:get()
+                return self.value
+            end
+            local object = Class:new(5)
+            local value = object:get()
+            return value
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6004" or "LUA6007" or "LUA6017" or "LUA6018");
+        var model = Assert.Single(result.ObjectModels);
+        Assert.Equal("Class", model.Name);
+        Assert.Equal(["new", "get"], model.Methods.Select(static method => method.Name));
+        Assert.All(model.Methods, static method => Assert.True(method.HasImplicitSelf));
+        Assert.IsType<LuaMetatableType>(result.Symbols.Single(static item =>
+            item.Symbol.Name == "object").InferredType);
+    }
+
+    [Fact]
+    public void RecognizesInheritanceMixinAndSingletonShapes()
+    {
+        var result = Analyze(
+            """
+            local Base = {}
+            Base.__index = Base
+            function Base:baseMethod() return 'base' end
+
+            local mixin = { mixed = function(self) return 'mixed' end }
+            local Derived = setmetatable({}, { __index = Base })
+            Derived.__index = Derived
+            Derived.mixed = mixin.mixed
+            function Derived:derivedMethod() return 'derived' end
+
+            local singleton = setmetatable({}, Derived)
+            local inherited = singleton:baseMethod()
+            local mixed = singleton:mixed()
+            local own = singleton:derivedMethod()
+            return inherited, mixed, own
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6004" or "LUA6007");
+        var derived = Assert.Single(result.ObjectModels, static item => item.Name == "Derived");
+        Assert.NotEmpty(derived.BaseTypes);
+        Assert.Contains(derived.Methods, static method => method.Name == "derivedMethod");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "inherited" && item.InferredType.DisplayName == "'base'");
+        Assert.Contains(result.Symbols, static item =>
+            item.Symbol.Name == "mixed" && item.InferredType.DisplayName == "'mixed'");
+    }
+
+    [Fact]
+    public void ReportsDotColonMismatchAndAnnotationConflicts()
+    {
+        var result = Analyze(
+            """
+            ---@class Broken
+            ---@field value string
+            local Broken = { value = 1 }
+            Broken.__index = Broken
+            function Broken:method() return self.value end
+            function Broken.factory() return {} end
+            local object = setmetatable({}, Broken)
+            object.method()
+            object:factory()
+            """);
+
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6019");
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6018");
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6017");
     }
 
     [Fact]
@@ -518,13 +718,19 @@ public sealed class LuaTypeAnalyzerTests
 
     private static LuaAnalysisResult Analyze(
         string source,
-        LuaAnalysisOptions? options = null)
+        LuaAnalysisOptions? options = null,
+        LuaLanguageVersion? version = null)
     {
         var text = SourceText.FromUtf8(source);
-        var lexing = LuaLexer.Lex(text);
-        var syntax = LuaParser.Parse(lexing);
+        var languageVersion = version ?? LuaLanguageVersions.Default;
+        var lexing = LuaLexer.Lex(text, new LuaLexerOptions { LanguageVersion = languageVersion });
+        var syntax = LuaParser.Parse(
+            lexing,
+            new LuaParserOptions { LanguageVersion = languageVersion });
         var annotations = LuaAnnotationParser.Parse(lexing);
-        var semantics = LuaBinder.Bind(syntax);
+        var semantics = LuaBinder.Bind(
+            syntax,
+            LuaBinderOptions.Default with { LanguageVersion = languageVersion });
         return LuaTypeAnalyzer.Analyze(semantics, annotations, options);
     }
 }

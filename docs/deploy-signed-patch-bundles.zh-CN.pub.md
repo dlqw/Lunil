@@ -42,8 +42,9 @@ lunil patch verify update.lpatch --trust-store patch-trust.json
 lunil patch dry-run update.lpatch --trust-store patch-trust.json
 ```
 
-把准入与 replay protection 绑定到一个稳定部署 target。Coordinator 要求 `ReplayScope` 等于该
-target 的 `TargetId`：
+把准入与 replay protection 绑定到一个稳定部署 target。`RuntimeAbi` 是宿主定义的应用兼容性标识，
+不是 Lunil 产品版本；只有能够安全消费同一 patch payload 的应用 build 才应复用该值。Coordinator
+要求 `ReplayScope` 等于该 target 的 `TargetId`：
 
 ```csharp
 var replayStore = new LuaPatchFileReplayStore("state/accepted-patches.ndjson");
@@ -53,7 +54,7 @@ var prepareOptions = new LuaPatchPrepareOptions
     {
         TargetBuild = currentBuild,
         CurrentRevision = currentRevision,
-        RuntimeAbi = "lunil-0.13",
+        RuntimeAbi = "my-game-runtime-v1",
         AllowedChannels = ["production"],
         GrantedCapabilities = hostPatchCapabilities,
         TargetLabels =

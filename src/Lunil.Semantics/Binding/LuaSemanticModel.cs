@@ -12,5 +12,11 @@ public sealed partial record LuaSemanticModel(
     ImmutableArray<LuaNameReference> References,
     ImmutableArray<LuaFunctionInfo> Functions)
 {
+    /// <summary>Gets non-lexical dot, colon, and bracket references in source order.</summary>
+    public ImmutableArray<LuaMemberReference> MemberReferences { get; init; } = [];
+
+    /// <summary>Gets the ordered union of lexical and non-lexical code references.</summary>
+    public ImmutableArray<LuaCodeReference> UnifiedReferences { get; init; } = [];
+
     public LuaLanguageVersion LanguageVersion => Syntax.LanguageVersion;
 }

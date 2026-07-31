@@ -54,6 +54,12 @@ var result = new LuaCompiler(compilerOptions).CompileUtf8(
 - `Diagnostics`：带 `LuaCompilationPhase` 的有序诊断；
 - `Module`：完成 lowering 与 verification 后的 canonical IR。
 
+只需要 syntax、binding 或 analysis 时，应复用 `LuaFrontEndSession`，不要运行完整 compiler pipeline。
+`Process` 在指定 `LuaFrontEndStage` 创建 snapshot，`Advance` 继续同一 snapshot；`Metrics` 按 lexing、
+annotation、parsing、binding、analysis、lowering 与 verification operation 报告 elapsed time 和 managed
+allocation。Session 只在 syntax-only work 中保留 compact syntax arena，并在立即 binding 前避免重复
+copy 整棵 tree。
+
 执行或持久化 canonical IR 前必须检查 `Succeeded`。存在 warning 或可恢复源码错误时，静态分析结果
 仍可能有用，因此应将 diagnostic 与 snapshot 一同保存，而不是直接丢弃整个结果。
 
@@ -82,6 +88,11 @@ source snapshot。
 - 隐式 `_ENV` global 使用 `FindGlobalReferences(name)`；
 - 调用关系直接读取 `LuaAnalysisResult.CallGraph`，不要重新解释 generic AST child。
 
+Direct `LuaBinder`/`LuaCompiler` consumer 需要 member/method/literal-index fact 时，必须设置
+`LuaBinderOptions.CollectCodeReferences = true`，再查询 `MemberReferences`、`UnifiedReferences`、
+`FindCodeReferences` 与 `FindCodeReferenceAt`。`LuaWorkspace` 会自动启用。只需要 lexical reference
+的 standalone pipeline 应保持关闭。
+
 需要持久化时，用逻辑 module identity 生成 `LuaSymbolKey`：
 
 ```csharp
@@ -103,6 +114,11 @@ function 和可选 target function。
 `LuaAnalysisResult.TypeDeclarations` 是 class、alias 与 enum directive 的类型解析视图；
 `LuaAnnotationDocument.Annotations` 是 syntax 视图。类型消费使用前者，需要保留精确 directive 与
 source span 的工具使用后者。
+
+Result 还提供 `MetatableFacts`、`ObjectModels`、`HostEffects`、`CallbackRegistrations`、
+`PersistenceAccesses`、`UpvalueCells` 与 `NilPaths`。必须保留其 precision/resolution state：dynamic
+mutation、escaping value、open table 与 dynamic index 会有意 widen 或 invalidate fact，而不会虚构
+member、callback、persistence key 或 nil-safe path。
 
 ## 5. 使用可复用 workspace
 
@@ -128,6 +144,16 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
+C++、C#、Unity、Godot 或其他宿主注入 Lua source 中不存在的 API 时，将经过验证的 schema 1
+`LuaHostAnalysisContract` 设为 `LuaWorkspaceOptions.HostContract`。Contract 会向 standalone/cross-module
+analysis 添加 typed global/module/function、overload、source/implementation location、callback lifetime、
+side effect 和 persistence read/write/delete/clear semantics。交换格式使用 `ToJson()`/`ParseJson()`，
+检查 declaration 使用 `ToLuaStub()`。
+
+大型或长生命周期 editor workspace 应改用 `AnalyzeCompactAsync`。Compact snapshot 保留分片的
+reference、call、callback、persistence 与 global index，不保留完整 compiler model，并可按需
+materialize full result。详见[大型 workspace 分析](large-workspaces.zh-CN.pub.md)。
+
 Module name 是 `require` graph identity。`SourceIdentity` 用于诊断与持久化的源码来源，不应使用不稳定
 临时路径或部署绝对路径；content hash 由源码 byte 生成。同一 snapshot 中 module name 必须唯一。
 
@@ -147,7 +173,8 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
 `ClearCache()` 会显式丢弃复用状态。
 
 `FindReferences(LuaSymbolKey)`、`FindGlobalReferences(string)` 与 `GetCallGraph()` 可跨完整 workspace
-投影代码索引，并附带 module/source identity 与稳定 containing-function key。
+投影代码索引，并附带 module/source identity 与稳定 containing-function key。Compact snapshot 还提供
+`FindCallsToExport`、`FindCallbackRegistrations` 与 `FindPersistenceSchemas`。
 
 ## 7. 应用生命周期、并发、诊断与预算规则
 

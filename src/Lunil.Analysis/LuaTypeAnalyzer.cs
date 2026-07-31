@@ -29,6 +29,7 @@ public static class LuaTypeAnalyzer
         LunilGuard.NotNull(annotations);
         LunilGuard.NotNull(environment);
         LunilGuard.NotNull(environment.ModuleTypes);
+        environment.HostContract?.Validate();
         options ??= LuaAnalysisOptions.Default;
         cancellationToken.ThrowIfCancellationRequested();
         ValidateOptions(options);

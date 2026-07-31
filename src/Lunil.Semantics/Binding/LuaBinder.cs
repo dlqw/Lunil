@@ -56,6 +56,8 @@ public static class LuaBinder
         private readonly ImmutableArray<Diagnostic>.Builder _diagnostics;
         private readonly List<LuaSymbol> _symbols = [];
         private readonly List<LuaNameReference> _references = [];
+        private readonly List<LuaMemberReference> _memberReferences = [];
+        private readonly List<LuaCodeReference> _codeReferences = [];
         private readonly List<LuaFunctionInfo> _functions = [];
         private readonly List<LuaSymbol> _activeSymbols = [];
         private FunctionContext _currentFunction = null!;
@@ -104,7 +106,18 @@ public static class LuaBinder
                 _diagnostics.ToImmutable(),
                 _symbols.ToImmutableArray(),
                 _references.OrderBy(static reference => reference.Span.Start).ToImmutableArray(),
-                _functions.OrderBy(static function => function.Id).ToImmutableArray());
+                _functions.OrderBy(static function => function.Id).ToImmutableArray())
+            {
+                MemberReferences = _memberReferences
+                    .OrderBy(static reference => reference.Span.Start)
+                    .ThenBy(static reference => reference.Span.Length)
+                    .ToImmutableArray(),
+                UnifiedReferences = _codeReferences
+                    .OrderBy(static reference => reference.Span.Start)
+                    .ThenBy(static reference => reference.Span.Length)
+                    .ThenBy(static reference => reference.Kind)
+                    .ToImmutableArray(),
+            };
         }
 
         private void BindBlock(
@@ -235,14 +248,10 @@ public static class LuaBinder
                     BindIdentifier(expression, isWrite: true);
                     break;
                 case LuaSyntaxKind.IndexExpression:
-                    foreach (var child in expression.ChildNodes())
-                    {
-                        BindExpression(child);
-                    }
-
+                    BindIndexExpression(expression, LuaReferenceAccess.Write);
                     break;
                 case LuaSyntaxKind.MemberAccessExpression:
-                    BindExpression(expression.ChildNodes().First());
+                    BindMemberExpression(expression, LuaReferenceAccess.Write);
                     break;
                 default:
                     BindExpression(expression);
@@ -403,6 +412,8 @@ public static class LuaBinder
                     token.Kind is LuaTokenKind.Dot or LuaTokenKind.Colon);
                 BindNameToken(firstName, isWrite: !isMember);
             }
+
+            BindFunctionNameMembers(nameTokens);
 
             var hasImplicitSelf = nameTokens.Any(static token => token.Kind == LuaTokenKind.Colon);
             BindNestedFunction(
@@ -588,12 +599,26 @@ public static class LuaBinder
             return LuaLocalAttributeKind.None;
         }
 
-        private void BindExpression(LuaSyntaxNode expression) // NOSONAR: exhaustive syntax dispatcher
+        private void BindExpression(
+            LuaSyntaxNode expression,
+            LuaReferenceAccess access = LuaReferenceAccess.Read) // NOSONAR: exhaustive syntax dispatcher
         {
             switch (expression.Kind)
             {
                 case LuaSyntaxKind.IdentifierExpression:
-                    BindIdentifier(expression, isWrite: false);
+                    BindIdentifier(expression, access);
+                    break;
+                case LuaSyntaxKind.MemberAccessExpression:
+                    BindMemberExpression(expression, access);
+                    break;
+                case LuaSyntaxKind.IndexExpression:
+                    BindIndexExpression(expression, access);
+                    break;
+                case LuaSyntaxKind.CallExpression:
+                    BindCallExpression(expression);
+                    break;
+                case LuaSyntaxKind.MethodCallExpression:
+                    BindMethodCallExpression(expression);
                     break;
                 case LuaSyntaxKind.VarArgExpression:
                     if (!_currentFunction.IsVarArg)
@@ -623,18 +648,183 @@ public static class LuaBinder
             }
         }
 
-        private void BindIdentifier(LuaSyntaxNode expression, bool isWrite)
+        private void BindIdentifier(LuaSyntaxNode expression, bool isWrite) =>
+            BindIdentifier(
+                expression,
+                isWrite ? LuaReferenceAccess.Write : LuaReferenceAccess.Read);
+
+        private void BindIdentifier(LuaSyntaxNode expression, LuaReferenceAccess access)
         {
             var token = expression.ChildTokens().FirstOrDefault(static candidate =>
                 candidate.Kind == LuaTokenKind.Identifier);
             if (token is not null && !token.IsMissing)
             {
-                BindNameToken(token, isWrite);
+                BindNameToken(token, access);
             }
+        }
+
+        private void BindCallExpression(LuaSyntaxNode expression)
+        {
+            var children = expression.ChildNodes().ToArray();
+            var callee = children.FirstOrDefault(static child => child.Kind != LuaSyntaxKind.ArgumentList);
+            if (callee is not null)
+            {
+                BindExpression(callee, LuaReferenceAccess.Read | LuaReferenceAccess.Call);
+            }
+
+            foreach (var arguments in children.Where(static child => child.Kind == LuaSyntaxKind.ArgumentList))
+            {
+                BindExpression(arguments);
+            }
+        }
+
+        private void BindMethodCallExpression(LuaSyntaxNode expression)
+        {
+            BindMemberExpression(
+                expression,
+                LuaReferenceAccess.Read | LuaReferenceAccess.Call | LuaReferenceAccess.MethodCall);
+            foreach (var arguments in expression.ChildNodes().Where(static child =>
+                         child.Kind == LuaSyntaxKind.ArgumentList))
+            {
+                BindExpression(arguments);
+            }
+        }
+
+        private void BindMemberExpression(LuaSyntaxNode expression, LuaReferenceAccess access)
+        {
+            var receiver = expression.ChildNodes().FirstOrDefault(static child =>
+                child.Kind != LuaSyntaxKind.ArgumentList);
+            if (receiver is not null)
+            {
+                BindExpression(receiver);
+            }
+
+            var member = expression.ChildTokens().LastOrDefault(static token =>
+                token.Kind == LuaTokenKind.Identifier);
+            RecordMemberReference(
+                member?.Span ?? new TextSpan(expression.Span.End, 0),
+                member is { IsMissing: false } ? GetName(member) : null,
+                LuaReferenceKind.Member,
+                access,
+                receiver?.Span ?? new TextSpan(expression.Span.Start, 0),
+                indexSpan: null,
+                member is { IsMissing: false }
+                    ? LuaReferenceResolutionKind.MemberCandidate
+                    : LuaReferenceResolutionKind.Incomplete,
+                member is { IsMissing: false } ? "member-name" : "incomplete-member-name");
+        }
+
+        private void BindIndexExpression(LuaSyntaxNode expression, LuaReferenceAccess access)
+        {
+            var children = expression.ChildNodes().ToArray();
+            var receiver = children.FirstOrDefault();
+            var index = children.Skip(1).FirstOrDefault();
+            if (receiver is not null)
+            {
+                BindExpression(receiver);
+            }
+
+            if (index is not null)
+            {
+                BindExpression(index);
+            }
+
+            var candidate = string.Empty;
+            var hasCandidate = index is not null && index.TryGetConstantString(out candidate);
+            RecordMemberReference(
+                index?.Span ?? new TextSpan(expression.Span.End, 0),
+                hasCandidate ? candidate : null,
+                LuaReferenceKind.Index,
+                access,
+                receiver?.Span ?? new TextSpan(expression.Span.Start, 0),
+                index?.Span,
+                index is null
+                    ? LuaReferenceResolutionKind.Incomplete
+                    : hasCandidate
+                        ? LuaReferenceResolutionKind.LiteralIndexCandidate
+                        : LuaReferenceResolutionKind.DynamicIndex,
+                index is null ? "incomplete-index" : hasCandidate ? "literal-string-index" : "dynamic-index");
+        }
+
+        private void BindFunctionNameMembers(LuaSyntaxToken[] tokens)
+        {
+            var identifiers = tokens
+                .Where(static token => token.Kind == LuaTokenKind.Identifier && !token.IsMissing)
+                .ToArray();
+            if (identifiers.Length < 2)
+            {
+                return;
+            }
+
+            var receiverStart = identifiers[0].Span.Start;
+            for (var index = 1; index < identifiers.Length; index++)
+            {
+                var member = identifiers[index];
+                var access = index == identifiers.Length - 1
+                    ? LuaReferenceAccess.Write
+                    : LuaReferenceAccess.Read;
+                RecordMemberReference(
+                    member.Span,
+                    GetName(member),
+                    LuaReferenceKind.Member,
+                    access,
+                    TextSpan.FromBounds(receiverStart, member.Span.Start),
+                    indexSpan: null,
+                    LuaReferenceResolutionKind.MemberCandidate,
+                    "function-declaration-member");
+            }
+        }
+
+        private void RecordMemberReference(
+            TextSpan span,
+            string? name,
+            LuaReferenceKind kind,
+            LuaReferenceAccess access,
+            TextSpan receiverSpan,
+            TextSpan? indexSpan,
+            LuaReferenceResolutionKind resolutionKind,
+            string reason)
+        {
+            if (!_options.CollectCodeReferences)
+            {
+                return;
+            }
+
+            var reference = new LuaMemberReference(
+                span,
+                name,
+                kind,
+                access,
+                receiverSpan,
+                indexSpan,
+                _currentFunction.Id,
+                resolutionKind,
+                reason);
+            _memberReferences.Add(reference);
+            _codeReferences.Add(new LuaCodeReference(
+                span,
+                name,
+                kind,
+                access,
+                receiverSpan,
+                indexSpan,
+                _currentFunction.Id,
+                LexicalReference: null,
+                CandidateName: name,
+                resolutionKind,
+                reason));
         }
 
         private void BindNameToken(LuaSyntaxToken token, bool isWrite)
         {
+            BindNameToken(
+                token,
+                isWrite ? LuaReferenceAccess.Write : LuaReferenceAccess.Read);
+        }
+
+        private void BindNameToken(LuaSyntaxToken token, LuaReferenceAccess access)
+        {
+            var isWrite = (access & LuaReferenceAccess.Write) != 0;
             var name = GetName(token);
             var symbol = FindActiveSymbol(name);
             LuaNameResolutionKind resolutionKind;
@@ -708,12 +898,28 @@ public static class LuaBinder
                 }
             }
 
-            _references.Add(new LuaNameReference(
+            var reference = new LuaNameReference(
                 token.Span,
                 name,
                 resolutionKind,
                 symbol,
-                isWrite));
+                isWrite);
+            _references.Add(reference);
+            if (_options.CollectCodeReferences)
+            {
+                _codeReferences.Add(new LuaCodeReference(
+                    token.Span,
+                    name,
+                    LuaReferenceKind.Name,
+                    access,
+                    ReceiverSpan: null,
+                    IndexSpan: null,
+                    _currentFunction.Id,
+                    reference,
+                    CandidateName: name,
+                    LuaReferenceResolutionKind.LexicalSymbol,
+                    "lexical-symbol"));
+            }
         }
 
         private void BindNestedFunction(

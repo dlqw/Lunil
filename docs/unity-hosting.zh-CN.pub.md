@@ -8,13 +8,13 @@ Unity 2022.3 LTS 与 Unity 6 都是一等支持目标。
 ## 前置条件
 
 - Unity 2022.3 LTS 或 Unity 6。
-- Release asset `com.dlqw.lunil-0.13.0.tgz`。
+- Release asset `com.dlqw.lunil-0.14.0.tgz`。
 - 仅在 Editor 中预生成 CLR binding 时需要 .NET SDK 10。
 
 ## 1. 安装 package
 
 在 Package Manager 中选择 **Add package from tarball**，再选择
-`com.dlqw.lunil-0.13.0.tgz`。Tarball 包含可移植解释器 assembly，不包含 CoreCLR JIT。
+`com.dlqw.lunil-0.14.0.tgz`。Tarball 包含可移植解释器 assembly，不包含 CoreCLR JIT。
 
 不要先用 Unity 6 打开再降级到 2022.3；请直接使用独立的
 [`samples/Lunil.Unity.2022.3`](../samples/Lunil.Unity.2022.3/) 项目。

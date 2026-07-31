@@ -8,12 +8,12 @@
 ## 前置条件
 
 - 面向 .NET 8+ 或兼容 `netstandard2.1` runtime 的项目。
-- 来自 release package source 的 `Lunil.Hosting` `0.13.0`。
+- 来自 release package source 的 `Lunil.Hosting` `0.14.0`。
 
 ## 1. 引用 host
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.13.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.14.0" />
 ```
 
 可移植应用不要引用 `Lunil.CodeGen.Cil`。它是 .NET 10 dynamic-code backend，不会进入

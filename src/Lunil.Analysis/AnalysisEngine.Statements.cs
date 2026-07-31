@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.EmmyLua;
 using Lunil.Semantics.Binding;
@@ -13,7 +14,8 @@ internal sealed partial class AnalysisEngine
     private FunctionSpecification BuildFunctionSpecification(
         LuaFunctionInfo function,
         FunctionSyntax syntax,
-        ImmutableArray<LuaAnnotationSyntax> annotations)
+        ImmutableArray<LuaAnnotationSyntax> annotations,
+        LuaType? implicitSelfType)
     {
         var genericAnnotation = annotations.OfType<LuaGenericAnnotationSyntax>().LastOrDefault();
         var typeParameters = genericAnnotation?.Parameters.Select((item, index) =>
@@ -47,7 +49,10 @@ internal sealed partial class AnalysisEngine
             }
             else
             {
-                parameters.Add(new LuaFunctionParameter(symbol.Name, LuaTypes.Any));
+                var parameterType = symbol.Name == "self" && implicitSelfType is not null
+                    ? implicitSelfType
+                    : LuaTypes.Any;
+                parameters.Add(new LuaFunctionParameter(symbol.Name, parameterType));
                 if (_context.Options.ReportImplicitAny && symbol.Name != "self")
                 {
                     _context.AddDiagnostic(
@@ -107,6 +112,7 @@ internal sealed partial class AnalysisEngine
         var annotations = GetAnnotations(statement);
         var declaredAnnotations = annotations.OfType<LuaTypeAnnotationSyntax>()
             .LastOrDefault()?.Types ?? [];
+        var classAnnotation = annotations.OfType<LuaClassAnnotationSyntax>().LastOrDefault();
         var expressionList = statement.ChildNodes().FirstOrDefault(static node =>
             node.Kind == LuaSyntaxKind.ExpressionList);
         var values = expressionList is null
@@ -136,10 +142,25 @@ internal sealed partial class AnalysisEngine
                 _declaredTypes.TryAdd(key, LuaTypes.Any);
             }
 
-            var flowValue = index < declaredAnnotations.Length &&
-                value.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown
-                    ? declared
-                    : value;
+            // A type annotation describes the storage location, not only the initializer.
+            // Keep the declared union available to flow analysis so later writes performed
+            // outside the current statement (including host writes and upvalue writes) are
+            // not incorrectly ruled out by a literal initializer such as nil.
+            var flowValue = index < declaredAnnotations.Length ? declared : value;
+            var classDeclaration = _types.Declarations.OfType<LuaClassDeclaration>()
+                .LastOrDefault(item => string.Equals(
+                    item.Name,
+                    classAnnotation?.Name ?? symbol.Name,
+                    StringComparison.Ordinal));
+            if (index == 0 && classDeclaration is not null &&
+                (classAnnotation is not null ||
+                 string.Equals(classDeclaration.Name, symbol.Name, StringComparison.Ordinal)))
+            {
+                flowValue = CreateAnnotatedPrototype(
+                    classDeclaration,
+                    flowValue,
+                    token.Span);
+            }
             state.Types[key] = flowValue;
             if (expressionList is not null)
             {
@@ -156,6 +177,38 @@ internal sealed partial class AnalysisEngine
         return BlockResult.Next(state);
     }
 
+    private LuaPrototypeType CreateAnnotatedPrototype(
+        LuaClassDeclaration declaration,
+        LuaType value,
+        TextSpan span)
+    {
+        LuaType shape = value;
+        foreach (var field in declaration.Fields)
+        {
+            var runtime = _relations.FindField(value, field.Name!);
+            if (runtime is not null &&
+                !_relations.IsAssignable(runtime.ValueType, field.ValueType) &&
+                !_relations.IsAssignable(field.ValueType, runtime.ValueType))
+            {
+                _context.AddDiagnostic(
+                    "LUA6019",
+                    span,
+                    $"Runtime prototype member '{field.Name}' conflicts with its class annotation type '{field.ValueType.DisplayName}'.");
+            }
+
+            if (runtime is null)
+            {
+                shape = AddOrReplaceField(shape, field.Name!, field.ValueType);
+            }
+        }
+
+        return new LuaPrototypeType(
+            declaration.Name,
+            shape,
+            declaration.BaseTypes,
+            UsesSelfIndex: false);
+    }
+
     private BlockResult AnalyzeFunctionDeclaration(
         LuaSyntaxNode statement,
         FlowState state,
@@ -166,9 +219,12 @@ internal sealed partial class AnalysisEngine
             return BlockResult.Next(state);
         }
 
-        var type = AnalyzeFunction(functionId, GetAnnotations(statement));
-        var identifier = statement.DescendantTokens().FirstOrDefault(static token =>
-            token.Kind == LuaTokenKind.Identifier && !token.IsMissing);
+        var functionName = statement.ChildNodes().FirstOrDefault(static node =>
+            node.Kind == LuaSyntaxKind.FunctionName);
+        var nameTokens = (functionName?.ChildTokens() ?? statement.ChildTokens())
+            .Where(static token => token.Kind == LuaTokenKind.Identifier && !token.IsMissing)
+            .ToArray();
+        var identifier = nameTokens.FirstOrDefault();
         if (identifier is null)
         {
             return BlockResult.Next(state);
@@ -176,6 +232,7 @@ internal sealed partial class AnalysisEngine
 
         if (local && _declarations.TryGetValue(identifier.Span, out var symbol))
         {
+            var type = AnalyzeFunction(functionId, GetAnnotations(statement));
             AssignVariable(VariableKey.Local(symbol.Id), symbol, type, identifier.Span, state);
         }
         else if (_references.TryGetValue(identifier.Span, out var reference))
@@ -183,7 +240,42 @@ internal sealed partial class AnalysisEngine
             var key = reference.ResolutionKind == LuaNameResolutionKind.Global
                 ? VariableKey.Global(reference.Name)
                 : VariableKey.Local(reference.Symbol.Id);
-            AssignVariable(key, reference.Symbol, type, identifier.Span, state);
+            var root = state.Types.GetValueOrDefault(
+                key,
+                _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
+            var isMember = nameTokens.Length > 1;
+            var receiver = isMember
+                ? ResolvePrototypePath(root, nameTokens.Skip(1).SkipLast(1))
+                : root;
+            var hasImplicitSelf = functionName?.ChildTokens().Any(static token =>
+                token.Kind == LuaTokenKind.Colon) == true;
+            var methodName = nameTokens.LastOrDefault() is { } methodToken
+                ? GetTokenText(methodToken)
+                : string.Empty;
+            var implicitSelf = hasImplicitSelf
+                ? IsConstructorName(methodName)
+                    ? receiver
+                    : new LuaMetatableType(
+                        new LuaStructuralTableType([], IsOpen: true),
+                        receiver,
+                        receiver.Kind is not (LuaTypeKind.Any or LuaTypeKind.Unknown))
+                : null;
+            var type = AnalyzeFunction(
+                functionId,
+                GetAnnotations(statement),
+                implicitSelf);
+            if (isMember)
+            {
+                var memberPath = nameTokens.Skip(1).Select(GetTokenText).ToArray();
+                var next = AddOrReplacePrototypePath(root, memberPath, type);
+                AssignVariable(key, reference.Symbol, next, identifier.Span, state);
+                PropagateTableMutation(state, root, next, key);
+            }
+            else
+            {
+                AssignVariable(key, reference.Symbol, type, identifier.Span, state);
+            }
+
             var path = GetFunctionName(statement);
             if (path is not null)
             {
@@ -195,6 +287,51 @@ internal sealed partial class AnalysisEngine
 
         return BlockResult.Next(state);
     }
+
+    private LuaType ResolvePrototypePath(LuaType root, IEnumerable<LuaSyntaxToken> members)
+    {
+        var current = root;
+        foreach (var member in members)
+        {
+            var field = _relations.FindField(current, GetTokenText(member));
+            if (field is null)
+            {
+                return LuaTypes.Any;
+            }
+
+            current = field.ValueType;
+        }
+
+        return current;
+    }
+
+    private static LuaType AddOrReplacePrototypePath(
+        LuaType root,
+        string[] members,
+        LuaType value)
+    {
+        if (members.Length == 0)
+        {
+            return value;
+        }
+
+        var name = members[0];
+        if (members.Length == 1)
+        {
+            return AddOrReplaceField(root, name, value);
+        }
+
+        LuaType shape = root is LuaPrototypeType prototype ? prototype.Shape : root;
+        var table = shape as LuaStructuralTableType ?? new LuaStructuralTableType([], IsOpen: true);
+        var existing = table.Fields.LastOrDefault(field =>
+            string.Equals(field.Name, name, StringComparison.Ordinal))?.ValueType ??
+            new LuaStructuralTableType([], IsOpen: true);
+        var nested = AddOrReplacePrototypePath(existing, members.Skip(1).ToArray(), value);
+        return AddOrReplaceField(root, name, nested);
+    }
+
+    private static bool IsConstructorName(string name) => name is
+        "new" or "create" or "constructor" or "ctor";
 
     private BlockResult AnalyzeAssignment(LuaSyntaxNode statement, FlowState state)
     {
@@ -471,6 +608,20 @@ internal sealed partial class AnalysisEngine
 
             if (string.Equals(iteratorName, "pairs", StringComparison.Ordinal))
             {
+                if (source is LuaMetatableType metatable &&
+                    _semantics.LanguageVersion != LuaLanguageVersion.Lua51 &&
+                    TryGetMetamethodSignatures(metatable, "__pairs", out var pairs) &&
+                    !pairs.IsEmpty &&
+                    pairs[0].Returns.GetElementOrNil(0) is LuaFunctionType iterator)
+                {
+                    return iterator.Returns;
+                }
+
+                if (source is LuaMetatableType wrapped)
+                {
+                    source = wrapped.BaseType;
+                }
+
                 if (source is LuaMapType map)
                 {
                     return new LuaTypePack([map.KeyType, map.ValueType]);
@@ -576,6 +727,17 @@ internal sealed partial class AnalysisEngine
 
         state.Types[key] = value;
         state.Assigned.Add(key);
+        var pathPrefix = key.IsGlobal ? "g:" + key.GlobalName : "s:" + key.SymbolId;
+        foreach (var path in state.PathTypes.Keys.Where(path =>
+                     string.Equals(path.Value, pathPrefix, StringComparison.Ordinal) ||
+                     path.Value.StartsWith(pathPrefix + ".", StringComparison.Ordinal)).ToArray())
+        {
+            state.PathTypes.Remove(path);
+        }
+        if (value is LuaPrototypeType prototype)
+        {
+            _latestPrototypes[prototype.Name] = prototype;
+        }
         if (key.IsGlobal)
         {
             _globalTypes[key.GlobalName!] = _globalTypes.TryGetValue(key.GlobalName!, out var previous)

@@ -7,4 +7,16 @@
     <Left>lib/netstandard2.1/Lunil.Compiler.dll</Left>
     <Right>lib/net10.0/Lunil.Compiler.dll</Right>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Compiler.LuaFrontEndOperation</Target>
+    <Left>lib/netstandard2.1/Lunil.Compiler.dll</Left>
+    <Right>lib/net10.0/Lunil.Compiler.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Compiler.LuaFrontEndStage</Target>
+    <Left>lib/netstandard2.1/Lunil.Compiler.dll</Left>
+    <Right>lib/net10.0/Lunil.Compiler.dll</Right>
+  </Suppression>
 </Suppressions>

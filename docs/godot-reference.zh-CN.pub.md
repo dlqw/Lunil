@@ -6,11 +6,15 @@
 
 | 字段 | 值 |
 | --- | --- |
-| NuGet package | `Lunil.Godot` `0.13.0` |
+| NuGet package | `Lunil.Godot` `0.14.0` |
 | Addon 路径 | `res://addons/lunil` |
 | 支持的 Godot | 4.4 与 4.6 .NET |
 | Runtime backend | 可移植解释器 |
 | 默认 CLR mode | 关闭；推荐生成的 `RegistryOnly` |
+
+Addon 暴露供 editor 使用的 `LunilGameLoop` 与 `LunilScript` class；它们分别派生自
+`Lunil.Godot` NuGet package 的公开类型 `LuaGodotGameLoop` 与 `LuaGodotScriptResource`。在 scene/
+resource 中使用 addon 名称；不经过 addon wrapper、直接从 C# 集成时使用 base type 名称。
 
 ## 平台矩阵
 
@@ -21,9 +25,9 @@
 | Linux/macOS desktop | 稳定 | 导出兼容性 |
 | Android | 稳定 | Godot 4.4 使用 .NET 8；Godot 4.6 export template 需要 .NET 9 |
 | iOS | Preview | 官方 C# exporter 与 Apple build toolchain 需要 macOS |
-| Web | 不在 0.13 范围 | 不提供兼容性承诺 |
+| Web | 不在 0.14 范围 | 不提供兼容性承诺 |
 
-## `LuaGodotGameLoop`
+## `LuaGodotGameLoop` 与 addon `LunilGameLoop`
 
 | Member | 行为 |
 | --- | --- |
@@ -47,7 +51,8 @@
 
 ## Resource 与 service
 
-- `LuaGodotScriptResource`：UTF-8 source 加稳定 asset/module identity。
+- `LuaGodotScriptResource`：UTF-8 source 加稳定 asset/module identity；addon 面向 editor 的
+  `LunilScript` 派生自此类型。
 - `LuaGodotAssetResolver`：在已注册 resource 上提供准确 asset、module 与 virtual-file 解析。
 - `LuaGodotDispatcher`：带边界 `Drain` 的 owner-thread queue；dispose 后拒绝新 callback。
 - `LuaGodotTimeProvider`：来自 `Time.GetTicksUsec()` 的单调微秒 timestamp。
