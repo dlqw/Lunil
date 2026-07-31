@@ -56,11 +56,10 @@ One `LuaCompilationResult` owns a consistent immutable snapshot:
 - `Module`: canonical IR when compilation reached lowering and verification.
 
 For syntax-only, binding-only, or analysis-only work, reuse `LuaFrontEndSession` instead of running
-the full compiler pipeline. `Process` creates a snapshot at the requested `LuaFrontEndStage` and
-`Advance` continues that same snapshot. The snapshot's `Metrics` reports elapsed time and managed
-allocation by lexing, annotation, parsing, binding, analysis, lowering, and verification operation.
-The session automatically keeps the compact syntax arena only for syntax-only work and avoids a
-redundant tree copy before immediate binding.
+the full compiler pipeline. `Process` creates a snapshot at the requested `LuaFrontEndStage`, and
+`Advance` continues that snapshot. Its `Metrics` separates elapsed time and managed allocation for
+lexing, annotation, parsing, binding, analysis, lowering, and verification. Syntax-only snapshots
+retain the compact syntax arena; advancing directly to binding avoids a redundant full-tree copy.
 
 Check `Succeeded` before executing or persisting canonical IR. Static-analysis data can still be
 useful when warnings or recoverable source errors are present, so retain diagnostics with the
@@ -91,10 +90,9 @@ SourceLocation end = result.Source.Text.GetLocation(span.End);
 - use `FindGlobalReferences(name)` for implicit `_ENV` globals;
 - read `LuaAnalysisResult.CallGraph` instead of reconstructing calls from generic AST children.
 
-Direct `LuaBinder` or `LuaCompiler` consumers that need member/method/literal-index facts must set
-`LuaBinderOptions.CollectCodeReferences = true`, then query `MemberReferences`,
-`UnifiedReferences`, `FindCodeReferences`, and `FindCodeReferenceAt`. `LuaWorkspace` enables this
-automatically. Leave it disabled for standalone pipelines that only need lexical references.
+Enable `LuaBinderOptions.CollectCodeReferences` when a standalone pipeline needs member, method,
+or literal-index references. The [analysis-fact reference](analysis-facts.pub.md) lists the
+corresponding collections and queries; `LuaWorkspace` enables collection automatically.
 
 For persistence, generate `LuaSymbolKey` with a logical module identity:
 
@@ -112,17 +110,16 @@ Classes, aliases, and enums use `LuaCompilationResult.GetAnnotationKey` and
 
 Each `LuaFunctionAnalysis` exposes the inferred function type and return pack, flow iteration
 count, widening state, and a `LuaControlFlowGraph`. Use `block.IsReachable` rather than assuming
-every emitted block is live. Call-graph edges retain resolved, dynamic, unresolved, and unreachable
-calls together with their containing function and optional target function.
+every emitted block is live. Call-graph edges retain resolved, dynamic, and unresolved calls
+together with their containing function and optional target function. Reachability is a CFG-block
+property; `LuaCallSite` does not define a separate unreachable resolution status.
 
 `LuaAnalysisResult.TypeDeclarations` is the resolved view of class, alias, and enum directives;
 `LuaAnnotationDocument.Annotations` is the syntax-level view. Use the former for types and the
 latter for tooling that must preserve exact directives and source spans.
 
-The result also exposes `MetatableFacts`, `ObjectModels`, `HostEffects`, `CallbackRegistrations`,
-`PersistenceAccesses`, `UpvalueCells`, and `NilPaths`. Preserve their precision and resolution
-states: dynamic mutation, escaping values, open tables, and dynamic indexes intentionally widen or
-invalidate facts instead of inventing a member, callback, persistence key, or nil-safe path.
+For metatable, object-model, host-effect, callback, persistence, upvalue, and nil-path result
+contracts, use the [analysis-fact reference](analysis-facts.pub.md).
 
 ## 5. Analyze a reusable workspace
 
@@ -149,11 +146,9 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
-Set `LuaWorkspaceOptions.HostContract` to a validated schema-1 `LuaHostAnalysisContract` when C++,
-C#, Unity, Godot, or another host injects APIs that are absent from Lua source. The contract adds
-typed globals/modules/functions, overloads, source and implementation locations, callback lifetime,
-side effects, and persistence read/write/delete/clear semantics to standalone and cross-module
-analysis. Use `ToJson()`/`ParseJson()` for interchange and `ToLuaStub()` for inspection.
+When APIs are injected by C++, C#, Unity, Godot, or another host, attach a validated
+`LuaHostAnalysisContract`. Follow [external host analysis](external-host-analysis.pub.md) to build,
+serialize, and apply that contract.
 
 For a large or long-lived editor workspace, call `AnalyzeCompactAsync` instead. Its compact snapshot
 keeps sharded reference, call, callback, persistence, and global indexes without retaining full
@@ -184,8 +179,8 @@ drops reuse state.
 
 `FindReferences(LuaSymbolKey)`, `FindGlobalReferences(string)`, and `GetCallGraph()` project code
 indexes across the completed workspace and include module/source identities and stable containing
-function keys. Compact snapshots add `FindCallsToExport`, `FindCallbackRegistrations`, and
-`FindPersistenceSchemas`.
+function keys. Compact snapshots additionally provide `FindCallsToExport`,
+`FindCallbackRegistrations`, and `FindPersistenceSchemas`.
 
 ## 7. Apply lifetime, concurrency, diagnostic, and budget rules
 
@@ -208,6 +203,4 @@ The host now produces immutable compilation and workspace snapshots with stable 
 symbol keys, call graphs, diagnostics, and bounded cache reuse. The
 [`Lunil.StaticAnalysis.Embedding` sample](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
 demonstrates annotated single-file compilation, semantic and analysis index output, byte-span
-formatting, and cache reuse and invalidation in a cyclic workspace. Apply the additional stable-key,
-resolver, cross-workspace index, cache-control, concurrency, and disposal contracts from this guide
-in the host integration that needs them.
+formatting, and cache reuse and invalidation in a cyclic workspace.
