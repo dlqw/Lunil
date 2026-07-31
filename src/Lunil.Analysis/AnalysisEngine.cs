@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using System.Runtime.CompilerServices;
 using Lunil.Core.Text;
 using Lunil.EmmyLua;
 using Lunil.Semantics.Binding;
@@ -13,6 +14,8 @@ internal sealed partial class AnalysisEngine
     private readonly LuaSemanticModel _semantics;
     private readonly LuaAnnotationDocument _annotations;
     private readonly LuaAnalysisEnvironment _environment;
+    private readonly ImmutableDictionary<string, LuaType> _hostGlobalTypes;
+    private readonly ImmutableDictionary<string, LuaType> _hostModuleTypes;
     private readonly AnnotationTypeEnvironment _types;
     private readonly LuaTypeRelations _relations;
     private readonly ImmutableArray<LuaControlFlowGraph> _graphs;
@@ -28,10 +31,19 @@ internal sealed partial class AnalysisEngine
     private readonly Dictionary<string, LuaType> _globalTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<int, LuaType> _functionValueTypes = [];
     private readonly Dictionary<int, LuaFunctionAnalysis> _functionAnalyses = [];
+    private readonly Dictionary<int, string> _functionCaptureSignatures = [];
+    private readonly Dictionary<string, LuaPrototypeType> _latestPrototypes = new(StringComparer.Ordinal);
     private readonly HashSet<int> _functionsInProgress = [];
     private readonly HashSet<string> _reportedUnknownGlobals = new(StringComparer.Ordinal);
     private readonly HashSet<TextSpan> _countedExpressionTypes = [];
     private readonly HashSet<int> _definitelyAssignedSymbols = [];
+    private readonly List<LuaMetatableFact> _metatableFacts = [];
+    private readonly List<LuaHostEffectFact> _hostEffects = [];
+    private readonly List<LuaCallbackRegistrationFact> _callbackRegistrations = [];
+    private readonly List<LuaPersistenceAccessFact> _persistenceAccesses = [];
+    private readonly List<LuaNilPathFact> _nilPaths = [];
+    private readonly Dictionary<int, UpvalueCellState> _upvalueCells = [];
+    private const int MaximumMetatableLookupDepth = 16;
     private FunctionAnalysisContext? _currentFunction;
 
     public AnalysisEngine(
@@ -45,6 +57,10 @@ internal sealed partial class AnalysisEngine
         _semantics = semantics;
         _annotations = annotations;
         _environment = environment;
+        _hostGlobalTypes = environment.HostContract?.CreateGlobalTypes() ??
+            ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+        _hostModuleTypes = environment.HostContract?.CreateModuleTypes() ??
+            ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
         _types = types;
         _relations = types.Relations;
         _graphs = graphs;
@@ -108,15 +124,81 @@ internal sealed partial class AnalysisEngine
             _context.GetBudgetUsage())
         {
             CallGraph = BuildCallGraph(),
+            MetatableFacts = _metatableFacts
+                .OrderBy(static fact => fact.Span.Start)
+                .ThenBy(static fact => fact.Span.Length)
+                .ToImmutableArray(),
+            ObjectModels = symbols
+                .Where(static item => item.InferredType is LuaPrototypeType &&
+                    item.Symbol.Kind is LuaSymbolKind.Local or LuaSymbolKind.Global)
+                .Select(item => CreateObjectModelFact(
+                    item.Symbol,
+                    (LuaPrototypeType)item.InferredType))
+                .OrderBy(static item => item.DeclaringSpan.Start)
+                .ToImmutableArray(),
+            HostEffects = [.. _hostEffects.OrderBy(static item => item.Span.Start)],
+            CallbackRegistrations = [.. _callbackRegistrations.OrderBy(static item => item.Span.Start)],
+            PersistenceAccesses = [.. _persistenceAccesses.OrderBy(static item => item.Span.Start)],
+            UpvalueCells = [.. _upvalueCells.Values
+                .OrderBy(static item => item.Symbol.Id)
+                .Select(static item => new LuaUpvalueCellFact(
+                    item.Symbol,
+                    item.Type,
+                    [.. item.Readers.OrderBy(static value => value)],
+                    [.. item.Writers.OrderBy(static value => value)],
+                    item.Escapes,
+                    item.Symbol.Kind is LuaSymbolKind.NumericForVariable or
+                        LuaSymbolKind.GenericForVariable))],
+            NilPaths = [.. _nilPaths.OrderBy(static item => item.Span.Start)],
         };
     }
 
+    private static LuaObjectModelFact CreateObjectModelFact(
+        LuaSymbol symbol,
+        LuaPrototypeType prototype)
+    {
+        var methods = GetPrototypeFields(prototype.Shape)
+            .Where(static field => field.Name is not null && field.ValueType is
+                LuaFunctionType or LuaOverloadType)
+            .Select(field => new LuaPrototypeMethodFact(
+                field.Name!,
+                field.ValueType,
+                field.ValueType is LuaFunctionType function && function.HasImplicitSelf ||
+                    field.ValueType is LuaOverloadType overload &&
+                    overload.Signatures.Any(static signature => signature.HasImplicitSelf)))
+            .ToImmutableArray();
+        return new LuaObjectModelFact(
+            prototype.Name,
+            symbol.DeclaringSpan,
+            prototype,
+            new LuaMetatableType(
+                new LuaStructuralTableType([], IsOpen: true),
+                prototype,
+                prototype.IsPrecise),
+            prototype.BaseTypes,
+            methods,
+            prototype.IsPrecise);
+    }
+
+    private static ImmutableArray<LuaTableField> GetPrototypeFields(LuaType shape) => shape switch
+    {
+        LuaStructuralTableType table => table.Fields,
+        LuaMetatableType metatable => GetPrototypeFields(metatable.BaseType),
+        LuaPrototypeType prototype => GetPrototypeFields(prototype.Shape),
+        _ => [],
+    };
+
     private LuaType AnalyzeFunction(
         int functionId,
-        ImmutableArray<LuaAnnotationSyntax> annotations)
+        ImmutableArray<LuaAnnotationSyntax> annotations,
+        LuaType? implicitSelfType = null)
     {
+        var functionInfo = _semantics.Functions.Single(item => item.Id == functionId);
+        var captureSignature = GetCaptureSignature(functionInfo);
         if (_functionValueTypes.TryGetValue(functionId, out var cached) &&
-            !_functionsInProgress.Contains(functionId))
+            !_functionsInProgress.Contains(functionId) &&
+            _functionCaptureSignatures.TryGetValue(functionId, out var previousCaptureSignature) &&
+            string.Equals(captureSignature, previousCaptureSignature, StringComparison.Ordinal))
         {
             return cached;
         }
@@ -127,8 +209,11 @@ internal sealed partial class AnalysisEngine
         }
 
         var syntax = _functionSyntax[functionId];
-        var functionInfo = _semantics.Functions.Single(item => item.Id == functionId);
-        var specification = BuildFunctionSpecification(functionInfo, syntax, annotations);
+        var specification = BuildFunctionSpecification(
+            functionInfo,
+            syntax,
+            annotations,
+            implicitSelfType);
         _functionValueTypes[functionId] = specification.ValueType;
         var previous = _currentFunction;
         var functionContext = new FunctionAnalysisContext(
@@ -167,6 +252,7 @@ internal sealed partial class AnalysisEngine
                 graph,
                 functionContext.FlowIterations,
                 functionContext.WasWidened);
+            _functionCaptureSignatures[functionId] = GetCaptureSignature(functionInfo);
             return valueType;
         }
         finally
@@ -174,6 +260,27 @@ internal sealed partial class AnalysisEngine
             _currentFunction = previous;
             _functionsInProgress.Remove(functionId);
         }
+    }
+
+    private string GetCaptureSignature(LuaFunctionInfo function)
+    {
+        if (function.Captures.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        var signature = new StringBuilder();
+        foreach (var capture in function.Captures.OrderBy(static item => item.Id))
+        {
+            var type = _upvalueCells.TryGetValue(capture.Id, out var cell)
+                ? cell.Type
+                : _symbolInferences.GetValueOrDefault(
+                    capture.Id,
+                    _declaredTypes.GetValueOrDefault(VariableKey.Local(capture.Id), LuaTypes.Any));
+            signature.Append(capture.Id).Append(':').Append(type.DisplayName).Append(';');
+        }
+
+        return signature.ToString();
     }
 
     private FlowState CreateInitialState(
@@ -206,6 +313,13 @@ internal sealed partial class AnalysisEngine
             var type = _symbolInferences.GetValueOrDefault(
                 capture.Id,
                 _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
+            if (!_upvalueCells.TryGetValue(capture.Id, out var cell))
+            {
+                cell = new UpvalueCellState(capture, type);
+                _upvalueCells.Add(capture.Id, cell);
+            }
+
+            type = cell.Type;
             state.Types[key] = type;
             state.Assigned.Add(key);
         }
@@ -434,6 +548,8 @@ internal sealed partial class AnalysisEngine
         public static VariableKey Global(string name) => new(-1, name);
     }
 
+    private readonly record struct AccessPathKey(string Value, int HopCount);
+
     private sealed class FlowState
     {
         public FlowState(IReadOnlyDictionary<string, LuaType> globals)
@@ -453,6 +569,8 @@ internal sealed partial class AnalysisEngine
 
         public HashSet<VariableKey> Assigned { get; } = [];
 
+        public Dictionary<AccessPathKey, LuaType> PathTypes { get; } = [];
+
         public bool Reachable { get; set; } = true;
 
         public FlowState Clone()
@@ -464,8 +582,35 @@ internal sealed partial class AnalysisEngine
             }
 
             clone.Assigned.UnionWith(Assigned);
+            foreach (var pair in PathTypes)
+            {
+                clone.PathTypes.Add(pair.Key, pair.Value);
+            }
+
             return clone;
         }
+    }
+
+    private sealed class LuaTypeReferenceComparer : IEqualityComparer<LuaType>
+    {
+        public static LuaTypeReferenceComparer Instance { get; } = new();
+
+        public bool Equals(LuaType? x, LuaType? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(LuaType obj) => RuntimeHelpers.GetHashCode(obj);
+    }
+
+    private sealed class UpvalueCellState(LuaSymbol symbol, LuaType type)
+    {
+        public LuaSymbol Symbol { get; } = symbol;
+
+        public LuaType Type { get; set; } = type;
+
+        public HashSet<int> Readers { get; } = [];
+
+        public HashSet<int> Writers { get; } = [];
+
+        public bool Escapes { get; set; }
     }
 
     private readonly record struct BlockResult(FlowState Fallthrough, List<FlowState> Breaks)

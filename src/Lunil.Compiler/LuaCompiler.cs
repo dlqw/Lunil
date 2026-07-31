@@ -1,15 +1,6 @@
-using System.Collections.Immutable;
-using System.Text;
 using Lunil.Analysis;
 using Lunil.Core;
-using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
-using Lunil.EmmyLua;
-using Lunil.IR.Canonical;
-using Lunil.Semantics.Binding;
-using Lunil.Semantics.Lowering;
-using Lunil.Syntax.Lexing;
-using Lunil.Syntax.Parsing;
 
 namespace Lunil.Compiler;
 
@@ -19,22 +10,13 @@ namespace Lunil.Compiler;
 /// </summary>
 public sealed class LuaCompiler
 {
+    private readonly LuaFrontEndSession _frontEnd;
+
     public LuaCompiler(LuaCompilerOptions? options = null)
     {
         Options = options ?? LuaCompilerOptions.Default;
-        LunilGuard.NotNull(Options.Lexer);
-        LunilGuard.NotNull(Options.Annotations);
-        LunilGuard.NotNull(Options.Analysis);
-        LunilGuard.NotNull(Options.Parser);
-        LunilGuard.NotNull(Options.Binder);
-        LunilGuard.NotNull(Options.Verifier);
-        if (!LuaLanguageVersions.IsKnown(Options.LanguageVersion))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                Options.LanguageVersion,
-                "The compiler language version is invalid.");
-        }
+        ValidateOptions(Options, nameof(options));
+        _frontEnd = new LuaFrontEndSession(Options);
     }
 
     public LuaCompilerOptions Options { get; }
@@ -69,174 +51,28 @@ public sealed class LuaCompiler
     {
         LunilGuard.NotNull(source);
         LunilGuard.NotNull(analysisEnvironment);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var lexing = LuaLexer.Lex(source.Text, Options.Lexer with
-        {
-            LanguageVersion = Options.LanguageVersion,
-        });
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var annotations = LuaAnnotationParser.Parse(lexing, Options.Annotations);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var syntax = LuaParser.Parse(lexing, Options.Parser with
-        {
-            LanguageVersion = Options.LanguageVersion,
-        });
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var semantics = LuaBinder.Bind(syntax, Options.Binder with
-        {
-            LanguageVersion = Options.LanguageVersion,
-        });
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var analysis = LuaTypeAnalyzer.Analyze(
-            semantics,
-            annotations,
-            analysisEnvironment,
-            Options.Analysis,
-            cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var lowering = LuaLowerer.Lower(semantics);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var diagnostics = ImmutableArray.CreateBuilder<LuaCompilationDiagnostic>();
-        if (!LuaVersionFeatureTable.Get(Options.LanguageVersion).IsImplemented)
-        {
-            diagnostics.Add(new LuaCompilationDiagnostic(
-                LuaCompilationPhase.Configuration,
-                new Diagnostic(
-                    "LUA0001",
-                    DiagnosticSeverity.Error,
-                    default,
-                    $"{LuaLanguageVersions.GetDisplayName(Options.LanguageVersion)} source " +
-                    "semantics are not implemented in this build; Lunil will not silently " +
-                    "apply another language version's semantics.")));
-        }
-
-        var observedDiagnostics = new HashSet<Diagnostic>();
-        AddDiagnostics(
-            lexing.Diagnostics,
-            LuaCompilationPhase.Lexing,
-            observedDiagnostics,
-            diagnostics);
-        AddDiagnostics(
-            annotations.Diagnostics,
-            LuaCompilationPhase.Annotation,
-            observedDiagnostics,
-            diagnostics);
-        AddDiagnostics(
-            syntax.Diagnostics,
-            LuaCompilationPhase.Parsing,
-            observedDiagnostics,
-            diagnostics);
-        AddDiagnostics(
-            semantics.Diagnostics,
-            LuaCompilationPhase.Binding,
-            observedDiagnostics,
-            diagnostics);
-        AddDiagnostics(
-            analysis.Diagnostics,
-            LuaCompilationPhase.Analysis,
-            observedDiagnostics,
-            diagnostics);
-        foreach (var diagnostic in lowering.Diagnostics)
-        {
-            if (observedDiagnostics.Add(diagnostic))
-            {
-                diagnostics.Add(new LuaCompilationDiagnostic(
-                    diagnostic.Code == "LUA4002"
-                        ? LuaCompilationPhase.Verification
-                        : LuaCompilationPhase.Lowering,
-                    diagnostic));
-            }
-        }
-
-        var module = lowering.Module;
-        if (diagnostics.Any(static diagnostic =>
-                diagnostic.Severity == DiagnosticSeverity.Error))
-        {
-            module = null;
-        }
-        else if (module is not null)
-        {
-            module = ApplySourceName(module, source.SourceName);
-            var verificationErrors = LuaIrVerifier.Verify(module, Options.Verifier);
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var error in verificationErrors)
-            {
-                diagnostics.Add(new LuaCompilationDiagnostic(
-                    LuaCompilationPhase.Verification,
-                    new Diagnostic(
-                        "LUA4003",
-                        DiagnosticSeverity.Error,
-                        GetVerificationSpan(module, error),
-                        error.Message)));
-            }
-
-            if (!verificationErrors.IsEmpty)
-            {
-                module = null;
-            }
-        }
-
-        return new LuaCompilationResult(
+        var snapshot = _frontEnd.Process(
             source,
-            syntax,
-            annotations,
-            semantics,
-            analysis,
-            module,
-            diagnostics.ToImmutable());
+            LuaFrontEndStage.Verification,
+            analysisEnvironment,
+            cancellationToken);
+        return _frontEnd.ToCompilationResult(snapshot);
     }
 
-    private static void AddDiagnostics(
-        ImmutableArray<Diagnostic> source,
-        LuaCompilationPhase phase,
-        HashSet<Diagnostic> observed,
-        ImmutableArray<LuaCompilationDiagnostic>.Builder destination)
+    internal static void ValidateOptions(LuaCompilerOptions options, string parameterName)
     {
-        foreach (var diagnostic in source)
+        LunilGuard.NotNull(options.Lexer);
+        LunilGuard.NotNull(options.Annotations);
+        LunilGuard.NotNull(options.Analysis);
+        LunilGuard.NotNull(options.Parser);
+        LunilGuard.NotNull(options.Binder);
+        LunilGuard.NotNull(options.Verifier);
+        if (!LuaLanguageVersions.IsKnown(options.LanguageVersion))
         {
-            if (observed.Add(diagnostic))
-            {
-                destination.Add(new LuaCompilationDiagnostic(phase, diagnostic));
-            }
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                options.LanguageVersion,
+                "The compiler language version is invalid.");
         }
-    }
-
-    private static LuaIrModule ApplySourceName(LuaIrModule module, string? sourceName)
-    {
-        if (sourceName is null)
-        {
-            return module;
-        }
-
-        var bytes = Encoding.UTF8.GetBytes(sourceName).ToImmutableArray();
-        return module with
-        {
-            Functions =
-            [
-                .. module.Functions.Select(function => function with { SourceName = bytes }),
-            ],
-        };
-    }
-
-    private static TextSpan GetVerificationSpan(
-        LuaIrModule module,
-        LuaIrVerificationError error)
-    {
-        if ((uint)error.FunctionId >= (uint)module.Functions.Length)
-        {
-            return default;
-        }
-
-        var function = module.Functions[error.FunctionId];
-        return (uint)error.ProgramCounter < (uint)function.Instructions.Length
-            ? function.Instructions[error.ProgramCounter].Span
-            : function.Span;
     }
 }

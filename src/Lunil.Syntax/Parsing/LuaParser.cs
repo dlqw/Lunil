@@ -6,14 +6,16 @@ using Lunil.Syntax.Lexing;
 
 namespace Lunil.Syntax.Parsing;
 
-/// <summary>A lossless, error-tolerant parser for the complete Lua 5.4 grammar.</summary>
+/// <summary>A lossless, error-tolerant parser for the versioned Lua 5.1–5.5 grammar.</summary>
 public static class LuaParser
 {
     public static LuaParseResult Parse(
         SourceText source,
         LuaLexerOptions? lexerOptions = null,
-        LuaParserOptions? parserOptions = null)
+        LuaParserOptions? parserOptions = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         parserOptions ??= LuaParserOptions.Default with
         {
             LanguageVersion = lexerOptions?.LanguageVersion ?? LuaLanguageVersions.Default,
@@ -22,12 +24,13 @@ public static class LuaParser
         {
             LanguageVersion = parserOptions.LanguageVersion,
         };
-        return Parse(LuaLexer.Lex(source, lexerOptions), parserOptions);
+        return Parse(LuaLexer.Lex(source, lexerOptions), parserOptions, cancellationToken);
     }
 
     public static LuaParseResult Parse(
         LuaLexResult lexResult,
-        LuaParserOptions? options = null)
+        LuaParserOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         LunilGuard.NotNull(lexResult);
         options ??= LuaParserOptions.Default with
@@ -42,7 +45,192 @@ public static class LuaParser
                 nameof(options));
         }
 
-        return new Implementation(lexResult, options).Parse();
+        return new Implementation(lexResult, options, cancellationToken).Parse();
+    }
+
+    public static LuaParseResult ParseIncremental(
+        LuaParseResult previous,
+        LuaTextChange change,
+        LuaLexerOptions? lexerOptions = null,
+        LuaParserOptions? parserOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        LunilGuard.NotNull(previous);
+        LunilGuard.NotNull(change);
+        cancellationToken.ThrowIfCancellationRequested();
+        var newSource = change.Apply(previous.Source);
+        lexerOptions ??= previous.Configuration.Lexer;
+        parserOptions ??= previous.Configuration.Parser;
+        if (lexerOptions != previous.Configuration.Lexer ||
+            parserOptions != previous.Configuration.Parser)
+        {
+            return FullIncrementalReparse(
+                newSource,
+                change,
+                lexerOptions,
+                parserOptions,
+                "configuration-changed",
+                cancellationToken);
+        }
+
+        if (!change.IsUtf8BoundarySafe(previous.Source))
+        {
+            return FullIncrementalReparse(
+                newSource,
+                change,
+                lexerOptions,
+                parserOptions,
+                "unsafe-utf8-boundary",
+                cancellationToken);
+        }
+
+        var rootChildren = previous.Root.Children;
+        if (rootChildren.Length != 2 ||
+            rootChildren[0].Node is not { Kind: LuaSyntaxKind.Block } previousBlock ||
+            rootChildren[1].Token is null)
+        {
+            return FullIncrementalReparse(
+                newSource,
+                change,
+                lexerOptions,
+                parserOptions,
+                "noncanonical-root",
+                cancellationToken);
+        }
+
+        var previousStatements = previousBlock.Children;
+        var prefixCount = 0;
+        while (prefixCount < previousStatements.Length &&
+               previousStatements[prefixCount].Node is { } statement &&
+               statement.FullSpan.End <= change.Span.Start)
+        {
+            prefixCount++;
+        }
+
+        var reparseStart = prefixCount < previousStatements.Length
+            ? previousStatements[prefixCount].Node!.FullSpan.Start
+            : rootChildren[1].Token!.FullSpan.Start;
+        if (reparseStart > change.Span.Start)
+        {
+            reparseStart = change.Span.Start;
+            prefixCount = 0;
+        }
+
+        var fragmentSource = new SourceText(newSource.AsSpan()[reparseStart..]);
+        var fragmentLexerOptions = reparseStart == 0
+            ? lexerOptions
+            : lexerOptions with
+            {
+                AcceptUtf8ByteOrderMark = false,
+                AcceptShebang = false,
+            };
+        var fragment = Parse(
+            fragmentSource,
+            fragmentLexerOptions,
+            parserOptions,
+            cancellationToken);
+        var shiftedFragmentRoot = fragment.Root.WithPositionDelta(reparseStart);
+        var fragmentRootChildren = shiftedFragmentRoot.Children;
+        var fragmentBlock = fragmentRootChildren[0].Node!;
+        var combinedStatements = ImmutableArray.CreateBuilder<LuaSyntaxElement>(
+            prefixCount + fragmentBlock.Children.Length);
+        for (var index = 0; index < prefixCount; index++)
+        {
+            combinedStatements.Add(previousStatements[index]);
+        }
+
+        combinedStatements.AddRange(fragmentBlock.Children);
+        var combinedBlock = new LuaSyntaxNode(
+            LuaSyntaxKind.Block,
+            combinedStatements.MoveToImmutable(),
+            0);
+        var combinedRoot = new LuaSyntaxNode(
+            LuaSyntaxKind.CompilationUnit,
+            [combinedBlock, fragmentRootChildren[1].Token!],
+            0);
+        var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+        diagnostics.AddRange(previous.Diagnostics.Where(diagnostic =>
+            diagnostic.Span.End <= reparseStart));
+        diagnostics.AddRange(fragment.Diagnostics.Select(diagnostic => new Diagnostic(
+            diagnostic.Code,
+            diagnostic.Severity,
+            new TextSpan(checked(diagnostic.Span.Start + reparseStart), diagnostic.Span.Length),
+            diagnostic.Message)));
+        var finalDiagnostics = diagnostics.Count <= parserOptions.MaximumDiagnosticCount
+            ? diagnostics.ToImmutable()
+            : diagnostics.Take(parserOptions.MaximumDiagnosticCount).ToImmutableArray();
+
+        CountReused(previousStatements, prefixCount, out var reusedNodes, out var reusedTokens);
+        return new LuaParseResult(newSource, combinedRoot, finalDiagnostics)
+        {
+            LanguageVersion = parserOptions.LanguageVersion,
+            Configuration = new LuaParseConfiguration(lexerOptions, parserOptions),
+            CompactMetrics = fragment.CompactMetrics,
+            IncrementalMetrics = new LuaIncrementalParseMetrics(
+                WasFullReparse: false,
+                Reason: "top-level-suffix",
+                ChangedOldSpan: change.Span,
+                ReparsedNewSpan: new TextSpan(reparseStart, newSource.Length - reparseStart),
+                ReusedNodeCount: reusedNodes,
+                ReusedTokenCount: reusedTokens),
+        };
+    }
+
+    private static LuaParseResult FullIncrementalReparse(
+        SourceText newSource,
+        LuaTextChange change,
+        LuaLexerOptions lexerOptions,
+        LuaParserOptions parserOptions,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var result = Parse(newSource, lexerOptions, parserOptions, cancellationToken);
+        return result with
+        {
+            IncrementalMetrics = new LuaIncrementalParseMetrics(
+                WasFullReparse: true,
+                Reason: reason,
+                ChangedOldSpan: change.Span,
+                ReparsedNewSpan: new TextSpan(0, newSource.Length),
+                ReusedNodeCount: 0,
+                ReusedTokenCount: 0),
+        };
+    }
+
+    private static void CountReused(
+        ImmutableArray<LuaSyntaxElement> statements,
+        int count,
+        out int nodeCount,
+        out int tokenCount)
+    {
+        nodeCount = 0;
+        tokenCount = 0;
+        var stack = new Stack<LuaSyntaxElement>();
+        for (var index = 0; index < count; index++)
+        {
+            stack.Push(statements[index]);
+        }
+
+        while (stack.Count != 0)
+        {
+            var element = stack.Pop();
+            if (element.Token is not null)
+            {
+                tokenCount++;
+                continue;
+            }
+
+            if (element.Node is not { } node)
+            {
+                continue;
+            }
+
+            nodeCount++;
+            foreach (var child in node.Children)
+            {
+                stack.Push(child);
+            }
+        }
     }
 
     private static void ValidateOptions(LuaParserOptions options)
@@ -58,6 +246,13 @@ public static class LuaParser
         LunilGuard.Positive(options.MaximumRecursionDepth);
         LunilGuard.Positive(options.MaximumNodeCount);
         LunilGuard.Positive(options.MaximumDiagnosticCount);
+        if (options.MaximumRecursionDepth > LuaParserOptions.MaximumSupportedRecursionDepth)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.MaximumRecursionDepth,
+                $"Parser recursion depth cannot exceed {LuaParserOptions.MaximumSupportedRecursionDepth}.");
+        }
     }
 
     private sealed class Implementation
@@ -66,17 +261,26 @@ public static class LuaParser
 
         private readonly LuaLexResult _lexResult;
         private readonly LuaParserOptions _options;
+        private readonly LuaGrammarFeatures _grammarFeatures;
+        private readonly CancellationToken _cancellationToken;
         private readonly ImmutableArray<Diagnostic>.Builder _diagnostics;
         private readonly Stack<int> _functionStartPositions = [];
         private int _position;
         private int _recursionDepth;
         private int _nodeCount;
+        private int _consumedTokenCount;
         private bool _nodeBudgetExceeded;
 
-        public Implementation(LuaLexResult lexResult, LuaParserOptions options)
+        public Implementation(
+            LuaLexResult lexResult,
+            LuaParserOptions options,
+            CancellationToken cancellationToken)
         {
             _lexResult = lexResult;
             _options = options;
+            _grammarFeatures = LuaGrammarFeatureTable.Get(options.LanguageVersion);
+            _cancellationToken = cancellationToken;
+            cancellationToken.ThrowIfCancellationRequested();
             _diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
             _diagnostics.AddRange(lexResult.Diagnostics.Take(options.MaximumDiagnosticCount));
         }
@@ -89,9 +293,17 @@ public static class LuaParser
                 Match(LuaTokenKind.EndOfFile),
             };
             var root = CreateNode(LuaSyntaxKind.CompilationUnit, children, 0);
-            return new LuaParseResult(_lexResult.Source, root, _diagnostics.ToImmutable())
+            var diagnostics = _diagnostics.ToImmutable();
+            var result = _options.UseCompactSyntaxArena
+                ? new LuaParseResult(
+                    _lexResult.Source,
+                    LuaSyntaxArena.Create(root, _nodeCount, _lexResult.Tokens.Length),
+                    diagnostics)
+                : new LuaParseResult(_lexResult.Source, root, diagnostics);
+            return result with
             {
                 LanguageVersion = _options.LanguageVersion,
+                Configuration = new LuaParseConfiguration(_lexResult.Options, _options),
             };
         }
 
@@ -193,7 +405,7 @@ public static class LuaParser
         {
             var start = Current.Span.Start;
             var children = new List<LuaSyntaxElement> { Consume() };
-            if (_options.LanguageVersion != LuaLanguageVersion.Lua55)
+            if (!_grammarFeatures.SupportsGlobalDeclarations)
             {
                 AddDiagnostic("LUA2013", children[0].Token!.Span,
                     "Global declarations are only available in Lua 5.5.");
@@ -210,8 +422,10 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.LessThan)
             {
                 children.Add(Consume());
-                children.Add(Match(LuaTokenKind.Identifier));
+                var attribute = Match(LuaTokenKind.Identifier);
+                children.Add(attribute);
                 children.Add(Match(LuaTokenKind.GreaterThan));
+                ValidateAttribute(attribute);
             }
 
             if (Current.Kind == LuaTokenKind.Star)
@@ -242,8 +456,10 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.LessThan)
             {
                 children.Add(Consume());
-                children.Add(Match(LuaTokenKind.Identifier));
+                var attribute = Match(LuaTokenKind.Identifier);
+                children.Add(attribute);
                 children.Add(Match(LuaTokenKind.GreaterThan));
+                ValidateAttribute(attribute);
             }
 
             return CreateNode(LuaSyntaxKind.AttributedName, children);
@@ -251,7 +467,7 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseLabelStatement()
         {
-            if (_options.LanguageVersion == LuaLanguageVersion.Lua51)
+            if (!_grammarFeatures.SupportsGotoAndLabels)
             {
                 AddDiagnostic("LUA2011", Current.Span, "Labels are not available in Lua 5.1.");
             }
@@ -267,7 +483,7 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseGotoStatement()
         {
-            if (_options.LanguageVersion == LuaLanguageVersion.Lua51)
+            if (!_grammarFeatures.SupportsGotoAndLabels)
             {
                 AddDiagnostic("LUA2011", Current.Span, "goto is not available in Lua 5.1.");
             }
@@ -498,24 +714,38 @@ public static class LuaParser
 
         private LuaSyntaxNode ParseAttributedName()
         {
-            var children = new List<LuaSyntaxElement>
+            var children = new List<LuaSyntaxElement>();
+            if (_grammarFeatures.SupportsPrefixAttributes &&
+                Current.Kind == LuaTokenKind.LessThan)
             {
-                Match(LuaTokenKind.Identifier),
-            };
+                children.Add(Consume());
+                var prefixAttribute = Match(LuaTokenKind.Identifier);
+                children.Add(prefixAttribute);
+                children.Add(Match(LuaTokenKind.GreaterThan));
+                ValidateAttribute(prefixAttribute);
+                children.Add(Match(LuaTokenKind.Identifier));
+                return CreateNode(LuaSyntaxKind.AttributedName, children);
+            }
+
+            children.Add(Match(LuaTokenKind.Identifier));
 
             if (Current.Kind == LuaTokenKind.LessThan)
             {
                 var attributeStart = Current.Span.Start;
                 children.Add(Consume());
-                children.Add(Match(LuaTokenKind.Identifier));
+                var attribute = Match(LuaTokenKind.Identifier);
+                children.Add(attribute);
                 children.Add(Match(LuaTokenKind.GreaterThan));
-                if (_options.LanguageVersion is not (
-                        LuaLanguageVersion.Lua54 or LuaLanguageVersion.Lua55))
+                if (!_grammarFeatures.SupportsLocalAttributes)
                 {
                     AddDiagnostic(
                         "LUA2010",
                         TextSpan.FromBounds(attributeStart, Current.Span.Start),
                         "Local attributes require Lua 5.4 or later.");
+                }
+                else
+                {
+                    ValidateAttribute(attribute);
                 }
             }
 
@@ -624,7 +854,7 @@ public static class LuaParser
                         Consume(),
                         ParseExpression(12),
                     };
-                    if (_options.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 &&
+                    if (!_grammarFeatures.SupportsBitwiseOperators &&
                         unaryToken.Kind == LuaTokenKind.Tilde)
                     {
                         AddDiagnostic(
@@ -650,10 +880,11 @@ public static class LuaParser
                         Consume(),
                         ParseExpression(rightPrecedence),
                     };
-                    if (_options.LanguageVersion is LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 &&
-                        operatorToken.Kind is LuaTokenKind.FloorDivide or LuaTokenKind.Ampersand or
-                        LuaTokenKind.Pipe or LuaTokenKind.ShiftLeft or LuaTokenKind.ShiftRight or
-                        LuaTokenKind.Tilde)
+                    if ((!_grammarFeatures.SupportsFloorDivision &&
+                         operatorToken.Kind == LuaTokenKind.FloorDivide) ||
+                        (!_grammarFeatures.SupportsBitwiseOperators &&
+                         operatorToken.Kind is LuaTokenKind.Ampersand or LuaTokenKind.Pipe or
+                             LuaTokenKind.ShiftLeft or LuaTokenKind.ShiftRight or LuaTokenKind.Tilde))
                     {
                         AddDiagnostic(
                             "LUA2012",
@@ -683,10 +914,9 @@ public static class LuaParser
             LuaTokenKind.TrueKeyword => CreateNode(
                 LuaSyntaxKind.TrueLiteralExpression,
                 [Consume()]),
-            LuaTokenKind.NumericLiteral => CreateNode(
-                LuaSyntaxKind.NumericLiteralExpression,
-                [Consume()]),
-            LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral => CreateNode(
+            LuaTokenKind.NumericLiteral => ParseNumericLiteralExpression(),
+            LuaTokenKind.StringLiteral => ParseStringLiteralExpression(),
+            LuaTokenKind.LongStringLiteral => CreateNode(
                 LuaSyntaxKind.StringLiteralExpression,
                 [Consume()]),
             LuaTokenKind.VarArg => CreateNode(
@@ -697,6 +927,56 @@ public static class LuaParser
             LuaTokenKind.Identifier or LuaTokenKind.OpenParenthesis => ParseSuffixedExpression(),
             _ => ParseMissingExpression(),
         };
+
+        private LuaSyntaxNode ParseNumericLiteralExpression()
+        {
+            var token = Consume();
+            var text = _lexResult.Source.GetSpan(token.Span);
+            if (!_grammarFeatures.SupportsHexadecimalFloats &&
+                text.Length >= 2 && text[0] == (byte)'0' && text[1] is (byte)'x' or (byte)'X' &&
+                (text.IndexOf((byte)'.') >= 0 || text.IndexOf((byte)'p') >= 0 ||
+                 text.IndexOf((byte)'P') >= 0))
+            {
+                AddDiagnostic(
+                    "LUA2015",
+                    token.Span,
+                    "Hexadecimal floating-point literals require Lua 5.2 or later.");
+            }
+
+            return CreateNode(LuaSyntaxKind.NumericLiteralExpression, [token]);
+        }
+
+        private LuaSyntaxNode ParseStringLiteralExpression()
+        {
+            var token = Consume();
+            var text = _lexResult.Source.GetSpan(token.Span);
+            for (var index = 1; index + 1 < text.Length; index++)
+            {
+                if (text[index] != (byte)'\\')
+                {
+                    continue;
+                }
+
+                var escape = text[++index];
+                var supported = escape switch
+                {
+                    (byte)'x' => _grammarFeatures.SupportsHexadecimalStringEscapes,
+                    (byte)'z' => _grammarFeatures.SupportsWhitespaceEatingStringEscape,
+                    (byte)'u' => _grammarFeatures.SupportsUnicodeStringEscapes,
+                    _ => true,
+                };
+                if (!supported)
+                {
+                    var requiredVersion = escape == (byte)'u' ? "5.3" : "5.2";
+                    AddDiagnostic(
+                        "LUA2016",
+                        token.Span,
+                        $"The \\{(char)escape} string escape requires Lua {requiredVersion} or later.");
+                }
+            }
+
+            return CreateNode(LuaSyntaxKind.StringLiteralExpression, [token]);
+        }
 
         private LuaSyntaxNode ParseFunctionExpression()
         {
@@ -903,7 +1183,7 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.VarArg)
             {
                 children.Add(Consume());
-                if (_options.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                if (_grammarFeatures.SupportsNamedVarargs &&
                     Current.Kind == LuaTokenKind.Identifier)
                 {
                     children.Add(Consume());
@@ -918,7 +1198,7 @@ public static class LuaParser
                     if (Current.Kind == LuaTokenKind.VarArg)
                     {
                         children.Add(Consume());
-                        if (_options.LanguageVersion == LuaLanguageVersion.Lua55 &&
+                        if (_grammarFeatures.SupportsNamedVarargs &&
                             Current.Kind == LuaTokenKind.Identifier)
                         {
                             children.Add(Consume());
@@ -962,6 +1242,23 @@ public static class LuaParser
             return CreateNode(LuaSyntaxKind.Error, children, start);
         }
 
+        private void ValidateAttribute(LuaSyntaxToken attribute)
+        {
+            if (attribute.IsMissing || !_grammarFeatures.SupportsLocalAttributes)
+            {
+                return;
+            }
+
+            var name = _lexResult.Source.GetSpan(attribute.Span);
+            if (!name.SequenceEqual("const"u8) && !name.SequenceEqual("close"u8))
+            {
+                AddDiagnostic(
+                    "LUA2014",
+                    attribute.Span,
+                    "Unknown variable attribute; expected 'const' or 'close'.");
+            }
+        }
+
         private void ValidateAssignable(LuaSyntaxNode expression)
         {
             if (expression.Kind is not (
@@ -979,6 +1276,11 @@ public static class LuaParser
             int? emptyPosition = null)
         {
             _nodeCount++;
+            if ((_nodeCount & 0xff) == 0)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+            }
+
             if (!_nodeBudgetExceeded && _nodeCount > _options.MaximumNodeCount)
             {
                 _nodeBudgetExceeded = true;
@@ -993,6 +1295,7 @@ public static class LuaParser
 
         private bool TryEnterRecursion(string construct)
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             if (_recursionDepth >= _options.MaximumRecursionDepth)
             {
                 AddDiagnostic(
@@ -1033,6 +1336,12 @@ public static class LuaParser
 
         private LuaSyntaxToken Consume()
         {
+            _consumedTokenCount++;
+            if ((_consumedTokenCount & 0xff) == 0)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+            }
+
             var token = Current;
             if (_position < _lexResult.Tokens.Length - 1)
             {

@@ -1,0 +1,140 @@
+{
+  "name": "lunil-lua",
+  "displayName": "Lunil Lua",
+  "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
+  "version": "0.14.0",
+  "publisher": "dlqw",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "lua",
+    "lsp",
+    "lunil",
+    "metatable",
+    "game development"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:lua",
+    "workspaceContains:**/*.lua",
+    "onCommand:lunil.restartServer",
+    "onCommand:lunil.clearCache",
+    "onCommand:lunil.showHostContract"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lua",
+        "aliases": [
+          "Lua",
+          "lua"
+        ],
+        "extensions": [
+          ".lua"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "lunil.restartServer",
+        "title": "Lunil: Restart Language Server"
+      },
+      {
+        "command": "lunil.clearCache",
+        "title": "Lunil: Clear Analysis Cache"
+      },
+      {
+        "command": "lunil.reindexWorkspace",
+        "title": "Lunil: Reindex Workspace"
+      },
+      {
+        "command": "lunil.showOutput",
+        "title": "Lunil: Show Language Server Output"
+      },
+      {
+        "command": "lunil.showHostContract",
+        "title": "Lunil: Show Virtual Host Contract"
+      }
+    ],
+    "configuration": {
+      "title": "Lunil",
+      "properties": {
+        "lunil.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Optional absolute path to a compatible lunil-language-server executable. The bundled server is used by default."
+        },
+        "lunil.server.trace": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "LSP message tracing written to the Lunil output channel."
+        },
+        "lunil.server.maximumRestartCount": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 20,
+          "scope": "window",
+          "description": "Maximum automatic restarts after unexpected server termination."
+        },
+        "lunil.server.gcHeapHardLimitPercent": {
+          "type": "integer",
+          "default": 70,
+          "minimum": 20,
+          "maximum": 90,
+          "scope": "machine-overridable",
+          "description": "Managed heap hard-limit percentage passed to the bundled server."
+        },
+        "lunil.hostContractPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Path to a versioned Lunil host analysis contract exported by a C++, C#, Unity, Godot, or other host."
+        },
+        "lunil.hostContractJson": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check": "tsc --noEmit && npm run compile",
+    "test": "npm run compile && node ./dist/test/runTest.js",
+    "package": "npm run check && vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.15.3",
+    "@types/vscode": "1.96.0",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "3.7.1",
+    "esbuild": "0.25.3",
+    "mocha": "11.1.0",
+    "typescript": "5.8.3"
+  }
+}

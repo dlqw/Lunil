@@ -8,18 +8,18 @@ coroutine。经过验证的 integration target 是 Godot 4.4 与 4.6 .NET。
 ## 前置条件
 
 - Godot 4.4 或 4.6 .NET 项目。
-- `Lunil.Godot` `0.13.0` NuGet package。
-- 0.13.0 release 中的 `addons/lunil` 目录。
+- `Lunil.Godot` `0.14.0` NuGet package。
+- 0.14.0 release 中的 `addons/lunil` 目录。
 
 ## 1. 安装 package 与 addon
 
 在 Godot C# 项目中添加 package：
 
 ```xml
-<PackageReference Include="Lunil.Godot" Version="0.13.0" />
+<PackageReference Include="Lunil.Godot" Version="0.14.0" />
 ```
 
-从 `v0.13.0` GitHub Release 下载 `Lunil.Godot.addon-0.13.0.zip` 并解压，再把 archive 中的
+从 `v0.14.0` GitHub Release 下载 `Lunil.Godot.addon-0.14.0.zip` 并解压，再把 archive 中的
 `addons/lunil` 目录复制到项目的 `res://addons/lunil`。随后在
 **Project > Project Settings > Plugins** 中启用 **Lunil**。Addon 暴露 `LunilGameLoop` node
 和 `LunilScript` resource，NuGet package 提供具体实现。
@@ -108,6 +108,6 @@ dispose 时断开。Typed overload 最多接收三个 signal value，且每个 G
 生成的 `.godot` metadata。
 
 桌面端与 Android 为稳定支持。Godot iOS 是 preview，因为官方 .NET exporter、Xcode build、签名与
-设备运行需要 macOS。Godot Web 不在 0.13 支持矩阵内。
+设备运行需要 macOS。Godot Web 不在 0.14 支持矩阵内。
 
 Lifecycle 与平台细节见 [Godot reference](godot-reference.zh-CN.pub.md)。

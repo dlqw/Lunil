@@ -13,4 +13,22 @@
     <Left>lib/netstandard2.1/Lunil.Workspace.dll</Left>
     <Right>lib/net10.0/Lunil.Workspace.dll</Right>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Workspace.LuaWorkspaceBindingStatus</Target>
+    <Left>lib/netstandard2.1/Lunil.Workspace.dll</Left>
+    <Right>lib/net10.0/Lunil.Workspace.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Workspace.LuaWorkspaceExportKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Workspace.dll</Left>
+    <Right>lib/net10.0/Lunil.Workspace.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Workspace.LuaWorkspaceProgressPhase</Target>
+    <Left>lib/netstandard2.1/Lunil.Workspace.dll</Left>
+    <Right>lib/net10.0/Lunil.Workspace.dll</Right>
+  </Suppression>
 </Suppressions>

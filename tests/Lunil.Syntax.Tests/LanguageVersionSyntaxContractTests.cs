@@ -132,6 +132,72 @@ public sealed class LanguageVersionSyntaxContractTests
         Assert.NotEmpty(result.Diagnostics);
     }
 
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, false, false, false, false)]
+    [InlineData(LuaLanguageVersion.Lua52, true, true, false, false)]
+    [InlineData(LuaLanguageVersion.Lua53, true, true, true, false)]
+    [InlineData(LuaLanguageVersion.Lua54, true, true, true, true)]
+    [InlineData(LuaLanguageVersion.Lua55, true, true, true, true)]
+    public void GrammarFeatureTableFreezesLiteralAndAttributeBoundaries(
+        LuaLanguageVersion version,
+        bool hexadecimalFloat,
+        bool extendedStringEscapes,
+        bool unicodeEscape,
+        bool localAttributes)
+    {
+        var features = LuaGrammarFeatureTable.Get(version);
+
+        Assert.Equal(hexadecimalFloat, features.SupportsHexadecimalFloats);
+        Assert.Equal(extendedStringEscapes, features.SupportsHexadecimalStringEscapes);
+        Assert.Equal(extendedStringEscapes, features.SupportsWhitespaceEatingStringEscape);
+        Assert.Equal(unicodeEscape, features.SupportsUnicodeStringEscapes);
+        Assert.Equal(localAttributes, features.SupportsLocalAttributes);
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, true)]
+    [InlineData(LuaLanguageVersion.Lua52, false)]
+    [InlineData(LuaLanguageVersion.Lua53, false)]
+    [InlineData(LuaLanguageVersion.Lua54, false)]
+    [InlineData(LuaLanguageVersion.Lua55, false)]
+    public void HexadecimalFloatBoundaryMatchesVersion(LuaLanguageVersion version, bool rejected)
+    {
+        var result = Parse("return 0x1.8p1", version);
+
+        Assert.Equal(rejected, result.Diagnostics.Any(static item => item.Code == "LUA2015"));
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, 2)]
+    [InlineData(LuaLanguageVersion.Lua52, 0)]
+    [InlineData(LuaLanguageVersion.Lua53, 0)]
+    [InlineData(LuaLanguageVersion.Lua54, 0)]
+    [InlineData(LuaLanguageVersion.Lua55, 0)]
+    public void ExtendedStringEscapeBoundaryMatchesVersion(
+        LuaLanguageVersion version,
+        int expectedParserDiagnostics)
+    {
+        var result = Parse("return '\\x41', 'a\\z  b'", version);
+
+        Assert.Equal(
+            expectedParserDiagnostics,
+            result.Diagnostics.Count(static item => item.Code == "LUA2016"));
+    }
+
+    [Fact]
+    public void Lua55AcceptsPrefixAttributesFromTheOfficialGrammar()
+    {
+        var result = Parse(
+            "local <close> resource = acquire()\nlocal <const> value = 1",
+            LuaLanguageVersion.Lua55);
+
+        Assert.Empty(result.Diagnostics);
+        Assert.True(LuaGrammarFeatureTable.Get(LuaLanguageVersion.Lua55)
+            .SupportsPrefixAttributes);
+        Assert.False(LuaGrammarFeatureTable.Get(LuaLanguageVersion.Lua54)
+            .SupportsPrefixAttributes);
+    }
+
     private static LuaParseResult Parse(string source, LuaLanguageVersion version) =>
         LuaParser.Parse(
             SourceText.FromUtf8(source),

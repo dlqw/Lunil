@@ -280,8 +280,81 @@ public sealed class LuaBinderTests
             Assert.Single(model.Symbols, symbol => symbol.Name == "answer").Attribute);
     }
 
+    [Fact]
+    public void ProjectsMemberAndMethodNamesWithoutInventingLexicalSymbols()
+    {
+        const string source = "local foo, self; foo.bar(); self:helper()";
+
+        var model = Bind(source);
+
+        Assert.DoesNotContain(model.References, reference => reference.Name is "bar" or "helper");
+        var bar = Assert.Single(model.MemberReferences, reference => reference.Name == "bar");
+        var helper = Assert.Single(model.MemberReferences, reference => reference.Name == "helper");
+        Assert.Equal(LuaReferenceKind.Member, bar.Kind);
+        Assert.Equal(LuaReferenceAccess.Read | LuaReferenceAccess.Call, bar.Access);
+        Assert.Equal(
+            LuaReferenceAccess.Read | LuaReferenceAccess.Call | LuaReferenceAccess.MethodCall,
+            helper.Access);
+        Assert.Equal("foo", source[bar.ReceiverSpan.Start..bar.ReceiverSpan.End]);
+        Assert.Equal("self", source[helper.ReceiverSpan.Start..helper.ReceiverSpan.End]);
+        Assert.Equal(["foo", "bar", "self", "helper"],
+            model.UnifiedReferences.Select(static reference => reference.Name));
+    }
+
+    [Fact]
+    public void RecordsWritesLiteralAndDynamicIndicesAndContainingFunctions()
+    {
+        const string source = "local t, key; t.value = 1; t[\"saved\"](); local function f() t[key] = 2 end";
+
+        var model = Bind(source);
+
+        var value = Assert.Single(model.MemberReferences, reference => reference.Name == "value");
+        var saved = Assert.Single(model.MemberReferences, reference => reference.Name == "saved");
+        var dynamic = Assert.Single(model.MemberReferences, reference =>
+            reference.ResolutionKind == LuaReferenceResolutionKind.DynamicIndex);
+        Assert.Equal(LuaReferenceAccess.Write, value.Access);
+        Assert.Equal(LuaReferenceAccess.Read | LuaReferenceAccess.Call, saved.Access);
+        Assert.Equal(LuaReferenceAccess.Write, dynamic.Access);
+        Assert.Equal(LuaReferenceKind.Index, saved.Kind);
+        Assert.Equal(0, saved.ContainingFunctionId);
+        Assert.Equal(1, dynamic.ContainingFunctionId);
+        Assert.Equal(1, model.GetContainingFunction(dynamic.Span).Id);
+    }
+
+    [Fact]
+    public void ReferenceIndexesHandleShadowingExactSpansAndForeignSymbols()
+    {
+        const string source = "local x = 1; do local x = x; x = 2 end; return x";
+        var model = Bind(source);
+        var symbols = model.Symbols.Where(static symbol => symbol.Name == "x").ToArray();
+
+        Assert.Equal(2, model.FindCodeReferences(symbols[0]).Length);
+        Assert.Single(model.FindCodeReferences(symbols[1]));
+        var last = model.UnifiedReferences.Last();
+        Assert.Same(last, model.FindCodeReferenceAt(last.Span.Start));
+        Assert.Contains(last, model.FindCodeReferences(last.Span));
+
+        var foreign = Bind("local x; return x").Symbols.Single(static symbol => symbol.Name == "x");
+        Assert.Throws<ArgumentException>(() => model.FindCodeReferences(foreign));
+    }
+
+    [Fact]
+    public void MalformedMemberAndIndexReferencesRemainQueryable()
+    {
+        var model = Bind("local t; t.; t[");
+
+        Assert.Contains(model.MemberReferences, reference =>
+            reference.ResolutionKind == LuaReferenceResolutionKind.Incomplete);
+        Assert.All(model.MemberReferences, reference =>
+            Assert.InRange(reference.ContainingFunctionId, 0, model.Functions.Length - 1));
+    }
+
     private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null)
     {
+        options = (options ?? LuaBinderOptions.Default) with
+        {
+            CollectCodeReferences = true,
+        };
         var syntax = LuaParser.Parse(
             SourceText.FromUtf8(source),
             lexerOptions: null,

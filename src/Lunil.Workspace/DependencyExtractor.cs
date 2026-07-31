@@ -7,13 +7,16 @@ namespace Lunil.Workspace;
 
 internal static class DependencyExtractor
 {
-    public static ImmutableArray<DiscoveredDependency> Extract(LuaCompilationResult compilation)
+    public static ImmutableArray<DiscoveredDependency> Extract(LuaFrontEndSnapshot snapshot)
     {
-        var references = compilation.SemanticModel.References
+        var semanticModel = snapshot.SemanticModel ?? throw new ArgumentException(
+            "A bound front-end snapshot is required.",
+            nameof(snapshot));
+        var references = semanticModel.References
             .GroupBy(static reference => reference.Span)
             .ToDictionary(static group => group.Key, static group => group.Last());
         var dependencies = ImmutableArray.CreateBuilder<DiscoveredDependency>();
-        new RequireCallWalker(references, dependencies).Visit(compilation.Syntax.Root);
+        new RequireCallWalker(references, dependencies).Visit(snapshot.Syntax.Root);
 
         return dependencies
             .OrderBy(static dependency => dependency.Span.Start)

@@ -1,0 +1,14 @@
+.github/**
+.gitignore
+.vscode-test/**
+dist-types/**
+node_modules/**
+src/**
+test/**
+**/*.map
+dist/test/**
+esbuild.mjs
+tsconfig.json
+package-lock.json
+server/**/*.pdb
+server/**/*.xml

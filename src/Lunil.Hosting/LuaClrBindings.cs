@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using Lunil.Analysis;
 using Lunil.Runtime.Values;
 
 namespace Lunil.Hosting;
@@ -382,8 +383,174 @@ public sealed class LuaClrBindingRegistry
         return builder.Append("</linker>\n").ToString();
     }
 
+    /// <summary>
+    /// Creates the same language-neutral analysis contract from the exact metadata used by the
+    /// runtime registry. Generated C# bindings therefore cannot silently drift from editor types.
+    /// </summary>
+    public LuaHostAnalysisContract CreateAnalysisContract(
+        string contractId,
+        string globalName = "clr")
+    {
+        var builder = new LuaHostContractBuilder(contractId);
+        foreach (var binding in GetBindings())
+        {
+            var typePath = globalName + "." + SanitizeContractName(binding.TypeName);
+            foreach (var constructor in binding.Constructors)
+            {
+                builder.AddFunction(new LuaHostFunctionContract
+                {
+                    Path = typePath + ".new",
+                    Parameters = [.. constructor.Parameters.Select(ToHostParameter)],
+                    Returns = [ToHostType(binding.ClrType)],
+                    Effects = LuaHostEffectKind.MayThrow,
+                    Source = ContractSource(binding, ".ctor"),
+                });
+            }
+
+            foreach (var member in binding.Members.Where(static item =>
+                         item.Kind is LuaClrMemberKind.Method or LuaClrMemberKind.Operator or
+                         LuaClrMemberKind.Indexer or LuaClrMemberKind.Event))
+            {
+                var callbackIndex = member.Kind == LuaClrMemberKind.Event
+                    ? FindDelegateParameter(member.Parameters)
+                    : -1;
+                builder.AddFunction(new LuaHostFunctionContract
+                {
+                    Path = typePath + "." + member.Name,
+                    Parameters = [.. member.Parameters.Select(ToHostParameter)],
+                    Returns = member.ReturnType == typeof(void) ? [] : [ToHostType(member.ReturnType)],
+                    Effects = LuaHostEffectKind.MayThrow |
+                        (callbackIndex >= 0 ? LuaHostEffectKind.RegistersCallback : LuaHostEffectKind.None),
+                    Callback = callbackIndex < 0 ? null : new LuaHostCallbackContract
+                    {
+                        ParameterIndex = callbackIndex,
+                        Invocation = LuaHostCallbackInvocationKind.Deferred,
+                        Cardinality = LuaHostCallbackCardinality.Many,
+                        Retention = LuaHostCallbackRetentionKind.Stored,
+                        MayThrow = true,
+                    },
+                    Source = ContractSource(binding, member.Name),
+                });
+            }
+        }
+
+        return builder.Build();
+    }
+
     private static string ClosedGenericKey(string genericTypeName, ImmutableArray<string> arguments) =>
         genericTypeName + "[" + string.Join(",", arguments) + "]";
+
+    private static LuaHostParameterContract ToHostParameter(LuaClrParameterBinding parameter) => new()
+    {
+        Name = parameter.Name,
+        Type = ToHostType(parameter.ParameterType),
+        IsOptional = parameter.HasDefaultValue || parameter.IsOut,
+    };
+
+    private static int FindDelegateParameter(ImmutableArray<LuaClrParameterBinding> parameters)
+    {
+        for (var index = 0; index < parameters.Length; index++)
+        {
+            if (typeof(Delegate).IsAssignableFrom(parameters[index].ParameterType))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static LuaHostTypeDescriptor ToHostType(Type type)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        if (type == typeof(void))
+        {
+            return new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Nil };
+        }
+
+        if (type == typeof(bool))
+        {
+            return new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Boolean };
+        }
+
+        if (type == typeof(string) || type == typeof(char))
+        {
+            return new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.String };
+        }
+
+        if (type.IsEnum || type == typeof(byte) || type == typeof(sbyte) ||
+            type == typeof(short) || type == typeof(ushort) || type == typeof(int) ||
+            type == typeof(uint) || type == typeof(long) || type == typeof(ulong))
+        {
+            return new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Integer };
+        }
+
+        if (type == typeof(float) || type == typeof(double) || type == typeof(decimal))
+        {
+            return new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Number };
+        }
+
+        if (typeof(Delegate).IsAssignableFrom(type))
+        {
+            return new LuaHostTypeDescriptor
+            {
+                Kind = LuaHostTypeKind.Function,
+                Name = type.FullName,
+                Parameters = [new LuaHostParameterContract
+                {
+                    Name = "...",
+                    Type = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Any },
+                    IsOptional = true,
+                }],
+                HasVariadicParameters = true,
+                HasVariadicReturns = true,
+            };
+        }
+
+        if (type.IsArray)
+        {
+            return new LuaHostTypeDescriptor
+            {
+                Kind = LuaHostTypeKind.Table,
+                Name = type.FullName,
+            };
+        }
+
+        return new LuaHostTypeDescriptor
+        {
+            Kind = LuaHostTypeKind.Userdata,
+            Name = type.FullName ?? type.Name,
+            IsNullable = !type.IsValueType,
+        };
+    }
+
+    private static LuaHostSourceLocation ContractSource(
+        LuaClrTypeBinding binding,
+        string member) => new()
+        {
+            Uri = $"dotnet://{binding.AssemblyName}/{binding.TypeName}#{member}",
+            Line = 1,
+            Column = 1,
+            ImplementationUri = $"dotnet-implementation://{binding.AssemblyName}/{binding.TypeName}#{member}",
+        };
+
+    private static string SanitizeContractName(string value)
+    {
+        var result = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            result.Append(char.IsLetterOrDigit(character) || character == '_'
+                ? character
+                : '_');
+        }
+
+        if (result.Length == 0 || !(result[0] == '_' || char.IsLetter(result[0])))
+        {
+            result.Insert(0, '_');
+        }
+
+        return result.ToString();
+    }
 
     private static string XmlEscape(string value) => value
         .Replace("&", "&amp;", StringComparison.Ordinal)

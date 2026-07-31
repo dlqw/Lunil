@@ -8,13 +8,13 @@ FixedUpdate lifecycle. Unity 2022.3 LTS and Unity 6 are both first-class targets
 ## Prerequisites
 
 - Unity 2022.3 LTS or Unity 6.
-- The `com.dlqw.lunil-0.13.0.tgz` release asset.
+- The `com.dlqw.lunil-0.14.0.tgz` release asset.
 - .NET SDK 10 only when pre-generating CLR bindings in the Editor.
 
 ## 1. Install the package
 
 In Package Manager, choose **Add package from tarball** and select
-`com.dlqw.lunil-0.13.0.tgz`. The tarball contains the portable interpreter assemblies; it does not
+`com.dlqw.lunil-0.14.0.tgz`. The tarball contains the portable interpreter assemblies; it does not
 contain the CoreCLR JIT.
 
 Do not open a Unity 6 project and downgrade it for 2022.3. Use the independent

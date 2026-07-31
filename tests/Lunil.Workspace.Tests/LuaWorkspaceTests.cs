@@ -1,5 +1,9 @@
 using Lunil.Core.Diagnostics;
 using Lunil.EmmyLua;
+using Lunil.Compiler;
+using Lunil.Analysis;
+using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Workspace.Tests;
 
@@ -21,6 +25,29 @@ public sealed class LuaWorkspaceTests
         Assert.DoesNotContain(result.GetModule("app")!.Compilation.Diagnostics, static diagnostic =>
             diagnostic.Code is "LUA6003" or "LUA6007");
         Assert.Equal("integer", result.GetModule("app")!.ExportedType.DisplayName);
+    }
+
+    [Fact]
+    public async Task TypedDependencyAnalysisReusesDiscoveryFrontEndProducts()
+    {
+        using var workspace = new LuaWorkspace();
+
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "local dep = require('dep')\nreturn dep.value + 1"),
+            Document("dep", "return { value = 42 }"),
+        ]);
+
+        foreach (var module in result.Modules)
+        {
+            var snapshot = Assert.IsType<LuaFrontEndSnapshot>(
+                module.Compilation.FrontEndSnapshot);
+            foreach (var operation in Enum.GetValues<LuaFrontEndOperation>())
+            {
+                Assert.Equal(
+                    1,
+                    snapshot.Metrics.Count(metric => metric.Operation == operation));
+            }
+        }
     }
 
     [Fact]
@@ -170,6 +197,260 @@ public sealed class LuaWorkspaceTests
                  TargetModule: edge.TargetModule?.Name,
                  edge.TargetExportName,
                  TargetFunction: edge.TargetFunctionKey?.Value)));
+    }
+
+    [Fact]
+    public async Task ExportGraphBindsNestedAndLiteralIndexCallsToRealFunctionKeys()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "local service = require('service')\n" +
+                "service.api.run()\n" +
+                "return service.api[\"run\"]()"),
+            Document(
+                "service",
+                "return { api = { run = function() return 42 end } }"),
+        ]);
+
+        var exported = Assert.Single(result.GetModule("service")!.ExportedSymbols, static symbol =>
+            symbol.Path == "api.run");
+        Assert.Equal(LuaWorkspaceExportKind.Function, exported.Kind);
+        Assert.NotNull(exported.FunctionKey);
+        Assert.True(Lunil.Semantics.Binding.LuaSymbolKey.TryParse(exported.FunctionKey, out _));
+
+        var calls = result.GetCallGraph().Edges.Where(static edge =>
+            edge.TargetExportName == "api.run").ToArray();
+        Assert.Equal(2, calls.Length);
+        Assert.All(calls, call =>
+        {
+            Assert.Equal("service", call.TargetModule?.Name);
+            Assert.Equal(exported.Key, call.TargetExportSymbolKey);
+            Assert.Equal(exported.FunctionKey, call.TargetExportFunctionKey);
+            Assert.Equal(exported.DefinitionSpan, call.ExternalDefinitionSpan);
+            Assert.Equal(LuaWorkspaceBindingStatus.Resolved, call.WorkspaceResolutionStatus);
+        });
+    }
+
+    [Fact]
+    public async Task ModuleTableFunctionsAndReExportsPreserveDefinitionTargets()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document("service", "local M = {}\nfunction M.run() return 42 end\nreturn M"),
+            Document("facade", "return require('service')"),
+            Document("app", "local api = require('facade')\nreturn api.run()"),
+        ];
+
+        var first = await workspace.AnalyzeAsync(documents);
+        var second = await workspace.AnalyzeAsync(documents);
+        var service = first.ExportGraph.Find("service", "run")!;
+        var facade = first.ExportGraph.Find("facade", "run")!;
+        Assert.True(facade.IsReExport);
+        Assert.Equal(service.Key, facade.TargetKey);
+        Assert.Equal(service.FunctionKey, facade.FunctionKey);
+        Assert.Contains(first.ExportGraph.Edges, edge =>
+            edge.SourceKey == facade.Key && edge.TargetKey == service.Key && edge.Kind == "re-export");
+
+        var call = Assert.Single(first.GetCallGraph().Edges, edge =>
+            edge.TargetExportSymbolKey == facade.Key);
+        Assert.Equal(service.FunctionKey, call.TargetExportFunctionKey);
+        Assert.Equal("facade", call.TargetModule?.Name);
+        Assert.Equal(
+            first.Modules.Select(static module =>
+                (module.Identity.Name, module.ExportSymbolHash, module.FunctionSummaryHash,
+                    module.AnalysisSummaryHash)),
+            second.Modules.Select(static module =>
+                (module.Identity.Name, module.ExportSymbolHash, module.FunctionSummaryHash,
+                    module.AnalysisSummaryHash)));
+    }
+
+    [Fact]
+    public async Task ReassignedModuleAliasesProduceAnExplicitUnresolvedReason()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "app",
+                "local dep = require('dep')\n" +
+                "dep = {}\n" +
+                "return dep.run()"),
+            Document("dep", "return { run = function() return 42 end }"),
+        ]);
+
+        var binding = Assert.Single(result.CallBindings.Edges);
+        Assert.Equal(LuaWorkspaceBindingStatus.Unresolved, binding.Status);
+        Assert.Equal("module-alias-reassigned", binding.Reason);
+        Assert.Null(binding.TargetSymbolKey);
+        var call = Assert.Single(result.GetCallGraph().Edges, edge =>
+            edge.Site.MemberTarget?.Name == "run");
+        Assert.Null(call.TargetModule);
+        Assert.Equal("module-alias-reassigned", call.WorkspaceResolutionReason);
+    }
+
+    [Fact]
+    public async Task DynamicExportsReturnBoundedCandidatesInsteadOfFalseTargets()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "local dep = require('dep')\nreturn dep.run()"),
+            Document("dep", "return unknown_factory()"),
+        ]);
+
+        var binding = Assert.Single(result.CallBindings.Edges);
+        Assert.Equal(LuaWorkspaceBindingStatus.Dynamic, binding.Status);
+        Assert.Equal("dynamic-export-candidate", binding.Reason);
+        Assert.NotEmpty(binding.CandidateKeys);
+        Assert.Null(binding.TargetSymbolKey);
+    }
+
+    [Fact]
+    public async Task HostModulesBindWithoutResolverDiagnosticsAndProjectExternalLocations()
+    {
+        var functionType = new LuaHostTypeDescriptor
+        {
+            Kind = LuaHostTypeKind.Function,
+            Returns = [new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Integer }],
+        };
+        var source = new LuaHostSourceLocation
+        {
+            Uri = "cpp://engine/native.hpp#run",
+            Line = 12,
+            Column = 7,
+            ImplementationUri = "cpp-implementation://engine/native.cpp#run",
+        };
+        var contract = new LuaHostContractBuilder("workspace-host")
+            .AddModule("native", new LuaHostTypeDescriptor
+            {
+                Kind = LuaHostTypeKind.Table,
+                Fields = ImmutableDictionary<string, LuaHostTypeDescriptor>.Empty
+                    .Add("run", functionType),
+            })
+            .AddFunction(new LuaHostFunctionContract
+            {
+                Path = "native.run",
+                Returns = functionType.Returns,
+                Source = source,
+            })
+            .Build();
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions { HostContract = contract });
+
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "local native = require('native')\nreturn native.run()"),
+        ]);
+
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "LUA7002");
+        Assert.Equal(LuaModuleDependencyKind.Host, Assert.Single(result.Graph.Dependencies).Kind);
+        var binding = Assert.Single(result.CallBindings.Edges);
+        Assert.Equal(LuaWorkspaceBindingStatus.Resolved, binding.Status);
+        Assert.Equal(source.Uri, binding.ExternalDefinition?.Uri);
+        Assert.Equal(source.ImplementationUri, binding.ExternalImplementation?.Uri);
+        Assert.StartsWith("host-function:workspace-host::native.run", binding.TargetFunctionKey,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CallbackAndPersistenceFactsCreateNavigableGraphEdges()
+    {
+        var callback = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Function };
+        var integer = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Integer };
+        var contract = new LuaHostContractBuilder("effects-host")
+            .AddFunction(new LuaHostFunctionContract
+            {
+                Path = "host.subscribe",
+                Parameters = [new LuaHostParameterContract { Name = "callback", Type = callback }],
+                Effects = LuaHostEffectKind.RegistersCallback,
+                Callback = new LuaHostCallbackContract { ParameterIndex = 0 },
+            })
+            .AddFunction(new LuaHostFunctionContract
+            {
+                Path = "host.save",
+                Parameters =
+                [
+                    new LuaHostParameterContract
+                    {
+                        Name = "key",
+                        Type = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.String },
+                    },
+                    new LuaHostParameterContract { Name = "value", Type = integer },
+                ],
+                Effects = LuaHostEffectKind.WritesPersistence,
+                Persistence = new LuaHostPersistenceContract
+                {
+                    Operation = LuaPersistenceOperationKind.Write,
+                    KeyParameterIndex = 0,
+                    ValueParameterIndex = 1,
+                    SchemaId = "player",
+                    SchemaVersion = 2,
+                    ValueType = integer,
+                },
+            })
+            .Build();
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions { HostContract = contract });
+
+        LuaWorkspaceDocument[] documents = [
+            Document("app", "host.subscribe(function() end)\nhost.save('score', 42)\nreturn true"),
+        ];
+        var result = await workspace.AnalyzeAsync(documents);
+
+        Assert.Contains(result.ExportGraph.Symbols, static symbol =>
+            symbol.ModuleName == "app" && symbol.Kind == LuaWorkspaceExportKind.Callback);
+        Assert.Contains(result.ExportGraph.Symbols, static symbol =>
+            symbol.ModuleName == "app" && symbol.Path == "$persistence-schema/player/2");
+        Assert.Contains(result.ExportGraph.Edges, static edge => edge.Kind == "callback-registration");
+        Assert.Contains(result.ExportGraph.Edges, static edge => edge.Kind == "persistence-schema");
+        Assert.Contains(result.ExportGraph.Edges, static edge => edge.Kind == "persistence-access");
+        var compact = await workspace.AnalyzeCompactAsync(documents);
+        var subscribe = compact.ExportGraph.Find("$host:effects-host", "host.subscribe")!;
+        Assert.NotEmpty(compact.FindCallsToExport(subscribe.Key));
+        Assert.NotEmpty(compact.FindCallbackRegistrations(subscribe.Key));
+        Assert.NotEmpty(compact.FindPersistenceSchemas("player"));
+    }
+
+    [Fact]
+    public async Task PrototypeExportsExposeMethodsAsClassSymbols()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document(
+                "class",
+                "local Class = {}\n" +
+                "Class.__index = Class\n" +
+                "function Class:run() return 42 end\n" +
+                "return Class"),
+        ]);
+
+        var root = result.ExportGraph.Find("class", string.Empty)!;
+        Assert.Equal(LuaWorkspaceExportKind.Class, root.Kind);
+        var method = result.ExportGraph.Find("class", "run")!;
+        Assert.Equal(LuaWorkspaceExportKind.Function, method.Kind);
+        Assert.NotNull(method.FunctionKey);
+    }
+
+    [Fact]
+    public async Task CyclicReExportsProduceBoundedDeterministicEdges()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document("a", "return require('b')"),
+            Document("b", "return require('a')"),
+        ];
+
+        var first = await workspace.AnalyzeAsync(documents);
+        var second = await workspace.AnalyzeAsync(documents);
+
+        Assert.True(Assert.Single(first.Graph.Components).IsCyclic);
+        Assert.Equal(2, first.ExportGraph.Edges.Count(static edge => edge.Kind == "re-export"));
+        Assert.Equal(
+            first.ExportGraph.Edges.Select(static edge => (edge.SourceKey, edge.TargetKey, edge.Kind)),
+            second.ExportGraph.Edges.Select(static edge => (edge.SourceKey, edge.TargetKey, edge.Kind)));
+        Assert.All(first.Modules, static module =>
+        {
+            Assert.NotEmpty(module.ExportSymbolHash);
+            Assert.NotEmpty(module.FunctionSummaryHash);
+            Assert.NotEmpty(module.AnalysisSummaryHash);
+        });
     }
 
     [Fact]
@@ -398,8 +679,13 @@ public sealed class LuaWorkspaceTests
     [Fact]
     public async Task ParallelResultMergingIsDeterministicAndGloballyBounded()
     {
+        var source = string.Join(
+            '\n',
+            Enumerable.Range(0, 150).Select(index =>
+                $"local function value{index}() return {index} end")) +
+            "\nreturn value149()";
         var documents = Enumerable.Range(0, 12)
-            .Select(index => Document("m" + index, $"return {index}"))
+            .Select(index => Document("m" + index, source))
             .ToArray();
         var options = new LuaWorkspaceOptions { MaximumParallelism = 3 };
         using var firstWorkspace = new LuaWorkspace(options);
@@ -416,6 +702,211 @@ public sealed class LuaWorkspaceTests
             second.Modules.Select(static module =>
                 (module.Identity.Name, module.ContentHash, module.ExportHash)));
         Assert.Equal(first.Diagnostics, second.Diagnostics);
+    }
+
+    [Fact]
+    public async Task PrivateFunctionChangesDoNotInvalidateUnchangedImporters()
+    {
+        using var workspace = new LuaWorkspace();
+        var app = Document("app", "local dep = require('dep')\nreturn dep.value + 1");
+        _ = await workspace.AnalyzeAsync([
+            app,
+            Document("dep", "local function hidden() return 1 end\nreturn { value = 42 }"),
+        ]);
+
+        var changed = await workspace.AnalyzeAsync([
+            app,
+            Document("dep", "local function hidden() return 2 end\nreturn { value = 42 }"),
+        ]);
+
+        Assert.True(changed.GetModule("app")!.WasCacheHit);
+        Assert.False(changed.GetModule("dep")!.WasCacheHit);
+        Assert.Equal(1, changed.Metrics.InvalidatedModuleCount);
+        Assert.Equal(0, changed.Metrics.DirtyExportCount);
+        Assert.True(changed.Metrics.DirtyFunctionCount >= 1);
+    }
+
+    [Fact]
+    public async Task CompactSnapshotsKeepQueryableReferencesWithoutCompilerModels()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document(
+                "app",
+                "local value = 1\n" +
+                "local function read() return value end\n" +
+                "return value, read()"),
+        ];
+        var full = await workspace.AnalyzeAsync(documents);
+        var module = Assert.Single(full.Modules);
+        var symbol = Assert.Single(module.Compilation.SemanticModel.Symbols, static item =>
+            item.Name == "value");
+        var key = module.Compilation.SemanticModel.GetSymbolKey(symbol, module.Identity);
+
+        var compact = await workspace.AnalyzeCompactAsync(documents);
+
+        Assert.Equal(2, compact.FindReferences(key).Length);
+        Assert.True(compact.EstimatedResidentBytes > 0);
+        Assert.Equal(compact.EstimatedResidentBytes, compact.Metrics.CompactResidentBytes);
+        Assert.True(compact.Metrics.IndexedReferenceCount >= 3);
+        var materialized = await compact.MaterializeAsync(workspace, documents);
+        Assert.True(materialized.GetModule("app")!.WasCacheHit);
+    }
+
+    [Fact]
+    public async Task WeakAnalysisCacheDetectsReclaimedFullModelsAndRematerializes()
+    {
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            RetainFullAnalysisCacheResults = false,
+        });
+        LuaWorkspaceDocument[] documents = [Document("app", "local value = 1\nreturn value")];
+        PopulateWeakAnalysisCache(workspace, documents);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var materialized = await workspace.AnalyzeAsync(documents);
+        Assert.True(materialized.Succeeded);
+        Assert.True(materialized.Metrics.ReclaimedAnalysisCount >= 1 ||
+            materialized.GetModule("app")!.WasCacheHit);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PopulateWeakAnalysisCache(
+        LuaWorkspace workspace,
+        IReadOnlyCollection<LuaWorkspaceDocument> documents)
+    {
+        _ = workspace.AnalyzeAsync(documents).GetAwaiter().GetResult();
+    }
+
+    [Fact]
+    public async Task FairWorkerQueuesBoundPendingWorkAndReportProgress()
+    {
+        var source = string.Join(
+            '\n',
+            Enumerable.Range(0, 40).Select(index =>
+                $"local function value{index}() return {index} end")) +
+            "\nreturn value39()";
+        var progress = new ProgressCollector();
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            MaximumParallelism = 3,
+            MaximumPendingWorkItems = 7,
+            Progress = progress,
+        });
+        var documents = Enumerable.Range(0, 64)
+            .Select(index => Document("m" + index, source))
+            .ToArray();
+
+        var result = await workspace.AnalyzeAsync(documents);
+
+        Assert.InRange(result.Metrics.PeakParallelism, 2, 3);
+        Assert.InRange(result.Metrics.PendingWorkItemHighWatermark, 1, 7);
+        Assert.Contains(progress.Values, static item => item.Phase == LuaWorkspaceProgressPhase.Discovery);
+        Assert.Contains(progress.Values, static item => item.Phase == LuaWorkspaceProgressPhase.Analysis);
+        Assert.Equal(LuaWorkspaceProgressPhase.Completed, progress.Values[^1].Phase);
+    }
+
+    [Fact]
+    public async Task CacheEvictionHonorsEntryAndByteBudgets()
+    {
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            MaximumCacheEntryCount = 4,
+            MaximumCacheBytes = 4_096,
+            RetainFullAnalysisCacheResults = true,
+        });
+        var result = await workspace.AnalyzeAsync(Enumerable.Range(0, 12)
+            .Select(index => Document("m" + index, "local value = " + index + "\nreturn value")));
+
+        Assert.True(result.Metrics.CacheEvictionCount > 0);
+        Assert.InRange(result.Metrics.CacheResidentBytes, 0, 4_096);
+    }
+
+    [Fact]
+    public async Task VersionedDiskCacheAcceptsValidSummariesAndRejectsCorruption()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lunil-workspace-cache-" + Guid.NewGuid().ToString("N"));
+        var options = new LuaWorkspaceOptions { DiskCacheDirectory = root };
+        var documents = new[] { Document("app", "return { value = 42 }") };
+        try
+        {
+            using (var first = new LuaWorkspace(options))
+            {
+                var result = await first.AnalyzeAsync(documents);
+                Assert.Equal(0, result.Metrics.DiskCacheHitCount);
+            }
+
+            using (var warm = new LuaWorkspace(options))
+            {
+                var result = await warm.AnalyzeAsync(documents);
+                Assert.True(result.Metrics.DiskCacheHitCount >= 1);
+            }
+
+            var cacheFile = Assert.Single(Directory.GetFiles(root, "*.lunilcache", SearchOption.AllDirectories));
+            await File.WriteAllTextAsync(cacheFile, "corrupt");
+            using var corrupted = new LuaWorkspace(options);
+            var recovered = await corrupted.AnalyzeAsync(documents);
+            Assert.Equal(0, recovered.Metrics.DiskCacheHitCount);
+            Assert.True(recovered.Succeeded);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task HostSummaryInvalidationIsScopedToReferencedFunctionPaths()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lunil-host-cache-" + Guid.NewGuid().ToString("N"));
+        var integer = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Integer };
+        var text = new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.String };
+        static LuaHostFunctionContract Function(string path, LuaHostTypeDescriptor result) => new()
+        {
+            Path = path,
+            Returns = [result],
+        };
+        var firstContract = new LuaHostContractBuilder("selective-host")
+            .AddFunction(Function("host.used", integer))
+            .AddFunction(Function("host.unused", integer))
+            .Build();
+        var changedContract = new LuaHostContractBuilder("selective-host")
+            .AddFunction(Function("host.used", integer))
+            .AddFunction(Function("host.unused", text))
+            .Build();
+        var documents = new[] { Document("app", "return host.used()") };
+        try
+        {
+            using (var first = new LuaWorkspace(new LuaWorkspaceOptions
+            {
+                DiskCacheDirectory = root,
+                HostContract = firstContract,
+            }))
+            {
+                _ = await first.AnalyzeAsync(documents);
+            }
+
+            using var changed = new LuaWorkspace(new LuaWorkspaceOptions
+            {
+                DiskCacheDirectory = root,
+                HostContract = changedContract,
+            });
+            var result = await changed.AnalyzeAsync(documents);
+            Assert.True(result.Metrics.DiskCacheHitCount >= 1);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -493,5 +984,12 @@ public sealed class LuaWorkspaceTests
             await Release.Task.WaitAsync(cancellationToken);
             return document;
         }
+    }
+
+    private sealed class ProgressCollector : IProgress<LuaWorkspaceProgress>
+    {
+        public List<LuaWorkspaceProgress> Values { get; } = [];
+
+        public void Report(LuaWorkspaceProgress value) => Values.Add(value);
     }
 }

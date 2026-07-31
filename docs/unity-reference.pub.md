@@ -7,7 +7,7 @@
 | Field | Value |
 | --- | --- |
 | Package ID | `com.dlqw.lunil` |
-| Version | `0.13.0` |
+| Version | `0.14.0` |
 | Minimum Unity | `2022.3` |
 | Runtime backend | Portable interpreter |
 | Default CLR mode | Disabled; generated `RegistryOnly` is recommended |

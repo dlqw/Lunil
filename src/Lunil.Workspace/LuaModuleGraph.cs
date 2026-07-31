@@ -7,6 +7,7 @@ public enum LuaModuleDependencyKind : byte
 {
     Static,
     Dynamic,
+    Host,
 }
 
 public sealed record LuaModuleDependency(

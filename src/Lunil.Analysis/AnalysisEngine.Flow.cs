@@ -78,6 +78,19 @@ internal sealed partial class AnalysisEngine
                 expression.Span);
         }
 
+        if (TryGetAccessPath(expression, out var path))
+        {
+            var current = state.PathTypes.GetValueOrDefault(
+                path,
+                _expressionInferences.GetValueOrDefault(expression.Span, LuaTypes.Any));
+            return NarrowPath(
+                path,
+                _relations.TruthyPart(current),
+                _relations.FalsyPart(current),
+                state,
+                expression.Span);
+        }
+
         var type = InferExpression(expression, state);
         var truthy = _relations.TruthyPart(type);
         var falsy = _relations.FalsyPart(type);
@@ -110,9 +123,21 @@ internal sealed partial class AnalysisEngine
             return NarrowNil(rightKey, equal, state, span);
         }
 
+        if (IsNil(left) && TryGetAccessPath(right, out var rightPath))
+        {
+            _ = InferExpression(right, state);
+            return NarrowNilPath(rightPath, equal, state, span);
+        }
+
         if (IsNil(right) && TryGetVariableKey(left, out var leftKey, out _))
         {
             return NarrowNil(leftKey, equal, state, span);
+        }
+
+        if (IsNil(right) && TryGetAccessPath(left, out var leftPath))
+        {
+            _ = InferExpression(left, state);
+            return NarrowNilPath(leftPath, equal, state, span);
         }
 
         if (TryGetTypeTest(left, right, out var typeKey, out var testedType) ||
@@ -183,6 +208,46 @@ internal sealed partial class AnalysisEngine
         var falseState = state.Clone();
         trueState.Types[key] = trueType;
         falseState.Types[key] = falseType;
+        if (trueType.Kind == LuaTypeKind.Never)
+        {
+            trueState.Reachable = false;
+            ReportRedundantCondition(span, isAlwaysTrue: false);
+        }
+
+        if (falseType.Kind == LuaTypeKind.Never)
+        {
+            falseState.Reachable = false;
+            ReportRedundantCondition(span, isAlwaysTrue: true);
+        }
+
+        return new ConditionStates(trueState, falseState);
+    }
+
+    private ConditionStates NarrowNilPath(
+        AccessPathKey path,
+        bool equal,
+        FlowState state,
+        Lunil.Core.Text.TextSpan span)
+    {
+        var current = state.PathTypes.GetValueOrDefault(path, LuaTypes.Any);
+        var nil = _relations.NarrowTo(current, LuaTypes.Nil);
+        var nonNil = _relations.RemoveNil(current);
+        return equal
+            ? NarrowPath(path, nil, nonNil, state, span)
+            : NarrowPath(path, nonNil, nil, state, span);
+    }
+
+    private ConditionStates NarrowPath(
+        AccessPathKey path,
+        LuaType trueType,
+        LuaType falseType,
+        FlowState state,
+        Lunil.Core.Text.TextSpan span)
+    {
+        var trueState = state.Clone();
+        var falseState = state.Clone();
+        trueState.PathTypes[path] = trueType;
+        falseState.PathTypes[path] = falseType;
         if (trueType.Kind == LuaTypeKind.Never)
         {
             trueState.Reachable = false;
@@ -398,6 +463,20 @@ internal sealed partial class AnalysisEngine
             }
         }
 
+        var paths = reachable.SelectMany(static state => state.PathTypes.Keys).Distinct().ToArray();
+        result.PathTypes.Clear();
+        foreach (var path in paths)
+        {
+            var candidates = reachable
+                .Where(state => state.PathTypes.ContainsKey(path))
+                .Select(state => state.PathTypes[path])
+                .ToArray();
+            if (candidates.Length == reachable.Length)
+            {
+                result.PathTypes[path] = _relations.Union(candidates);
+            }
+        }
+
         result.Assigned.Clear();
         result.Assigned.UnionWith(reachable[0].Assigned);
         foreach (var item in reachable.Skip(1))
@@ -430,13 +509,16 @@ internal sealed partial class AnalysisEngine
     {
         if (left.Reachable != right.Reachable ||
             !left.Assigned.SetEquals(right.Assigned) ||
-            left.Types.Count != right.Types.Count)
+            left.Types.Count != right.Types.Count ||
+            left.PathTypes.Count != right.PathTypes.Count)
         {
             return false;
         }
 
         return left.Types.All(pair => right.Types.TryGetValue(pair.Key, out var type) &&
-            string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal));
+                string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal)) &&
+            left.PathTypes.All(pair => right.PathTypes.TryGetValue(pair.Key, out var type) &&
+                string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal));
     }
 
     private static void CopyState(FlowState source, FlowState destination)
@@ -449,6 +531,11 @@ internal sealed partial class AnalysisEngine
 
         destination.Assigned.Clear();
         destination.Assigned.UnionWith(source.Assigned);
+        destination.PathTypes.Clear();
+        foreach (var pair in source.PathTypes)
+        {
+            destination.PathTypes.Add(pair.Key, pair.Value);
+        }
         destination.Reachable = source.Reachable;
     }
 
@@ -577,6 +664,31 @@ internal sealed partial class AnalysisEngine
 
     private void RecordSymbolInference(LuaSymbol symbol, LuaType type)
     {
+        if (symbol.IsCaptured)
+        {
+            if (!_upvalueCells.TryGetValue(symbol.Id, out var cell))
+            {
+                cell = new UpvalueCellState(symbol, type);
+                _upvalueCells.Add(symbol.Id, cell);
+            }
+            else
+            {
+                cell.Type = _relations.Union(cell.Type, type);
+            }
+
+            if (_currentFunction is not null)
+            {
+                cell.Writers.Add(_currentFunction.FunctionId);
+            }
+        }
+
+        if (type is LuaPrototypeType prototype)
+        {
+            _latestPrototypes[prototype.Name] = prototype;
+            _symbolInferences[symbol.Id] = prototype;
+            return;
+        }
+
         _symbolInferences[symbol.Id] = _symbolInferences.TryGetValue(symbol.Id, out var previous)
             ? _relations.Union(previous, type)
             : type;
@@ -621,6 +733,11 @@ internal sealed partial class AnalysisEngine
 
     private void InstallBuiltIns()
     {
+        foreach (var pair in _hostGlobalTypes)
+        {
+            _globalTypes[pair.Key] = pair.Value;
+        }
+
         _globalTypes["type"] = new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.String]),
@@ -650,6 +767,26 @@ internal sealed partial class AnalysisEngine
             [new LuaFunctionParameter("message", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.Never]),
             []);
+        _globalTypes["setmetatable"] = new LuaFunctionType(
+            [new LuaFunctionParameter("table", LuaTypes.Table),
+             new LuaFunctionParameter("metatable", LuaTypes.Table)],
+            new LuaTypePack([LuaTypes.Table]),
+            []);
+        _globalTypes["getmetatable"] = new LuaFunctionType(
+            [new LuaFunctionParameter("value", LuaTypes.Any)],
+            new LuaTypePack([_relations.Union(LuaTypes.Table, LuaTypes.Nil)]),
+            []);
+        _globalTypes["rawget"] = new LuaFunctionType(
+            [new LuaFunctionParameter("table", LuaTypes.Table),
+             new LuaFunctionParameter("index", LuaTypes.Any)],
+            new LuaTypePack([LuaTypes.Any]),
+            []);
+        _globalTypes["rawset"] = new LuaFunctionType(
+            [new LuaFunctionParameter("table", LuaTypes.Table),
+             new LuaFunctionParameter("index", LuaTypes.Any),
+             new LuaFunctionParameter("value", LuaTypes.Any)],
+            new LuaTypePack([LuaTypes.Table]),
+            []);
     }
 
     private bool TryGetVariableKey(
@@ -675,6 +812,49 @@ internal sealed partial class AnalysisEngine
             ? VariableKey.Global(reference.Name)
             : VariableKey.Local(reference.Symbol.Id);
         return true;
+    }
+
+    private bool TryGetAccessPath(LuaSyntaxNode expression, out AccessPathKey path)
+    {
+        if (expression.Kind == LuaSyntaxKind.IdentifierExpression &&
+            TryGetVariableKey(expression, out var key, out _))
+        {
+            path = new AccessPathKey(
+                key.IsGlobal ? "g:" + key.GlobalName : "s:" + key.SymbolId,
+                0);
+            return true;
+        }
+
+        if (expression.Kind == LuaSyntaxKind.MemberAccessExpression)
+        {
+            var receiver = expression.ChildNodes().FirstOrDefault();
+            var member = expression.ChildTokens().LastOrDefault(static token =>
+                token.Kind == LuaTokenKind.Identifier && !token.IsMissing);
+            if (receiver is not null && member is not null &&
+                TryGetAccessPath(receiver, out var receiverPath))
+            {
+                path = new AccessPathKey(
+                    receiverPath.Value + "." + GetTokenText(member),
+                    receiverPath.HopCount + 1);
+                return true;
+            }
+        }
+
+        if (expression.Kind == LuaSyntaxKind.IndexExpression)
+        {
+            var nodes = expression.ChildNodes().ToArray();
+            if (nodes.Length > 1 && nodes[1].TryGetConstantString(out var member) &&
+                TryGetAccessPath(nodes[0], out var receiverPath))
+            {
+                path = new AccessPathKey(
+                    receiverPath.Value + "." + member,
+                    receiverPath.HopCount + 1);
+                return true;
+            }
+        }
+
+        path = default;
+        return false;
     }
 
     private bool TryGetCalledIdentifier(LuaSyntaxNode expression, out string name)

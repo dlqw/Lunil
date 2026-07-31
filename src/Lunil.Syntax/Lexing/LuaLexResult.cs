@@ -11,4 +11,6 @@ public sealed record LuaLexResult(
     ImmutableArray<Diagnostic> Diagnostics)
 {
     public LuaLanguageVersion LanguageVersion { get; init; } = LuaLanguageVersions.Default;
+
+    public LuaLexerOptions Options { get; init; } = LuaLexerOptions.Default;
 }

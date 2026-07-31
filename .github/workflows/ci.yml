@@ -191,6 +191,28 @@ jobs:
             artifacts/nativeaot/${{ matrix.rid }}/**
             if-no-files-found: error
 
+  vscode-extension:
+    name: VS Code extension
+    needs: change_scope
+    if: needs.change_scope.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install extension dependencies
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Type-check and bundle extension
+        working-directory: editors/vscode
+        run: npm run check
+      - name: Audit runtime dependencies
+        working-directory: editors/vscode
+        run: npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
+
   docs-only-build-test-contexts:
     name: Build and test (${{ matrix.os }})
     if: needs.change_scope.outputs.docs-only == 'true'

@@ -49,4 +49,40 @@
     <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
     <Right>lib/net10.0/Lunil.Analysis.dll</Right>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaHostTypeKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaHostEffectKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaHostCallbackInvocationKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaHostCallbackCardinality</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaHostCallbackRetentionKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Analysis.LuaPersistenceOperationKind</Target>
+    <Left>lib/netstandard2.1/Lunil.Analysis.dll</Left>
+    <Right>lib/net10.0/Lunil.Analysis.dll</Right>
+  </Suppression>
 </Suppressions>

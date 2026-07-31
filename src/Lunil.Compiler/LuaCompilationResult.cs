@@ -19,9 +19,15 @@ public sealed record LuaCompilationResult(
     LuaIrModule? Module,
     ImmutableArray<LuaCompilationDiagnostic> Diagnostics)
 {
+    /// <summary>Gets the reusable verified front-end snapshot that produced this result.</summary>
+    public LuaFrontEndSnapshot? FrontEndSnapshot { get; init; }
+
+    /// <summary>True when the result intentionally stops after semantic analysis.</summary>
+    public bool IsAnalysisOnly { get; init; }
+
     public LuaLanguageVersion LanguageVersion => Syntax.LanguageVersion;
 
-    public bool Succeeded => Module is not null &&
+    public bool Succeeded => (Module is not null || IsAnalysisOnly) &&
         Diagnostics.All(static diagnostic =>
             diagnostic.Severity != DiagnosticSeverity.Error);
 }

@@ -1118,6 +1118,7 @@ internal static class LuaBasicLibrary
             "LUA2001" => "expected token",
             "LUA2002" => "unexpected symbol",
             "LUA2004" => "syntax error",
+            "LUA2014" => $"unknown attribute '{Encoding.UTF8.GetString(source.GetSpan(diagnostic.Span))}'",
             _ => diagnostic.Message,
         };
         if (diagnostic.Code is "LUA1002" or "LUA1003" or "LUA1004" or "LUA1005" ||

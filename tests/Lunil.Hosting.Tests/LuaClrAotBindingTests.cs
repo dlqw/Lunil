@@ -1,4 +1,5 @@
 using System.Collections;
+using Lunil.Analysis;
 using Lunil.Runtime.Values;
 
 [assembly: Lunil.Hosting.LuaClrGenerateBinding(
@@ -34,6 +35,46 @@ namespace Lunil.Hosting.Tests;
 
 public sealed class LuaClrAotBindingTests
 {
+    [Fact]
+    public void GeneratedRegistryProducesAStableReflectionFreeAnalysisContract()
+    {
+        var registry = CreateRegistry();
+
+        var contract = registry.CreateAnalysisContract("generated-fixture");
+        var roundTrip = LuaHostAnalysisContract.ParseJson(contract.ToJson());
+        var add = Assert.Single(roundTrip.Functions.Values, static function =>
+            function.Path.EndsWith(".Add", StringComparison.Ordinal));
+        var changed = Assert.Single(roundTrip.Functions.Values, static function =>
+            function.Path.EndsWith(".Changed", StringComparison.Ordinal));
+
+        Assert.Equal(LuaHostTypeKind.Integer, add.Returns[0].Kind);
+        Assert.StartsWith("dotnet://", add.Source!.Uri, StringComparison.Ordinal);
+        Assert.StartsWith("dotnet-implementation://", add.Source.ImplementationUri!, StringComparison.Ordinal);
+        Assert.NotNull(changed.Callback);
+        Assert.Equal(LuaHostCallbackRetentionKind.Stored, changed.Callback!.Retention);
+        Assert.Contains("function clr.", roundTrip.ToLuaStub(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameLoopPersistenceV2ContractIncludesReadWriteDeleteClearAndSchema()
+    {
+        var contract = LuaGameLoopAnalysisContracts.CreatePersistenceContract(
+            "game-save",
+            new LuaGameLoopPersistenceSchema("save", 3, "persistence.migrate"),
+            new LuaHostTypeDescriptor { Kind = LuaHostTypeKind.Table });
+
+        Assert.Equal(4, contract.Functions.Count);
+        Assert.Equal(LuaPersistenceOperationKind.Read,
+            contract.Functions["persistence.read"].Persistence!.Operation);
+        Assert.True(contract.Functions["persistence.read"].Persistence!.MissingReturnsNil);
+        Assert.Equal(LuaPersistenceOperationKind.Delete,
+            contract.Functions["persistence.delete"].Persistence!.Operation);
+        Assert.Equal(LuaPersistenceOperationKind.Clear,
+            contract.Functions["persistence.clear"].Persistence!.Operation);
+        Assert.All(contract.Functions.Values, static function =>
+            Assert.Equal(3, function.Persistence!.SchemaVersion));
+    }
+
     [Fact]
     public void RegistryOnlyBindingsInvokeMembersDelegatesAndNamedRefOut()
     {

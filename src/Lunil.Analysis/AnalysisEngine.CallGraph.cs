@@ -108,6 +108,17 @@ internal sealed partial class AnalysisEngine
         LuaCallResolutionStatus resolutionStatus,
         string? unresolvedReason)
     {
+        if (resolutionStatus == LuaCallResolutionStatus.Dynamic &&
+            unresolvedReason != LuaCallUnresolvedReasons.ModuleRequestIsDynamic &&
+            TryGetCalledGlobalIdentifier(expression, out var projectedGlobal) &&
+            _globalTypes.TryGetValue(projectedGlobal, out var projectedType) &&
+            !GetCallSignatures(projectedType).IsEmpty)
+        {
+            calleeType = projectedType;
+            resolutionStatus = LuaCallResolutionStatus.Resolved;
+            unresolvedReason = null;
+        }
+
         var containingFunctionId = _currentFunction?.FunctionId ?? 0;
         var directReference = expression.Kind == LuaSyntaxKind.MethodCallExpression
             ? null
@@ -258,6 +269,18 @@ internal sealed partial class AnalysisEngine
             var directReference = expression.Kind == LuaSyntaxKind.MethodCallExpression
                 ? null
                 : GetDirectReference(calleeNode);
+            if (calleeType.Kind == LuaTypeKind.Unknown &&
+                directReference?.ResolutionKind == LuaNameResolutionKind.Global &&
+                _globalTypes.TryGetValue(directReference.Name, out var globalType))
+            {
+                calleeType = globalType;
+            }
+            else if (calleeType.Kind == LuaTypeKind.Unknown &&
+                     TryGetCalledGlobalIdentifier(expression, out var projectedGlobal) &&
+                     _globalTypes.TryGetValue(projectedGlobal, out globalType))
+            {
+                calleeType = globalType;
+            }
             var directSymbol = directReference?.Symbol.Kind == LuaSymbolKind.Environment
                 ? null
                 : directReference?.Symbol;
@@ -269,6 +292,9 @@ internal sealed partial class AnalysisEngine
                 moduleRequest = request;
             }
 
+            var resolutionStatus = GetCallSignatures(calleeType).IsEmpty
+                ? LuaCallResolutionStatus.Dynamic
+                : LuaCallResolutionStatus.Resolved;
             _callSites.Add(key, new LuaCallSite(
                 expression.Span,
                 functionId,
@@ -281,9 +307,13 @@ internal sealed partial class AnalysisEngine
                     ? new LuaMemberTarget(receiver.Span, memberName, receiverType ?? LuaTypes.Unknown)
                     : null,
                 moduleRequest,
-                TargetFunctionId: null,
-                LuaCallResolutionStatus.Dynamic,
-                LuaCallUnresolvedReasons.CallWasNotAnalyzed));
+                TargetFunctionId: resolutionStatus == LuaCallResolutionStatus.Resolved
+                    ? GetTargetFunctionId(directReference)
+                    : null,
+                resolutionStatus,
+                resolutionStatus == LuaCallResolutionStatus.Resolved
+                    ? null
+                    : LuaCallUnresolvedReasons.CallWasNotAnalyzed));
         }
     }
 

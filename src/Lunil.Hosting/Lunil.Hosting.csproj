@@ -15,6 +15,7 @@
                       ReferenceOutputAssembly="false"
                       GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish;LunilReadyToRunPublish" />
     <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
+    <ProjectReference Include="..\Lunil.Analysis\Lunil.Analysis.csproj" />
     <ProjectReference Include="..\Lunil.CodeGen.Cil\Lunil.CodeGen.Cil.csproj"
                       Condition="'$(TargetFramework)' == 'net10.0'" />
     <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />

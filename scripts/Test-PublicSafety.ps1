@@ -16,6 +16,7 @@ $publicRoots = @(
     'Directory.Build.props',
     'docs',
     'dotnet-tools.json',
+    'editors',
     'global.json',
     'integrations',
     'LICENSE',

@@ -166,6 +166,16 @@ public sealed class LuaTypeRelations
                 MapKeyType = table.MapKeyType is null ? null : Substitute(table.MapKeyType, substitutions),
                 MapValueType = table.MapValueType is null ? null : Substitute(table.MapValueType, substitutions),
             },
+            LuaMetatableType metatable => metatable with
+            {
+                BaseType = Substitute(metatable.BaseType, substitutions),
+                MetatableType = Substitute(metatable.MetatableType, substitutions),
+            },
+            LuaPrototypeType prototype => prototype with
+            {
+                Shape = Substitute(prototype.Shape, substitutions),
+                BaseTypes = [.. prototype.BaseTypes.Select(item => Substitute(item, substitutions))],
+            },
             LuaTupleType tuple => new LuaTupleType(
                 [.. tuple.Elements.Select(element => Substitute(element, substitutions))]),
             LuaTypePack pack => new LuaTypePack(
@@ -232,6 +242,27 @@ public sealed class LuaTypeRelations
             if (source is LuaAliasType sourceAlias)
             {
                 return IsAssignable(sourceAlias.Target, target, visiting);
+            }
+
+            if (source is LuaMetatableType sourceMetatable)
+            {
+                return IsAssignable(sourceMetatable.BaseType, target, visiting);
+            }
+
+            if (source is LuaPrototypeType sourcePrototype)
+            {
+                return IsAssignable(sourcePrototype.Shape, target, visiting) ||
+                    sourcePrototype.BaseTypes.Any(item => IsAssignable(item, target, visiting));
+            }
+
+            if (target is LuaPrototypeType targetPrototype)
+            {
+                return IsAssignable(source, targetPrototype.Shape, visiting);
+            }
+
+            if (target is LuaMetatableType targetMetatable)
+            {
+                return IsAssignable(source, targetMetatable.BaseType, visiting);
             }
 
             if (target is LuaAliasType targetAlias)
@@ -470,6 +501,37 @@ public sealed class LuaTypeRelations
 
     private LuaTableField? FindField(LuaType type, string name, HashSet<string> visiting)
     {
+        if (type is LuaMetatableType metatable)
+        {
+            return FindField(metatable.BaseType, name, visiting);
+        }
+
+        if (type is LuaPrototypeType prototype)
+        {
+            var marker = "prototype:" + prototype.Name;
+            if (!visiting.Add(marker))
+            {
+                return null;
+            }
+
+            var own = FindField(prototype.Shape, name, visiting);
+            if (own is not null)
+            {
+                return own;
+            }
+
+            foreach (var baseType in prototype.BaseTypes)
+            {
+                var inherited = FindField(baseType, name, visiting);
+                if (inherited is not null)
+                {
+                    return inherited;
+                }
+            }
+
+            return null;
+        }
+
         if (type is LuaAliasType alias)
         {
             return FindField(alias.Target, name, visiting);

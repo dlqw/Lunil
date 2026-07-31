@@ -6,6 +6,11 @@ namespace Lunil.Syntax.Parsing;
 /// <summary>A lossless immutable Lua syntax node composed of nodes and tokens.</summary>
 public sealed class LuaSyntaxNode
 {
+    private readonly LuaSyntaxArena? _arena;
+    private readonly int _arenaIndex;
+    private readonly int _positionDelta;
+    private ImmutableArray<LuaSyntaxElement> _children;
+
     public LuaSyntaxNode(
         LuaSyntaxKind kind,
         IEnumerable<LuaSyntaxElement> children,
@@ -13,18 +18,59 @@ public sealed class LuaSyntaxNode
     {
         LunilGuard.NotNull(children);
         Kind = kind;
-        Children = children.ToImmutableArray();
-        Span = CalculateSpan(Children, includeTrivia: false, emptyPosition);
-        FullSpan = CalculateSpan(Children, includeTrivia: true, emptyPosition);
+        _children = children.ToImmutableArray();
+        Span = CalculateSpan(_children, includeTrivia: false, emptyPosition);
+        FullSpan = CalculateSpan(_children, includeTrivia: true, emptyPosition);
+    }
+
+    internal LuaSyntaxNode(LuaSyntaxArena arena, int arenaIndex, int positionDelta)
+    {
+        _arena = arena;
+        _arenaIndex = arenaIndex;
+        _positionDelta = positionDelta;
+        Kind = arena.GetKind(arenaIndex);
+        Span = arena.GetSpan(arenaIndex, includeTrivia: false, positionDelta);
+        FullSpan = arena.GetSpan(arenaIndex, includeTrivia: true, positionDelta);
     }
 
     public LuaSyntaxKind Kind { get; }
 
-    public ImmutableArray<LuaSyntaxElement> Children { get; }
+    public ImmutableArray<LuaSyntaxElement> Children
+    {
+        get
+        {
+            if (_children.IsDefault)
+            {
+                _children = _arena!.GetChildren(_arenaIndex, _positionDelta);
+            }
+
+            return _children;
+        }
+    }
 
     public TextSpan Span { get; }
 
     public TextSpan FullSpan { get; }
+
+    internal LuaSyntaxNode WithPositionDelta(int delta)
+    {
+        if (delta == 0)
+        {
+            return this;
+        }
+
+        if (_arena is not null)
+        {
+            return _arena.CreateNode(
+                _arenaIndex,
+                checked(_positionDelta + delta));
+        }
+
+        return new LuaSyntaxNode(
+            Kind,
+            Children.Select(child => ShiftElement(child, delta)),
+            checked(Span.Start + delta));
+    }
 
     public IEnumerable<LuaSyntaxNode> ChildNodes() =>
         Children.Where(static child => child.IsNode).Select(static child => child.Node!);
@@ -34,34 +80,53 @@ public sealed class LuaSyntaxNode
 
     public IEnumerable<LuaSyntaxNode> DescendantNodes()
     {
-        foreach (var child in Children)
+        var stack = new Stack<LuaSyntaxNode>();
+        var children = Children;
+        for (var index = children.Length - 1; index >= 0; index--)
         {
-            if (child.Node is null)
+            if (children[index].Node is { } child)
             {
-                continue;
+                stack.Push(child);
             }
+        }
 
-            yield return child.Node;
-            foreach (var descendant in child.Node.DescendantNodes())
+        while (stack.Count != 0)
+        {
+            var node = stack.Pop();
+            yield return node;
+            children = node.Children;
+            for (var index = children.Length - 1; index >= 0; index--)
             {
-                yield return descendant;
+                if (children[index].Node is { } child)
+                {
+                    stack.Push(child);
+                }
             }
         }
     }
 
     public IEnumerable<Lexing.LuaSyntaxToken> DescendantTokens()
     {
-        foreach (var child in Children)
+        var stack = new Stack<LuaSyntaxElement>();
+        var children = Children;
+        for (var index = children.Length - 1; index >= 0; index--)
         {
-            if (child.Token is not null)
+            stack.Push(children[index]);
+        }
+
+        while (stack.Count != 0)
+        {
+            var child = stack.Pop();
+            if (child.Token is { } token)
             {
-                yield return child.Token;
+                yield return token;
             }
-            else if (child.Node is not null)
+            else if (child.Node is { } node)
             {
-                foreach (var token in child.Node.DescendantTokens())
+                children = node.Children;
+                for (var index = children.Length - 1; index >= 0; index--)
                 {
-                    yield return token;
+                    stack.Push(children[index]);
                 }
             }
         }
@@ -95,5 +160,26 @@ public sealed class LuaSyntaxNode
         return start is int value
             ? TextSpan.FromBounds(value, end)
             : new TextSpan(emptyPosition, 0);
+    }
+
+    private static LuaSyntaxElement ShiftElement(LuaSyntaxElement element, int delta)
+    {
+        if (element.Node is { } node)
+        {
+            return node.WithPositionDelta(delta);
+        }
+
+        var token = element.Token!;
+        return new Lexing.LuaSyntaxToken(
+            token.Kind,
+            new TextSpan(checked(token.Span.Start + delta), token.Span.Length),
+            [.. token.LeadingTrivia.Select(trivia => trivia with
+            {
+                Span = new TextSpan(checked(trivia.Span.Start + delta), trivia.Span.Length),
+            })])
+        {
+            Value = token.Value,
+            IsMissing = token.IsMissing,
+        };
     }
 }

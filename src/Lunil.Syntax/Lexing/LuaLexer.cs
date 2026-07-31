@@ -117,6 +117,7 @@ public static class LuaLexer
                 _diagnostics.ToImmutable())
             {
                 LanguageVersion = _options.LanguageVersion,
+                Options = _options,
             };
         }
 

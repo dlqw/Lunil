@@ -90,8 +90,8 @@ try {
             $projects.Add($project)
         }
     }
-    if ($projects.Count -ne 14) {
-        throw "Expected the active $compatibilityLine package scope to contain 14 projects, found $($projects.Count)."
+    if ($projects.Count -ne 15) {
+        throw "Expected the active $compatibilityLine package scope to contain 15 projects, found $($projects.Count)."
     }
 
     if (-not $NoBuild) {

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Lunil.Analysis;
 using Lunil.Compiler;
 using Lunil.Core;
 using Lunil.Core.Diagnostics;
@@ -15,17 +16,36 @@ public sealed record LuaWorkspaceOptions
 
     public LuaCompilerOptions Compiler { get; init; } = LuaCompilerOptions.Default;
 
-    public int MaximumModuleCount { get; init; } = 4_096;
+    /// <summary>Optional C++, C#, or generated host values visible to every module.</summary>
+    public LuaHostAnalysisContract? HostContract { get; init; }
 
-    public int MaximumDependencyCount { get; init; } = 65_536;
+    public int MaximumModuleCount { get; init; } = 65_536;
 
-    public long MaximumSourceBytes { get; init; } = 256L * 1024 * 1024;
+    public int MaximumDependencyCount { get; init; } = 1_048_576;
+
+    public long MaximumSourceBytes { get; init; } = 1024L * 1024 * 1024;
 
     public int MaximumParallelism { get; init; } = Math.Max(1, Environment.ProcessorCount);
 
     public int MaximumFixedPointIterations { get; init; } = 16;
 
     public int MaximumCacheEntryCount { get; init; } = 16_384;
+
+    public long MaximumCacheBytes { get; init; } = 512L * 1024 * 1024;
+
+    public int MaximumPendingWorkItems { get; init; } = 4_096;
+
+    public int IndexShardCount { get; init; } = 64;
+
+    /// <summary>Optional directory for versioned, content-addressed compact summary cache files.</summary>
+    public string? DiskCacheDirectory { get; init; }
+
+    public long MaximumDiskCacheBytes { get; init; } = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>Keeps analysis cache values strongly rooted; false allows full models to be reclaimed.</summary>
+    public bool RetainFullAnalysisCacheResults { get; init; }
+
+    public IProgress<LuaWorkspaceProgress>? Progress { get; init; }
 
     public int MaximumDiagnosticCount { get; init; } = 10_000;
 

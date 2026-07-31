@@ -34,12 +34,33 @@ public sealed record LuaWorkspaceCallSite(
     LuaSymbolKey ContainingFunctionKey,
     LuaSymbolKey? TargetFunctionKey,
     LuaModuleIdentity? TargetModule,
-    string? TargetExportName);
+    string? TargetExportName)
+{
+    public string? TargetExportSymbolKey { get; init; }
+
+    public string? TargetExportFunctionKey { get; init; }
+
+    public ImmutableArray<string> CandidateTargetKeys { get; init; } = [];
+
+    public LuaWorkspaceBindingStatus WorkspaceResolutionStatus { get; init; } =
+        LuaWorkspaceBindingStatus.Unresolved;
+
+    public string? WorkspaceResolutionReason { get; init; }
+
+    public TextSpan? ExternalDefinitionSpan { get; init; }
+
+    public LuaHostSourceLocation? ExternalDefinition { get; init; }
+
+    public LuaHostSourceLocation? ExternalImplementation { get; init; }
+}
 
 /// <summary>Immutable workspace-wide call graph projection.</summary>
 public sealed record LuaWorkspaceCallGraph(
     ImmutableArray<LuaWorkspaceFunction> Functions,
-    ImmutableArray<LuaWorkspaceCallSite> Edges);
+    ImmutableArray<LuaWorkspaceCallSite> Edges)
+{
+    public static LuaWorkspaceCallGraph Empty { get; } = new([], []);
+}
 
 /// <summary>Builds deterministic reference and call-graph projections from a workspace result.</summary>
 public static class LuaWorkspaceCodeIndex
@@ -96,6 +117,9 @@ public static class LuaWorkspaceCodeIndex
         LunilGuard.NotNull(workspace);
         var functions = ImmutableArray.CreateBuilder<LuaWorkspaceFunction>();
         var edges = ImmutableArray.CreateBuilder<LuaWorkspaceCallSite>();
+        var bindings = workspace.CallBindings.Edges
+            .GroupBy(static binding => (binding.SourceModuleName, binding.Span))
+            .ToDictionary(static group => group.Key, static group => group.First());
         foreach (var module in workspace.Modules)
         {
             var model = module.Compilation.SemanticModel;
@@ -116,7 +140,10 @@ public static class LuaWorkspaceCodeIndex
                 var target = site.TargetFunctionId is int targetId
                     ? functionsById[targetId]
                     : null;
-                var targetModule = ResolveTargetModule(site, projection);
+                bindings.TryGetValue((module.Identity.Name, site.Span), out var binding);
+                var targetModule = binding is not null
+                    ? ResolveBindingTargetModule(module, binding)
+                    : ResolveTargetModule(site, projection);
                 edges.Add(new LuaWorkspaceCallSite(
                     module.Identity,
                     module.SourceIdentity,
@@ -124,7 +151,21 @@ public static class LuaWorkspaceCodeIndex
                     model.GetFunctionKey(containing, module.Identity),
                     target is not null ? model.GetFunctionKey(target, module.Identity) : null,
                     targetModule,
-                    targetModule is not null ? site.MemberTarget?.Name : null));
+                    binding is { Status: not LuaWorkspaceBindingStatus.Unresolved }
+                        ? binding.MemberPath
+                        : targetModule is not null ? site.MemberTarget?.Name : null)
+                {
+                    TargetExportSymbolKey = binding?.TargetSymbolKey,
+                    TargetExportFunctionKey = binding?.TargetFunctionKey,
+                    CandidateTargetKeys = binding?.CandidateKeys ?? [],
+                    WorkspaceResolutionStatus = binding?.Status ??
+                        (target is not null ? LuaWorkspaceBindingStatus.Resolved :
+                            LuaWorkspaceBindingStatus.Unresolved),
+                    WorkspaceResolutionReason = binding?.Reason,
+                    ExternalDefinitionSpan = binding?.DefinitionSpan,
+                    ExternalDefinition = binding?.ExternalDefinition,
+                    ExternalImplementation = binding?.ExternalImplementation,
+                });
             }
         }
 
@@ -268,6 +309,28 @@ public static class LuaWorkspaceCodeIndex
         }
 
         return projection.TargetsByRequest.GetValueOrDefault(request);
+    }
+
+    private static LuaModuleIdentity? ResolveBindingTargetModule(
+        LuaWorkspaceModuleResult module,
+        LuaWorkspaceModuleCallBinding binding)
+    {
+        if (binding.Status == LuaWorkspaceBindingStatus.Unresolved)
+        {
+            return null;
+        }
+
+        var targets = module.Dependencies
+            .Where(dependency => dependency.Kind == LuaModuleDependencyKind.Static &&
+                dependency.Target is not null &&
+                string.Equals(
+                    dependency.RequestedName,
+                    binding.RequestedModuleName,
+                    StringComparison.Ordinal))
+            .Select(static dependency => dependency.Target!)
+            .Distinct()
+            .ToArray();
+        return targets.Length == 1 ? targets[0] : null;
     }
 
     private static string? ResolveReceiverModuleRequest(
