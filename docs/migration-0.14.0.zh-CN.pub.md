@@ -89,7 +89,7 @@ JSON，即可获得 C++、C#、Unity 或 Godot 定义的 completion/navigation�
 
 ## 兼容性检查清单
 
-- 保持预期 `LuaLanguageVersion`；默认仍为 Lua 5.4.8；
+- 保持预期 `LuaLanguageVersion`；默认仍为 Lua 5.4 语言契约，兼容性基线为 PUC Lua 5.4.8；
 - `TextSpan` 必须与其所属 UTF-8 source snapshot 绑定；
 - 只有 direct binder/compiler consumer 需要新 member/unified index 时才启用
   `CollectCodeReferences`；

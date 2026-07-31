@@ -16,11 +16,12 @@
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.14.0-16a34a?style=flat-square"></a>
   <img alt=".NET 10 and .NET Standard 2.1" src="https://img.shields.io/badge/.NET-10%20%7C%20Standard%202.1-512BD4?style=flat-square&logo=dotnet">
-  <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
+  <img alt="Lua 5.4" src="https://img.shields.io/badge/Lua-5.4-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil is a pure C# Lua toolchain. Lua 5.4.8 is the default contract, with explicit Lua 5.1,
-5.2, 5.3, and 5.5 modes. Source and versioned binary chunks lower to one verified canonical IR,
+Lunil is a pure C# Lua toolchain. Lua 5.4 is the default language contract, validated against the
+PUC Lua 5.4.8 compatibility baseline, with explicit Lua 5.1, 5.2, 5.3, and 5.5 modes. Source and
+versioned binary chunks lower to one verified canonical IR,
 then run through the portable interpreter or the profile-guided .NET 10 JIT.
 
 ## Capabilities
@@ -134,7 +135,8 @@ The Unity projects are independent: the 2022.3 sample does not require an upgrad
 
 ## Compatibility
 
-- Default language: Lua 5.4.8; explicit Lua 5.1–5.5 contracts remain available.
+- Default language contract: Lua 5.4; PUC Lua 5.4.8 is the compatibility baseline. Explicit Lua
+  5.1–5.5 contracts remain available.
 - Stable line: `0.14.x`; existing .NET 10 host entry points remain source compatible unless the
   migration guide states otherwise.
 - Release bundles: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
