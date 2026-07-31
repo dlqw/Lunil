@@ -3,6 +3,7 @@ using Lunil.EmmyLua;
 using Lunil.Compiler;
 using Lunil.Analysis;
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 
 namespace Lunil.Workspace.Tests;
 
@@ -678,8 +679,13 @@ public sealed class LuaWorkspaceTests
     [Fact]
     public async Task ParallelResultMergingIsDeterministicAndGloballyBounded()
     {
+        var source = string.Join(
+            '\n',
+            Enumerable.Range(0, 150).Select(index =>
+                $"local function value{index}() return {index} end")) +
+            "\nreturn value149()";
         var documents = Enumerable.Range(0, 12)
-            .Select(index => Document("m" + index, $"return {index}"))
+            .Select(index => Document("m" + index, source))
             .ToArray();
         var options = new LuaWorkspaceOptions { MaximumParallelism = 3 };
         using var firstWorkspace = new LuaWorkspace(options);
@@ -755,7 +761,7 @@ public sealed class LuaWorkspaceTests
             RetainFullAnalysisCacheResults = false,
         });
         LuaWorkspaceDocument[] documents = [Document("app", "local value = 1\nreturn value")];
-        _ = await workspace.AnalyzeCompactAsync(documents);
+        PopulateWeakAnalysisCache(workspace, documents);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -767,9 +773,22 @@ public sealed class LuaWorkspaceTests
             materialized.GetModule("app")!.WasCacheHit);
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PopulateWeakAnalysisCache(
+        LuaWorkspace workspace,
+        IReadOnlyCollection<LuaWorkspaceDocument> documents)
+    {
+        _ = workspace.AnalyzeAsync(documents).GetAwaiter().GetResult();
+    }
+
     [Fact]
     public async Task FairWorkerQueuesBoundPendingWorkAndReportProgress()
     {
+        var source = string.Join(
+            '\n',
+            Enumerable.Range(0, 40).Select(index =>
+                $"local function value{index}() return {index} end")) +
+            "\nreturn value39()";
         var progress = new ProgressCollector();
         using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
         {
@@ -778,7 +797,7 @@ public sealed class LuaWorkspaceTests
             Progress = progress,
         });
         var documents = Enumerable.Range(0, 64)
-            .Select(index => Document("m" + index, "return " + index))
+            .Select(index => Document("m" + index, source))
             .ToArray();
 
         var result = await workspace.AnalyzeAsync(documents);
