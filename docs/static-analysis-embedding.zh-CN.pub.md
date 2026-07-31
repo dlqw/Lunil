@@ -54,11 +54,11 @@ var result = new LuaCompiler(compilerOptions).CompileUtf8(
 - `Diagnostics`：带 `LuaCompilationPhase` 的有序诊断；
 - `Module`：完成 lowering 与 verification 后的 canonical IR。
 
-只需要 syntax、binding 或 analysis 时，应复用 `LuaFrontEndSession`，不要运行完整 compiler pipeline。
-`Process` 在指定 `LuaFrontEndStage` 创建 snapshot，`Advance` 继续同一 snapshot；`Metrics` 按 lexing、
-annotation、parsing、binding、analysis、lowering 与 verification operation 报告 elapsed time 和 managed
-allocation。Session 只在 syntax-only work 中保留 compact syntax arena，并在立即 binding 前避免重复
-copy 整棵 tree。
+只需要 syntax、binding 或 analysis 时，应复用 `LuaFrontEndSession`，不要运行完整 compiler
+pipeline。`Process` 在指定 `LuaFrontEndStage` 创建 snapshot，`Advance` 继续该 snapshot；`Metrics`
+分别报告 lexing、annotation、parsing、binding、analysis、lowering 与 verification 的 elapsed time
+和 managed allocation。Syntax-only snapshot 保留 compact syntax arena；直接推进到 binding 可避免
+重复复制完整 syntax tree。
 
 执行或持久化 canonical IR 前必须检查 `Succeeded`。存在 warning 或可恢复源码错误时，静态分析结果
 仍可能有用，因此应将 diagnostic 与 snapshot 一同保存，而不是直接丢弃整个结果。
@@ -88,10 +88,9 @@ source snapshot。
 - 隐式 `_ENV` global 使用 `FindGlobalReferences(name)`；
 - 调用关系直接读取 `LuaAnalysisResult.CallGraph`，不要重新解释 generic AST child。
 
-Direct `LuaBinder`/`LuaCompiler` consumer 需要 member/method/literal-index fact 时，必须设置
-`LuaBinderOptions.CollectCodeReferences = true`，再查询 `MemberReferences`、`UnifiedReferences`、
-`FindCodeReferences` 与 `FindCodeReferenceAt`。`LuaWorkspace` 会自动启用。只需要 lexical reference
-的 standalone pipeline 应保持关闭。
+Standalone pipeline 需要 member、method 或 literal-index reference 时，启用
+`LuaBinderOptions.CollectCodeReferences`。对应集合与查询见
+[分析 fact reference](analysis-facts.zh-CN.pub.md)；`LuaWorkspace` 会自动启用收集。
 
 需要持久化时，用逻辑 module identity 生成 `LuaSymbolKey`：
 
@@ -108,17 +107,16 @@ var later = anotherResult.SemanticModel.ResolveSymbolKey(key, "game.player");
 
 每个 `LuaFunctionAnalysis` 都提供推断 function type、return pack、flow iteration、widening 状态和
 `LuaControlFlowGraph`。判断活跃路径应读取 `block.IsReachable`，不能假设所有生成 block 都可达。
-Call graph edge 会保留 resolved、dynamic、unresolved 与 unreachable call，并携带 containing
-function 和可选 target function。
+Call graph edge 会保留 resolved、dynamic 与 unresolved call，并携带 containing function 和可选
+target function。Reachability 是 CFG block property；`LuaCallSite` 不定义单独的 unreachable
+resolution status。
 
 `LuaAnalysisResult.TypeDeclarations` 是 class、alias 与 enum directive 的类型解析视图；
 `LuaAnnotationDocument.Annotations` 是 syntax 视图。类型消费使用前者，需要保留精确 directive 与
 source span 的工具使用后者。
 
-Result 还提供 `MetatableFacts`、`ObjectModels`、`HostEffects`、`CallbackRegistrations`、
-`PersistenceAccesses`、`UpvalueCells` 与 `NilPaths`。必须保留其 precision/resolution state：dynamic
-mutation、escaping value、open table 与 dynamic index 会有意 widen 或 invalidate fact，而不会虚构
-member、callback、persistence key 或 nil-safe path。
+Metatable、object model、host effect、callback、persistence、upvalue 与 nil path 的结果契约见
+[分析 fact reference](analysis-facts.zh-CN.pub.md)。
 
 ## 5. 使用可复用 workspace
 
@@ -144,11 +142,9 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
-C++、C#、Unity、Godot 或其他宿主注入 Lua source 中不存在的 API 时，将经过验证的 schema 1
-`LuaHostAnalysisContract` 设为 `LuaWorkspaceOptions.HostContract`。Contract 会向 standalone/cross-module
-analysis 添加 typed global/module/function、overload、source/implementation location、callback lifetime、
-side effect 和 persistence read/write/delete/clear semantics。交换格式使用 `ToJson()`/`ParseJson()`，
-检查 declaration 使用 `ToLuaStub()`。
+C++、C#、Unity、Godot 或其他宿主注入 API 时，附加经过验证的
+`LuaHostAnalysisContract`。构建、序列化和应用方式见
+[外部宿主分析](external-host-analysis.zh-CN.pub.md)。
 
 大型或长生命周期 editor workspace 应改用 `AnalyzeCompactAsync`。Compact snapshot 保留分片的
 reference、call、callback、persistence 与 global index，不保留完整 compiler model，并可按需
@@ -197,5 +193,4 @@ Workspace result 的 graph 包含强连通分量；`IsCyclic` 标记需要 fixed
 workspace snapshot，并在预算内复用 cache。
 [`Lunil.StaticAnalysis.Embedding` sample](../samples/Lunil.StaticAnalysis.Embedding/EmbeddingScenario.cs)
 展示了带 annotation 的单文件 compilation、semantic/analysis index 输出、byte span 格式化，以及循环
-workspace 中的 cache 复用与失效。其余 stable key、resolver、跨 workspace index、cache control、并发
-与 disposal 契约应按本指南接入需要这些能力的宿主。
+workspace 中的 cache 复用与失效。
