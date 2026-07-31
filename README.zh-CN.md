@@ -16,12 +16,12 @@
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
   <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.14.0-16a34a?style=flat-square"></a>
   <img alt=".NET 10 与 .NET Standard 2.1" src="https://img.shields.io/badge/.NET-10%20%7C%20Standard%202.1-512BD4?style=flat-square&logo=dotnet">
-  <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
+  <img alt="Lua 5.4" src="https://img.shields.io/badge/Lua-5.4-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil 是纯 C# Lua 工具链。默认契约为 Lua 5.4.8，也可显式选择 Lua 5.1、5.2、5.3
-或 5.5。源码与版本化二进制 chunk 会降低为同一套经过验证的 canonical IR，再由可移植
-解释器或 .NET 10 profile-guided JIT 执行。
+Lunil 是纯 C# Lua 工具链。默认语言契约为 Lua 5.4，兼容性基线为 PUC Lua 5.4.8，也可显式
+选择 Lua 5.1、5.2、5.3 或 5.5。源码与版本化二进制 chunk 会降低为同一套经过验证的
+canonical IR，再由可移植解释器或 .NET 10 profile-guided JIT 执行。
 
 ## 主要能力
 
@@ -134,7 +134,7 @@ Console.WriteLine(execution.Values[0].AsInteger()); // 42
 
 ## 兼容性
 
-- 默认语言为 Lua 5.4.8；继续提供显式 Lua 5.1–5.5 契约。
+- 默认语言契约为 Lua 5.4；兼容性基线为 PUC Lua 5.4.8；继续提供显式 Lua 5.1–5.5 契约。
 - 稳定线为 `0.14.x`；除迁移指南明确列出的项目外，既有 .NET 10 host 入口保持源码兼容。
 - Release bundle：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - CLR 互操作默认关闭并 fail closed。可信 .NET host 可显式选择 `RegistryThenReflection`；
