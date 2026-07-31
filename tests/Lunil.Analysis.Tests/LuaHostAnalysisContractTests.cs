@@ -339,29 +339,29 @@ public sealed class LuaHostAnalysisContractTests
         int? key,
         int? value,
         ImmutableArray<LuaHostTypeDescriptor> returns = default) => new()
-    {
-        Path = path,
-        Parameters = parameters,
-        Returns = returns.IsDefault ? [] : returns,
-        Effects = operation switch
         {
-            LuaPersistenceOperationKind.Read => LuaHostEffectKind.ReadsPersistence,
-            LuaPersistenceOperationKind.Write => LuaHostEffectKind.WritesPersistence,
-            LuaPersistenceOperationKind.Delete => LuaHostEffectKind.DeletesPersistence,
-            _ => LuaHostEffectKind.ClearsPersistence,
-        },
-        Persistence = new LuaHostPersistenceContract
-        {
-            Operation = operation,
-            KeyParameterIndex = key,
-            ValueParameterIndex = value,
-            SchemaId = "save-v2",
-            SchemaVersion = 2,
-            ValueType = save,
-            MissingReturnsNil = true,
-            MigrationFunction = "game.migrate",
-        },
-    };
+            Path = path,
+            Parameters = parameters,
+            Returns = returns.IsDefault ? [] : returns,
+            Effects = operation switch
+            {
+                LuaPersistenceOperationKind.Read => LuaHostEffectKind.ReadsPersistence,
+                LuaPersistenceOperationKind.Write => LuaHostEffectKind.WritesPersistence,
+                LuaPersistenceOperationKind.Delete => LuaHostEffectKind.DeletesPersistence,
+                _ => LuaHostEffectKind.ClearsPersistence,
+            },
+            Persistence = new LuaHostPersistenceContract
+            {
+                Operation = operation,
+                KeyParameterIndex = key,
+                ValueParameterIndex = value,
+                SchemaId = "save-v2",
+                SchemaVersion = 2,
+                ValueType = save,
+                MissingReturnsNil = true,
+                MigrationFunction = "game.migrate",
+            },
+        };
 
     private static LuaHostParameterContract Parameter(string name, LuaHostTypeDescriptor type) =>
         new() { Name = name, Type = type };

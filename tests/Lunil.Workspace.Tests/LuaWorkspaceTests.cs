@@ -865,10 +865,10 @@ public sealed class LuaWorkspaceTests
         try
         {
             using (var first = new LuaWorkspace(new LuaWorkspaceOptions
-                   {
-                       DiskCacheDirectory = root,
-                       HostContract = firstContract,
-                   }))
+            {
+                DiskCacheDirectory = root,
+                HostContract = firstContract,
+            }))
             {
                 _ = await first.AnalyzeAsync(documents);
             }

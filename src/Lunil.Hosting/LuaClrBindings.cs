@@ -527,12 +527,12 @@ public sealed class LuaClrBindingRegistry
     private static LuaHostSourceLocation ContractSource(
         LuaClrTypeBinding binding,
         string member) => new()
-    {
-        Uri = $"dotnet://{binding.AssemblyName}/{binding.TypeName}#{member}",
-        Line = 1,
-        Column = 1,
-        ImplementationUri = $"dotnet-implementation://{binding.AssemblyName}/{binding.TypeName}#{member}",
-    };
+        {
+            Uri = $"dotnet://{binding.AssemblyName}/{binding.TypeName}#{member}",
+            Line = 1,
+            Column = 1,
+            ImplementationUri = $"dotnet-implementation://{binding.AssemblyName}/{binding.TypeName}#{member}",
+        };
 
     private static string SanitizeContractName(string value)
     {

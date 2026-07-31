@@ -74,32 +74,32 @@ public static class LuaGameLoopAnalysisContracts
         LuaHostTypeDescriptor valueType,
         int? keyIndex,
         int? valueIndex) => new()
-    {
-        Path = path,
-        Parameters = parameters,
-        Returns = returns,
-        Effects = operation switch
         {
-            LuaPersistenceOperationKind.Read => LuaHostEffectKind.ReadsPersistence,
-            LuaPersistenceOperationKind.Write => LuaHostEffectKind.WritesPersistence,
-            LuaPersistenceOperationKind.Delete => LuaHostEffectKind.DeletesPersistence,
-            _ => LuaHostEffectKind.ClearsPersistence,
-        },
-        Persistence = new LuaHostPersistenceContract
-        {
-            Operation = operation,
-            KeyParameterIndex = keyIndex,
-            ValueParameterIndex = valueIndex,
-            SchemaId = schema.SchemaId,
-            SchemaVersion = schema.Version,
-            ValueType = valueType,
-            MissingReturnsNil = operation == LuaPersistenceOperationKind.Read,
-            MigrationFunction = schema.MigrationFunction,
-        },
-        Source = new LuaHostSourceLocation
-        {
-            Uri = "dotnet://Lunil.Hosting/ILuaGameLoopPersistentStore#" + operation,
-            ImplementationUri = "dotnet-implementation://host/ILuaGameLoopPersistentStore#" + operation,
-        },
-    };
+            Path = path,
+            Parameters = parameters,
+            Returns = returns,
+            Effects = operation switch
+            {
+                LuaPersistenceOperationKind.Read => LuaHostEffectKind.ReadsPersistence,
+                LuaPersistenceOperationKind.Write => LuaHostEffectKind.WritesPersistence,
+                LuaPersistenceOperationKind.Delete => LuaHostEffectKind.DeletesPersistence,
+                _ => LuaHostEffectKind.ClearsPersistence,
+            },
+            Persistence = new LuaHostPersistenceContract
+            {
+                Operation = operation,
+                KeyParameterIndex = keyIndex,
+                ValueParameterIndex = valueIndex,
+                SchemaId = schema.SchemaId,
+                SchemaVersion = schema.Version,
+                ValueType = valueType,
+                MissingReturnsNil = operation == LuaPersistenceOperationKind.Read,
+                MigrationFunction = schema.MigrationFunction,
+            },
+            Source = new LuaHostSourceLocation
+            {
+                Uri = "dotnet://Lunil.Hosting/ILuaGameLoopPersistentStore#" + operation,
+                ImplementationUri = "dotnet-implementation://host/ILuaGameLoopPersistentStore#" + operation,
+            },
+        };
 }

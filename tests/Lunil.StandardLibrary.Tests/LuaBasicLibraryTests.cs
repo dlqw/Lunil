@@ -213,6 +213,17 @@ public sealed class LuaBasicLibraryTests
     }
 
     [Fact]
+    public void LoadUsesLuaCompatibleUnknownAttributeDiagnostics()
+    {
+        var values = Execute("local f,e=load('local value <unknown> = 1') return f,e");
+
+        Assert.True(values[0].IsNil);
+        Assert.Contains(
+            "unknown attribute 'unknown'",
+            values[1].AsString().ToString());
+    }
+
+    [Fact]
     public void LoadDiagnosticsIncludeLuaCompatibleNearContext()
     {
         var values = Execute("local _,e=load('return \"abc\\\\x\"') return e");
