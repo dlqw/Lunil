@@ -36,6 +36,6 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(LunilPortableLibrary)' == 'true' and '$(TargetFramework)' == 'netstandard2.1'">
-    <PackageReference Include="System.Collections.Immutable" Version="10.0.0" />
+    <PackageReference Include="System.Collections.Immutable" Version="10.0.10" />
   </ItemGroup>
 </Project>
