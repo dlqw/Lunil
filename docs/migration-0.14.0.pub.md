@@ -93,7 +93,8 @@ See the [language server reference](language-server.pub.md) and [VS Code guide](
 
 ## Compatibility checklist
 
-- Keep the intended `LuaLanguageVersion`; the default remains Lua 5.4.8.
+- Keep the intended `LuaLanguageVersion`; the default remains the Lua 5.4 language contract, with
+  PUC Lua 5.4.8 as the compatibility baseline.
 - Keep `TextSpan` values tied to their owning UTF-8 source snapshot.
 - Enable `CollectCodeReferences` only for direct binder/compiler consumers that need the new member
   and unified indexes.
