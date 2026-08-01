@@ -102,7 +102,7 @@ jobs:
           ./scripts/Test-PackageCompatibility.ps1
           -Version '${{ needs.validate.outputs.version }}'
           -PackageDirectory artifacts/packages -NoPack
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Build Unity package and Godot addon
@@ -136,7 +136,7 @@ jobs:
           global-json-file: global.json
           cache: true
           cache-dependency-path: "**/*.csproj"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
