@@ -26,6 +26,7 @@ public sealed class LuaWorkspace : IDisposable
     private readonly object _cacheLock = new();
     private readonly Dictionary<string, CacheEntry<DiscoveryEntry>> _discoveryCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CacheEntry<LuaWorkspaceModuleResult>> _analysisCache = new(StringComparer.Ordinal);
+    private LuaWorkspaceModuleResult? _lastAnalysisResultPin;
     private Dictionary<string, string> _previousModuleKeys = new(StringComparer.Ordinal);
     private Dictionary<string, ModuleSummaryState> _previousSummaries = new(StringComparer.Ordinal);
     private int _activeOperations;
@@ -807,6 +808,11 @@ public sealed class LuaWorkspace : IDisposable
             if (_analysisCache.TryGetValue(cacheKey, out var cached) &&
                 cached.TryGetValue(out var cachedResult))
             {
+                // Pin the last served result so consecutive analyses of the same snapshot
+                // deterministically hit the weak cache (default RetainFullAnalysisCacheResults
+                // keeps entries weak; without this pin the served with-copy is the only strong
+                // reference and a GC between two analyses forces a re-analysis).
+                _lastAnalysisResultPin = cachedResult;
                 Interlocked.Increment(ref operation.CacheHits);
                 return new ModuleAnalysis(
                     cachedResult with
@@ -864,6 +870,7 @@ public sealed class LuaWorkspace : IDisposable
                 result,
                 EstimateAnalysisBytes(result),
                 Options.RetainFullAnalysisCacheResults);
+            _lastAnalysisResultPin = result;
         }
         _diskCache?.Write(cacheKey, result);
 

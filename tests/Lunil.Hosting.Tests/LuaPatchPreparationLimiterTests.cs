@@ -21,7 +21,7 @@ public sealed class LuaPatchPreparationLimiterTests
         var replayStore = new CountingReplayStore();
 
         var active = first.PreparePatchAsync(bundle, options);
-        Assert.True(decoder.Entered.Wait(TimeSpan.FromSeconds(10)));
+        WaitUntilEntered(decoder, active, limiter);
 
         var deferred = second.PreparePatch(bundle, options with
         {
@@ -75,7 +75,7 @@ public sealed class LuaPatchPreparationLimiterTests
         var queuedOptions = Options(decoder, limiter, Timeout.InfiniteTimeSpan);
 
         var active = first.PreparePatchAsync(bundle, queuedOptions);
-        Assert.True(decoder.Entered.Wait(TimeSpan.FromSeconds(10)));
+        WaitUntilEntered(decoder, active, limiter);
         var queued = second.PreparePatchAsync(bundle, queuedOptions);
         Assert.True(SpinWait.SpinUntil(
             () => limiter.QueuedCount == 1,
@@ -111,7 +111,7 @@ public sealed class LuaPatchPreparationLimiterTests
         var active = first.PreparePatchAsync(
             bundle,
             Options(decoder, limiter, Timeout.InfiniteTimeSpan));
-        Assert.True(decoder.Entered.Wait(TimeSpan.FromSeconds(10)));
+        WaitUntilEntered(decoder, active, limiter);
 
         var deferred = await second.PreparePatchAsync(
             bundle,
@@ -143,7 +143,7 @@ public sealed class LuaPatchPreparationLimiterTests
         var options = Options(decoder, limiter, Timeout.InfiniteTimeSpan);
 
         var active = first.PreparePatchAsync(bundle, options);
-        Assert.True(decoder.Entered.Wait(TimeSpan.FromSeconds(10)));
+        WaitUntilEntered(decoder, active, limiter);
         using var cancellation = new CancellationTokenSource();
         var queued = second.PreparePatchAsync(bundle, options, cancellation.Token);
         Assert.True(SpinWait.SpinUntil(
@@ -172,7 +172,7 @@ public sealed class LuaPatchPreparationLimiterTests
         using var cancellation = new CancellationTokenSource();
 
         var active = host.PreparePatchAsync(bundle, options, cancellation.Token);
-        Assert.True(decoder.Entered.Wait(TimeSpan.FromSeconds(10)));
+        WaitUntilEntered(decoder, active, limiter);
         Assert.Equal(1, limiter.ActiveCount);
 
         cancellation.Cancel();
@@ -223,6 +223,33 @@ public sealed class LuaPatchPreparationLimiterTests
             PreparationLimiter = limiter,
             PreparationWaitTimeout = waitTimeout,
         };
+
+    /// <summary>
+    /// Waits until the active preparation enters the blocking decoder. CI runners can starve the
+    /// thread pool (parallel test classes), so the wait tolerates scheduling delay and reports a
+    /// diagnostic snapshot when the preparation never arrives.
+    /// </summary>
+    private static void WaitUntilEntered(
+        BlockingCanonicalIrDecoder decoder,
+        Task<LuaPatchPrepareResult> preparation,
+        LuaPatchPreparationLimiter limiter)
+    {
+        if (SpinWait.SpinUntil(
+            () => decoder.Entered.IsSet,
+            TimeSpan.FromSeconds(30)))
+        {
+            return;
+        }
+
+        var detail = preparation.IsCompleted
+            ? preparation.IsFaulted
+                ? $"preparation faulted: {preparation.Exception?.GetBaseException()}"
+                : "preparation completed without entering the decoder"
+            : "preparation is still running";
+        throw new InvalidOperationException(
+            $"The preparation did not enter the blocking decoder within 30 seconds. {detail} " +
+            $"(ActiveCount={limiter.ActiveCount}, QueuedCount={limiter.QueuedCount}).");
+    }
 
     private static BlockingCanonicalIrDecoder BlockingDecoder(LuaHost host)
     {

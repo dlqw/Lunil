@@ -479,6 +479,13 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return;
             }
 
+            if (loaded.Count == 0)
+            {
+                // 空文件夹或无可加载文档时不得失效索引：无效失效会推进 generation 并使
+                // 进行中的 ReindexNowAsync 因 generation 失配丢弃快照写入（偶发竞态）。
+                return;
+            }
+
             foreach (var pair in loaded)
             {
                 if (!_documents.TryGetValue(pair.Key, out var existing) || !existing.IsOpen)

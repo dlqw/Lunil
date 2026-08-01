@@ -103,6 +103,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.LanguageServer.Tests"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.LanguageServer.Scale", "benchmarks\Lunil.LanguageServer.Scale\Lunil.LanguageServer.Scale.csproj", "{1A9341C8-CC1F-47AC-8392-BE506B16E724}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.FfiSmoke.Fixture", "tests\Lunil.FfiSmoke.Fixture\Lunil.FfiSmoke.Fixture.csproj", "{23284AC1-1C4C-4226-BBC7-713D23F0A290}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -665,6 +667,18 @@ Global
 		{1A9341C8-CC1F-47AC-8392-BE506B16E724}.Release|x64.Build.0 = Release|Any CPU
 		{1A9341C8-CC1F-47AC-8392-BE506B16E724}.Release|x86.ActiveCfg = Release|Any CPU
 		{1A9341C8-CC1F-47AC-8392-BE506B16E724}.Release|x86.Build.0 = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|x64.Build.0 = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Debug|x86.Build.0 = Debug|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|Any CPU.Build.0 = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|x64.ActiveCfg = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|x64.Build.0 = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|x86.ActiveCfg = Release|Any CPU
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -716,5 +730,6 @@ Global
 		{ED5B5FCE-035F-47C1-9BBE-96869811D46E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{6421FCBF-C830-43C4-BAFB-52996F84E49E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{1A9341C8-CC1F-47AC-8392-BE506B16E724} = {66320409-64EC-F7C5-3DEF-65E7510DAAD1}
+		{23284AC1-1C4C-4226-BBC7-713D23F0A290} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
