@@ -191,6 +191,35 @@ jobs:
             artifacts/nativeaot/${{ matrix.rid }}/**
             if-no-files-found: error
 
+  ffi-linux-musl-smoke:
+    name: FFI smoke (linux-musl-x64)
+    needs: change_scope
+    if: needs.change_scope.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Publish FFI smoke for musl
+        shell: pwsh
+        run: dotnet publish tests/Lunil.FfiSmoke.Fixture -r linux-musl-x64 --self-contained -o artifacts/ffi-smoke-musl
+      - name: Run FFI smoke on Alpine (musl primary dl path)
+        shell: pwsh
+        run: |
+          docker run --rm -v "$PWD/artifacts/ffi-smoke-musl:/app:ro" alpine:3.21 sh -c "apk add --no-cache libstdc++ libgcc >/dev/null && /app/Lunil.FfiSmoke.Fixture"
+      - name: Run FFI smoke on Alpine without libdl.so.2 (fallback path)
+        shell: pwsh
+        run: |
+          docker run --rm -v "$PWD/artifacts/ffi-smoke-musl:/app:ro" alpine:3.21 sh -c "apk add --no-cache libstdc++ libgcc >/dev/null && find /lib /usr/lib -name 'libdl.so.2' -delete 2>/dev/null; /app/Lunil.FfiSmoke.Fixture"
+      - name: Publish and run FFI smoke on glibc (linux-x64)
+        shell: pwsh
+        run: |
+          dotnet publish tests/Lunil.FfiSmoke.Fixture -r linux-x64 --self-contained -o artifacts/ffi-smoke-glibc
+          & ./artifacts/ffi-smoke-glibc/Lunil.FfiSmoke.Fixture
+
   vscode-extension:
     name: VS Code extension
     needs: change_scope

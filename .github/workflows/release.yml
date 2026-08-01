@@ -37,6 +37,9 @@ jobs:
             throw "Missing changelogs/$version.md."
           }
           "value=$version" >> $env:GITHUB_OUTPUT
+      - name: Validate release input versions
+        shell: pwsh
+        run: ./scripts/Assert-ReleaseInputVersions.ps1 -Version '${{ steps.version.outputs.value }}'
 
   bundles:
     name: Bundle (${{ matrix.rid }})
