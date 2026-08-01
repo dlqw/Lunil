@@ -22,7 +22,7 @@ public sealed class LuaFfiTests
             [LuaFfiNativeType.Utf8String, LuaFfiNativeType.UIntPtr],
             signature.ParameterTypes.ToArray());
         Assert.Equal("i32(cstring, usize)", signature.ToString());
-        Assert.Throws<LuaFfiException>(() => LuaFfiSignature.Parse("i32(i32, ...)") );
+        Assert.Throws<LuaFfiException>(() => LuaFfiSignature.Parse("i32(i32, ...)"));
     }
 
     [Fact]

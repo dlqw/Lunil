@@ -706,44 +706,44 @@ internal sealed class LuaFfiContext : IDisposable
             case LuaFfiNativeType.Pointer:
                 return ConvertPointer(value, type);
             case LuaFfiNativeType.Utf8String:
-            {
-                if (value.Kind != LuaValueKind.String)
                 {
-                    throw new LuaFfiException(
-                        LuaFfiErrorCode.InvalidArgument,
-                        "A UTF-8 string argument is required.");
-                }
-
-                var bytes = value.AsString().ToArray();
-                if (bytes.Length > _options.MaximumStringBytes)
-                {
-                    throw new LuaFfiException(
-                        LuaFfiErrorCode.RangeExceeded,
-                        "The UTF-8 string exceeds the configured length limit.");
-                }
-
-                var size = checked(bytes.Length + 1);
-                Reserve(size);
-                var address = IntPtr.Zero;
-                try
-                {
-                    address = Marshal.AllocHGlobal(size);
-                    Marshal.Copy(bytes, 0, address, bytes.Length);
-                    Marshal.WriteByte(address, bytes.Length, 0);
-                    temporary.Add((address, size));
-                    return address;
-                }
-                catch
-                {
-                    if (address != IntPtr.Zero)
+                    if (value.Kind != LuaValueKind.String)
                     {
-                        Marshal.FreeHGlobal(address);
+                        throw new LuaFfiException(
+                            LuaFfiErrorCode.InvalidArgument,
+                            "A UTF-8 string argument is required.");
                     }
 
-                    Release(size);
-                    throw;
+                    var bytes = value.AsString().ToArray();
+                    if (bytes.Length > _options.MaximumStringBytes)
+                    {
+                        throw new LuaFfiException(
+                            LuaFfiErrorCode.RangeExceeded,
+                            "The UTF-8 string exceeds the configured length limit.");
+                    }
+
+                    var size = checked(bytes.Length + 1);
+                    Reserve(size);
+                    var address = IntPtr.Zero;
+                    try
+                    {
+                        address = Marshal.AllocHGlobal(size);
+                        Marshal.Copy(bytes, 0, address, bytes.Length);
+                        Marshal.WriteByte(address, bytes.Length, 0);
+                        temporary.Add((address, size));
+                        return address;
+                    }
+                    catch
+                    {
+                        if (address != IntPtr.Zero)
+                        {
+                            Marshal.FreeHGlobal(address);
+                        }
+
+                        Release(size);
+                        throw;
+                    }
                 }
-            }
             default:
                 throw new LuaFfiException(
                     LuaFfiErrorCode.UnsupportedSignature,
@@ -774,75 +774,75 @@ internal sealed class LuaFfiContext : IDisposable
             case LuaFfiNativeType.UInt16:
             case LuaFfiNativeType.UInt32:
             case LuaFfiNativeType.UInt64:
-            {
-                var unsigned = Convert.ToUInt64(value, CultureInfo.InvariantCulture);
-                if (unsigned > long.MaxValue)
                 {
-                    throw new LuaFfiException(
-                        LuaFfiErrorCode.RangeExceeded,
-                        "The native unsigned result cannot be represented by a Lua integer.");
-                }
+                    var unsigned = Convert.ToUInt64(value, CultureInfo.InvariantCulture);
+                    if (unsigned > long.MaxValue)
+                    {
+                        throw new LuaFfiException(
+                            LuaFfiErrorCode.RangeExceeded,
+                            "The native unsigned result cannot be represented by a Lua integer.");
+                    }
 
-                return LuaValue.FromInteger((long)unsigned);
-            }
+                    return LuaValue.FromInteger((long)unsigned);
+                }
             case LuaFfiNativeType.UIntPtr:
-            {
-                var unsigned = ToUInt64(value);
-                if (unsigned > long.MaxValue)
                 {
-                    throw new LuaFfiException(
-                        LuaFfiErrorCode.RangeExceeded,
-                        "The native unsigned result cannot be represented by a Lua integer.");
-                }
+                    var unsigned = ToUInt64(value);
+                    if (unsigned > long.MaxValue)
+                    {
+                        throw new LuaFfiException(
+                            LuaFfiErrorCode.RangeExceeded,
+                            "The native unsigned result cannot be represented by a Lua integer.");
+                    }
 
-                return LuaValue.FromInteger((long)unsigned);
-            }
+                    return LuaValue.FromInteger((long)unsigned);
+                }
             case LuaFfiNativeType.Float:
             case LuaFfiNativeType.Double:
                 return LuaValue.FromFloat(Convert.ToDouble(value, CultureInfo.InvariantCulture));
             case LuaFfiNativeType.Pointer:
             case LuaFfiNativeType.Utf8String:
-            {
-                if (type == LuaFfiNativeType.Utf8String && value is string text)
                 {
-                    var bytes = Encoding.UTF8.GetBytes(text);
-                    if (bytes.Length > _options.MaximumStringBytes)
+                    if (type == LuaFfiNativeType.Utf8String && value is string text)
                     {
-                        throw new LuaFfiException(
-                            LuaFfiErrorCode.RangeExceeded,
-                            "The native string exceeds the configured length limit.");
+                        var bytes = Encoding.UTF8.GetBytes(text);
+                        if (bytes.Length > _options.MaximumStringBytes)
+                        {
+                            throw new LuaFfiException(
+                                LuaFfiErrorCode.RangeExceeded,
+                                "The native string exceeds the configured length limit.");
+                        }
+
+                        return LuaValue.FromString(state.Strings.GetOrCreate(bytes));
                     }
 
-                    return LuaValue.FromString(state.Strings.GetOrCreate(bytes));
-                }
-
-                if (type == LuaFfiNativeType.Utf8String && value is byte[] bytesValue)
-                {
-                    if (bytesValue.Length > _options.MaximumStringBytes)
+                    if (type == LuaFfiNativeType.Utf8String && value is byte[] bytesValue)
                     {
-                        throw new LuaFfiException(
-                            LuaFfiErrorCode.RangeExceeded,
-                            "The native string exceeds the configured length limit.");
+                        if (bytesValue.Length > _options.MaximumStringBytes)
+                        {
+                            throw new LuaFfiException(
+                                LuaFfiErrorCode.RangeExceeded,
+                                "The native string exceeds the configured length limit.");
+                        }
+
+                        return LuaValue.FromString(state.Strings.GetOrCreate(bytesValue));
                     }
 
-                    return LuaValue.FromString(state.Strings.GetOrCreate(bytesValue));
+                    var address = value switch
+                    {
+                        IntPtr pointer => pointer,
+                        UIntPtr pointer => new IntPtr(unchecked((long)pointer.ToUInt64())),
+                        _ => IntPtr.Zero,
+                    };
+                    return type == LuaFfiNativeType.Pointer
+                        ? PointerValue(state, address, library)
+                        : address == IntPtr.Zero
+                            ? LuaValue.Nil
+                            : LuaValue.FromString(
+                                state.Strings.GetOrCreate(ReadNullTerminated(
+                                    address,
+                                    _options.MaximumStringBytes)));
                 }
-
-                var address = value switch
-                {
-                    IntPtr pointer => pointer,
-                    UIntPtr pointer => new IntPtr(unchecked((long)pointer.ToUInt64())),
-                    _ => IntPtr.Zero,
-                };
-                return type == LuaFfiNativeType.Pointer
-                    ? PointerValue(state, address, library)
-                    : address == IntPtr.Zero
-                        ? LuaValue.Nil
-                        : LuaValue.FromString(
-                            state.Strings.GetOrCreate(ReadNullTerminated(
-                                address,
-                                _options.MaximumStringBytes)));
-            }
             default:
                 throw new LuaFfiException(
                     LuaFfiErrorCode.UnsupportedSignature,
