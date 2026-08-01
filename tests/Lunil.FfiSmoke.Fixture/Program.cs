@@ -34,8 +34,11 @@ public static class Program
             Ffi = new LuaFfiOptions
             {
                 Enabled = true,
-                AllowedLibraryNames = ["libm"],
-                AllowedSymbolNames = ["libm!fabs"],
+                // Platform library naming differs: glibc resolves "libm" (libm.so.6), while
+                // musl/Alpine exposes the math interface as libm.so.1 (a libc.musl alias) and
+                // does not resolve the bare "libm" name.
+                AllowedLibraryNames = ["libm", "libm.so.1", "libm.so.6"],
+                AllowedSymbolNames = ["libm!fabs", "libm.so.1!fabs", "libm.so.6!fabs"],
             },
         };
         var state = new LuaState();
@@ -44,9 +47,16 @@ public static class Program
         var result = new LuaInterpreter().Execute(
             state,
             state.CreateMainClosure(Compile(
-                "local lib=ffi.load('libm'); " +
-                "local fabs=ffi.bind(lib,'fabs','f64(f64)'); " +
-                "local value=fabs(-5.0); ffi.close(lib); return value")));
+                "local lib\n" +
+                "for _, name in ipairs({'libm', 'libm.so.1', 'libm.so.6'}) do\n" +
+                "  local ok, loaded = pcall(ffi.load, name)\n" +
+                "  if ok then lib = loaded break end\n" +
+                "end\n" +
+                "if lib == nil then error('no libm variant could be loaded') end\n" +
+                "local fabs = ffi.bind(lib, 'fabs', 'f64(f64)')\n" +
+                "local value = fabs(-5.0)\n" +
+                "ffi.close(lib)\n" +
+                "return value")));
         return result.Values[0].AsInteger() == 5;
     }
 
