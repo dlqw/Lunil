@@ -29,6 +29,8 @@ host 才会安装；只有选项启用时全局 `ffi` 表才会出现。
 
 ## 3. 兼容性检查清单
 
+- 默认语言契约不变：Lua 5.4 仍为默认语言契约，PUC Lua 5.4.8 是其兼容性基线；这是表述
+  澄清，不是行为变化。
 - 除非 host 显式授予 native loading，否则保持 `LuaStandardLibraryOptions.Ffi` 关闭；默认
   受限行为不变。
 - `InstallPackage(LuaState)` 仍然可用；新的可选 options 重载不改变既有调用点。

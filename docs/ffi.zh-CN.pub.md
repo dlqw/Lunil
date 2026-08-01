@@ -38,6 +38,7 @@ library 白名单或 symbol 白名单为空时，配置在构造期即被拒绝�
 
 ```csharp
 using Lunil.Runtime;
+using Lunil.StandardLibrary;
 
 var state = new LuaState();
 LuaStandardLibrary.InstallBasic(state, options);

@@ -31,6 +31,8 @@ appears only when the option is enabled.
 
 ## 3. Compatibility checklist
 
+- The default language contract is unchanged: Lua 5.4 remains the default language contract
+  and PUC Lua 5.4.8 is its compatibility baseline; the wording is clarified, not a behavior change.
 - Keep `LuaStandardLibraryOptions.Ffi` disabled unless the host explicitly grants native
   loading; the default restricted behavior is unchanged.
 - `InstallPackage(LuaState)` remains available; the new optional-options overload does not

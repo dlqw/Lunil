@@ -40,6 +40,7 @@ Apply the options when installing the standard library:
 
 ```csharp
 using Lunil.Runtime;
+using Lunil.StandardLibrary;
 
 var state = new LuaState();
 LuaStandardLibrary.InstallBasic(state, options);
