@@ -7,4 +7,22 @@
     <Left>lib/netstandard2.1/Lunil.StandardLibrary.dll</Left>
     <Right>lib/net10.0/Lunil.StandardLibrary.dll</Right>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.StandardLibrary.LuaFfiCallingConvention</Target>
+    <Left>lib/netstandard2.1/Lunil.StandardLibrary.dll</Left>
+    <Right>lib/net10.0/Lunil.StandardLibrary.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.StandardLibrary.LuaFfiErrorCode</Target>
+    <Left>lib/netstandard2.1/Lunil.StandardLibrary.dll</Left>
+    <Right>lib/net10.0/Lunil.StandardLibrary.dll</Right>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.StandardLibrary.LuaFfiNativeType</Target>
+    <Left>lib/netstandard2.1/Lunil.StandardLibrary.dll</Left>
+    <Right>lib/net10.0/Lunil.StandardLibrary.dll</Right>
+  </Suppression>
 </Suppressions>

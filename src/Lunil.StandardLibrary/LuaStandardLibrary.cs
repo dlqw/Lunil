@@ -14,9 +14,10 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        var globals = InstallBasic(state, options);
+        var configuredOptions = options ?? LuaStandardLibraryOptions.Default;
+        var globals = InstallBasic(state, configuredOptions);
         var coroutine = InstallCoroutine(state);
-        var package = InstallPackage(state);
+        var package = InstallPackage(state, configuredOptions);
         var loaded = package.Get(LuaLibraryHelpers.String(state, "loaded")).AsTable();
         RegisterLoaded(state, loaded, "_G", globals);
         RegisterLoaded(state, loaded, "coroutine", coroutine);
@@ -96,6 +97,10 @@ public static class LuaStandardLibrary
         {
             RegisterLoaded(state, loaded, "bit32", LuaBit32Library.Install(state));
         }
+        if (configuredOptions.Ffi.Enabled)
+        {
+            RegisterLoaded(state, loaded, "ffi", InstallFfi(state, configuredOptions));
+        }
         return globals;
     }
 
@@ -149,11 +154,30 @@ public static class LuaStandardLibrary
     }
 
     /// <summary>Installs the version-selected package module and global require function.</summary>
-    public static LuaTable InstallPackage(LuaState state)
+    public static LuaTable InstallPackage(LuaState state) => InstallPackage(state, null);
+
+    /// <summary>Installs the version-selected package module and global require function.</summary>
+    public static LuaTable InstallPackage(
+        LuaState state,
+        LuaStandardLibraryOptions? options)
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaPackageLibrary.Install(state);
+        return LuaPackageLibrary.Install(
+            state,
+            options ?? LuaStandardLibraryContext.Get(state).Options);
+    }
+
+    /// <summary>Installs the opt-in native FFI module.</summary>
+    public static LuaTable InstallFfi(
+        LuaState state,
+        LuaStandardLibraryOptions? options = null)
+    {
+        LunilGuard.NotNull(state);
+        EnsureImplemented(state);
+        return LuaFfiLibrary.Install(
+            state,
+            options ?? LuaStandardLibraryContext.Get(state).Options);
     }
 
     /// <summary>Installs the version-selected I/O module and FILE* userdata metatable.</summary>

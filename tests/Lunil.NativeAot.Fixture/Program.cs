@@ -6,6 +6,7 @@ using Lunil.IR.Canonical;
 using Lunil.Runtime;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
+using Lunil.StandardLibrary;
 using Lunil.Workspace;
 
 [assembly: LuaClrGenerateBinding(
@@ -144,6 +145,12 @@ public static class Program
             return 6;
         }
 
+        if (!VerifyFfi())
+        {
+            Console.Error.WriteLine("The NativeAOT registry-only FFI contract is invalid.");
+            return 9;
+        }
+
         if (!VerifyGameLoop())
         {
             Console.Error.WriteLine("The NativeAOT game-loop contract is invalid.");
@@ -207,6 +214,36 @@ public static class Program
             operation.Status == LuaGameLoopOperationStatus.Completed &&
             operation.Values[0].AsInteger() == 42;
     }
+
+    private static bool VerifyFfi()
+    {
+        var registry = new LuaFfiBindingRegistry();
+        registry.Register("fixture", "add", "i32(i32,i32)", AddNative);
+        var options = new LuaStandardLibraryOptions
+        {
+            Ffi = new LuaFfiOptions
+            {
+                Enabled = true,
+                AllowedLibraryNames = ["fixture"],
+                AllowedSymbolNames = ["fixture!add"],
+                BindingRegistry = registry,
+                LibraryLoader = RegistryOnlyLoader.Instance,
+            },
+        };
+        var state = new LuaState();
+        LuaStandardLibrary.InstallBasic(state, options);
+        LuaStandardLibrary.InstallFfi(state, options);
+        var result = new LuaInterpreter().Execute(
+            state,
+            state.CreateMainClosure(Compile(
+                "local lib=ffi.load('fixture'); " +
+                "local add=ffi.bind(lib,'add','i32(i32,i32)'); " +
+                "local value=add(20,22); ffi.close(lib); return value")));
+        return result.Values[0].AsInteger() == 42;
+    }
+
+    private static object? AddNative(ReadOnlySpan<object?> arguments) =>
+        checked((int)arguments[0]! + (int)arguments[1]!);
 
     private static bool VerifyClrInterop()
     {
@@ -311,5 +348,23 @@ public static class Program
         public long Add(long amount) => Value + amount;
 
         public static Task<long> Async(long value) => Task.FromResult(value);
+    }
+
+    private sealed class RegistryOnlyLoader : ILuaFfiLibraryLoader
+    {
+        public static RegistryOnlyLoader Instance { get; } = new();
+
+        private RegistryOnlyLoader()
+        {
+        }
+
+        public IntPtr Load(string libraryName) => new(1);
+
+        public IntPtr GetExport(IntPtr libraryHandle, string symbolName) =>
+            throw new InvalidOperationException("The registry-only fixture must not resolve dynamic symbols.");
+
+        public void Free(IntPtr libraryHandle)
+        {
+        }
     }
 }

@@ -6,6 +6,9 @@ public sealed record LuaStandardLibraryOptions
 
     public ILuaFileSystem FileSystem { get; init; } = SystemLuaFileSystem.Instance;
 
+    /// <summary>Gets the disabled-by-default native C ABI FFI capability.</summary>
+    public LuaFfiOptions Ffi { get; init; } = LuaFfiOptions.Disabled;
+
     public ILuaConsole Console { get; init; } = SystemLuaConsole.Instance;
 
     public ILuaEnvironment Environment { get; init; } = SystemLuaEnvironment.Instance;
