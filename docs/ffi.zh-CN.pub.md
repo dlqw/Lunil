@@ -9,7 +9,7 @@
 
 - Lunil `0.15.0` 或更新版本，并引用 `Lunil.StandardLibrary` 包。
 - 受信任的 host 决策：授予 native loading，并提供精确的 library 与 symbol 身份。
-- AOT 或 trimmed 发布需要精确的 host 注册绑定（见 [AOT bindings](aot-bindings.pub.md)）。
+- AOT 或 trimmed 发布需要精确的 host 注册绑定（见 [AOT bindings](aot-bindings.zh-CN.pub.md)）。
 
 ## 1. 通过标准库选项授予 FFI
 
@@ -34,6 +34,19 @@ var options = new LuaStandardLibraryOptions
 library 白名单或 symbol 白名单为空时，配置在构造期即被拒绝。NUL 字符与路径穿越段在所有
 入口都被拒绝；只有精确白名单条目可以被加载或绑定。
 
+安装标准库时应用该选项：
+
+```csharp
+using Lunil.Runtime;
+
+var state = new LuaState();
+LuaStandardLibrary.InstallBasic(state, options);
+LuaStandardLibrary.InstallFfi(state, options);
+```
+
+安装后全局 `ffi` 表可用且 `ffi.enabled` 为 `true`；保持 `LuaFfiOptions.Enabled` 默认值的
+host 永远不会看到该模块。
+
 ## 2. 加载库并绑定函数
 
 `ffi.load` 返回 library userdata，`ffi.bind` 返回可调用闭包：
@@ -47,7 +60,7 @@ ffi.close(lib)
 
 签名使用紧凑 C ABI 声明形式 `returnType(param1, param2)`。支持的类型为定宽整数、
 pointer-sized 整数、布尔、`float`/`double`、UTF-8 字符串（`cstring`）与原始指针；完整
-别名表见 [FFI reference](ffi-reference.pub.md)。Variadic 声明与 `long` 等平台歧义类型不被
+别名表见 [FFI reference](ffi-reference.zh-CN.pub.md)。Variadic 声明与 `long` 等平台歧义类型不被
 接受；pointer-sized 值请使用 `intptr_t`/`uintptr_t`/`size_t`。
 
 动态签名适配需要运行时动态代码。AOT 或 trimmed host 应通过 registry 绑定精确 symbol
@@ -65,7 +78,6 @@ lib = nil               -- 或释放引用，让垃圾回收器关闭它
 
 `__gc` 与 `__close` metamethod 在收集或 to-be-closed 路径下释放原生资源。库关闭后调用其
 绑定函数会以稳定的 `ffi LibraryClosed` 错误失败，而不会触碰 native 内存。
-
 ## 4. 与原生代码交换有界内存
 
 `ffi.alloc` 创建零初始化的 native buffer，`ffi.read`/`ffi.write` 带边界检查访问：
@@ -111,7 +123,8 @@ private static object? AddNative(ReadOnlySpan<object?> arguments) =>
 
 注册签名必须与 `ffi.bind` 请求的签名完全一致；不一致以 `InvalidSignature` 失败。运行时
 无法提供动态代码时，registry 路径是唯一受支持的路由，任何动态解析尝试以
-`DynamicCodeUnavailable` 失败。
+`DynamicCodeUnavailable` 失败。registry 选项同样通过 [第 1 节](#1-通过标准库选项授予-ffi)
+的 `LuaStandardLibrary.InstallFfi(state, options)` 安装步骤应用。
 
 ## 6. 诊断失败
 
@@ -119,4 +132,4 @@ private static object? AddNative(ReadOnlySpan<object?> arguments) =>
 `ffi LibraryNotAllowed: native library 'other' is not allowlisted.`。平台 loader 错误在可用时
 包含 native 详情：Windows 报告 `GetLastWin32Error` 消息，Unix-like 报告 `dlerror`；Linux
 加载从 `libdl.so.2` 回退到 `libdl.so` 以支持 musl 系发行版。完整错误码列表见
-[FFI reference](ffi-reference.pub.md)。
+[FFI reference](ffi-reference.zh-CN.pub.md)。

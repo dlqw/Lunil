@@ -36,6 +36,19 @@ An empty library allowlist or an empty symbol allowlist rejects the configuratio
 construction time. NUL characters and path traversal segments are rejected everywhere; only
 exact allowlist entries can be loaded or bound.
 
+Apply the options when installing the standard library:
+
+```csharp
+using Lunil.Runtime;
+
+var state = new LuaState();
+LuaStandardLibrary.InstallBasic(state, options);
+LuaStandardLibrary.InstallFfi(state, options);
+```
+
+After installation the global `ffi` table is available with `ffi.enabled` set to `true`;
+hosts that keep `LuaFfiOptions.Enabled` at its default never see the module.
+
 ## 2. Load a library and bind a function
 
 `ffi.load` returns a library userdata, `ffi.bind` returns a callable closure:
@@ -118,7 +131,8 @@ private static object? AddNative(ReadOnlySpan<object?> arguments) =>
 The registered signature must match the signature requested by `ffi.bind` exactly; a mismatch
 fails with `InvalidSignature`. When the runtime cannot provide dynamic code, the registry path
 is the only supported route and any dynamic resolution attempt fails with
-`DynamicCodeUnavailable`.
+`DynamicCodeUnavailable`. Apply the registry options with the same
+`LuaStandardLibrary.InstallFfi(state, options)` step from [step 1](#1-grant-ffi-through-standard-library-options).
 
 ## 6. Diagnose failures
 
