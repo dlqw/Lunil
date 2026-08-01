@@ -9,32 +9,36 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dlqw/Lunil/blob/v0.14.0/README.md">English</a> · <strong>简体中文</strong>
+  <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.14.0-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="稳定版本" src="https://img.shields.io/badge/stable-0.15.0-16a34a?style=flat-square"></a>
   <img alt=".NET 10 与 .NET Standard 2.1" src="https://img.shields.io/badge/.NET-10%20%7C%20Standard%202.1-512BD4?style=flat-square&logo=dotnet">
-  <img alt="Lua 5.4.8" src="https://img.shields.io/badge/Lua-5.4.8-2C2D72?style=flat-square&logo=lua">
+  <img alt="Lua 5.4" src="https://img.shields.io/badge/Lua-5.4-2C2D72?style=flat-square&logo=lua">
 </p>
 
-Lunil 是纯 C# Lua 工具链。默认契约为 Lua 5.4.8，也可显式选择 Lua 5.1、5.2、5.3
-或 5.5。源码与版本化二进制 chunk 会降低为同一套经过验证的 canonical IR，再由可移植
-解释器或 .NET 10 profile-guided JIT 执行。
+Lunil 是纯 C# Lua 工具链。默认语言契约为 Lua 5.4，兼容性基线为 PUC Lua 5.4.8，也可显式
+选择 Lua 5.1、5.2、5.3 或 5.5。源码与版本化二进制 chunk 会降低为同一套经过验证的
+canonical IR，再由可移植解释器或 .NET 10 profile-guided JIT 执行。
 
-## 0.14 新增内容
+## 主要能力
 
-- Flow-sensitive 元表与 metamethod 分析、prototype 风格 OOP 与 `self` 推断、共享 closure
-  upvalue，以及 path-sensitive nil 链诊断。
-- 跨模块 export、call、reference、callback registration 与 persistence schema 索引，并可从
-  版本化 C++、C#、Unity 或 Godot contract 注入宿主定义。
-- Compact/incremental syntax storage 与有边界的 compact workspace snapshot，可覆盖普通编辑器
-  文件到数百万行 repository。
-- 面向 Windows、Linux、macOS 的 x64/ARM64 自包含 LSP 3.17 server 与 VS Code 插件，支持宿主感知
-  navigation 和虚拟 host-contract 文档。
-- 在稳定 `netstandard2.1` compiler/analysis 资产之外，继续覆盖 NativeAOT、trimming、single-file、
-  ReadyToRun 与 portable host。
+| 领域 | Lunil 提供的能力 |
+| --- | --- |
+| 语言与编译器 | 按版本区分的 Lua 5.1–5.5 语法和 chunk 契约、无损 UTF-8 语法树、annotation、语义绑定、canonical lowering 与独立 IR 验证。 |
+| 托管运行时 | Lua value、table、closure、coroutine、metatable、protected call、逻辑 GC、资源预算、参考解释器与自适应 .NET 10 JIT。 |
+| 静态分析 | Symbol、type、CFG、稳定 key、member/reference index、call graph、metatable/object model fact、closure upvalue 与 nil path 分析。 |
+| Workspace 分析 | 模块发现、循环、export、跨模块 call/reference、外部宿主 contract、增量失效、compact snapshot，以及面向大型 repository 的有界 cache。 |
+| Hosting 与互操作 | Restricted、Trusted、Deterministic host，精确 allowlist CLR 访问，生成式 AOT binding，opt-in native C ABI FFI，callback、task、timer、cancellation 与宿主服务。 |
+| 引擎与更新 | Engine-neutral 游戏循环调度、Unity/Godot package、持久化、帧边界发布与签名原子 patch 部署。 |
+| 编辑器工具 | 自包含 LSP 3.17 server 与分平台 VS Code 插件，提供诊断、导航、rename、symbol、semantic token、hint 和 call hierarchy。 |
+| 部署 | .NET 10 与 `netstandard2.1` 资产，NativeAOT、trimming、single-file、ReadyToRun、IL2CPP，以及六个桌面 RID 的 release bundle。 |
+
+> [!TIP]
+> 当前版本变更见 [0.15.0 Release](https://github.com/dlqw/Lunil/releases/tag/v0.15.0)，兼容性细节见
+> [迁移指南](docs/migration-0.15.0.zh-CN.pub.md)。
 
 ## 平台支持
 
@@ -53,16 +57,14 @@ Unity IL2CPP 覆盖 Windows 与 Android 实际运行、WebGL 浏览器运行以�
 
 ## 安装
 
-每个 [GitHub Release](https://github.com/dlqw/Lunil/releases) 都会附带 package。先把全部
-`*.nupkg` asset 下载到 `.lunil-packages` 目录；GitHub CLI 命令为：
+每个 [GitHub Release](https://github.com/dlqw/Lunil/releases) 都会附带 package。先把 NuGet
+asset 下载到本地 source：
 
 ```bash
-gh release download v0.14.0 --repo dlqw/Lunil --pattern "*.nupkg" --dir .lunil-packages
-gh release download v0.14.0 --repo dlqw/Lunil --pattern "com.dlqw.lunil-0.14.0.tgz" --dir .lunil-engine-assets
-gh release download v0.14.0 --repo dlqw/Lunil --pattern "Lunil.Godot.addon-0.14.0.zip" --dir .lunil-engine-assets
+gh release download v0.15.0 --repo dlqw/Lunil --pattern "*.nupkg" --dir .lunil-packages
 ```
 
-在 `NuGet.Config` 中同时加入 release 目录与 NuGet.org，确保第三方依赖仍可解析：
+在 `NuGet.Config` 中同时加入 release 目录与 NuGet.org：
 
 ```xml
 <configuration>
@@ -73,20 +75,19 @@ gh release download v0.14.0 --repo dlqw/Lunil --pattern "Lunil.Godot.addon-0.14.
 </configuration>
 ```
 
-然后安装 CLI 或引用 host：
+安装 CLI 或引用 host：
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.14.0
+dotnet tool install --global Lunil.Cli --version 0.15.0
 lunil --version
 ```
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.14.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.15.0" />
 ```
 
-Unity 用户通过 Package Manager 安装 `.lunil-engine-assets/com.dlqw.lunil-0.14.0.tgz`。Godot 用户
-安装 `Lunil.Godot` NuGet 包，解压 `.lunil-engine-assets/Lunil.Godot.addon-0.14.0.zip`，再把其中的
-`addons/lunil` 目录复制到项目的 `res://addons/lunil`。
+Unity 与 Godot 的安装步骤分别放在对应 hosting 指南中。Release 还包含自包含 CLI bundle
+和六个分平台 VS Code package。
 
 ## 在 .NET 中运行 Lua
 
@@ -106,69 +107,37 @@ if (execution is null || execution.Signal != LuaVmSignal.Completed)
 Console.WriteLine(execution.Values[0].AsInteger()); // 42
 ```
 
-在 .NET 10 上，`LuaHostExecutionBackend.Auto` 会在动态代码可用时选择 JIT。可移植资产与
-AOT runtime 会选择解释器，不加载或探测 JIT assembly。
-
-## 驱动游戏循环
-
-```csharp
-using var loop = new LuaGameLoopHost(new LuaGameLoopHostOptions
-{
-    HostOptions = LuaHostOptions.Restricted with
-    {
-        ExecutionBackend = LuaHostExecutionBackend.Interpreter,
-    },
-});
-
-var script = loop.Host.CompileUtf8(
-    "counter=1; coroutine.yield(); counter=counter+1; return counter");
-var operation = loop.Start(script);
-loop.Tick();
-loop.Tick();
-Console.WriteLine(operation.Values[0].AsInteger()); // 2
-```
-
-`Tick` 和 `TickFixed` 必须在构造线程调用。后台 callback 通过
-`ILuaGameLoopDispatcher` 回到主线程；patch 使用 `PublishAtFrameBoundary` 保证原子可见。
+在 .NET 10 上，`LuaHostExecutionBackend.Auto` 会在动态代码可用时选择 JIT。可移植与 AOT
+资产使用解释器，不加载或探测 JIT assembly。
 
 ## 示例
 
 | 示例 | 打开或运行方式 |
 | --- | --- |
-| [可移植 host](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.Portable.Hosting) | `dotnet run --project samples/Lunil.Portable.Hosting` |
-| [Unity 2022.3](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.Unity.2022.3) | 直接用 Unity 2022.3 LTS 打开 |
-| [Unity 6](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.Unity.6) | 直接用 Unity 6 打开 |
-| [Godot 4.4](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.Godot.4.4) | 直接用 Godot 4.4.1 .NET 打开 |
-| [Godot 4.6](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.Godot.4.6) | 直接用 Godot 4.6.3 .NET 打开 |
-| [静态分析嵌入](https://github.com/dlqw/Lunil/tree/v0.14.0/samples/Lunil.StaticAnalysis.Embedding) | `dotnet run --project samples/Lunil.StaticAnalysis.Embedding` |
+| [可移植 host](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.Portable.Hosting) | `dotnet run --project samples/Lunil.Portable.Hosting` |
+| [静态分析嵌入](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.StaticAnalysis.Embedding) | `dotnet run --project samples/Lunil.StaticAnalysis.Embedding` |
+| [Unity 2022.3](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.Unity.2022.3) | 直接用 Unity 2022.3 LTS 打开 |
+| [Unity 6](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.Unity.6) | 直接用 Unity 6 打开 |
+| [Godot 4.4](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.Godot.4.4) | 直接用 Godot 4.4.1 .NET 打开 |
+| [Godot 4.6](https://github.com/dlqw/Lunil/tree/v0.15.0/samples/Lunil.Godot.4.6) | 直接用 Godot 4.6.3 .NET 打开 |
 
 两个 Unity 项目彼此独立；Unity 2022.3 示例不需要先由 Unity 6 升级。
 
 ## 文档
 
-| 文档 | 类型 |
-| --- | --- |
-| [可移植 hosting](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/portable-hosting.zh-CN.pub.md) | How-to |
-| [Engine-neutral game-loop hosting](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/game-engine-hosting.zh-CN.pub.md) | How-to |
-| [Unity hosting](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/unity-hosting.zh-CN.pub.md) · [Unity reference](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/unity-reference.zh-CN.pub.md) | How-to · Reference |
-| [Godot hosting](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/godot-hosting.zh-CN.pub.md) · [Godot reference](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/godot-reference.zh-CN.pub.md) | How-to · Reference |
-| [AOT CLR binding](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/aot-bindings.zh-CN.pub.md) | How-to |
-| [CLR 互操作](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/clr-interop.zh-CN.pub.md) · [契约](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/clr-interop-reference.zh-CN.pub.md) · [生命周期原理](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/clr-interop-lifecycle.zh-CN.pub.md) | How-to · Reference · Explanation |
-| [签名 Patch Bundle](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/signed-patch-bundles.zh-CN.pub.md) · [部署](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/deploy-signed-patch-bundles.zh-CN.pub.md) · [发布原理](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/signed-patch-publication.zh-CN.pub.md) | Reference · How-to · Explanation |
-| [CLI](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/cli.zh-CN.pub.md) | Reference |
-| [.NET NativeAOT 与 trimming](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/nativeaot-build-integration.zh-CN.pub.md) | How-to |
-| [静态分析嵌入](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/static-analysis-embedding.zh-CN.pub.md) | How-to |
-| [大型 workspace 分析](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/large-workspaces.zh-CN.pub.md) | How-to |
-| [Language server](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/language-server.zh-CN.pub.md) | Reference |
-| [VS Code](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/vscode.zh-CN.pub.md) | How-to |
-| [PUC Lua prototype 导入](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/puc-prototype-import.zh-CN.pub.md) | Reference |
-| [迁移到 0.14](https://github.com/dlqw/Lunil/blob/v0.14.0/docs/migration-0.14.0.zh-CN.pub.md) | Migration guide |
+| 领域 | 指南 | Reference 与 explanation |
+| --- | --- | --- |
+| 编译器与分析 | [静态分析嵌入](docs/static-analysis-embedding.zh-CN.pub.md) · [外部宿主分析](docs/external-host-analysis.zh-CN.pub.md) · [大型 workspace](docs/large-workspaces.zh-CN.pub.md) | [分析 fact](docs/analysis-facts.zh-CN.pub.md) · [PUC Lua prototype 导入](docs/puc-prototype-import.zh-CN.pub.md) |
+| Hosting 与互操作 | [可移植 hosting](docs/portable-hosting.zh-CN.pub.md) · [游戏循环 hosting](docs/game-engine-hosting.zh-CN.pub.md) · [CLR 互操作](docs/clr-interop.zh-CN.pub.md) · [AOT binding](docs/aot-bindings.zh-CN.pub.md) · [Native FFI](docs/ffi.zh-CN.pub.md) | [CLR 契约](docs/clr-interop-reference.zh-CN.pub.md) · [CLR 生命周期](docs/clr-interop-lifecycle.zh-CN.pub.md) · [FFI reference](docs/ffi-reference.zh-CN.pub.md) |
+| 引擎与更新 | [Unity hosting](docs/unity-hosting.zh-CN.pub.md) · [Godot hosting](docs/godot-hosting.zh-CN.pub.md) · [签名 patch 部署](docs/deploy-signed-patch-bundles.zh-CN.pub.md) | [Unity reference](docs/unity-reference.zh-CN.pub.md) · [Godot reference](docs/godot-reference.zh-CN.pub.md) · [Patch bundle reference](docs/signed-patch-bundles.zh-CN.pub.md) · [Patch 发布模型](docs/signed-patch-publication.zh-CN.pub.md) |
+| 工具与部署 | [VS Code](docs/vscode.zh-CN.pub.md) · [NativeAOT 与 trimming](docs/nativeaot-build-integration.zh-CN.pub.md) | [CLI reference](docs/cli.zh-CN.pub.md) · [Language server](docs/language-server.zh-CN.pub.md) · [0.15 迁移](docs/migration-0.15.0.zh-CN.pub.md) |
 
 ## 兼容性
 
-- 默认语言为 Lua 5.4.8；继续提供显式 Lua 5.1–5.5 契约。
-- 稳定线为 `0.14.x`；0.13 到 0.14 的变化见迁移指南。除迁移指南明确列出的项目外，
-  既有 .NET 10 host 入口保持源码兼容。
+- 默认语言契约为 Lua 5.4；兼容性基线为 PUC Lua 5.4.8；继续提供显式 Lua 5.1–5.5 契约。
+- 稳定线为 `0.15.x`；除迁移指南明确列出的项目外，既有 .NET 10 host 入口保持源码兼容。
 - Release bundle：`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`osx-x64`、`osx-arm64`。
 - CLR 互操作默认关闭并 fail closed。可信 .NET host 可显式选择 `RegistryThenReflection`；
   NativeAOT、IL2CPP 与 trimming 使用生成 binding 的 `RegistryOnly`。
+- Native FFI 为 opt-in 且 fail closed：默认关闭，使用精确 library 与 symbol 白名单，
+  以及无需动态代码的精确 AOT registry 绑定。
