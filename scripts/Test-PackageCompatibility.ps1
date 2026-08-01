@@ -393,10 +393,13 @@ if (-not $NoPack) {
     if ($LASTEXITCODE -ne 0) { throw 'Building packages for compatibility validation failed.' }
 }
 
+# Sort by a deterministic, culture-independent key: PowerShell's Sort-Object uses
+# culture-sensitive comparison whose '-' vs '.' ordering differs across runners, which
+# would make the reviewed package baseline environment-dependent.
 $nupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.nupkg" |
-    Sort-Object Name)
+    Sort-Object { $_.Name.Replace('-', '.').ToLowerInvariant() })
 $snupkgs = @(Get-ChildItem -LiteralPath $packageRoot -File -Filter "*.$Version.snupkg" |
-    Sort-Object Name)
+    Sort-Object { $_.Name.Replace('-', '.').ToLowerInvariant() })
 if ($nupkgs.Count -ne 15 -or $snupkgs.Count -ne 15) {
     throw "Expected 15 NuGet and 15 symbol packages for $Version; found $($nupkgs.Count) and $($snupkgs.Count)."
 }

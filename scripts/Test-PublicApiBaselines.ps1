@@ -78,7 +78,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'dotnet tool restore failed.' }
 
     $candidateProjects = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'src') `
-        -Recurse -Filter 'Lunil.*.csproj' | Sort-Object Name)
+        -Recurse -Filter 'Lunil.*.csproj' |
+        Sort-Object { $_.Name.Replace('-', '.').ToLowerInvariant() })
     $projects = [Collections.Generic.List[System.IO.FileInfo]]::new()
     foreach ($project in $candidateProjects) {
         $isPackable = (& dotnet msbuild $project.FullName -nologo `

@@ -25,8 +25,11 @@ internal static class LuaPackageLibrary
     private static readonly LuaNativeFunction NativeRootSearcherDescriptor =
         new("package.searcher.native-root", NativeRootSearcher);
 
-    public static LuaTable Install(LuaState state)
+    public static LuaTable Install(
+        LuaState state,
+        LuaStandardLibraryOptions? options = null)
     {
+        options ??= LuaStandardLibraryContext.Get(state).Options;
         var loaded = GetOrCreateRegistryTable(state, LoadedRegistryKey);
         state.AttachLoadedModuleCache(loaded);
         var preload = GetOrCreateRegistryTable(state, PreloadRegistryKey);
