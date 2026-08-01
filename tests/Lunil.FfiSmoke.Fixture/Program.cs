@@ -57,7 +57,7 @@ public static class Program
                 "local value = fabs(-5.0)\n" +
                 "ffi.close(lib)\n" +
                 "return value")));
-        return result.Values[0].AsInteger() == 5;
+        return Math.Abs(result.Values[0].AsFloat() - 5.0) < 1e-9;
     }
 
     private static LuaIrModule Compile(string source)
