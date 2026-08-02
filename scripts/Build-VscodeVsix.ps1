@@ -85,6 +85,8 @@ try {
             throw "Published server executable is missing for $($item.Rid)."
         }
         $debugAdapterName = if ($item.Rid.StartsWith('win')) { 'lunil-debug-adapter.exe' } else { 'lunil-debug-adapter' }
+        & dotnet restore $debugAdapterProject -r $item.Rid
+        if ($LASTEXITCODE -ne 0) { throw "Restore failed for debug adapter $($item.Rid)." }
         & dotnet publish $debugAdapterProject -c Release -r $item.Rid --self-contained true --no-restore `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:DebugType=None -p:DebugSymbols=false -o $publishDirectory
