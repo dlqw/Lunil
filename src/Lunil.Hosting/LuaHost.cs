@@ -299,6 +299,29 @@ public sealed partial class LuaHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Resumes a thread suspended by a host debugger pause. The debug-pause reactivation path is
+    /// only available on the reference interpreter backend; the CIL JIT backend does not dispatch
+    /// debug hooks.
+    /// </summary>
+    public LuaExecutionResult ResumeDebuggedThread(
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        LunilGuard.NotNull(thread);
+        lock (_executionGate)
+        {
+            ThrowIfDisposed();
+            if (SelectedExecutionBackend == LuaHostExecutionBackend.Jit)
+            {
+                throw new InvalidOperationException(
+                    "Resuming a debugger-paused thread requires the interpreter execution backend.");
+            }
+
+            return _interpreterExecutor.ResumeDebugged(State, thread, arguments);
+        }
+    }
+
     public void Dispose()
     {
         lock (_executionGate)

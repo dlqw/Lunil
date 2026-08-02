@@ -16,14 +16,14 @@ no runtime network requests.
 
 ## 1. Install the VSIX
 
-Download the matching `lunil-lua-0.14.0-<target>.vsix` and its `.sha256` file from the 0.14.0
+Download the matching `lunil-lua-0.16.0-<target>.vsix` and its `.sha256` file from the 0.16.0
 release. Targets are `win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `darwin-x64`, and
 `darwin-arm64`.
 
 Install from **Extensions: Install from VSIX...**, or use:
 
 ```bash
-code --install-extension lunil-lua-0.14.0-win32-x64.vsix
+code --install-extension lunil-lua-0.16.0-win32-x64.vsix
 ```
 
 Each VSIX contains exactly one self-contained server for its target. No separate .NET installation
@@ -71,9 +71,23 @@ reached, use the restart command to begin a new attempt sequence.
 | `lunil.server.gcHeapHardLimitPercent` | `70` | Managed heap hard-limit percentage, from 20 through 90, for the bundled server. |
 | `lunil.hostContractPath` | empty | Resource-relative or absolute path to a host-analysis contract. |
 | `lunil.hostContractJson` | empty | Inline contract JSON; takes precedence over the path. |
+| `lunil.server.suppressedDiagnosticCodes` | `[]` | Diagnostic codes (for example `LUA6022`) suppressed by the language server analysis. |
 
 `lunil.server.path` must be absolute. Changing the server path or heap limit restarts the process;
 changing the host contract reloads configuration and reindexes semantic data.
+
+## Debug Lua code
+
+The extension contributes a `lunil` debugger type with two configurations:
+
+- **Launch** runs a `.lua` file under the reference interpreter with breakpoints, stepping,
+  pause, stack, locals, and upvalues (`program` points at the script).
+- **Attach** connects to a game-loop host that exposes a named-pipe debug endpoint
+  (`debugPipe` names the pipe; the host starts it with `LuaGameLoopHost.StartDebugServer`).
+
+The adapter executable (`lunil-debug-adapter`) is bundled inside the VSIX like the language
+server. See [Debugging Lua](debugging.pub.md) for walkthroughs and the
+[debugging reference](debugging-reference.pub.md) for the supported protocol surface.
 
 ## Expected result
 

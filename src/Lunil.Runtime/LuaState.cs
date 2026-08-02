@@ -16,6 +16,9 @@ public sealed class LuaState
 {
     internal object ExecutionGate { get; } = new();
 
+    /// <summary>Host debugger session attached to this state, or null when not debugged.</summary>
+    internal LuaDebugSession? DebugSession { get; set; }
+
     private readonly Dictionary<LuaValueKind, LuaTable> _typeMetatables = [];
     private readonly Dictionary<string, LoadedModuleRegistration> _loadedModules =
         new(StringComparer.Ordinal);

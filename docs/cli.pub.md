@@ -55,6 +55,7 @@ The only build target is `chunk`. Legacy AOT target inputs fail with `LUNIL0006`
 | `--execution` | `auto` (default), `interpreter`, `jit` | All | Select the execution backend used by `run`. |
 | `--warnings-as-errors` | Flag | Source commands | Promote analysis warnings to errors. |
 | `--no-warnings-as-errors` | Flag | Source commands | Override an enabled configuration/environment setting. |
+| `--suppress` | Repeatable code | `check`, `build`, `dump` | Suppress an analysis diagnostic code (for example `LUA6022`). |
 | `-o`, `--output` | Path | `build` | Write a chunk file, or one `.luac` per module when the path denotes a directory; stdout lists each emitted path. |
 | `-o`, `--output` | Path or `-` | `dump` | Write the dump to a file; omit the option or use `-` to write the dump payload to stdout. |
 | `-o`, `--output` | Path | `patch pack` | Write the signed bundle to the path; stdout prints that bundle path. |

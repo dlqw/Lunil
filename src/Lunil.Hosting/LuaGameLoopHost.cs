@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Lunil.Compiler;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
+using Lunil.Runtime.Debugging;
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Memory;
 using Lunil.Runtime.Values;
@@ -28,6 +29,7 @@ public sealed class LuaGameLoopHost : IDisposable
     private readonly CallbackSchedulerAdapter _callbackScheduler;
     private readonly int _ownerThreadId;
     private readonly bool _ownsHost;
+    private LuaGameLoopDebugServer? _debugServer;
     private long _nextSequence;
     private long _nextOperationId;
     private long _generation = 1;
@@ -209,6 +211,34 @@ public sealed class LuaGameLoopHost : IDisposable
         }
 
         QueueOperationExecution(operation, QueuedWorkKind.Resume, arguments);
+    }
+
+    /// <summary>
+    /// Starts the cross-process debug endpoint: a named-pipe DAP server on the given pipe name.
+    /// The host attaches a debug session to its Lua state; breakpoints, stepping, pause, stack,
+    /// and variable requests are served over the pipe, and resumes are queued into the next tick
+    /// so the game loop stays the single execution driver.
+    /// </summary>
+    public LuaGameLoopDebugServer StartDebugServer(string pipeName)
+    {
+        LunilGuard.NotNullOrEmpty(pipeName);
+        EnsureOwnerThread();
+        ThrowIfDisposed();
+        if (_debugServer is not null)
+        {
+            throw new InvalidOperationException("A debug server is already running on this host.");
+        }
+
+        if (Host.SelectedExecutionBackend == LuaHostExecutionBackend.Jit)
+        {
+            throw new InvalidOperationException(
+                "Cross-process debugging requires the interpreter execution backend.");
+        }
+
+        var server = new LuaGameLoopDebugServer(this, pipeName);
+        _debugServer = server;
+        server.Start();
+        return server;
     }
 
     public void Cancel(LuaGameLoopOperation operation)
@@ -427,6 +457,8 @@ public sealed class LuaGameLoopHost : IDisposable
                 return;
             }
 
+            _debugServer?.Dispose();
+            _debugServer = null;
             Host.ClrBridge.DetachCallbackScheduler(_callbackScheduler);
             _generation = checked(_generation + 1);
             foreach (var operation in _operations.Values.ToArray())
@@ -749,6 +781,51 @@ public sealed class LuaGameLoopHost : IDisposable
         QueueCancellationFromAnyThread(operation);
     }
 
+    /// <summary>
+    /// Queues a debugger-paused operation for engine-level resume on the next tick. Safe to call
+    /// from any thread (the debug server runs on a pipe listener thread).
+    /// </summary>
+    internal void QueueDebugResume(LuaGameLoopOperation operation)
+    {
+        var item = new QueuedWork(
+            NextSequence(),
+            QueuedWorkKind.DebugResume,
+            operation.Phase,
+            operation.Generation,
+            operation,
+            [],
+            []);
+        if (_dispatcher.CheckAccess())
+        {
+            if (Volatile.Read(ref _disposed) == 0 &&
+                operation.Generation == Volatile.Read(ref _generation) &&
+                !operation.IsTerminal)
+            {
+                Enqueue(item, enforceLimit: true);
+            }
+        }
+        else
+        {
+            _dispatcher.Post(() =>
+            {
+                if (Volatile.Read(ref _disposed) == 0 &&
+                    operation.Generation == Volatile.Read(ref _generation) &&
+                    !operation.IsTerminal)
+                {
+                    Enqueue(item, enforceLimit: true);
+                }
+            });
+        }
+    }
+
+    internal IReadOnlyList<LuaGameLoopOperation> SnapshotOperations()
+    {
+        lock (_gate)
+        {
+            return _operations.Values.ToArray();
+        }
+    }
+
     private void Enqueue(QueuedWork item, bool enforceLimit)
     {
         var count = Interlocked.Increment(ref _queuedWorkCount);
@@ -873,7 +950,8 @@ public sealed class LuaGameLoopHost : IDisposable
                 ref instructions,
                 ref completed,
                 ref suspended,
-                ref cancelled);
+                ref cancelled,
+                item.Kind == QueuedWorkKind.DebugResume);
         }
         catch (Exception exception) when (IsRecoverable(exception))
         {
@@ -904,7 +982,8 @@ public sealed class LuaGameLoopHost : IDisposable
         ref long instructions,
         ref int completed,
         ref int suspended,
-        ref int cancelled)
+        ref int cancelled,
+        bool debugResume = false)
     {
         if (operation.IsCancellationRequested)
         {
@@ -928,9 +1007,12 @@ public sealed class LuaGameLoopHost : IDisposable
         }
 
         operation.SetStatus(LuaGameLoopOperationStatus.Running);
-        var result = start
-            ? Host.StartThread(operation.Thread, instructionBudget, arguments)
-            : Host.ResumeThread(operation.Thread, instructionBudget, arguments);
+        var result = debugResume
+            ? Host.ResumeDebuggedThread(operation.Thread, arguments)
+            : start
+                ? Host.StartThread(operation.Thread, instructionBudget, arguments)
+                : Host.ResumeThread(operation.Thread, instructionBudget, arguments);
+
         callbacks++;
         instructions = checked(instructions + result.ExecutedInstructionCount);
         operation.SetValues(result.Values);
@@ -957,6 +1039,20 @@ public sealed class LuaGameLoopHost : IDisposable
                     null,
                     exception.Message,
                     exception));
+                break;
+            case LuaVmSignal.Paused:
+                // A debugger attached to the operation thread suspended the turn. The game loop
+                // keeps the operation suspended; the debugger resumes the root thread to continue.
+                operation.SetStatus(LuaGameLoopOperationStatus.Suspended);
+                suspended++;
+                if (_debugServer is { } debugServer)
+                {
+                    var line = LuaDebugApi.GetCurrentLine(
+                        operation.Thread,
+                        LuaDebugApi.GetFrame(Host.State, operation.Thread, 0)!);
+                    debugServer.OnDebugPause(operation, line);
+                }
+
                 break;
             default:
                 throw new InvalidOperationException("The Lua VM signal is invalid.");
@@ -1128,6 +1224,7 @@ public sealed class LuaGameLoopHost : IDisposable
     {
         Start,
         Resume,
+        DebugResume,
         ClrCallback,
         TaskCompletion,
         Cancel,

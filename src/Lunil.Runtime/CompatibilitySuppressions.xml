@@ -103,4 +103,10 @@
     <Left>lib/netstandard2.1/Lunil.Runtime.dll</Left>
     <Right>lib/net10.0/Lunil.Runtime.dll</Right>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0008</DiagnosticId>
+    <Target>T:Lunil.Runtime.LuaDebugStepMode</Target>
+    <Left>lib/netstandard2.1/Lunil.Runtime.dll</Left>
+    <Right>lib/net10.0/Lunil.Runtime.dll</Right>
+  </Suppression>
 </Suppressions>
