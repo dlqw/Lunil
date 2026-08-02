@@ -58,6 +58,7 @@ build target 是 `chunk`。旧 AOT target 输入会以 phase `removed-feature`�
 | `--execution` | `auto`（默认）、`interpreter`、`jit` | 全部 | 选择 `run` 使用的执行 backend。 |
 | `--warnings-as-errors` | Flag | Source command | 将 analysis warning 提升为 error。 |
 | `--no-warnings-as-errors` | Flag | Source command | 覆盖已启用的配置或环境设置。 |
+| `--suppress` | 可重复的码 | `check`、`build`、`dump` | 抑制一个 analysis diagnostic 码（例如 `LUA6022`）。 |
 | `-o`、`--output` | Path | `build` | 写入 chunk 文件；path 表示目录时，每个 module 写入一个 `.luac`；stdout 列出每个构件 path。 |
 | `-o`、`--output` | Path 或 `-` | `dump` | 写入 dump 文件；省略该选项或使用 `-` 时将 dump payload 写入 stdout。 |
 | `-o`、`--output` | Path | `patch pack` | 将签名 bundle 写入该 path；stdout 输出 bundle path。 |

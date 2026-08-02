@@ -317,6 +317,17 @@ internal sealed class LuaLanguageServer : IDisposable
         var path = lunil.TryGetProperty("hostContractPath", out var pathElement) &&
             pathElement.ValueKind == JsonValueKind.String ? pathElement.GetString() : null;
         _workspace.ConfigureHostContract(json, path);
+        if (lunil.TryGetProperty("server", out var server) &&
+            server.TryGetProperty("suppressedDiagnosticCodes", out var codesElement) &&
+            codesElement.ValueKind == JsonValueKind.Array)
+        {
+            var codes = codesElement.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => item.GetString()!)
+                .ToArray();
+            _workspace.UpdateSuppressedDiagnosticCodes(codes);
+        }
+
         return null;
     }
 

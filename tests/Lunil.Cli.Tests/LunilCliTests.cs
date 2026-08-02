@@ -488,6 +488,26 @@ public sealed class LunilCliTests
     }
 
     [Fact]
+    public async Task CheckSuppressesRequestedDiagnosticCodes()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("suppress.lua", "return 'text' + 1");
+
+        var normal = await fixture.RunAsync("check", script);
+        var suppressed = await fixture.RunAsync(
+            "check",
+            script,
+            "--suppress",
+            "LUA6003",
+            "--diagnostic-format",
+            "json");
+
+        Assert.Contains("warning LUA6003", normal.StandardError, StringComparison.Ordinal);
+        Assert.Equal(0, suppressed.ExitCode);
+        Assert.DoesNotContain("LUA6003", suppressed.StandardError, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CheckReportsSyntaxErrorsAndCrossModuleDiagnostics()
     {
         using var fixture = new CliFixture();

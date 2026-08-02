@@ -122,6 +122,9 @@ internal sealed record CliOptions
     public int MaximumCallDepth { get; init; } = 20_000;
 
     public long MaximumHeapBytes { get; init; } = 256L * 1024 * 1024;
+
+    public ImmutableHashSet<string> SuppressedDiagnosticCodes { get; init; } =
+        ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
 }
 
 internal sealed record CliConfiguration
@@ -157,6 +160,8 @@ internal sealed record CliConfiguration
     public int? MaximumCallDepth { get; init; }
 
     public long? MaximumHeapBytes { get; init; }
+
+    public ImmutableArray<string>? SuppressedDiagnosticCodes { get; init; }
 }
 
 internal sealed class CliUsageException(string message) : Exception(message);

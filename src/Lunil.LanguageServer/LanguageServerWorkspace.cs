@@ -29,6 +29,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private ImmutableArray<Uri> _folders = [];
     private LuaWorkspace _workspace;
     private LuaHostAnalysisContract? _hostContract;
+    private ImmutableHashSet<string> _suppressedDiagnosticCodes =
+        ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
     private LuaWorkspaceCompactSnapshot? _snapshot;
     private CancellationTokenSource? _indexCancellation;
     private int _generation;
@@ -500,9 +502,21 @@ internal sealed class LanguageServerWorkspace : IDisposable
         ScheduleIndex();
     }
 
+    internal void UpdateSuppressedDiagnosticCodes(IEnumerable<string> codes)
+    {
+        _suppressedDiagnosticCodes = codes.ToImmutableHashSet(StringComparer.Ordinal);
+        lock (_gate)
+        {
+            InvalidateIndexNoLock();
+        }
+
+        ScheduleIndex();
+    }
+
     private LuaWorkspace CreateWorkspace(LuaHostAnalysisContract? hostContract) => new(new LuaWorkspaceOptions
     {
         HostContract = hostContract,
+        SuppressedDiagnosticCodes = _suppressedDiagnosticCodes,
         DiskCacheDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Lunil",

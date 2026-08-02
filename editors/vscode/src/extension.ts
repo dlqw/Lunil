@@ -17,11 +17,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   controller = new LunilClientController(context);
   context.subscriptions.push(controller);
   await controller.activate();
+  context.subscriptions.push(
+    vscode.debug.registerDebugAdapterDescriptorFactory(
+      'lunil',
+      new LunilDebugAdapterFactory(context)));
 }
 
 export async function deactivate(): Promise<void> {
   await controller?.stop();
   controller = undefined;
+}
+
+class LunilDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+  public constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public async createDebugAdapterDescriptor(
+    session: vscode.DebugSession): Promise<vscode.DebugAdapterDescriptor> {
+    const executableName = process.platform === 'win32'
+      ? 'lunil-debug-adapter.exe'
+      : 'lunil-debug-adapter';
+    const serverDirectory = this.context.asAbsolutePath(path.join('server', platformRid()));
+    const executable = path.join(serverDirectory, executableName);
+    await verifyChecksum(serverDirectory, executableName);
+    if (process.platform !== 'win32') {
+      await fs.chmod(executable, 0o755);
+    }
+
+    const args = ['--stdio'];
+    if (session.configuration.request === 'attach' &&
+        typeof session.configuration.debugPipe === 'string') {
+      args.push('--pipe', session.configuration.debugPipe);
+    }
+
+    return new vscode.DebugAdapterExecutable(executable, args);
+  }
 }
 
 class LunilClientController implements vscode.Disposable {
@@ -318,14 +347,17 @@ interface HostDocument {
 
 async function verifyChecksum(directory: string, executableName: string): Promise<void> {
   const manifestPath = path.join(directory, 'server.sha256');
-  const manifest = (await fs.readFile(manifestPath, 'utf8')).trim().split(/\s+/u);
-  if (manifest.length !== 2 || manifest[1] !== executableName || manifest[0] === undefined) {
-    throw new Error(`Invalid bundled server checksum manifest: ${manifestPath}`);
+  const manifestText = await fs.readFile(manifestPath, 'utf8');
+  const entry = manifestText.split(/\r?\n/u)
+    .map(line => line.trim().split(/\s+/u))
+    .find(parts => parts.length === 2 && parts[1] === executableName);
+  if (entry === undefined || entry[0] === undefined) {
+    throw new Error(`Bundled server checksum manifest has no entry for ${executableName}: ${manifestPath}`);
   }
   const executable = await fs.readFile(path.join(directory, executableName));
   const actual = crypto.createHash('sha256').update(executable).digest('hex');
-  if (actual.toLowerCase() !== manifest[0].toLowerCase()) {
-    throw new Error(`Bundled Lunil Language Server checksum mismatch for ${executableName}.`);
+  if (actual.toLowerCase() !== entry[0].toLowerCase()) {
+    throw new Error(`Bundled Lunil server checksum mismatch for ${executableName}.`);
   }
 }
 

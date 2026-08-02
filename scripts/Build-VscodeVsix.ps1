@@ -12,6 +12,7 @@ $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $extensionRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'editors/vscode'))
 $serverRoot = [IO.Path]::GetFullPath((Join-Path $extensionRoot 'server'))
 $project = Join-Path $repositoryRoot 'src/Lunil.LanguageServer/Lunil.LanguageServer.csproj'
+$debugAdapterProject = Join-Path $repositoryRoot 'src/Lunil.DebugAdapter/Lunil.DebugAdapter.csproj'
 $version = (& (Join-Path $repositoryRoot 'scripts/Get-LunilVersion.ps1')).Trim()
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot "artifacts/vscode/$version"
@@ -83,10 +84,21 @@ try {
         if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
             throw "Published server executable is missing for $($item.Rid)."
         }
+        $debugAdapterName = if ($item.Rid.StartsWith('win')) { 'lunil-debug-adapter.exe' } else { 'lunil-debug-adapter' }
+        & dotnet publish $debugAdapterProject -c Release -r $item.Rid --self-contained true --no-restore `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None -p:DebugSymbols=false -o $publishDirectory
+        if ($LASTEXITCODE -ne 0) { throw "Debug adapter publish failed for $($item.Rid)." }
+        $debugAdapterExecutable = Join-Path $publishDirectory $debugAdapterName
+        if (-not (Test-Path -LiteralPath $debugAdapterExecutable -PathType Leaf)) {
+            throw "Published debug adapter executable is missing for $($item.Rid)."
+        }
+
         $hash = Get-Sha256Hex $executable
+        $debugHash = Get-Sha256Hex $debugAdapterExecutable
         [IO.File]::WriteAllText(
             (Join-Path $publishDirectory 'server.sha256'),
-            "$hash  $($item.Executable)`n",
+            "$hash  $($item.Executable)`n$debugHash  $debugAdapterName`n",
             [Text.UTF8Encoding]::new($false))
 
         $vsix = Join-Path $OutputDirectory "lunil-lua-$version-$($item.Target).vsix"
@@ -97,10 +109,12 @@ try {
         $archive = [IO.Compression.ZipFile]::OpenRead($vsix)
         try {
             $entries = $archive.Entries.FullName
+            $debugAdapterName = if ($item.Rid.StartsWith('win')) { 'lunil-debug-adapter.exe' } else { 'lunil-debug-adapter' }
             foreach ($required in @(
                 'extension/package.json',
                 'extension/LICENSE.txt',
                 "extension/server/$($item.Rid)/$($item.Executable)",
+                "extension/server/$($item.Rid)/$debugAdapterName",
                 "extension/server/$($item.Rid)/server.sha256"
             )) {
                 if ($entries -notcontains $required) {
