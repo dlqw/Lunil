@@ -15,17 +15,18 @@ Unity 或 Godot 宿主定义。
 
 ## 1. 安装 VSIX
 
-从 0.16.0 release 下载匹配的 `lunil-lua-0.16.0-<target>.vsix` 与 `.sha256`。Target 包括
+从 0.16.1 release 下载匹配的 `lunil-lua-0.16.1-<target>.vsix` 与 `.sha256`。Target 包括
 `win32-x64`、`win32-arm64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。
 
 使用 **Extensions: Install from VSIX...**，或执行：
 
 ```bash
-code --install-extension lunil-lua-0.16.0-win32-x64.vsix
+code --install-extension lunil-lua-0.16.1-win32-x64.vsix
 ```
 
 每个 VSIX 只包含一个目标平台的 self-contained server，不需要单独安装 .NET。打开包含 Lua 文件的
-trusted folder 后，Lunil status item 会显示启动和索引进度。
+trusted folder 后，Lunil status item 会显示启动和索引进度。首次激活时，如果内置 payload 仍在
+解压，checksum 校验会进行有上限的 backoff 等待；manifest 格式错误或 checksum 不匹配仍会立即失败。
 
 ## 2. 配置宿主注入
 
@@ -54,6 +55,9 @@ lifetime 与 persistence analysis 实际使用的 declaration 视图。
 | **Lunil: Show Virtual Host Contract** | 以虚拟 Lua 文档打开当前外部 API declaration。 |
 
 异常退出会按 backoff 进行有次数上限的自动重启。达到限制后，使用 restart command 开始新的尝试序列。
+
+Request 或 notification handler 的意外失败会把完整 managed exception stack 写入 Lunil output
+channel，同时保持 JSON-RPC error response 简洁。报告 server 故障时请附上该 stack。
 
 ## Settings
 

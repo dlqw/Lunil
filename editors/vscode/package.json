@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -183,7 +183,8 @@
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "check": "tsc --noEmit && npm run compile",
-    "test": "npm run compile && node ./dist/test/runTest.js",
+    "test": "npm run test:unit && npm run compile && node ./dist/test/runTest.js",
+    "test:unit": "tsc && mocha \"dist-types/test/unit/**/*.test.js\"",
     "package": "npm run check && vsce package"
   },
   "dependencies": {

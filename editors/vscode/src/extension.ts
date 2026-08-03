@@ -1,7 +1,7 @@
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { verifyChecksum } from './checksum';
 import {
   CloseAction,
   ErrorAction,
@@ -343,22 +343,6 @@ interface HostDocument {
   readonly uri: string;
   readonly languageId: string;
   readonly text: string;
-}
-
-async function verifyChecksum(directory: string, executableName: string): Promise<void> {
-  const manifestPath = path.join(directory, 'server.sha256');
-  const manifestText = await fs.readFile(manifestPath, 'utf8');
-  const entry = manifestText.split(/\r?\n/u)
-    .map(line => line.trim().split(/\s+/u))
-    .find(parts => parts.length === 2 && parts[1] === executableName);
-  if (entry === undefined || entry[0] === undefined) {
-    throw new Error(`Bundled server checksum manifest has no entry for ${executableName}: ${manifestPath}`);
-  }
-  const executable = await fs.readFile(path.join(directory, executableName));
-  const actual = crypto.createHash('sha256').update(executable).digest('hex');
-  if (actual.toLowerCase() !== entry[0].toLowerCase()) {
-    throw new Error(`Bundled Lunil server checksum mismatch for ${executableName}.`);
-  }
 }
 
 function platformRid(): string {

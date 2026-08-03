@@ -23,7 +23,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private static readonly string[] ExcludedDirectories =
         [".git", ".svn", "bin", "obj", "node_modules", ".vscode", ".idea"];
     private readonly object _gate = new();
-    private readonly LuaCompiler _compiler = new();
+    private readonly LuaFrontEndSession _frontEnd = new();
     private readonly Dictionary<string, LspTextDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LanguageDocumentAnalysis> _analyses = new(StringComparer.Ordinal);
     private ImmutableArray<Uri> _folders = [];
@@ -285,12 +285,14 @@ internal sealed class LanguageServerWorkspace : IDisposable
         await Task.CompletedTask.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var source = LuaSourceDocument.FromUtf8(document.Text, document.Uri.AbsoluteUri);
-        var compilation = hostContract is null
-            ? _compiler.Compile(source, cancellationToken)
-            : _compiler.Compile(
-                source,
-                new LuaAnalysisEnvironment { HostContract = hostContract },
-                cancellationToken);
+        var environment = hostContract is null
+            ? LuaAnalysisEnvironment.Empty
+            : new LuaAnalysisEnvironment { HostContract = hostContract };
+        var compilation = CreateAnalysisCompilationResult(_frontEnd.Process(
+            source,
+            LuaFrontEndStage.Analysis,
+            environment,
+            cancellationToken));
         var result = new LanguageDocumentAnalysis(document, module, compilation);
         lock (_gate)
         {
@@ -523,6 +525,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
             "language-server-cache"),
         Progress = new InlineProgress(progress => _ = ProgressReported?.Invoke(progress)),
     });
+
+    private static LuaCompilationResult CreateAnalysisCompilationResult(LuaFrontEndSnapshot snapshot) =>
+        new(
+            snapshot.Source,
+            snapshot.Syntax,
+            snapshot.Annotations,
+            snapshot.SemanticModel ?? throw new InvalidOperationException("Binding did not complete."),
+            snapshot.Analysis ?? throw new InvalidOperationException("Analysis did not complete."),
+            Module: null,
+            snapshot.Diagnostics)
+        {
+            FrontEndSnapshot = snapshot,
+            IsAnalysisOnly = true,
+        };
 
     private void InvalidateIndexNoLock()
     {

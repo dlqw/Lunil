@@ -16,19 +16,21 @@ no runtime network requests.
 
 ## 1. Install the VSIX
 
-Download the matching `lunil-lua-0.16.0-<target>.vsix` and its `.sha256` file from the 0.16.0
+Download the matching `lunil-lua-0.16.1-<target>.vsix` and its `.sha256` file from the 0.16.1
 release. Targets are `win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `darwin-x64`, and
 `darwin-arm64`.
 
 Install from **Extensions: Install from VSIX...**, or use:
 
 ```bash
-code --install-extension lunil-lua-0.16.0-win32-x64.vsix
+code --install-extension lunil-lua-0.16.1-win32-x64.vsix
 ```
 
 Each VSIX contains exactly one self-contained server for its target. No separate .NET installation
 is required. Open a trusted folder with Lua files; the Lunil status item reports startup and index
-progress.
+progress. During initial activation, checksum verification waits with bounded backoff for bundled
+payload files that are still being extracted. A malformed manifest or checksum mismatch fails
+immediately.
 
 ## 2. Configure an injected host
 
@@ -60,6 +62,10 @@ Use the Command Palette:
 
 Unexpected termination uses bounded automatic restart with backoff. After the configured limit is
 reached, use the restart command to begin a new attempt sequence.
+
+Unexpected request or notification handler failures write the full managed exception stack to the
+Lunil output channel while JSON-RPC error responses remain concise. Include that stack when
+reporting a server failure.
 
 ## Settings
 
