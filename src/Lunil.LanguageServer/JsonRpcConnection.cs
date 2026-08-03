@@ -30,6 +30,8 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
     private const int MaximumMessageBytes = 32 * 1024 * 1024;
     private readonly Stream _input;
     private readonly Stream _output;
+    private readonly TextWriter _errorOutput;
+    private readonly object _errorGate = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonNode?>> _outbound = new(StringComparer.Ordinal);
@@ -40,10 +42,11 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
     };
     private long _nextOutboundId;
 
-    public JsonRpcConnection(Stream input, Stream output)
+    public JsonRpcConnection(Stream input, Stream output, TextWriter? errorOutput = null)
     {
         _input = input;
         _output = output;
+        _errorOutput = errorOutput ?? Console.Error;
     }
 
     public async Task RunAsync(
@@ -203,6 +206,7 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
         catch (Exception exception) when (exception is not OutOfMemoryException and
             not StackOverflowException and not AccessViolationException)
         {
+            LogInternalError(request, exception);
             await SendErrorAsync(
                 request.Id,
                 -32603,
@@ -216,7 +220,25 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
         }
     }
 
-    private static async Task DispatchNotificationAsync(
+    private void LogInternalError(JsonRpcRequest request, Exception exception)
+    {
+        try
+        {
+            lock (_errorGate)
+            {
+                _errorOutput.WriteLine(
+                    $"Lunil language server request failed: method={request.Method}, id={request.Id?.GetRawText()}");
+                _errorOutput.WriteLine(exception.ToString());
+                _errorOutput.Flush();
+            }
+        }
+        catch (Exception loggingException) when (loggingException is IOException or ObjectDisposedException)
+        {
+            // Failure to write a local diagnostic must not replace the JSON-RPC response.
+        }
+    }
+
+    private async Task DispatchNotificationAsync(
         Func<JsonRpcRequest, CancellationToken, Task<JsonNode?>> dispatcher,
         JsonRpcRequest request,
         CancellationToken cancellationToken)
@@ -225,9 +247,14 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
         {
             _ = await dispatcher(request, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is JsonRpcException or JsonException or ArgumentException)
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and not AccessViolationException)
         {
             // JSON-RPC notifications intentionally have no response channel.
+            if (exception is not JsonRpcException and not JsonException and not ArgumentException)
+            {
+                LogInternalError(request, exception);
+            }
         }
     }
 
