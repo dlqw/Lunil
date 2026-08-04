@@ -220,7 +220,8 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
             var result = await dispatcher(request, source.Token).ConfigureAwait(false);
             await SendResultAsync(request.Id.Value, result, serverCancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (source.IsCancellationRequested)        {
+        catch (OperationCanceledException) when (source.IsCancellationRequested)
+        {
             await SendErrorAsync(request.Id, -32800, "Request cancelled.", null, serverCancellationToken)
                 .ConfigureAwait(false);
         }

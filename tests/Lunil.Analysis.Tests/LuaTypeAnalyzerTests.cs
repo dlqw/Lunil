@@ -48,7 +48,8 @@ public sealed class LuaTypeAnalyzerTests
     }
 
     [Fact]
-    public void ResolvesClassAliasEnumAndStructuralMembers()    {
+    public void ResolvesClassAliasEnumAndStructuralMembers()
+    {
         var result = Analyze(
             """
             ---@class Box<T>
