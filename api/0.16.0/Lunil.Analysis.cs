@@ -62,6 +62,7 @@ namespace Lunil.Analysis
     {
         public static Lunil.Analysis.LuaAnalysisEnvironment Empty { get => throw null; }
         public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> ModuleTypes { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaExternalTypeDeclaration> ExternalTypeDeclarations { get => throw null; init { } }
         public Lunil.Analysis.LuaHostAnalysisContract? HostContract { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Analysis.LuaAnalysisEnvironment? left, Lunil.Analysis.LuaAnalysisEnvironment? right) => throw null;
@@ -425,6 +426,26 @@ namespace Lunil.Analysis
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Analysis.LuaExpressionTypeInfo? other) => throw null;
         public void Deconstruct(out Lunil.Core.Text.TextSpan Span, out Lunil.Analysis.LuaType Type) => throw null;
+    }
+
+    public sealed class LuaExternalTypeDeclaration : System.IEquatable<Lunil.Analysis.LuaExternalTypeDeclaration>
+    {
+        public string Name { get => throw null; init { } }
+        public Lunil.EmmyLua.LuaAnnotationSyntax Root { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaAnnotationSyntax> Extras { get => throw null; init { } }
+        public LuaExternalTypeDeclaration(string Name, Lunil.EmmyLua.LuaAnnotationSyntax Root, System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaAnnotationSyntax> Extras) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Analysis.LuaExternalTypeDeclaration? left, Lunil.Analysis.LuaExternalTypeDeclaration? right) => throw null;
+        public static bool operator ==(Lunil.Analysis.LuaExternalTypeDeclaration? left, Lunil.Analysis.LuaExternalTypeDeclaration? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Analysis.LuaExternalTypeDeclaration? other) => throw null;
+        public void Deconstruct(out string Name, out Lunil.EmmyLua.LuaAnnotationSyntax Root, out System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaAnnotationSyntax> Extras) => throw null;
+    }
+
+    public static class LuaExternalTypeDeclarations
+    {
+        public static System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaExternalTypeDeclaration> Collect(Lunil.EmmyLua.LuaAnnotationDocument document) => throw null;
     }
 
     public sealed class LuaFloatLiteralType : Lunil.Analysis.LuaLiteralType, System.IEquatable<Lunil.Analysis.LuaFloatLiteralType>
