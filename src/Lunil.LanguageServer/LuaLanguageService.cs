@@ -589,7 +589,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var uri = GetUri(parameters);
         var analysis = await workspace.GetAnalysisAsync(uri, cancellationToken).ConfigureAwait(false);
         if (analysis is null) return null;
-        var position = GetPosition(parameters.GetProperty("position"));
+        // Requests such as documentSymbol and semanticTokens/full carry no cursor position.
+        // Default to the document start instead of failing the whole request.
+        var position = parameters.TryGetProperty("position", out var positionElement)
+            ? GetPosition(positionElement)
+            : new LspPosition(0, 0);
         return new DocumentContext(analysis, position, analysis.Document.ToByteOffset(position));
     }
 

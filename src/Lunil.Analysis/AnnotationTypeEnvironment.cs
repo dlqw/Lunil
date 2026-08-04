@@ -18,12 +18,36 @@ internal sealed class AnnotationTypeEnvironment
 
     public AnnotationTypeEnvironment(
         LuaAnnotationDocument document,
+        LuaAnalysisContext context) : this(document, LuaAnalysisEnvironment.Empty, context)
+    {
+    }
+
+    public AnnotationTypeEnvironment(
+        LuaAnnotationDocument document,
+        LuaAnalysisEnvironment environment,
         LuaAnalysisContext context)
     {
         _document = document;
         _context = context;
         CollectRawDeclarations();
-        foreach (var name in _rawDeclarations.Keys.OrderBy(static value => value, StringComparer.Ordinal))
+        var localNames = _rawDeclarations.Keys.ToArray();
+        foreach (var pair in environment.ExternalTypeDeclarations
+                     .OrderBy(static item => item.Key, StringComparer.Ordinal))
+        {
+            if (_rawDeclarations.ContainsKey(pair.Key))
+            {
+                continue;
+            }
+
+            var raw = new RawDeclaration(pair.Value.Name, pair.Value.Root, pair.Value.Root.Span);
+            raw.Extras.AddRange(pair.Value.Extras);
+            _rawDeclarations[pair.Key] = raw;
+        }
+
+        // Resolve only the document's own declarations eagerly. External declarations resolve
+        // lazily on first reference; eagerly resolving the whole cross-file graph for every
+        // document would make each analysis traverse thousands of type declarations.
+        foreach (var name in localNames.OrderBy(static value => value, StringComparer.Ordinal))
         {
             ResolveDeclaration(name);
         }

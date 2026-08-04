@@ -98,6 +98,7 @@ internal sealed class LuaLanguageServer : IDisposable
             "callHierarchy/outgoingCalls" => _service.OutgoingCalls(request.Parameters),
             "lunil/reindex" => await ReindexAsync(cancellationToken).ConfigureAwait(false),
             "lunil/clearCache" => ClearCache(),
+            "lunil/indexStatus" => _workspace.GetIndexStatus(),
             "lunil/virtualHostDocument" => VirtualHostDocument(),
             "$/setTrace" or "$/cancelRequest" => null,
             _ when request.IsNotification => null,
@@ -142,6 +143,9 @@ internal sealed class LuaLanguageServer : IDisposable
 
         _workspace.Initialize(folders);
         _initialized = true;
+        Console.Error.WriteLine(
+            $"Lunil language server {GetVersion()} initialized with {folders.Count} workspace folder(s): " +
+            string.Join(", ", folders.Select(static folder => folder.AbsoluteUri)));
         return new JsonObject
         {
             ["capabilities"] = Capabilities(),
@@ -396,6 +400,7 @@ internal sealed class LuaLanguageServer : IDisposable
     private async Task PublishProgressAsync(LuaWorkspaceProgress progress)
     {
         const string token = "lunil-workspace-index";
+        var status = _workspace.GetIndexStatus();
         if (!_progressReady)
         {
             await _connection.SendNotificationAsync("lunil/indexProgress", new JsonObject
@@ -403,6 +408,11 @@ internal sealed class LuaLanguageServer : IDisposable
                 ["phase"] = progress.Phase.ToString(),
                 ["completed"] = progress.CompletedWorkItems,
                 ["total"] = progress.TotalWorkItems,
+                ["analyzed"] = status["analyzed"],
+                ["succeeded"] = status["succeeded"],
+                ["failed"] = status["failed"],
+                ["inProgress"] = status["inProgress"],
+                ["pending"] = status["pending"],
             }).ConfigureAwait(false);
             return;
         }

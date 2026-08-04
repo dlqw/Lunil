@@ -94,6 +94,23 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task DocumentSymbolsAndSemanticTokensWorkWithoutACursorPosition()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///no-position.lua");
+        workspace.Open(uri, 1, "local function render() return 1 end\nreturn render()");
+        var service = new LuaLanguageService(workspace);
+        var parameters = Element(new { textDocument = new { uri = uri.AbsoluteUri } });
+
+        var symbols = await service.DocumentSymbolsAsync(parameters, CancellationToken.None);
+        var semanticTokens = await service.SemanticTokensAsync(parameters, false, CancellationToken.None);
+
+        Assert.NotEmpty(symbols!.AsArray());
+        Assert.NotEmpty(semanticTokens!["data"]!.AsArray());
+    }
+
+    [Fact]
     public async Task HoverReferencesAndCapturedLocalRenameUseStableBinding()
     {
         using var workspace = new LanguageServerWorkspace();

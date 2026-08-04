@@ -61,6 +61,14 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
                 break;
             }
 
+            if (System.Environment.GetEnvironmentVariable("LUNIL_DEBUG_MSG") == "1")
+            {
+                using var dbg = JsonDocument.Parse(payload);
+                var root = dbg.RootElement;
+                var method = root.TryGetProperty("method", out var m) ? m.GetString() : "<response>";
+                Console.Error.WriteLine($"DBG recv {method} at {DateTime.UtcNow:HH:mm:ss.fff}");
+            }
+
             if (TryHandleResponse(payload))
             {
                 continue;
@@ -94,7 +102,30 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
             _inflight.Add(task);
         }
 
-        await Task.WhenAll(_inflight.ToArray()).ConfigureAwait(false);
+        await WaitForInflightAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task WaitForInflightAsync(CancellationToken cancellationToken)
+    {
+        var inflight = _inflight.ToArray();
+        if (inflight.Length == 0)
+        {
+            return;
+        }
+
+        // In-flight requests are linked to the server cancellation token, so exit cancels them.
+        // A CPU-bound request may not observe cancellation promptly, so bound the wait rather
+        // than hanging the shutdown path (the client force-kills the process after its stop
+        // timeout and reports "Server process exited with code 1").
+        try
+        {
+            await Task.WhenAll(inflight)
+                .WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
+        {
+        }
     }
 
     public Task SendNotificationAsync(
@@ -189,8 +220,7 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
             var result = await dispatcher(request, source.Token).ConfigureAwait(false);
             await SendResultAsync(request.Id.Value, result, serverCancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (source.IsCancellationRequested)
-        {
+        catch (OperationCanceledException) when (source.IsCancellationRequested)        {
             await SendErrorAsync(request.Id, -32800, "Request cancelled.", null, serverCancellationToken)
                 .ConfigureAwait(false);
         }
