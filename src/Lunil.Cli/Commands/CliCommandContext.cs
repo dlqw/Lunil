@@ -108,6 +108,7 @@ internal sealed record CliCommandContext(
             LuaWorkspaceOptions.Default with
             {
                 LanguageVersion = Options.LanguageVersion,
+                SuppressedDiagnosticCodes = Options.SuppressedDiagnosticCodes,
             },
             CreateModuleResolver(moduleRoots));
     }

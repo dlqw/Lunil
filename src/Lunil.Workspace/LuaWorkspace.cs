@@ -416,6 +416,9 @@ public sealed class LuaWorkspace : IDisposable
             }
             operation.CacheEvictions += _diskCache?.Prune() ?? 0;
 
+            AddCrossModuleDiagnostics(
+                moduleResults.Values.Select(static module => module.Result),
+                diagnostics);
             var filteredDiagnostics = FinalizeDiagnostics(diagnostics);
             var metrics = new LuaWorkspaceMetrics(
                 discoveries.Count,
@@ -1030,6 +1033,54 @@ public sealed class LuaWorkspace : IDisposable
             !previous.TryGetValue(key, out var oldValue) ||
             !current.TryGetValue(key, out var newValue) ||
             !string.Equals(oldValue, newValue, StringComparison.Ordinal));
+
+    private void AddCrossModuleDiagnostics(
+        IEnumerable<LuaWorkspaceModuleResult> modules,
+        List<LuaWorkspaceDiagnostic> diagnostics)
+    {
+        if (Options.SuppressedDiagnosticCodes.Contains("LUA6022"))
+        {
+            return;
+        }
+
+        var relations = new LuaTypeRelations();
+        var byName = modules.ToDictionary(static module => module.Identity.Name, StringComparer.Ordinal);
+        foreach (var module in modules)
+        {
+            var source = module.Compilation.Source.Text;
+            foreach (var dependency in module.Dependencies)
+            {
+                if (dependency.Target is not { } target ||
+                    !byName.TryGetValue(target.Name, out var targetModule) ||
+                    targetModule.ExportedType.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown)
+                {
+                    continue;
+                }
+
+                foreach (var symbol in module.Compilation.Analysis.Symbols)
+                {
+                    var declared = symbol.DeclaredType;
+                    if (declared.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown ||
+                        source.GetLocation(symbol.Symbol.DeclaringSpan.Start).Line !=
+                        source.GetLocation(dependency.Span.Start).Line)
+                    {
+                        continue;
+                    }
+
+                    if (!relations.IsAssignable(targetModule.ExportedType, declared))
+                    {
+                        diagnostics.Add(new LuaWorkspaceDiagnostic(
+                            LuaWorkspaceDiagnosticPhase.Analysis,
+                            module.Identity,
+                            "LUA6022",
+                            DiagnosticSeverity.Warning,
+                            symbol.Symbol.DeclaringSpan,
+                            $"Require '{dependency.RequestedName}' is annotated as '{declared.DisplayName}' but module exports '{targetModule.ExportedType.DisplayName}'."));
+                    }
+                }
+            }
+        }
+    }
 
     private ImmutableArray<LuaWorkspaceDiagnostic> FinalizeDiagnostics(
         IEnumerable<LuaWorkspaceDiagnostic> diagnostics)

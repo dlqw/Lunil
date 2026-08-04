@@ -957,6 +957,74 @@ public sealed class LuaWorkspaceTests
         Assert.Throws<ObjectDisposedException>(workspace.ClearCache);
     }
 
+    [Fact]
+    public async Task RequireAnnotationMatchingModuleExportProducesNoLua6022()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "---@type { value: integer }\nlocal dep = require('dep')\nreturn dep.value"),
+            Document("dep", "return { value = 42 }"),
+        ]);
+
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic =>
+            diagnostic.Code == "LUA6022");
+    }
+
+    [Fact]
+    public async Task RequireAnnotationMismatchingModuleExportProducesLua6022()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "---@type { value: string }\nlocal dep = require('dep')\nreturn dep.value"),
+            Document("dep", "return { value = 42 }"),
+        ]);
+
+        var diagnostic = Assert.Single(
+            result.Diagnostics,
+            static item => item.Code == "LUA6022");
+        Assert.Equal(LuaWorkspaceDiagnosticPhase.Analysis, diagnostic.Phase);
+        Assert.Equal(DiagnosticSeverity.Warning, diagnostic.Severity);
+        Assert.Equal("app", diagnostic.Module?.Name);
+        Assert.Contains("'dep'", diagnostic.Message);
+        Assert.Contains("annotated as '{value: string}'", diagnostic.Message);
+        Assert.Contains("module exports '{value:", diagnostic.Message);
+    }
+
+    [Fact]
+    public async Task SuppressedLua6022IsOmittedFromWorkspaceDiagnostics()
+    {
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            SuppressedDiagnosticCodes = ["LUA6022"],
+        });
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "---@type { value: string }\nlocal dep = require('dep')\nreturn dep.value"),
+            Document("dep", "return { value = 42 }"),
+        ]);
+
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic =>
+            diagnostic.Code == "LUA6022");
+    }
+
+    [Fact]
+    public async Task UnresolvedOrAnyTypesProduceNoCrossModuleLua6022()
+    {
+        using var workspace = new LuaWorkspace();
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "---@type Missing\nlocal dep = require('dep')\nreturn dep.value"),
+            Document("dep", "return { value = 42 }"),
+        ]);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic =>
+            diagnostic.Code == "LUA6022");
+
+        var resultAny = await workspace.AnalyzeAsync([
+            Document("app", "---@type { value: integer }\nlocal dep = require('dep')\nreturn dep"),
+            Document("dep", "return unknown_factory()"),
+        ]);
+        Assert.DoesNotContain(resultAny.Diagnostics, static diagnostic =>
+            diagnostic.Code == "LUA6022");
+    }
+
     private static LuaWorkspaceDocument Document(string name, string source) =>
         LuaWorkspaceDocument.FromUtf8(name, source);
 

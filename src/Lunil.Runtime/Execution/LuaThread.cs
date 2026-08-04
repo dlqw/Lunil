@@ -144,6 +144,9 @@ public sealed class LuaThread : LuaGcObject
 
     internal bool DebugHookTransferIsNative { get; set; }
 
+    /// <summary>True while the thread is suspended by a host debugger pause.</summary>
+    internal bool DebugPaused { get; set; }
+
     internal LuaFrame CurrentFrame => _frames[^1];
 
     internal int FrameCount => _frames.Count;

@@ -1,6 +1,6 @@
 {
   "name": "com.dlqw.lunil",
-  "version": "0.15.1",
+  "version": "0.16.1",
   "displayName": "Lunil",
   "description": "Portable Lua 5.1-5.5 compiler, runtime, hosting, and Unity lifecycle integration.",
   "unity": "2022.3",

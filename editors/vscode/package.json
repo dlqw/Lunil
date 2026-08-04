@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.15.1",
+  "version": "0.16.1",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -28,7 +28,8 @@
     "workspaceContains:**/*.lua",
     "onCommand:lunil.restartServer",
     "onCommand:lunil.clearCache",
-    "onCommand:lunil.showHostContract"
+    "onCommand:lunil.showHostContract",
+    "onDebugResolve:lunil"
   ],
   "contributes": {
     "languages": [
@@ -113,15 +114,77 @@
           "default": "",
           "scope": "resource",
           "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
+        },
+        "lunil.server.suppressedDiagnosticCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "description": "Diagnostic codes (for example LUA6003) suppressed by the language server analysis."
         }
       }
-    }
+    },
+    "debuggers": [
+      {
+        "type": "lunil",
+        "label": "Lunil Lua",
+        "languages": [
+          "lua"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to the Lua script to debug."
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "debugPipe": {
+                "type": "string",
+                "description": "Named pipe of a Lunil game-loop host exposing a debug endpoint."
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "Lunil Lua: Launch script",
+            "description": "Debug a Lua script with the Lunil interpreter.",
+            "body": {
+              "type": "lunil",
+              "request": "launch",
+              "name": "Debug Lua script",
+              "program": "${workspaceFolder}/${1:main.lua}"
+            }
+          },
+          {
+            "label": "Lunil Lua: Attach to host",
+            "description": "Attach to a Lunil game-loop host exposing a debug pipe.",
+            "body": {
+              "type": "lunil",
+              "request": "attach",
+              "name": "Attach to Lunil host",
+              "debugPipe": "${1:lunil-debug}"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "check": "tsc --noEmit && npm run compile",
-    "test": "npm run compile && node ./dist/test/runTest.js",
+    "test": "npm run test:unit && npm run compile && node ./dist/test/runTest.js",
+    "test:unit": "tsc && mocha \"dist-types/test/unit/**/*.test.js\"",
     "package": "npm run check && vsce package"
   },
   "dependencies": {

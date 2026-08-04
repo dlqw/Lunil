@@ -15,17 +15,18 @@ Unity 或 Godot 宿主定义。
 
 ## 1. 安装 VSIX
 
-从 0.14.0 release 下载匹配的 `lunil-lua-0.14.0-<target>.vsix` 与 `.sha256`。Target 包括
+从 0.16.1 release 下载匹配的 `lunil-lua-0.16.1-<target>.vsix` 与 `.sha256`。Target 包括
 `win32-x64`、`win32-arm64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。
 
 使用 **Extensions: Install from VSIX...**，或执行：
 
 ```bash
-code --install-extension lunil-lua-0.14.0-win32-x64.vsix
+code --install-extension lunil-lua-0.16.1-win32-x64.vsix
 ```
 
 每个 VSIX 只包含一个目标平台的 self-contained server，不需要单独安装 .NET。打开包含 Lua 文件的
-trusted folder 后，Lunil status item 会显示启动和索引进度。
+trusted folder 后，Lunil status item 会显示启动和索引进度。首次激活时，如果内置 payload 仍在
+解压，checksum 校验会进行有上限的 backoff 等待；manifest 格式错误或 checksum 不匹配仍会立即失败。
 
 ## 2. 配置宿主注入
 
@@ -55,6 +56,9 @@ lifetime 与 persistence analysis 实际使用的 declaration 视图。
 
 异常退出会按 backoff 进行有次数上限的自动重启。达到限制后，使用 restart command 开始新的尝试序列。
 
+Request 或 notification handler 的意外失败会把完整 managed exception stack 写入 Lunil output
+channel，同时保持 JSON-RPC error response 简洁。报告 server 故障时请附上该 stack。
+
 ## Settings
 
 | Setting | 默认值 | 说明 |
@@ -65,9 +69,22 @@ lifetime 与 persistence analysis 实际使用的 declaration 视图。
 | `lunil.server.gcHeapHardLimitPercent` | `70` | 内置 server 的 managed heap hard-limit 百分比，范围 20–90。 |
 | `lunil.hostContractPath` | 空 | Host-analysis contract 的 resource-relative 或绝对路径。 |
 | `lunil.hostContractJson` | 空 | 内联 contract JSON；优先于 path。 |
+| `lunil.server.suppressedDiagnosticCodes` | `[]` | language server 分析抑制的诊断码数组（例如 `LUA6022`）。 |
 
 `lunil.server.path` 必须为绝对路径。修改 server path 或 heap limit 会重启 process；修改 host contract
 会重载配置并重新索引 semantic data。
+
+## 调试 Lua 代码
+
+插件贡献了 `lunil` 调试器类型，支持两种配置：
+
+- **Launch** 在参考解释器下运行 `.lua` 文件，支持断点、单步、暂停、调用栈、局部变量与上值
+  （`program` 指向脚本）。
+- **Attach** 连接暴露命名管道调试端点的游戏循环宿主（`debugPipe` 指定管道名；宿主用
+  `LuaGameLoopHost.StartDebugServer` 启动）。
+
+adapter 可执行文件（`lunil-debug-adapter`）与 language server 一样内置在 VSIX 中。操作指南见
+[调试 Lua](debugging.zh-CN.pub.md)，受支持的协议面见[调试参考](debugging-reference.zh-CN.pub.md)。
 
 ## 预期结果
 

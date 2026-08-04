@@ -17,7 +17,7 @@ namespace Lunil.Runtime.Execution;
 /// <summary>Shared resumable scheduler and execution kernel used by all execution backends.</summary>
 internal sealed class LuaExecutionEngine
 {
-    private const int MaximumCStackDepth = 200;
+    private const int MaximumCStackDepth = 120;
 
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
@@ -149,6 +149,85 @@ internal sealed class LuaExecutionEngine
         }
     }
 
+    /// <summary>
+    /// Resumes a turn suspended by a host debugger pause. The root thread and the suspended
+    /// coroutine chain (root → ActiveResumee → …) are reactivated together so pending
+    /// <c>coroutine.resume</c> calls complete with their results.
+    /// </summary>
+    public LuaExecutionResult ResumeDebuggedTurn(
+        LuaState state,
+        LuaThread root,
+        ReadOnlySpan<LuaValue> arguments = default)
+    {
+        LunilGuard.NotNull(state);
+        lock (state.ExecutionGate)
+        {
+            ValidateThreadEntry(state, root);
+            if (root.Status != LuaThreadStatus.Suspended || !root.DebugPaused)
+            {
+                throw new LuaRuntimeException("Cannot resume a thread that is not debugger-paused.");
+            }
+
+            var chain = new List<LuaThread> { root };
+            while (chain[^1].ActiveResumee is { } nested)
+            {
+                chain.Add(nested);
+            }
+
+            for (var index = 1; index < chain.Count; index++)
+            {
+                if (chain[index].Status != LuaThreadStatus.Suspended || !chain[index].DebugPaused)
+                {
+                    throw new LuaRuntimeException("The suspended coroutine chain is inconsistent.");
+                }
+            }
+
+            // The innermost thread executes; its debug pause is cleared by ActivateThread.
+            // The outer threads become waiting resumers and are reactivated when the inner
+            // thread completes and injects its results.
+            for (var index = 0; index < chain.Count - 1; index++)
+            {
+                chain[index].DebugPaused = false;
+            }
+
+            return RunDebuggedTurn(state, chain, arguments);
+        }
+    }
+
+    private LuaExecutionResult RunDebuggedTurn(
+        LuaState state,
+        List<LuaThread> chain,
+        ReadOnlySpan<LuaValue> arguments)
+    {
+        // chain[0] is the root resumer (waiting), chain[^1] is the innermost thread to execute.
+        // Rebuild the nested scheduler so coroutine completion injects results up the chain.
+        var innermost = chain[^1];
+        var scheduler = new LuaScheduler(chain[0], yieldableRoot: true, _options.MaximumInstructionCount);
+        if (chain.Count > 1)
+        {
+            chain[0].Status = LuaThreadStatus.Normal;
+        }
+
+        for (var index = 1; index < chain.Count; index++)
+        {
+            chain[index].Resumer = chain[index - 1];
+            chain[index - 1].ActiveResumee = chain[index];
+            if (index < chain.Count - 1)
+            {
+                chain[index].Status = LuaThreadStatus.Normal;
+            }
+
+            scheduler.Push(chain[index], isYieldable: true);
+        }
+
+        return RunScheduler(
+            state,
+            innermost,
+            arguments,
+            yieldableRoot: true,
+            schedulerOverride: scheduler);
+    }
+
     public LuaExecutionResult Close(LuaState state, LuaThread thread)
     {
         LunilGuard.NotNull(state);
@@ -196,7 +275,8 @@ internal sealed class LuaExecutionEngine
         ReadOnlySpan<LuaValue> arguments,
         bool yieldableRoot,
         bool activateThread = true,
-        long? maximumInstructionCount = null)
+        long? maximumInstructionCount = null,
+        LuaScheduler? schedulerOverride = null)
     {
         if (_schedulerNestingDepth >= MaximumCStackDepth)
         {
@@ -206,21 +286,32 @@ internal sealed class LuaExecutionEngine
         var previousRunningThread = state.RunningThread;
         var previousRunningThreadIsYieldable = state.RunningThreadIsYieldable;
         var previousIsRunningFinalizer = state.IsRunningFinalizer;
+        // The debug session is attached between turns; a turn never changes it, so the
+        // checkpoint below can test a hoisted local instead of re-reading the state field on
+        // every instruction of the hot loop.
+        var hasDebugSession = state.DebugSession is not null;
         _schedulerNestingDepth++;
         state.Heap.AddPermanentRoot(root);
         try
         {
-            var scheduler = new LuaScheduler(
+            var scheduler = schedulerOverride ?? new LuaScheduler(
                 root,
                 yieldableRoot,
                 maximumInstructionCount ?? _options.MaximumInstructionCount);
-            if (activateThread)
+            if (schedulerOverride is null)
+            {
+                if (activateThread)
+                {
+                    ActivateThread(state, scheduler, root, arguments);
+                }
+                else
+                {
+                    root.Status = LuaThreadStatus.Running;
+                }
+            }
+            else if (activateThread)
             {
                 ActivateThread(state, scheduler, root, arguments);
-            }
-            else
-            {
-                root.Status = LuaThreadStatus.Running;
             }
             while (scheduler.Count != 0)
             {
@@ -369,6 +460,21 @@ internal sealed class LuaExecutionEngine
                             continue;
                         }
 
+                        // Host debugger checkpoint: suspend the whole scheduling turn when an
+                        // attached session requests a pause (breakpoint hit, step target, or an
+                        // asynchronous pause request). Hook frames are skipped.
+                        if (!frame.IsDebugHook && hasDebugSession &&
+                            state.DebugSession is { } debugSession &&
+                            debugSession.EvaluatePause(thread, initialInstruction.SourceLine))
+                        {
+                            if (CompleteDebugPause(scheduler, thread, out var debugPauseResult))
+                            {
+                                return RecordInstructionCount(debugPauseResult!, scheduler);
+                            }
+
+                            continue;
+                        }
+
                         var executionContext = activation.ExecutionContext;
                         if (executionContext is null)
                         {
@@ -397,7 +503,8 @@ internal sealed class LuaExecutionEngine
                             // compact interpreter loop without an interface dispatch.
                             exit = LuaInterpreterInstructionExecutor.RequiresExactDebugHookDispatch(
                                 thread,
-                                frame)
+                                frame,
+                                state)
                                 ? LuaInterpreterInstructionExecutor.ExecuteSingleInstruction(
                                     this,
                                     executionContext,
@@ -1096,6 +1203,14 @@ internal sealed class LuaExecutionEngine
             return;
         }
 
+        // A host debugger pause suspends the thread without a yield continuation; resuming
+        // simply continues from the suspended instruction.
+        if (thread.DebugPaused)
+        {
+            thread.DebugPaused = false;
+            return;
+        }
+
         if (frame.Continuation.Kind != LuaContinuationKind.CoroutineYield)
         {
             throw new InvalidOperationException("A suspended coroutine has no yield continuation.");
@@ -1169,6 +1284,24 @@ internal sealed class LuaExecutionEngine
             resumer.Status = LuaThreadStatus.Running;
             throw;
         }
+    }
+
+    private static bool CompleteDebugPause(
+        LuaScheduler scheduler,
+        LuaThread thread,
+        out LuaExecutionResult? result)
+    {
+        // Suspend every active thread of the turn. Coroutines keep their frames and resume
+        // through Lua-side coroutine.resume after the root thread is resumed by the debugger.
+        for (var index = 0; index < scheduler.Count; index++)
+        {
+            var activeThread = scheduler.GetActivation(index).Thread;
+            activeThread.Status = LuaThreadStatus.Suspended;
+            activeThread.DebugPaused = true;
+        }
+
+        result = new LuaExecutionResult(LuaVmSignal.Paused, []);
+        return true;
     }
 
     private bool CompleteYield(

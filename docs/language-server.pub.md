@@ -15,7 +15,10 @@ standard input and output.
 
 An unrecognized argument exits with status 2 unless `--version` is also present; version reporting
 takes precedence and exits with status 0. Protocol logs must go to standard error; writing non-LSP
-text to standard output corrupts the connection.
+text to standard output corrupts the connection. Unexpected request-handler failures return a
+concise JSON-RPC internal error and write the method, request ID, and full managed exception stack
+to standard error. Unexpected notification-handler failures are logged there and do not stop the
+connection.
 
 ## Document and workspace model
 

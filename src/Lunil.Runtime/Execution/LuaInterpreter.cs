@@ -40,6 +40,16 @@ public sealed class LuaInterpreter
         ReadOnlySpan<LuaValue> arguments = default) =>
         _engine.Resume(state, thread, arguments);
 
+    /// <summary>
+    /// Resumes a debugger-paused turn: reactivates the root thread together with the suspended
+    /// coroutine chain so pending <c>coroutine.resume</c> calls complete with their results.
+    /// </summary>
+    public LuaExecutionResult ResumeDebugged(
+        LuaState state,
+        LuaThread thread,
+        ReadOnlySpan<LuaValue> arguments = default) =>
+        _engine.ResumeDebuggedTurn(state, thread, arguments);
+
     public LuaExecutionResult Close(LuaState state, LuaThread thread) =>
         _engine.Close(state, thread);
 }

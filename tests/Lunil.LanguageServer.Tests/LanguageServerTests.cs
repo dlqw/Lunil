@@ -61,6 +61,39 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task DocumentProvidersUseAnalysisOnlyFrontEndWithoutAHostContract()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///injected-globals.lua");
+        workspace.Open(
+            uri,
+            1,
+            "local function render(value) return NativeBridge.draw(value) end\n" +
+            "local result = render(InjectedGameState.value)\n" +
+            "return result");
+        var service = new LuaLanguageService(workspace);
+        var parameters = Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 1, character = 8 },
+        });
+
+        var analysis = await workspace.GetAnalysisAsync(uri, CancellationToken.None);
+        var symbols = await service.DocumentSymbolsAsync(parameters, CancellationToken.None);
+        var semanticTokens = await service.SemanticTokensAsync(parameters, false, CancellationToken.None);
+        var inlayHints = await service.InlayHintsAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(analysis);
+        Assert.True(analysis.Compilation.IsAnalysisOnly);
+        Assert.Equal(Lunil.Compiler.LuaFrontEndStage.Analysis, analysis.Compilation.FrontEndSnapshot!.Stage);
+        Assert.Null(analysis.Compilation.Module);
+        Assert.NotEmpty(symbols!.AsArray());
+        Assert.NotEmpty(semanticTokens!["data"]!.AsArray());
+        Assert.NotEmpty(inlayHints!.AsArray());
+    }
+
+    [Fact]
     public async Task HoverReferencesAndCapturedLocalRenameUseStableBinding()
     {
         using var workspace = new LanguageServerWorkspace();
@@ -193,6 +226,56 @@ public sealed class LanguageServerTests
         var payload = ReadFirstPayload(output.ToArray());
         using var response = JsonDocument.Parse(payload);
         Assert.Equal(-32800, response.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+    }
+
+    [Fact]
+    public async Task JsonRpcInternalErrorsWriteFullExceptionToLocalDiagnosticStream()
+    {
+        var request = Frame(
+            """{"jsonrpc":"2.0","id":11,"method":"textDocument/semanticTokens/full","params":{}}""");
+        await using var input = new MemoryStream(request);
+        await using var output = new MemoryStream();
+        using var errors = new StringWriter();
+        await using var connection = new JsonRpcConnection(input, output, errors);
+
+        await connection.RunAsync((_, _) =>
+            throw new KeyNotFoundException("The analysis key was not present."));
+
+        var payload = ReadFirstPayload(output.ToArray());
+        using var response = JsonDocument.Parse(payload);
+        var error = response.RootElement.GetProperty("error");
+        Assert.Equal(-32603, error.GetProperty("code").GetInt32());
+        Assert.Equal("KeyNotFoundException: The analysis key was not present.",
+            error.GetProperty("data").GetString());
+        Assert.Contains("method=textDocument/semanticTokens/full", errors.ToString(), StringComparison.Ordinal);
+        Assert.Contains("System.Collections.Generic.KeyNotFoundException", errors.ToString(),
+            StringComparison.Ordinal);
+        Assert.Contains("The analysis key was not present.", errors.ToString(), StringComparison.Ordinal);
+        Assert.Contains(" at ", errors.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task JsonRpcNotificationInternalErrorsAreLoggedWithoutStoppingTheConnection()
+    {
+        var notification = Frame(
+            """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{}}""");
+        var request = Frame(
+            """{"jsonrpc":"2.0","id":12,"method":"lunil/reindexWorkspace","params":{}}""");
+        await using var input = new MemoryStream(notification.Concat(request).ToArray());
+        await using var output = new MemoryStream();
+        using var errors = new StringWriter();
+        await using var connection = new JsonRpcConnection(input, output, errors);
+
+        await connection.RunAsync((message, _) => message.IsNotification
+            ? throw new KeyNotFoundException("The notification analysis key was not present.")
+            : Task.FromResult<JsonNode?>(JsonValue.Create(true)));
+
+        var payload = ReadFirstPayload(output.ToArray());
+        using var response = JsonDocument.Parse(payload);
+        Assert.True(response.RootElement.GetProperty("result").GetBoolean());
+        Assert.Contains("method=textDocument/didOpen", errors.ToString(), StringComparison.Ordinal);
+        Assert.Contains("The notification analysis key was not present.", errors.ToString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]

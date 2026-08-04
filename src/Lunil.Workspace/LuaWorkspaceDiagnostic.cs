@@ -12,6 +12,7 @@ public enum LuaWorkspaceDiagnosticPhase : byte
     Compilation,
     FixedPoint,
     Budget,
+    Analysis,
 }
 
 public sealed record LuaWorkspaceDiagnostic(

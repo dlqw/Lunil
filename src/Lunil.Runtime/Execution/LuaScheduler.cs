@@ -60,6 +60,8 @@ internal sealed class LuaScheduler
 
     public LuaActivation Current => _activations[_activeCount - 1];
 
+    public LuaActivation GetActivation(int index) => _activations[index];
+
     public long InstructionLimit { get; }
 
     public long TotalInstructionCount

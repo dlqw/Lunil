@@ -8,6 +8,7 @@ public enum LuaVmSignal : byte
     Completed,
     Yielded,
     Error,
+    Paused,
 }
 
 public sealed record LuaExecutionResult(

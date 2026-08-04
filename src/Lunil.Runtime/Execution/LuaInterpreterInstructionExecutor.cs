@@ -23,7 +23,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         LuaFrame frame,
         in LuaIrInstruction instruction)
     {
-        if (RequiresExactDebugHookDispatch(thread, frame))
+        if (RequiresExactDebugHookDispatch(thread, frame, state))
         {
             return ExecuteSingleInstruction(
                 engine,
@@ -98,8 +98,12 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         }
     }
 
-    internal static bool RequiresExactDebugHookDispatch(LuaThread thread, LuaFrame frame) =>
-        thread.HasDispatchableDebugHook && !frame.IsDebugHook && !frame.IsHidden;
+    internal static bool RequiresExactDebugHookDispatch(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaState state) =>
+        (thread.HasDispatchableDebugHook || state.DebugSession is not null) &&
+        !frame.IsDebugHook && !frame.IsHidden;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static LuaCompiledExit ExecuteSingleInstruction(

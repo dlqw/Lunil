@@ -32,6 +32,7 @@ internal static class CliParser
         var maximumStackSlots = configuration.MaximumStackSlots ?? 1_000_000;
         var maximumCallDepth = configuration.MaximumCallDepth ?? 20_000;
         var maximumHeapBytes = configuration.MaximumHeapBytes ?? 256L * 1024 * 1024;
+        var suppressedDiagnosticCodes = new HashSet<string>(StringComparer.Ordinal);
         string? output = null;
         string? moduleName = null;
         string? patchKeyId = null;
@@ -180,6 +181,15 @@ internal static class CliParser
                     dumpFormat = ParseDumpFormat(ReadValue(arguments, ref index, name, inlineValue));
                     dumpFormatSpecified = true;
                     break;
+                case "--suppress":
+                    var code = ReadValue(arguments, ref index, name, inlineValue);
+                    if (code.Length == 0)
+                    {
+                        throw new CliUsageException($"Option '{name}' requires a diagnostic code.");
+                    }
+
+                    suppressedDiagnosticCodes.Add(code);
+                    break;
                 case "--maximum-input-bytes":
                     var rawLimit = ReadValue(arguments, ref index, name, inlineValue);
                     if (!long.TryParse(rawLimit, out maximumInputBytes) || maximumInputBytes <= 0)
@@ -269,6 +279,7 @@ internal static class CliParser
             MaximumStackSlots = maximumStackSlots,
             MaximumCallDepth = maximumCallDepth,
             MaximumHeapBytes = maximumHeapBytes,
+            SuppressedDiagnosticCodes = suppressedDiagnosticCodes.ToImmutableHashSet(StringComparer.Ordinal),
         };
     }
 

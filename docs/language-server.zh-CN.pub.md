@@ -13,7 +13,9 @@ contract 的自包含 LSP 3.17 server。它只通过标准输入/输出上的 JS
 | `lunil-language-server --version` | 输出 Lunil 产品版本并退出。 |
 
 未识别参数会以状态 2 退出；若同时提供 `--version`，则优先输出版本并以状态 0 退出。Protocol log
-必须写入标准错误；向标准输出写入非 LSP 文本会破坏连接。
+必须写入标准错误；向标准输出写入非 LSP 文本会破坏连接。Request handler 意外失败时，server
+返回简洁的 JSON-RPC internal error，并把 method、request ID 与完整 managed exception stack
+写入标准错误。Notification handler 意外失败也会记录到标准错误，且不会停止连接。
 
 ## Document 与 workspace 模型
 
