@@ -3,7 +3,9 @@ using System.Text.Json.Nodes;
 using Lunil.Analysis;
 using Lunil.Compiler;
 using Lunil.Core.Diagnostics;
+using Lunil.EmmyLua;
 using Lunil.Semantics.Binding;
+using Lunil.Syntax.Lexing;
 using Lunil.Workspace;
 
 namespace Lunil.LanguageServer;
@@ -12,6 +14,14 @@ internal sealed record LanguageDocumentAnalysis(
     LspTextDocument Document,
     LuaModuleIdentity Module,
     LuaCompilationResult Compilation);
+
+internal enum FileIndexStatus : byte
+{
+    Pending,
+    InProgress,
+    Succeeded,
+    Failed,
+}
 
 internal sealed class LanguageServerWorkspace : IDisposable
 {
@@ -33,8 +43,35 @@ internal sealed class LanguageServerWorkspace : IDisposable
         ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
     private LuaWorkspaceCompactSnapshot? _snapshot;
     private CancellationTokenSource? _indexCancellation;
+    private ImmutableDictionary<string, LuaExternalTypeDeclaration> _externalTypeDeclarations =
+        ImmutableDictionary<string, LuaExternalTypeDeclaration>.Empty.WithComparers(StringComparer.Ordinal);
+    private readonly Dictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>
+        _perDocumentDeclarations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FileIndexStatus> _indexStatus = new(StringComparer.Ordinal);
     private int _generation;
+    private int _declarationsGeneration;
+    private readonly SemaphoreSlim _analysisConcurrency = new(8, 8);
+    private readonly TaskCompletionSource<bool> _declarationsReady =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _declarationsReadySet;
     private bool _disposed;
+
+    /// <summary>
+    /// Resolves a file URI to a usable local path. VSCode encodes the Windows drive colon
+    /// (<c>file:///c%3A/...</c>), which makes <see cref="Uri.LocalPath"/> return a POSIX-style
+    /// <c>/c:/...</c> that <see cref="Path.GetFullPath"/> mangles into <c>C:\c:\...</c>. Strip the
+    /// leading slash for drive-letter paths so directory scans and file reads find the real files.
+    /// </summary>
+    private static string ToLocalPath(Uri uri)
+    {
+        var path = uri.LocalPath;
+        if (path.Length >= 3 && path[0] == '/' && char.IsLetter(path[1]) && path[2] == ':')
+        {
+            return path.Substring(1);
+        }
+
+        return path;
+    }
 
     public LanguageServerWorkspace()
     {
@@ -60,7 +97,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public void Initialize(IEnumerable<Uri> folders)
     {
         var normalized = folders.Where(static uri => uri.IsFile)
-            .Select(static uri => new Uri(Path.GetFullPath(uri.LocalPath) + Path.DirectorySeparatorChar))
+            .Select(static uri => new Uri(Path.GetFullPath(ToLocalPath(uri)) + Path.DirectorySeparatorChar))
             .Distinct()
             .ToImmutableArray();
         lock (_gate)
@@ -68,7 +105,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             ThrowIfDisposed();
             _folders = normalized;
             foreach (var key in _documents.Where(pair => !pair.Value.IsOpen &&
-                         !normalized.Any(folder => IsUnderRoot(pair.Value.Uri.LocalPath, folder.LocalPath)))
+                         !normalized.Any(folder => IsUnderRoot(ToLocalPath(pair.Value.Uri), ToLocalPath(folder))))
                      .Select(static pair => pair.Key).ToArray())
             {
                 _documents.Remove(key);
@@ -89,12 +126,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public void RemoveFolder(Uri folder)
     {
-        var root = Path.GetFullPath(folder.LocalPath);
+        var root = Path.GetFullPath(ToLocalPath(folder));
         lock (_gate)
         {
-            _folders = [.. _folders.Where(item => !PathsEqual(item.LocalPath, root))];
+            _folders = [.. _folders.Where(item => !PathsEqual(ToLocalPath(item), root))];
             foreach (var key in _documents.Where(pair => !pair.Value.IsOpen &&
-                         IsUnderRoot(pair.Value.Uri.LocalPath, root)).Select(static pair => pair.Key).ToArray())
+                         IsUnderRoot(ToLocalPath(pair.Value.Uri), root)).Select(static pair => pair.Key).ToArray())
             {
                 _documents.Remove(key);
                 _analyses.Remove(key);
@@ -113,11 +150,98 @@ internal sealed class LanguageServerWorkspace : IDisposable
             ThrowIfDisposed();
             _documents[uri.AbsoluteUri] = new LspTextDocument(uri, version, text);
             _analyses.Remove(uri.AbsoluteUri);
+            _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             InvalidateIndexNoLock();
+        }
+
+        UpdateDocumentTypeDeclarations(uri.AbsoluteUri, text);
+        if (_folders.IsEmpty)
+        {
+            // No workspace folder was registered (for example a single-file session). Scan the
+            // opened document's directory tree, including ancestor directories' direct .lua files,
+            // so cross-file @class/@alias/@enum declarations are still available.
+            ScanAncestorDeclarations(uri);
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
         ScheduleIndex();
+    }
+
+    /// <summary>Collects type declarations from a document's directory and each ancestor directory.</summary>
+    private void ScanAncestorDeclarations(Uri uri)
+    {
+        // Best-effort scan; failures on inaccessible roots must never block document analysis.
+        try
+        {
+            var added = new Dictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>(StringComparer.Ordinal);
+            var directory = Path.GetDirectoryName(ToLocalPath(uri));
+            while (directory is not null)
+            {
+                IEnumerable<string>? files;
+                try
+                {
+                    files = Directory.Exists(directory)
+                        ? Directory.EnumerateFiles(directory, "*.lua", SearchOption.TopDirectoryOnly).ToArray()
+                        : [];
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    files = [];
+                }
+
+                foreach (var path in files)
+                {
+                    try
+                    {
+                        var fileUri = new Uri(Path.GetFullPath(path));
+                        if (!added.ContainsKey(fileUri.AbsoluteUri))
+                        {
+                            added[fileUri.AbsoluteUri] = ScanTypeDeclarations(File.ReadAllText(path), fileUri.AbsoluteUri);
+                        }
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+
+                var parent = Path.GetDirectoryName(directory);
+                if (parent == directory)
+                {
+                    break;
+                }
+
+                directory = parent;
+            }
+
+            lock (_gate)
+            {
+                foreach (var pair in added)
+                {
+                    _perDocumentDeclarations[pair.Key] = pair.Value;
+                }
+
+                RebuildExternalTypeDeclarationsNoLock();
+            }
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and not AccessViolationException)
+        {
+            // Best-effort directory scan; ignore any failure.
+            Console.Error.WriteLine($"Lunil workspace: ancestor declaration scan failed for {uri}: {exception.Message}");
+        }
+        finally
+        {
+            // Even when no ancestor .lua files exist (for example a virtual/single-file session),
+            // the declaration gate must lift so the document can be analyzed.
+            lock (_gate)
+            {
+                if (!_declarationsReadySet)
+                {
+                    _declarationsReadySet = true;
+                    _declarationsReady.TrySetResult(true);
+                }
+            }
+        }
     }
 
     public bool Change(Uri uri, int version, IReadOnlyList<LspTextChange> changes)
@@ -133,7 +257,16 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
             _documents[uri.AbsoluteUri] = document.Apply(version, changes);
             _analyses.Remove(uri.AbsoluteUri);
+            _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             InvalidateIndexNoLock();
+        }
+
+        var changedText = _documents.TryGetValue(uri.AbsoluteUri, out var changedDocument)
+            ? changedDocument.Text
+            : null;
+        if (changedText is not null)
+        {
+            UpdateDocumentTypeDeclarations(uri.AbsoluteUri, changedText);
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
@@ -144,9 +277,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public void Close(Uri uri)
     {
         LspTextDocument? disk = null;
-        if (uri.IsFile && File.Exists(uri.LocalPath))
+        if (uri.IsFile && File.Exists(ToLocalPath(uri)))
         {
-            disk = new LspTextDocument(uri, 0, File.ReadAllText(uri.LocalPath), isOpen: false);
+            disk = new LspTextDocument(uri, 0, File.ReadAllText(ToLocalPath(uri)), isOpen: false);
         }
 
         lock (_gate)
@@ -154,14 +287,29 @@ internal sealed class LanguageServerWorkspace : IDisposable
             if (disk is null)
             {
                 _documents.Remove(uri.AbsoluteUri);
+                _indexStatus.Remove(uri.AbsoluteUri);
             }
             else
             {
                 _documents[uri.AbsoluteUri] = disk;
+                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             }
 
             _analyses.Remove(uri.AbsoluteUri);
             InvalidateIndexNoLock();
+        }
+
+        if (disk is not null)
+        {
+            UpdateDocumentTypeDeclarations(uri.AbsoluteUri, disk.Text);
+        }
+        else
+        {
+            lock (_gate)
+            {
+                _perDocumentDeclarations.Remove(uri.AbsoluteUri);
+                RebuildExternalTypeDeclarationsNoLock();
+            }
         }
 
         if (DiagnosticsPublished is { } publish)
@@ -181,21 +329,36 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return;
             }
 
-            if (changeType == 3 || !uri.IsFile || !File.Exists(uri.LocalPath))
+            if (changeType == 3 || !uri.IsFile || !File.Exists(ToLocalPath(uri)))
             {
                 _documents.Remove(uri.AbsoluteUri);
+                _indexStatus.Remove(uri.AbsoluteUri);
             }
             else
             {
                 _documents[uri.AbsoluteUri] = new LspTextDocument(
                     uri,
                     0,
-                    File.ReadAllText(uri.LocalPath),
+                    File.ReadAllText(ToLocalPath(uri)),
                     isOpen: false);
+                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             }
 
             _analyses.Remove(uri.AbsoluteUri);
             InvalidateIndexNoLock();
+        }
+
+        if (_documents.TryGetValue(uri.AbsoluteUri, out var watched))
+        {
+            UpdateDocumentTypeDeclarations(uri.AbsoluteUri, watched.Text);
+        }
+        else
+        {
+            lock (_gate)
+            {
+                _perDocumentDeclarations.Remove(uri.AbsoluteUri);
+                RebuildExternalTypeDeclarationsNoLock();
+            }
         }
 
         ScheduleIndex();
@@ -284,15 +447,38 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
         await Task.CompletedTask.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+
+        // Wait for the initial workspace declaration scan so cross-file @class/@alias/@enum types
+        // resolve correctly on the very first analyses (avoids stale LUA6001 races at startup).
+        bool declarationsReady;
+        lock (_gate)
+        {
+            declarationsReady = _declarationsReadySet;
+        }
+
+        if (!declarationsReady)
+        {
+            await _declarationsReady.Task.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         var source = LuaSourceDocument.FromUtf8(document.Text, document.Uri.AbsoluteUri);
-        var environment = hostContract is null
-            ? LuaAnalysisEnvironment.Empty
-            : new LuaAnalysisEnvironment { HostContract = hostContract };
-        var compilation = CreateAnalysisCompilationResult(_frontEnd.Process(
-            source,
-            LuaFrontEndStage.Analysis,
-            environment,
-            cancellationToken));
+        var environment = new LuaAnalysisEnvironment
+        {
+            HostContract = hostContract,
+            ExternalTypeDeclarations = _externalTypeDeclarations,
+        };
+        // The front-end analysis is CPU-bound and synchronous. Run it on the thread pool so a
+        // large document (for example a multi-megabyte generated config file) cannot stall the
+        // JSON-RPC message loop; otherwise shutdown/exit requests queue behind the analysis and
+        // the client kills the server as unresponsive after its stop timeout.
+        var compilation = await Task.Run(
+            () => CreateAnalysisCompilationResult(_frontEnd.Process(
+                source,
+                LuaFrontEndStage.Analysis,
+                environment,
+                cancellationToken)),
+            cancellationToken).ConfigureAwait(false);
         var result = new LanguageDocumentAnalysis(document, module, compilation);
         lock (_gate)
         {
@@ -326,16 +512,16 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public LuaModuleIdentity GetModuleIdentity(Uri uri)
     {
-        var path = uri.IsFile ? Path.GetFullPath(uri.LocalPath) : uri.AbsolutePath;
+        var path = uri.IsFile ? Path.GetFullPath(ToLocalPath(uri)) : uri.AbsolutePath;
         Uri? owner;
         lock (_gate)
         {
-            owner = _folders.Where(folder => IsUnderRoot(path, folder.LocalPath))
-                .OrderByDescending(static folder => folder.LocalPath.Length)
+            owner = _folders.Where(folder => IsUnderRoot(path, ToLocalPath(folder)))
+                .OrderByDescending(static folder => ToLocalPath(folder).Length)
                 .FirstOrDefault();
         }
 
-        var relative = owner is null ? Path.GetFileName(path) : Path.GetRelativePath(owner.LocalPath, path);
+        var relative = owner is null ? Path.GetFileName(path) : Path.GetRelativePath(ToLocalPath(owner), path);
         var name = Path.ChangeExtension(relative, null)!.Replace(Path.DirectorySeparatorChar, '.')
             .Replace(Path.AltDirectorySeparatorChar, '.');
         if (name.EndsWith(".init", StringComparison.Ordinal))
@@ -395,33 +581,205 @@ internal sealed class LanguageServerWorkspace : IDisposable
             _indexCancellation?.Cancel();
             _indexCancellation?.Dispose();
             _workspace.Dispose();
+            _declarationsReady.TrySetResult(true);
         }
     }
 
-    private async Task AnalyzeAndPublishAsync(Uri uri, int version, CancellationToken cancellationToken)
+    /// <summary>Returns the per-document index status counts for progress display.</summary>
+    public JsonObject GetIndexStatus()
     {
-        try
+        var failedFiles = new List<string>();
+        var pendingFiles = new List<string>();
+        int total, succeeded, failed, inProgress, pending;
+        lock (_gate)
         {
-            var analysis = await GetAnalysisAsync(uri, cancellationToken).ConfigureAwait(false);
-            if (analysis is null || analysis.Document.Version != version || DiagnosticsPublished is not { } publish)
+            total = _indexStatus.Count;
+            succeeded = 0;
+            failed = 0;
+            inProgress = 0;
+            pending = 0;
+            foreach (var pair in _indexStatus)
+            {
+                switch (pair.Value)
+                {
+                    case FileIndexStatus.Succeeded:
+                        succeeded++;
+                        break;
+                    case FileIndexStatus.Failed:
+                        failed++;
+                        failedFiles.Add(pair.Key);
+                        break;
+                    case FileIndexStatus.InProgress:
+                        inProgress++;
+                        break;
+                    case FileIndexStatus.Pending:
+                        pending++;
+                        pendingFiles.Add(pair.Key);
+                        break;
+                }
+            }
+        }
+
+        return new JsonObject
+        {
+            ["total"] = total,
+            ["analyzed"] = succeeded + failed,
+            ["succeeded"] = succeeded,
+            ["failed"] = failed,
+            ["inProgress"] = inProgress,
+            ["pending"] = pending,
+            ["failedFiles"] = new JsonArray(failedFiles.Take(200).Select(static item => (JsonNode?)item).ToArray()),
+            ["pendingFiles"] = new JsonArray(pendingFiles.Take(200).Select(static item => (JsonNode?)item).ToArray()),
+        };
+    }
+
+    /// <summary>Re-scans the type declarations of one document and refreshes the cross-file index.</summary>
+    public void UpdateDocumentTypeDeclarations(string uri, string text)
+    {
+        var declarations = ScanTypeDeclarations(text, uri);
+        lock (_gate)
+        {
+            _perDocumentDeclarations[uri] = declarations;
+            RebuildExternalTypeDeclarationsNoLock();
+        }
+    }
+
+    /// <summary>Scans all loaded documents for type declarations. Cheap lexing + annotation parsing only.</summary>
+    public void ScanAllTypeDeclarations()
+    {
+        KeyValuePair<string, LspTextDocument>[] documents;
+        LspTextDocument[] openDocuments;
+        lock (_gate)
+        {
+            if (_disposed)
             {
                 return;
             }
 
-            var diagnostics = new JsonArray(analysis.Compilation.Diagnostics.Select(diagnostic =>
-                (JsonNode?)new JsonObject
-                {
-                    ["range"] = ToJson(analysis.Document.ToRange(diagnostic.Span)),
-                    ["severity"] = ToLspSeverity(diagnostic.Severity),
-                    ["code"] = diagnostic.Code,
-                    ["source"] = "lunil",
-                    ["message"] = diagnostic.Message,
-                    ["data"] = new JsonObject { ["phase"] = diagnostic.Phase.ToString() },
-                }).ToArray());
-            await publish(uri, version, diagnostics).ConfigureAwait(false);
+            documents = _documents.ToArray();
+            openDocuments = _documents.Values.Where(static document => document.IsOpen).ToArray();
         }
-        catch (Exception exception) when (exception is OperationCanceledException or IOException or UnauthorizedAccessException)
+
+        var results = new System.Collections.Concurrent.ConcurrentDictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>(
+            StringComparer.Ordinal);
+        Parallel.ForEach(
+            documents,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2) },
+            pair => results[pair.Key] = ScanTypeDeclarations(pair.Value.Text, pair.Value.Uri.AbsoluteUri));
+
+        lock (_gate)
         {
+            foreach (var pair in results)
+            {
+                _perDocumentDeclarations[pair.Key] = pair.Value;
+            }
+
+            RebuildExternalTypeDeclarationsNoLock();
+            _declarationsGeneration++;
+            _analyses.Clear();
+            InvalidateIndexNoLock();
+        }
+
+        Console.Error.WriteLine(
+            $"Lunil workspace: scanned {documents.Length} documents, {_externalTypeDeclarations.Count} external type declarations");
+
+        SignalDeclarationsReady();
+
+        // The declaration map may have grown since documents were first analyzed (for example the
+        // workspace folder arrived late). Re-analyze open documents so diagnostics reflect the
+        // complete cross-file map; stale in-flight publishes are dropped via the generation check.
+        foreach (var document in openDocuments)
+        {
+            _ = AnalyzeAndPublishAsync(document.Uri, document.Version, CancellationToken.None);
+        }
+    }
+
+    private ImmutableDictionary<string, LuaExternalTypeDeclaration> ScanTypeDeclarations(string text, string sourceName)
+    {
+        var source = LuaSourceDocument.FromUtf8(text, sourceName);
+        var lexing = LuaLexer.Lex(source.Text, _frontEnd.Options.Lexer with
+        {
+            LanguageVersion = _frontEnd.Options.LanguageVersion,
+        });
+        var annotations = LuaAnnotationParser.Parse(lexing, _frontEnd.Options.Annotations);
+        return LuaExternalTypeDeclarations.Collect(annotations);
+    }
+
+    private void RebuildExternalTypeDeclarationsNoLock()
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, LuaExternalTypeDeclaration>(StringComparer.Ordinal);
+        foreach (var pair in _perDocumentDeclarations.OrderBy(static item => item.Key, StringComparer.Ordinal))
+        {
+            foreach (var declaration in pair.Value)
+            {
+                builder.TryAdd(declaration.Key, declaration.Value);
+            }
+        }
+
+        _externalTypeDeclarations = builder.ToImmutable();
+    }
+
+    private async Task AnalyzeAndPublishAsync(Uri uri, int version, CancellationToken cancellationToken)
+    {
+        // Bound analysis concurrency: after the startup declaration gate lifts, every open document
+        // resumes analysis at once; an unbounded burst would saturate the thread pool and stall
+        // everything. A modest cap keeps the message loop responsive without throttling real use.
+        await _analysisConcurrency.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            int declarationsGeneration;
+            lock (_gate)
+            {
+                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.InProgress;
+                declarationsGeneration = _declarationsGeneration;
+            }
+
+            try
+            {
+                var analysis = await GetAnalysisAsync(uri, cancellationToken).ConfigureAwait(false);
+                if (analysis is null || analysis.Document.Version != version || DiagnosticsPublished is not { } publish)
+                {
+                    return;
+                }
+
+                // If the cross-file declaration map changed while this analysis ran, a re-analysis
+                // started after the change will publish the authoritative diagnostics. Drop this
+                // potentially stale publish so it cannot overwrite the corrected result.
+                lock (_gate)
+                {
+                    if (declarationsGeneration != _declarationsGeneration)
+                    {
+                        return;
+                    }
+                }
+
+                var diagnostics = new JsonArray(analysis.Compilation.Diagnostics.Select(diagnostic =>
+                    (JsonNode?)new JsonObject
+                    {
+                        ["range"] = ToJson(analysis.Document.ToRange(diagnostic.Span)),
+                        ["severity"] = ToLspSeverity(diagnostic.Severity),
+                        ["code"] = diagnostic.Code,
+                        ["source"] = "lunil",
+                        ["message"] = diagnostic.Message,
+                        ["data"] = new JsonObject { ["phase"] = diagnostic.Phase.ToString() },
+                    }).ToArray());
+                await publish(uri, version, diagnostics).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Succeeded;
+                }
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or IOException or UnauthorizedAccessException)
+            {
+                lock (_gate)
+                {
+                    _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Failed;
+                }
+            }
+        }
+        finally
+        {
+            _analysisConcurrency.Release();
         }
     }
 
@@ -456,10 +814,19 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     private void LoadFolders(ImmutableArray<Uri> folders)
     {
-        var loaded = new Dictionary<string, LspTextDocument>(StringComparer.Ordinal);
+        // Reading every .lua file serially is slow on large workspaces; parallelize the I/O so the
+        // startup declaration gate lifts sooner and the first diagnostics appear faster.
+        var paths = new List<string>();
         foreach (var folder in folders)
         {
-            foreach (var path in EnumerateLuaFiles(folder.LocalPath))
+            paths.AddRange(EnumerateLuaFiles(ToLocalPath(folder)));
+        }
+
+        var loaded = new System.Collections.Concurrent.ConcurrentDictionary<string, LspTextDocument>(StringComparer.Ordinal);
+        Parallel.ForEach(
+            paths,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(4, Environment.ProcessorCount) },
+            path =>
             {
                 try
                 {
@@ -473,20 +840,34 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
                 }
-            }
-        }
+            });
+
+        Console.Error.WriteLine(
+            $"Lunil workspace: loading {folders.Length} folder(s) -> {paths.Count} .lua files");
 
         lock (_gate)
         {
-            if (_disposed || !_folders.SequenceEqual(folders))
+            if (_disposed)
             {
+                SignalDeclarationsReady();
                 return;
             }
 
-            if (loaded.Count == 0)
+            // Folders changed while this load was in progress; a newer LoadFolders will apply the
+            // current set. Do NOT release the declaration gate here: releasing with an empty/partial
+            // map lets the first document analyses publish false LUA6001s before the folder scan
+            // completes. The gate lifts when a real scan finishes or the first document is opened.
+            if (!_folders.SequenceEqual(folders))
             {
-                // 空文件夹或无可加载文档时不得失效索引：无效失效会推进 generation 并使
-                // 进行中的 ReindexNowAsync 因 generation 失配丢弃快照写入（偶发竞态）。
+                Console.Error.WriteLine("Lunil workspace: folders changed during load; deferring to newer load");
+                return;
+            }
+
+            if (loaded.IsEmpty)
+            {
+                Console.Error.WriteLine("Lunil workspace: no .lua files under registered folders; declaration gate stays closed until a document opens or a folder is added");
+                // No documents under the registered folders. The gate stays closed until a document
+                // is opened (its ancestor directory is scanned) or a folder with files is added.
                 return;
             }
 
@@ -498,10 +879,28 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 }
             }
 
+            foreach (var pair in _documents)
+            {
+                _indexStatus.TryAdd(pair.Key, FileIndexStatus.Pending);
+            }
+
             InvalidateIndexNoLock();
         }
 
+        ScanAllTypeDeclarations();
         ScheduleIndex();
+    }
+
+    private void SignalDeclarationsReady()
+    {
+        lock (_gate)
+        {
+            if (!_declarationsReadySet)
+            {
+                _declarationsReadySet = true;
+                _declarationsReady.TrySetResult(true);
+            }
+        }
     }
 
     internal void UpdateSuppressedDiagnosticCodes(IEnumerable<string> codes)

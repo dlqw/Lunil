@@ -12,6 +12,42 @@ namespace Lunil.Analysis.Tests;
 public sealed class LuaTypeAnalyzerTests
 {
     [Fact]
+    public void ResolvesCrossFileExternalClassDeclarations()
+    {
+        // Build an external declaration from a separate document (the workspace index) and verify
+        // the analyzed document resolves the type without an "unknown annotation type" error.
+        var externalSource = SourceText.FromUtf8(
+            """
+            ---@class ExternalTask
+            ---@field name string
+            local ExternalTask = {}
+            """);
+        var externalLexing = LuaLexer.Lex(externalSource, LuaLexerOptions.Default);
+        var externalAnnotations = LuaAnnotationParser.Parse(externalLexing);
+        var external = LuaExternalTypeDeclarations.Collect(externalAnnotations);
+        Assert.Contains("ExternalTask", external.Keys);
+
+        var environment = new LuaAnalysisEnvironment
+        {
+            ExternalTypeDeclarations = external,
+        };
+
+        var text = SourceText.FromUtf8(
+            """
+            ---@type ExternalTask
+            local task = nil
+            return task
+            """);
+        var lexing = LuaLexer.Lex(text, LuaLexerOptions.Default);
+        var syntax = LuaParser.Parse(lexing, LuaParserOptions.Default);
+        var annotations = LuaAnnotationParser.Parse(lexing);
+        var semantics = LuaBinder.Bind(syntax, LuaBinderOptions.Default);
+        var result = LuaTypeAnalyzer.Analyze(semantics, annotations, environment);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6001");
+    }
+
+    [Fact]
     public void ResolvesClassAliasEnumAndStructuralMembers()
     {
         var result = Analyze(

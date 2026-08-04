@@ -14,6 +14,14 @@ public sealed record LuaAnalysisEnvironment
     public ImmutableDictionary<string, LuaType> ModuleTypes { get; init; } =
         ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets cross-file type declarations (<c>---@class</c>, <c>---@alias</c>, <c>---@enum</c>)
+    /// collected from other documents in the workspace. Local declarations of the analyzed
+    /// document take precedence over these.
+    /// </summary>
+    public ImmutableDictionary<string, LuaExternalTypeDeclaration> ExternalTypeDeclarations { get; init; } =
+        ImmutableDictionary<string, LuaExternalTypeDeclaration>.Empty.WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

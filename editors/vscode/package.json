@@ -28,6 +28,7 @@
     "workspaceContains:**/*.lua",
     "onCommand:lunil.restartServer",
     "onCommand:lunil.clearCache",
+    "onCommand:lunil.showIndexStatus",
     "onCommand:lunil.showHostContract",
     "onDebugResolve:lunil"
   ],
@@ -61,6 +62,10 @@
       {
         "command": "lunil.showOutput",
         "title": "Lunil: Show Language Server Output"
+      },
+      {
+        "command": "lunil.showIndexStatus",
+        "title": "Lunil: Show Index Status"
       },
       {
         "command": "lunil.showHostContract",

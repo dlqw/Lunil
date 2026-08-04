@@ -814,6 +814,35 @@ internal sealed partial class AnalysisEngine
         return true;
     }
 
+    /// <summary>
+    /// Detects when an expression is the module's global table (<c>_G</c> or <c>_ENV</c>) directly,
+    /// so that writes like <c>_G.name = value</c> can additionally be recorded as a global assignment.
+    /// </summary>
+    private bool IsGlobalTableReference(LuaSyntaxNode expression, out LuaSymbol symbol)
+    {
+        symbol = null!;
+        if (expression.Kind != LuaSyntaxKind.IdentifierExpression)
+        {
+            return false;
+        }
+
+        var token = expression.ChildTokens().First(static item => item.Kind == LuaTokenKind.Identifier);
+        if (!_references.TryGetValue(token.Span, out var reference))
+        {
+            return false;
+        }
+
+        if (reference.ResolutionKind != LuaNameResolutionKind.Global ||
+            reference.Symbol.Kind != LuaSymbolKind.Environment ||
+            reference.Name is not ("_G" or "_ENV"))
+        {
+            return false;
+        }
+
+        symbol = reference.Symbol;
+        return true;
+    }
+
     private bool TryGetAccessPath(LuaSyntaxNode expression, out AccessPathKey path)
     {
         if (expression.Kind == LuaSyntaxKind.IdentifierExpression &&

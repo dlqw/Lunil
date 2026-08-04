@@ -2,7 +2,8 @@
 param(
     [string] $OutputDirectory,
     [switch] $SkipNodeInstall,
-    [switch] $SkipExtensionCheck
+    [switch] $SkipExtensionCheck,
+    [string[]] $BuildTargets = @()
 )
 
 Set-StrictMode -Version Latest
@@ -35,6 +36,13 @@ $targets = @(
     [pscustomobject]@{ Rid = 'osx-x64'; Target = 'darwin-x64'; Executable = 'lunil-language-server' },
     [pscustomobject]@{ Rid = 'osx-arm64'; Target = 'darwin-arm64'; Executable = 'lunil-language-server' }
 )
+if ($BuildTargets.Count -gt 0) {
+    $selected = $targets | Where-Object { $BuildTargets -contains $_.Rid -or $BuildTargets -contains $_.Target }
+    if ($selected.Count -eq 0) {
+        throw "No build target matches -BuildTargets '$($BuildTargets -join ', ')'. Valid RIDs: $($targets.Rid -join ', ')."
+    }
+    $targets = @($selected)
+}
 
 function Remove-ServerStaging {
     if (-not (Test-Path -LiteralPath $serverRoot)) { return }

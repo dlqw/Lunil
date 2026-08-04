@@ -78,6 +78,7 @@ class LunilClientController implements vscode.Disposable {
       vscode.commands.registerCommand('lunil.clearCache', () => this.request('lunil/clearCache')),
       vscode.commands.registerCommand('lunil.reindexWorkspace', () => this.request('lunil/reindex')),
       vscode.commands.registerCommand('lunil.showOutput', () => this.output.show(true)),
+      vscode.commands.registerCommand('lunil.showIndexStatus', () => this.showIndexStatus()),
       vscode.commands.registerCommand('lunil.showHostContract', () => this.showHostContract()),
       vscode.workspace.onDidChangeConfiguration(event => this.configurationChanged(event)),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.start())
@@ -85,6 +86,8 @@ class LunilClientController implements vscode.Disposable {
   }
 
   public async activate(): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders?.map(f => f.uri.toString()) ?? [];
+    this.output.appendLine(`[${timestamp()}] activate: trusted=${vscode.workspace.isTrusted} folders=[${folders.join(', ')}]`);
     if (!vscode.workspace.isTrusted) {
       this.setStatus('restricted', 'Lunil: disabled in Restricted Mode');
       this.output.appendLine('Lunil waits for Workspace Trust before starting executable workspace code.');
@@ -118,6 +121,7 @@ class LunilClientController implements vscode.Disposable {
 
   private async start(): Promise<void> {
     if (this.disposed || this.client !== undefined || !vscode.workspace.isTrusted) {
+      this.output.appendLine(`[${timestamp()}] start: skipped (disposed=${this.disposed} clientExists=${this.client !== undefined} trusted=${vscode.workspace.isTrusted})`);
       return;
     }
 
@@ -125,6 +129,7 @@ class LunilClientController implements vscode.Disposable {
     this.setStatus('starting', 'Lunil: starting');
     try {
       const executable = await this.resolveServer();
+      this.output.appendLine(`[${timestamp()}] start: server = ${executable}`);
       const configuration = vscode.workspace.getConfiguration('lunil');
       const heapLimit = configuration.get<number>('server.gcHeapHardLimitPercent', 70);
       const serverOptions: ServerOptions = {
@@ -190,8 +195,10 @@ class LunilClientController implements vscode.Disposable {
   }
 
   private stateChanged(state: State): void {
+    this.output.appendLine(`[${timestamp()}] stateChanged: ${state}`);
     if (state === State.Running) {
       this.setStatus('running', 'Lunil: ready');
+      this.output.appendLine(`[${timestamp()}] server running (Lunil: ready)`);
       if (this.stableTimer !== undefined) {
         clearTimeout(this.stableTimer);
       }
@@ -200,6 +207,7 @@ class LunilClientController implements vscode.Disposable {
       this.setStatus('starting', 'Lunil: starting');
     } else {
       this.setStatus('stopped', 'Lunil: stopped');
+      this.output.appendLine(`[${timestamp()}] server stopped (stopping=${this.stopping})`);
       const stopped = this.client;
       this.client = undefined;
       if (stopped !== undefined) {
@@ -300,10 +308,71 @@ class LunilClientController implements vscode.Disposable {
   }
 
   private indexProgress(value: unknown): void {
-    const progress = value as { phase?: string; completed?: number; total?: number };
+    const progress = value as { phase?: string; completed?: number; total?: number; succeeded?: number; failed?: number; inProgress?: number; pending?: number };
     const total = progress.total ?? 0;
     const completed = progress.completed ?? 0;
-    this.setStatus('indexing', `Lunil: ${progress.phase ?? 'indexing'} ${completed}/${total}`);
+    const detail = [
+      `succeeded:${progress.succeeded ?? 0}`,
+      `in-progress:${progress.inProgress ?? 0}`,
+      `failed:${progress.failed ?? 0}`,
+      `pending:${progress.pending ?? 0}`
+    ].join(' ');
+    this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${completed}/${total} ${detail}`);
+    this.setStatus('indexing', `Lunil: ${progress.phase ?? 'indexing'} ${completed}/${total} (${detail})`);
+  }
+
+  private async showIndexStatus(): Promise<void> {
+    this.output.appendLine(`[${timestamp()}] showIndexStatus: client=${this.client !== undefined ? 'exists' : 'none'} running=${this.client?.isRunning() ?? false}`);
+    if (this.client === undefined || !this.client.isRunning()) {
+      void vscode.window.showWarningMessage('Lunil Language Server is not running.');
+      return;
+    }
+    try {
+      const status = await this.client.sendRequest('lunil/indexStatus') as {
+        total?: number; analyzed?: number; succeeded?: number; failed?: number;
+        inProgress?: number; pending?: number; failedFiles?: string[]; pendingFiles?: string[];
+      };
+      this.output.appendLine(`[${timestamp()}] indexStatus result: ${JSON.stringify(status)}`);
+      const summary = [
+        `total:${status.total ?? 0}`,
+        `succeeded:${status.succeeded ?? 0}`,
+        `in-progress:${status.inProgress ?? 0}`,
+        `failed:${status.failed ?? 0}`,
+        `pending:${status.pending ?? 0}`
+      ].join('  ');
+      const failed = status.failedFiles ?? [];
+      const pending = status.pendingFiles ?? [];
+      const items: vscode.QuickPickItem[] = [];
+      if (failed.length > 0) {
+        items.push({ label: `$(error) Failed (${failed.length})`, kind: vscode.QuickPickItemKind.Separator });
+        for (const file of failed.slice(0, 50)) {
+          items.push({ label: file, description: 'failed', detail: 'Analysis threw for this document' });
+        }
+        if (failed.length > 50) {
+          items.push({ label: `... and ${failed.length - 50} more failed files`, kind: vscode.QuickPickItemKind.Separator });
+        }
+      }
+      if (pending.length > 0) {
+        items.push({ label: `$(clock) Pending (${pending.length})`, kind: vscode.QuickPickItemKind.Separator });
+        for (const file of pending.slice(0, 50)) {
+          items.push({ label: file, description: 'pending', detail: 'Not yet analyzed' });
+        }
+        if (pending.length > 50) {
+          items.push({ label: `... and ${pending.length - 50} more pending files`, kind: vscode.QuickPickItemKind.Separator });
+        }
+      }
+      if (items.length === 0) {
+        items.push({ label: '$(check) All documents analyzed', detail: summary });
+      }
+      const pick = await vscode.window.showQuickPick(items, { placeHolder: summary });
+      if (pick !== undefined && pick.label !== undefined && pick.label.startsWith('file://')) {
+        const uri = vscode.Uri.parse(pick.label);
+        await vscode.window.showTextDocument(uri, { preview: true });
+      }
+    } catch (error) {
+      this.output.appendLine(`[${timestamp()}] showIndexStatus FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      this.logError('showIndexStatus', error);
+    }
   }
 
   private setStatus(kind: string, text: string): void {
@@ -378,4 +447,8 @@ function configurationObject(configuration: vscode.WorkspaceConfiguration): Reco
       trace: configuration.get<string>('server.trace', 'off')
     }
   };
+}
+
+function timestamp(): string {
+  return new Date().toISOString();
 }

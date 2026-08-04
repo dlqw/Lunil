@@ -117,7 +117,8 @@ internal sealed partial class AnalysisEngine
         var key = reference.ResolutionKind == LuaNameResolutionKind.Global
             ? VariableKey.Global(reference.Name)
             : VariableKey.Local(reference.Symbol.Id);
-        if (reference.Symbol.IsCaptured)
+        if (reference.ResolutionKind != LuaNameResolutionKind.Global &&
+            reference.Symbol.IsCaptured)
         {
             if (!_upvalueCells.TryGetValue(reference.Symbol.Id, out var cell))
             {
@@ -337,7 +338,17 @@ internal sealed partial class AnalysisEngine
             return LuaTypes.Unknown;
         }
 
+        if (target.Kind == LuaTypeKind.Never)
+        {
+            return LuaTypes.Never;
+        }
+
         if (target is LuaPrototypeType { IsPrecise: false })
+        {
+            return LuaTypes.Any;
+        }
+
+        if (target.Kind == LuaTypeKind.Table)
         {
             return LuaTypes.Any;
         }
@@ -355,11 +366,40 @@ internal sealed partial class AnalysisEngine
                 : item.ValueType;
         }
 
+        if (target is LuaStructuralTableType { IsOpen: true })
+        {
+            return LuaTypes.Any;
+        }
+
+        if (target is LuaStructuralTableType { Fields.IsEmpty: true } empty &&
+            empty.ArrayElementType is null && empty.MapKeyType is null)
+        {
+            return LuaTypes.Any;
+        }
+
+        if (target is LuaMetatableType { IsPrecise: true } classSelf &&
+            classSelf.BaseType is LuaStructuralTableType { Fields.IsEmpty: true, ArrayElementType: null, MapKeyType: null })
+        {
+            return LuaTypes.Any;
+        }
+
+        if (target is LuaClassType emptyClass && IsEmptyClass(emptyClass))
+        {
+            return LuaTypes.Any;
+        }
+
         _context.AddDiagnostic(
             "LUA6007",
             span,
             $"Type '{target.DisplayName}' has no known member '{name}'.");
         return LuaTypes.Unknown;
+    }
+
+    private bool IsEmptyClass(LuaClassType type)
+    {
+        var declaration = _types.Declarations.OfType<LuaClassDeclaration>()
+            .FirstOrDefault(item => string.Equals(item.Name, type.Name, StringComparison.Ordinal));
+        return declaration is { Fields.IsEmpty: true, BaseTypes.IsEmpty: true };
     }
 
     private LuaType InferIndex(LuaSyntaxNode expression, FlowState state)
@@ -396,6 +436,8 @@ internal sealed partial class AnalysisEngine
 
         if (target is LuaStructuralTableType table)
         {
+            var isEmptyOpen = table.IsOpen ||
+                (table.Fields.IsEmpty && table.ArrayElementType is null && table.MapKeyType is null);
             if (index is LuaStringLiteralType text)
             {
                 var name = DecodeLiteral(text);
@@ -408,6 +450,11 @@ internal sealed partial class AnalysisEngine
                         : item.ValueType;
                     RecordPathType(expression, fieldType, state);
                     return fieldType;
+                }
+
+                if (isEmptyOpen)
+                {
+                    return LuaTypes.Any;
                 }
             }
 
@@ -423,6 +470,11 @@ internal sealed partial class AnalysisEngine
                 RecordPathType(expression, table.MapValueType, state);
                 return table.MapValueType;
             }
+
+            if (isEmptyOpen)
+            {
+                return LuaTypes.Any;
+            }
         }
 
         if (target is LuaUnionType union)
@@ -433,6 +485,22 @@ internal sealed partial class AnalysisEngine
                 nodes[1].Span)));
             RecordPathType(expression, unionResult, state);
             return unionResult;
+        }
+
+        if (target.Kind is LuaTypeKind.Unknown)
+        {
+            return LuaTypes.Unknown;
+        }
+
+        if (target.Kind is LuaTypeKind.Table or LuaTypeKind.Any or LuaTypeKind.Never)
+        {
+            return target.Kind == LuaTypeKind.Never ? LuaTypes.Never : LuaTypes.Any;
+        }
+
+        if (target is LuaMetatableType { IsPrecise: true } classSelf &&
+            classSelf.BaseType is LuaStructuralTableType { Fields.IsEmpty: true, ArrayElementType: null, MapKeyType: null })
+        {
+            return LuaTypes.Any;
         }
 
         _context.AddDiagnostic(
@@ -1002,6 +1070,10 @@ internal sealed partial class AnalysisEngine
 
             AssignVariable(key, symbol, next, target.Span, state);
             PropagateTableMutation(state, baseType, next, key);
+            if (IsGlobalTableReference(baseExpression, out var environmentSymbol))
+            {
+                AssignVariable(VariableKey.Global(name), environmentSymbol, value, nameToken.Span, state);
+            }
         }
     }
 
@@ -1053,6 +1125,11 @@ internal sealed partial class AnalysisEngine
         {
             AssignVariable(key, symbol, next, target.Span, state);
             PropagateTableMutation(state, baseType, next, key);
+            if (indexType is LuaStringLiteralType text &&
+                IsGlobalTableReference(nodes[0], out var environmentSymbol))
+            {
+                AssignVariable(VariableKey.Global(DecodeLiteral(text)), environmentSymbol, value, target.Span, state);
+            }
         }
     }
 
@@ -1605,6 +1682,17 @@ internal sealed partial class AnalysisEngine
         VariableKey assignedKey)
     {
         if (ReferenceEquals(previous, next))
+        {
+            return;
+        }
+
+        // Only composite, shareable shapes participate in table mutation. Primitive
+        // singletons such as any/unknown/table/number are shared by every untyped
+        // variable; replacing them by reference would conflate unrelated variables.
+        if (previous.Kind is not (LuaTypeKind.StructuralTable or LuaTypeKind.Prototype or
+            LuaTypeKind.Metatable or LuaTypeKind.Map or LuaTypeKind.Array or
+            LuaTypeKind.Union or LuaTypeKind.Class or LuaTypeKind.Callable or
+            LuaTypeKind.Overload))
         {
             return;
         }

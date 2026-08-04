@@ -47,7 +47,7 @@ public static class LuaTypeAnalyzer
         }
 
         var context = new LuaAnalysisContext(options, cancellationToken);
-        var typeEnvironment = new AnnotationTypeEnvironment(annotations, context);
+        var typeEnvironment = new AnnotationTypeEnvironment(annotations, environment, context);
         cancellationToken.ThrowIfCancellationRequested();
         var graphs = ControlFlowGraphBuilder.BuildAll(semanticModel, context);
         cancellationToken.ThrowIfCancellationRequested();
