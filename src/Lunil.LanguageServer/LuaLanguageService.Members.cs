@@ -319,10 +319,25 @@ internal sealed partial class LuaLanguageService
             case LuaStructuralTableType table:
                 foreach (var field in table.Fields)
                 {
-                    if (field.Name is not null)
+                    if (field.Name is null)
                     {
-                        yield return (field.Name, field.ValueType);
+                        continue;
                     }
+
+                    if (field.Name == "__index" &&
+                        field.ValueType.Kind is not (LuaTypeKind.Nil or LuaTypeKind.Any or LuaTypeKind.Unknown))
+                    {
+                        // Inheritance: an __index field delegates missing members to its
+                        // target table, so inherited members stay reachable.
+                        foreach (var inherited in CollectTypeMembers(field.ValueType, visited, depth + 1))
+                        {
+                            yield return inherited;
+                        }
+
+                        continue;
+                    }
+
+                    yield return (field.Name, field.ValueType);
                 }
 
                 break;

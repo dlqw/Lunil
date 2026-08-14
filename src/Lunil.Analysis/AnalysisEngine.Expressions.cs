@@ -706,8 +706,67 @@ internal sealed partial class AnalysisEngine
             memberName,
             LuaCallResolutionStatus.Resolved,
             unresolvedReason: null);
-        return selected.Returns;
+        return ApplyConstructorInference(selected.Returns, memberName, receiverType);
     }
+
+    /// <summary>
+    /// Unannotated constructor idiom: calling a member named new/create on a shaped
+    /// receiver returns an instance whose members resolve through the receiver's
+    /// table, so metatable classes built without annotations still provide instance
+    /// types for completion, hover, and navigation.
+    /// </summary>
+    private static LuaTypePack ApplyConstructorInference(
+        LuaTypePack returns,
+        string? memberName,
+        LuaType? receiverType)
+    {
+        if (memberName is not ("new" or "create") ||
+            receiverType is null ||
+            receiverType.Kind is not (LuaTypeKind.StructuralTable or
+                LuaTypeKind.Prototype or
+                LuaTypeKind.Metatable or
+                LuaTypeKind.Map))
+        {
+            return returns;
+        }
+
+        var head = returns.Head.FirstOrDefault();
+        var rebuild = head is null || head.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown ||
+            // A constructor captured in the middle of class declaration returns a
+            // metatable over an early, member-less snapshot of the class table;
+            // rebuild over the receiver so members declared later stay reachable.
+            head is LuaMetatableType snapshot &&
+            !HasShapeMembers(snapshot.BaseType) &&
+            !HasShapeMembers(snapshot.MetatableType) &&
+            HasShapeMembers(receiverType);
+        if (!rebuild)
+        {
+            return returns;
+        }
+
+        var instance = new LuaMetatableType(
+            new LuaStructuralTableType([], IsOpen: true),
+            receiverType,
+            IsPrecise: false);
+        var rebuilt = ImmutableArray.CreateBuilder<LuaType>(returns.Head.Length);
+        rebuilt.Add(instance);
+        for (var index = 1; index < returns.Head.Length; index++)
+        {
+            rebuilt.Add(returns.Head[index]);
+        }
+
+        return new LuaTypePack(rebuilt.ToImmutable(), returns.VariadicType);
+    }
+
+    private static bool HasShapeMembers(LuaType? type) => type switch
+    {
+        LuaStructuralTableType table => table.Fields.Any(static field => field.Name != "__index"),
+        LuaPrototypeType prototype => HasShapeMembers(prototype.Shape),
+        LuaMetatableType metatable =>
+            HasShapeMembers(metatable.BaseType) || HasShapeMembers(metatable.MetatableType),
+        LuaUnionType union => union.Types.Any(HasShapeMembers),
+        _ => false,
+    };
 
     private LuaTypePack? InferSpecialCall(
         LuaSyntaxNode expression,

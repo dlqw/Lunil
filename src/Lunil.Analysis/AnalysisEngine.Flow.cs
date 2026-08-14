@@ -698,6 +698,52 @@ internal sealed partial class AnalysisEngine
     private static bool IsIntegerLike(LuaType type) => type.Kind == LuaTypeKind.Integer ||
         type is LuaIntegerLiteralType;
 
+    private static bool IsShapeGrowth(LuaType previous, LuaType next)
+    {
+        // An empty placeholder snapshot carries no information; any later shape
+        // (including the self-index prototype upgrade) replaces it.
+        if (previous is LuaStructuralTableType { Fields.IsEmpty: true } or
+            LuaPrototypeType { Shape: LuaStructuralTableType { Fields.IsEmpty: true } })
+        {
+            return true;
+        }
+
+        // A self-indexed class table becomes a prototype; compare through its shape.
+        if (previous is LuaPrototypeType oldPrototype &&
+            next is LuaPrototypeType newPrototype &&
+            string.Equals(oldPrototype.Name, newPrototype.Name, StringComparison.Ordinal) &&
+            oldPrototype.UsesSelfIndex == newPrototype.UsesSelfIndex)
+        {
+            return IsShapeGrowth(oldPrototype.Shape, newPrototype.Shape);
+        }
+
+        if (previous is not LuaStructuralTableType oldTable ||
+            next is not LuaStructuralTableType newTable)
+        {
+            return false;
+        }
+
+        foreach (var field in oldTable.Fields)
+        {
+            if (field.Name is null)
+            {
+                continue;
+            }
+
+            var replacement = newTable.Fields.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, field.Name, StringComparison.Ordinal));
+            if (replacement is null ||
+                !ReferenceEquals(replacement.ValueType, field.ValueType) &&
+                !string.Equals(replacement.ValueType.DisplayName, field.ValueType.DisplayName,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private void RecordSymbolInference(LuaSymbol symbol, LuaType type)
     {
         if (symbol.IsCaptured)
@@ -706,6 +752,14 @@ internal sealed partial class AnalysisEngine
             {
                 cell = new UpvalueCellState(symbol, type);
                 _upvalueCells.Add(symbol.Id, cell);
+            }
+            else if (IsShapeGrowth(cell.Type, type))
+            {
+                // Captured module/class tables grow member by member. Unioning two
+                // growth stages of one table widens member lookups to unions (or the
+                // empty placeholder) and hides every declared member; a pure growth
+                // step replaces the previous snapshot losslessly.
+                cell.Type = type;
             }
             else
             {

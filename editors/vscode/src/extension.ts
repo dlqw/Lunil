@@ -110,6 +110,7 @@ class LunilClientController implements vscode.Disposable {
       vscode.commands.registerCommand('lunil.showMenu', () => this.showMenu()),
       vscode.commands.registerCommand('lunil.showIndexStatus', () => this.showIndexStatus()),
       vscode.commands.registerCommand('lunil.showHostContract', () => this.showHostContract()),
+      vscode.commands.registerCommand('lunil._suppressDiagnostic', (code: string) => this.suppressDiagnostic(code)),
       vscode.workspace.onDidChangeConfiguration(event => this.configurationChanged(event)),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.start())
     );
@@ -188,6 +189,34 @@ class LunilClientController implements vscode.Disposable {
         initializationOptions: {
           extensionVersion: this.context.extension.packageJSON.version,
           platform: platformRid()
+        },
+        middleware: {
+          provideCodeActions: async (document, range, context, token, next) => {
+            const provided = await next(document, range, context, token);
+            const items: (vscode.CodeAction | vscode.Command)[] =
+              provided === undefined || provided === null
+                ? []
+                : Array.isArray(provided)
+                  ? [...provided]
+                  : [...provided];
+            for (const diagnostic of context.diagnostics) {
+              const code = typeof diagnostic.code === 'string' ? diagnostic.code : undefined;
+              if (code === undefined || !/^LUA\d+$/.test(code)) {
+                continue;
+              }
+              const suppressed = vscode.workspace.getConfiguration('lunil')
+                .get<string[]>('server.suppressedDiagnosticCodes', []);
+              if (suppressed.includes(code)) {
+                continue;
+              }
+              items.push({
+                title: `Suppress ${code} in this workspace (lunil.server.suppressedDiagnosticCodes)`,
+                kind: vscode.CodeActionKind.QuickFix,
+                command: { title: `Suppress ${code}`, command: 'lunil._suppressDiagnostic', arguments: [code] }
+              } as vscode.CodeAction);
+            }
+            return items;
+          }
         },
         errorHandler: {
           error: () => ({ action: ErrorAction.Continue }),
@@ -331,6 +360,22 @@ class LunilClientController implements vscode.Disposable {
     vscode.window.setStatusBarMessage(
       `Lunil: reindexed ${result.modules ?? 0} modules.`,
       4_000);
+    await this.refreshIndexedCount();
+  }
+
+  /** Adds a Lunil diagnostic code to the workspace suppression setting. */
+  private async suppressDiagnostic(code: string): Promise<void> {
+    const configuration = vscode.workspace.getConfiguration('lunil');
+    const current = configuration.get<string[]>('server.suppressedDiagnosticCodes', []);
+    if (current.includes(code)) {
+      vscode.window.setStatusBarMessage(`Lunil: ${code} is already suppressed.`, 4_000);
+      return;
+    }
+    const target = vscode.workspace.workspaceFolders !== undefined
+      ? vscode.ConfigurationTarget.Workspace
+      : vscode.ConfigurationTarget.Global;
+    await configuration.update('server.suppressedDiagnosticCodes', [...current, code], target);
+    vscode.window.setStatusBarMessage(`Lunil: ${code} suppressed.`, 4_000);
   }
 
   private async showHostContract(): Promise<void> {
@@ -399,6 +444,34 @@ class LunilClientController implements vscode.Disposable {
     if (this.state === 'indexing') {
       this.setStatus('running', 'ready');
       this.lastIndexDetail = '';
+    }
+    void this.refreshIndexedCount();
+  }
+
+  /** Ready-state status text: workspace folder and indexed module count. */
+  private async refreshIndexedCount(): Promise<void> {
+    if (this.client === undefined || !this.client.isRunning() || this.state !== 'running') {
+      return;
+    }
+    const showCount = vscode.workspace.getConfiguration('lunil')
+      .get<boolean>('statusBar.showModuleCount', true);
+    try {
+      const status = await this.client.sendRequest('lunil/indexStatus') as { total?: number } | undefined;
+      const folderName = vscode.workspace.workspaceFolders?.[0]?.name;
+      const count = status?.total ?? 0;
+      const parts: string[] = [];
+      if (folderName !== undefined && folderName !== '') {
+        parts.push(folderName);
+      }
+      if (showCount) {
+        parts.push(`${count} module${count === 1 ? '' : 's'}`);
+      }
+      this.stateText = parts.length > 0 ? parts.join(' · ') : 'ready';
+      this.status.text = statusIcon('running', this.stateText);
+      this.status.tooltip = `Lunil: ready · ${folderName ?? 'no folder'} · ${count} indexed` +
+        (this.lastIndexDetail === '' ? '' : ` · ${this.lastIndexDetail}`);
+    } catch {
+      // Index status is best-effort; keep the plain ready text.
     }
   }
 
@@ -594,7 +667,8 @@ function configurationObject(configuration: vscode.WorkspaceConfiguration): Reco
     hostContractPath: configuration.get<string>('hostContractPath', ''),
     hostContractJson: configuration.get<string>('hostContractJson', ''),
     server: {
-      trace: configuration.get<string>('server.trace', 'off')
+      trace: configuration.get<string>('server.trace', 'off'),
+      suppressedDiagnosticCodes: configuration.get<string[]>('server.suppressedDiagnosticCodes', [])
     }
   };
 }

@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0-alpha.3",
+  "version": "0.17.0-alpha.4",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -200,6 +200,13 @@
           "scope": "resource",
           "order": 6,
           "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
+        },
+        "lunil.statusBar.showModuleCount": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "order": 7,
+          "markdownDescription": "Show the indexed module count in the Lunil status item once indexing completes. The workspace folder name is shown alongside it."
         }
       }
     },

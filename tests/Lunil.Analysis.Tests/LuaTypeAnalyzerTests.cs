@@ -752,6 +752,32 @@ public sealed class LuaTypeAnalyzerTests
             item.Symbol.Name == "created" && item.InferredType.DisplayName == "Vector");
     }
 
+    [Fact]
+    public void UnannotatedConstructorReturnsMetatableInstance()
+    {
+        var result = Analyze(
+            """
+            local Dog = {}
+            Dog.__index = Dog
+            function Dog.new(name)
+                return setmetatable({}, Dog)
+            end
+            function Dog:fetch()
+                return "ball"
+            end
+            local dog = Dog.new("rex")
+            local ball = dog.fetch()
+            return ball
+            """);
+
+        var dog = result.Symbols.Single(static item => item.Symbol.Name == "dog");
+        var instance = Assert.IsType<LuaMetatableType>(dog.InferredType);
+        // The instance carries the class table as its metatable so members resolve
+        // through the receiver; call-through return refinement on rebuilt instances
+        // remains a later refinement.
+        Assert.Equal(LuaTypeKind.Prototype, instance.MetatableType.Kind);
+    }
+
     private static LuaAnalysisResult Analyze(
         string source,
         LuaAnalysisOptions? options = null,

@@ -362,10 +362,12 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return new JsonArray();
         }
 
-        return new JsonArray(context.Analysis.Compilation.SemanticModel.Symbols
-            .Where(static symbol => symbol.Kind != LuaSymbolKind.Environment)
-            .OrderBy(static symbol => symbol.DeclaringSpan.Start)
-            .Select(symbol => (JsonNode)new JsonObject
+        var builder = ImmutableArray.CreateBuilder<JsonObject>();
+        foreach (var symbol in context.Analysis.Compilation.SemanticModel.Symbols
+                     .Where(static symbol => symbol.Kind != LuaSymbolKind.Environment)
+                     .OrderBy(static symbol => symbol.DeclaringSpan.Start))
+        {
+            builder.Add(new JsonObject
             {
                 ["name"] = symbol.Name,
                 ["detail"] = GetType(context.Analysis, symbol)?.DisplayName,
@@ -374,7 +376,42 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     NormalizeDeclaringSpan(symbol, context.Analysis.Document))),
                 ["selectionRange"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(
                     NormalizeDeclaringSpan(symbol, context.Analysis.Document))),
-            }).ToArray());
+            });
+        }
+
+        // Table-assigned functions (function M.f, function C:m, M.f = function) are
+        // member writes, not lexical symbols; surface them so the outline reflects
+        // the module's real API without annotations.
+        var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var member in context.Analysis.Compilation.SemanticModel.UnifiedReferences
+                     .Where(static reference => reference.Kind == LuaReferenceKind.Member &&
+                         reference.Access.HasFlag(LuaReferenceAccess.Write) &&
+                         !string.IsNullOrEmpty(reference.Name))
+                     .OrderBy(static reference => reference.Span.Start))
+        {
+            if (!seenMembers.Add(member.Name!))
+            {
+                continue;
+            }
+
+            var memberType = ResolveMemberType(context.Analysis, member);
+            if (memberType is not (LuaFunctionType or LuaOverloadType))
+            {
+                continue;
+            }
+
+            var range = context.Analysis.Document.ToRange(member.Span);
+            builder.Add(new JsonObject
+            {
+                ["name"] = member.Name!,
+                ["detail"] = memberType.DisplayName,
+                ["kind"] = 12,
+                ["range"] = LanguageServerWorkspace.ToJson(range),
+                ["selectionRange"] = LanguageServerWorkspace.ToJson(range),
+            });
+        }
+
+        return new JsonArray(builder.ToArray());
     }
 
     public JsonNode WorkspaceSymbols(string query)

@@ -233,6 +233,74 @@ public sealed class LanguageServerTests
         Assert.Contains(3, memberTypes);
     }
 
+    private static readonly string[] UnannotatedClassHoverLines =
+    [
+        "local Animal = {}",
+        "Animal.__index = Animal",
+        "function Animal.new(name) return setmetatable({}, Animal) end",
+        "function Animal:speak() return self.name .. \"...\" end",
+        "local Dog = setmetatable({}, { __index = Animal })",
+        "Dog.__index = Dog",
+        "function Dog.new(name) return setmetatable({}, Dog) end",
+        "function Dog:fetch() return \"ball\" end",
+        "local dog = Dog.new(\"rex\")",
+        "return dog",
+    ];
+
+    private static readonly string[] UnannotatedClassCompletionLines =
+    [
+        "local Dog = {}",
+        "Dog.__index = Dog",
+        "function Dog.new(name) return setmetatable({}, Dog) end",
+        "function Dog:fetch() return \"ball\" end",
+        "function Dog:bark() return \"woof\" end",
+        "local dog = Dog.new(\"rex\")",
+        "local sound = dog.",
+        "return sound",
+    ];
+
+    [Fact]
+    public async Task UnannotatedMetatableClassesProvideInstanceTypesAndOutline()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///oop.lua");
+        workspace.Open(uri, 1, string.Join("\n", UnannotatedClassHoverLines));
+        var service = new LuaLanguageService(workspace);
+
+        // Instance hover shows the constructor-inferred metatable type.
+        var hover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 9, character = 11 },
+        }), CancellationToken.None);
+        Assert.NotNull(hover);
+        Assert.DoesNotContain("any", hover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        // Member completion on the instance lists own and __index-inherited members.
+        workspace.Open(uri, 2, string.Join("\n", UnannotatedClassCompletionLines));
+        var completion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 6, character = 18 },
+        }), CancellationToken.None);
+        var labels = completion!["items"]!.AsArray()
+            .Select(item => item!["label"]!.GetValue<string>()).ToArray();
+        Assert.Contains("fetch", labels);
+        Assert.Contains("bark", labels);
+        Assert.Contains("new", labels);
+
+        // Outline includes table-assigned functions without annotations.
+        var symbols = await service.DocumentSymbolsAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+        }), CancellationToken.None);
+        var names = symbols!.AsArray().Select(item => item!["name"]!.GetValue<string>()).ToArray();
+        Assert.Contains("fetch", names);
+        Assert.Contains("bark", names);
+        Assert.Contains("new", names);
+    }
+
     [Fact]
     public async Task HoverReferencesAndCapturedLocalRenameUseStableBinding()
     {
