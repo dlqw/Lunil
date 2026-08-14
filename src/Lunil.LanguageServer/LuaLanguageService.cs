@@ -28,38 +28,56 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return new JsonArray();
         }
 
-        var items = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var keyword in Keywords)
+        var before = context.Analysis.Document.Text.AsSpan(0,
+            context.Analysis.Document.ToCharOffset(context.Position)).ToString();
+        var contextual = BuildContextualCompletion(context.Analysis, context.ByteOffset, before);
+        if (contextual.Handled)
         {
-            items[keyword] = CompletionItem(keyword, 14, "Lua keyword");
+            return new JsonObject
+            {
+                ["isIncomplete"] = false,
+                ["items"] = new JsonArray(contextual.Items.Select(static item => (JsonNode)CompletionItem(
+                    item.Label, item.Kind, item.Detail, item.SortText)).ToArray()),
+            };
         }
 
+        // Generic context: file-local symbols first, workspace exports next, keywords last.
+        var items = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var symbol in context.Analysis.Compilation.SemanticModel.Symbols.Where(static symbol =>
                      symbol.Kind != LuaSymbolKind.Environment))
         {
             var type = GetType(context.Analysis, symbol)?.DisplayName ?? symbol.Kind.ToString();
+            var isFunction = type.StartsWith("fun(", StringComparison.Ordinal);
             items[symbol.Name] = CompletionItem(
                 symbol.Name,
-                type.StartsWith("fun(", StringComparison.Ordinal) ? 3 : 6,
-                type);
+                isFunction ? 3 : 6,
+                type,
+                (isFunction ? "1" : "2") + symbol.Name);
         }
 
         var snapshot = workspace.GetSnapshot();
         if (snapshot is not null)
         {
-            foreach (var symbol in snapshot.ExportGraph.Symbols)
+            foreach (var symbol in snapshot.ExportGraph.Symbols.Where(static symbol =>
+                         !symbol.Path.Contains('.', StringComparison.Ordinal)))
             {
                 items.TryAdd(symbol.Name, CompletionItem(
                     symbol.Name,
                     symbol.Kind == LuaWorkspaceExportKind.Function ? 3 : 6,
-                    $"{symbol.ModuleName}.{symbol.Path}: {symbol.Type.DisplayName}"));
+                    $"{symbol.ModuleName}.{symbol.Path}: {symbol.Type.DisplayName}",
+                    (symbol.Kind == LuaWorkspaceExportKind.Function ? "1" : "2") + symbol.Name));
             }
+        }
+
+        foreach (var keyword in Keywords)
+        {
+            items.TryAdd(keyword, CompletionItem(keyword, 14, "Lua keyword", "3" + keyword));
         }
 
         return new JsonObject
         {
             ["isIncomplete"] = snapshot is null,
-            ["items"] = new JsonArray(items.Values.OrderBy(static item => item["label"]!.GetValue<string>(),
+            ["items"] = new JsonArray(items.Values.OrderBy(static item => item["sortText"]!.GetValue<string>(),
                 StringComparer.Ordinal).Select(static item => (JsonNode)item).ToArray()),
         };
     }
@@ -75,6 +93,27 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var reference = FindReference(context.Analysis, context.ByteOffset);
         if (reference is null)
         {
+            // Hover over a member reference shows the inferred member type.
+            var codeReference = FindCodeReference(context.Analysis, context.ByteOffset);
+            if (codeReference is not null && IsNamedMember(codeReference))
+            {
+                var memberType = ResolveMemberType(context.Analysis, codeReference);
+                if (memberType is null)
+                {
+                    return null;
+                }
+
+                return new JsonObject
+                {
+                    ["contents"] = new JsonObject
+                    {
+                        ["kind"] = "markdown",
+                        ["value"] = $"```lua\n{codeReference.Name}: {memberType.DisplayName}\n```\nmember",
+                    },
+                    ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(codeReference.Span)),
+                };
+            }
+
             return null;
         }
 
@@ -135,6 +174,17 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return null;
         }
 
+        // Cursor inside a require("...") string opens the required module.
+        if (FindRequireAt(context.Analysis, context.ByteOffset) is { } required)
+        {
+            if (workspace.GetUri(required.ModuleName) is { } moduleUri)
+            {
+                return Location(moduleUri, new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)));
+            }
+
+            return null;
+        }
+
         var snapshot = workspace.GetSnapshot();
         var call = snapshot?.CallBindings.Edges.FirstOrDefault(edge =>
             edge.SourceModuleName == context.Analysis.Module.Name && Contains(edge.Span, context.ByteOffset));
@@ -157,6 +207,17 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
         }
 
+        // Member references (.field, :method, ["key"]) resolve through module exports
+        // and same-file member writes; lexical name references continue below.
+        var codeReference = FindCodeReference(context.Analysis, context.ByteOffset);
+        if (codeReference is not null && IsNamedMember(codeReference))
+        {
+            var memberDefinition = ResolveMemberDefinition(context.Analysis, codeReference);
+            return memberDefinition is null
+                ? null
+                : Location(memberDefinition.Uri, memberDefinition.Range);
+        }
+
         var reference = FindReference(context.Analysis, context.ByteOffset);
         if (reference is null || reference.Symbol.Kind == LuaSymbolKind.Environment)
         {
@@ -176,15 +237,61 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
-        if (reference is null || reference.Symbol.Kind == LuaSymbolKind.Environment)
+        if (reference is not null && reference.Symbol.Kind != LuaSymbolKind.Environment)
         {
-            return new JsonArray();
+            var includeDeclaration = parameters.TryGetProperty("context", out var referenceContext) &&
+                referenceContext.TryGetProperty("includeDeclaration", out var include) && include.GetBoolean();
+            var locations = GetReferenceLocations(context.Analysis, reference, includeDeclaration);
+            return new JsonArray(locations.Select(static location => (JsonNode)location).ToArray());
         }
 
-        var includeDeclaration = parameters.TryGetProperty("context", out var referenceContext) &&
-            referenceContext.TryGetProperty("includeDeclaration", out var include) && include.GetBoolean();
-        var locations = GetReferenceLocations(context.Analysis, reference, includeDeclaration);
-        return new JsonArray(locations.Select(static location => (JsonNode)location).ToArray());
+        // Member references: same-file occurrences plus cross-module export hits when
+        // the member resolves to a workspace export.
+        var codeReference = FindCodeReference(context.Analysis, context.ByteOffset);
+        if (codeReference is not null && IsNamedMember(codeReference))
+        {
+            var name = codeReference.Name!;
+            var builder = ImmutableArray.CreateBuilder<JsonObject>();
+            foreach (var item in context.Analysis.Compilation.SemanticModel.UnifiedReferences.Where(item =>
+                         string.Equals(item.Name, name, StringComparison.Ordinal)))
+            {
+                builder.Add(Location(context.Analysis.Document.Uri,
+                    context.Analysis.Document.ToRange(item.Span)));
+            }
+
+            var aliases = BuildRequireAliases(context.Analysis);
+            var receiver = ResolveReceiverSymbol(context.Analysis, codeReference);
+            if (receiver is not null && aliases.TryGetValue(receiver.Id, out var moduleName))
+            {
+                var exported = FindExportSymbol(moduleName, name);
+                if (exported is not null && workspace.GetSnapshot() is { } snapshot)
+                {
+                    // The definition itself is reported so "find references" on a member
+                    // shows where it is defined, matching editor expectations.
+                    if (workspace.GetUri(exported.ModuleName) is { } exportUri &&
+                        workspace.TryGetDocument(exportUri, out var exportDocument))
+                    {
+                        builder.Add(Location(exportUri, exportDocument.ToRange(exported.DefinitionSpan)));
+                    }
+
+                    var key = new LuaSymbolKey(exported.FunctionKey ?? exported.Key);
+                    foreach (var item in snapshot.FindReferences(key))
+                    {
+                        var uri = workspace.GetUri(item.Module.Name);
+                        if (uri is not null && workspace.TryGetDocument(uri, out var document))
+                        {
+                            builder.Add(Location(uri, document.ToRange(item.Span)));
+                        }
+                    }
+                }
+            }
+
+            return new JsonArray(builder
+                .DistinctBy(static location => location.ToJsonString())
+                .Select(static location => (JsonNode)location).ToArray());
+        }
+
+        return new JsonArray();
     }
 
     public async Task<JsonNode?> PrepareRenameAsync(JsonElement parameters, CancellationToken cancellationToken)
@@ -548,19 +655,35 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
     private static ImmutableArray<int> BuildSemanticTokens(LanguageDocumentAnalysis analysis)
     {
-        var tokens = analysis.Compilation.SemanticModel.References
+        // Name references and member/index references are both highlighted; member
+        // tokens distinguish method calls, plain calls, and plain field accesses.
+        var tokens = analysis.Compilation.SemanticModel.UnifiedReferences
             .Select(reference =>
             {
                 var range = analysis.Document.ToRange(reference.Span);
-                var type = reference.Symbol.Kind switch
+                int type;
+                int modifiers = (reference.Access.HasFlag(LuaReferenceAccess.Write) ? 4 : 0) |
+                    (reference.LexicalReference?.Symbol.IsReadOnly == true ? 2 : 0) |
+                    (reference.LexicalReference?.Symbol.IsCaptured == true ? 8 : 0);
+                if (reference.LexicalReference is { } lexical)
                 {
-                    LuaSymbolKind.Parameter => 1,
-                    LuaSymbolKind.Global => 3,
-                    _ => GetType(analysis, reference.Symbol) is LuaFunctionType ? 2 : 0,
-                };
-                var modifiers = (reference.IsWrite ? 1 : 0) |
-                    (reference.Symbol.IsReadOnly ? 2 : 0) |
-                    (reference.Symbol.IsCaptured ? 4 : 0);
+                    type = lexical.Symbol.Kind switch
+                    {
+                        LuaSymbolKind.Parameter => 1,
+                        LuaSymbolKind.Global => 3,
+                        _ => GetType(analysis, lexical.Symbol) is LuaFunctionType ? 2 : 0,
+                    };
+                }
+                else
+                {
+                    type = reference.Access switch
+                    {
+                        var access when access.HasFlag(LuaReferenceAccess.MethodCall) => 4,
+                        var access when access.HasFlag(LuaReferenceAccess.Call) => 2,
+                        _ => 3,
+                    };
+                }
+
                 return (range.Start.Line, range.Start.Character,
                     Math.Max(1, range.End.Character - range.Start.Character), type, modifiers);
             })
@@ -615,12 +738,12 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     private static bool Contains(Lunil.Core.Text.TextSpan span, int offset) =>
         offset >= span.Start && offset <= span.End;
 
-    private static JsonObject CompletionItem(string label, int kind, string detail) => new()
+    private static JsonObject CompletionItem(string label, int kind, string detail, string? sortText = null) => new()
     {
         ["label"] = label,
         ["kind"] = kind,
         ["detail"] = detail,
-        ["sortText"] = label,
+        ["sortText"] = sortText ?? label,
     };
 
     private static JsonObject Location(Uri uri, LspRange range) => new()

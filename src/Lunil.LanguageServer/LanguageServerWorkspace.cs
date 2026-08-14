@@ -33,7 +33,13 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private static readonly string[] ExcludedDirectories =
         [".git", ".svn", "bin", "obj", "node_modules", ".vscode", ".idea"];
     private readonly object _gate = new();
-    private readonly LuaFrontEndSession _frontEnd = new();
+    private readonly LuaFrontEndSession _frontEnd = new(new LuaCompilerOptions
+    {
+        // Single-document analysis (open files outside an indexed workspace) uses the
+        // same unified reference projection as workspace modules so member navigation,
+        // semantic tokens, and completion behave identically in both paths.
+        Binder = LuaBinderOptions.Default with { CollectCodeReferences = true },
+    });
     private readonly Dictionary<string, LspTextDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LanguageDocumentAnalysis> _analyses = new(StringComparer.Ordinal);
     private ImmutableArray<Uri> _folders = [];
@@ -155,6 +161,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         UpdateDocumentTypeDeclarations(uri.AbsoluteUri, text);
+        // An opened document is itself a declarations source. Registered folders that are
+        // empty or missing on disk would otherwise leave the declaration gate closed
+        // forever, and every subsequent analysis request would hang waiting for it.
+        SignalDeclarationsReady();
         if (_folders.IsEmpty)
         {
             // No workspace folder was registered (for example a single-file session). Scan the

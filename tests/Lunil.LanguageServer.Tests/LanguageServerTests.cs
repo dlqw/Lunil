@@ -111,6 +111,129 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task MemberNavigationResolvesModuleExportsAndRequireStrings()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var utilUri = new Uri("file:///src/lib/util.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(utilUri, 1,
+            "local M = {}\nfunction M.greet(name) return name end\nM.version = 2\nreturn M");
+        workspace.Open(appUri, 1,
+            "local util = require(\"lib.util\")\nreturn util.greet(util.version)");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var definition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(definition);
+        Assert.Equal(utilUri.AbsoluteUri, definition!["uri"]!.GetValue<string>());
+        Assert.Equal(1, definition["range"]!["start"]!["line"]!.GetValue<int>());
+
+        var fieldDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 27 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(fieldDefinition);
+        Assert.Equal(utilUri.AbsoluteUri, fieldDefinition!["uri"]!.GetValue<string>());
+
+        var requireDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 26 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(requireDefinition);
+        Assert.Equal(utilUri.AbsoluteUri, requireDefinition!["uri"]!.GetValue<string>());
+
+        var references = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), CancellationToken.None);
+        Assert.Contains(references!.AsArray(),
+            location => location!["uri"]!.GetValue<string>() == utilUri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task CompletionUsesMemberAndRequireContexts()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var utilUri = new Uri("file:///src/lib/util.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(utilUri, 1,
+            "local M = {}\nfunction M.greet(name) return name end\nM.version = 2\nreturn M");
+        workspace.Open(appUri, 1,
+            "local util = require(\"lib.util\")\nlocal x = util.");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var memberCompletion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 15 },
+        }), CancellationToken.None);
+        var memberLabels = memberCompletion!["items"]!.AsArray()
+            .Select(item => item!["label"]!.GetValue<string>()).ToArray();
+        Assert.Contains("greet", memberLabels);
+        Assert.Contains("version", memberLabels);
+        Assert.DoesNotContain("function", memberLabels);
+
+        var methodCompletion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 15 },
+            context = new { triggerCharacter = ":" },
+        }), CancellationToken.None);
+        _ = methodCompletion;
+
+        workspace.Open(appUri, 2, "local util = require(\"");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var requireCompletion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 22 },
+        }), CancellationToken.None);
+        var requireLabels = requireCompletion!["items"]!.AsArray()
+            .Select(item => item!["label"]!.GetValue<string>()).ToArray();
+        Assert.Contains("lib.util", requireLabels);
+        Assert.DoesNotContain("local", requireLabels);
+    }
+
+    [Fact]
+    public async Task SemanticTokensIncludeMemberReferences()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///members.lua");
+        workspace.Open(uri, 1,
+            "local t = {}\nt.value = 1\nlocal function run() return t.value end\nreturn t.value");
+        var service = new LuaLanguageService(workspace);
+        var tokens = await service.SemanticTokensAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+        }), false, CancellationToken.None);
+        var data = tokens!["data"]!.AsArray().Select(static value => value!.GetValue<int>()).ToArray();
+        Assert.NotEmpty(data);
+        // Every reference (names and members) contributes a token; member accesses
+        // must be present beyond the plain lexical references.
+        Assert.True(data.Length / 5 >= 6, $"expected at least 6 tokens, got {data.Length / 5}");
+        var memberTypes = new HashSet<int>();
+        for (var index = 0; index < data.Length; index += 5)
+        {
+            memberTypes.Add(data[index + 3]);
+        }
+
+        Assert.Contains(3, memberTypes);
+    }
+
+    [Fact]
     public async Task HoverReferencesAndCapturedLocalRenameUseStableBinding()
     {
         using var workspace = new LanguageServerWorkspace();

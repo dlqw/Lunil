@@ -189,8 +189,8 @@ internal sealed class LuaLanguageServer : IDisposable
         {
             ["legend"] = new JsonObject
             {
-                ["tokenTypes"] = new JsonArray("variable", "parameter", "function", "property"),
-                ["tokenModifiers"] = new JsonArray("declaration", "readonly", "modification"),
+                ["tokenTypes"] = new JsonArray("variable", "parameter", "function", "property", "method"),
+                ["tokenModifiers"] = new JsonArray("declaration", "readonly", "modification", "captured"),
             },
             ["range"] = false,
             ["full"] = new JsonObject { ["delta"] = true },
