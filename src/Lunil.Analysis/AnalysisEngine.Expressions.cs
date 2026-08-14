@@ -122,7 +122,7 @@ internal sealed partial class AnalysisEngine
         {
             if (!_upvalueCells.TryGetValue(reference.Symbol.Id, out var cell))
             {
-                var initial = state.Types.GetValueOrDefault(
+                var initial = state.TypeOf(
                     key,
                     _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
                 cell = new UpvalueCellState(reference.Symbol, initial);
@@ -130,9 +130,9 @@ internal sealed partial class AnalysisEngine
             }
 
             cell.Readers.Add(_currentFunction?.FunctionId ?? 0);
-            state.Types[key] = cell.Type;
+            state.SetType(key, cell.Type);
         }
-        if (!key.IsGlobal && !state.Assigned.Contains(key))
+        if (!key.IsGlobal && !state.IsAssigned(key))
         {
             _context.AddDiagnostic(
                 "LUA6008",
@@ -140,7 +140,7 @@ internal sealed partial class AnalysisEngine
                 $"Local '{reference.Name}' may be read before an explicit assignment.");
         }
 
-        if (state.Types.TryGetValue(key, out var type))
+        if (state.TryGetType(key, out var type))
         {
             return type;
         }
@@ -1697,25 +1697,30 @@ internal sealed partial class AnalysisEngine
             return;
         }
 
-        foreach (var key in state.Types.Keys.ToArray())
+        var keys = new List<VariableKey>();
+        foreach (var key in state.EnumerateTypeKeys())
+        {
+            keys.Add(key);
+        }
+
+        foreach (var key in keys)
         {
             if (key == assignedKey)
             {
                 continue;
             }
 
-            var current = state.Types[key];
+            var current = state.TypeOf(key, LuaTypes.Any);
             var replaced = ReplaceTypeReference(current, previous, next, depth: 0);
             if (ReferenceEquals(current, replaced))
             {
                 continue;
             }
 
-            state.Types[key] = replaced;
+            state.SetType(key, replaced);
             if (!key.IsGlobal)
             {
-                var symbol = _semantics.Symbols.FirstOrDefault(candidate => candidate.Id == key.SymbolId);
-                if (symbol is not null)
+                if (_symbolsById.TryGetValue(key.SymbolId, out var symbol))
                 {
                     RecordSymbolInference(symbol, replaced);
                 }
@@ -1794,7 +1799,7 @@ internal sealed partial class AnalysisEngine
         foreach (var argument in arguments)
         {
             if (!TryGetVariableKey(argument, out var key, out var symbol) ||
-                !state.Types.TryGetValue(key, out var current))
+                !state.TryGetType(key, out var current))
             {
                 continue;
             }

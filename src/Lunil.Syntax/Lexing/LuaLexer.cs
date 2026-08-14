@@ -36,10 +36,11 @@ public static class LuaLexer
     {
         private readonly SourceText _source;
         private readonly LuaLexerOptions _options;
-        private readonly ImmutableArray<LuaSyntaxToken>.Builder _tokens =
-            ImmutableArray.CreateBuilder<LuaSyntaxToken>();
+        private readonly ImmutableArray<LuaSyntaxToken>.Builder _tokens;
         private readonly ImmutableArray<Diagnostic>.Builder _diagnostics =
             ImmutableArray.CreateBuilder<Diagnostic>();
+        private readonly ImmutableArray<LuaSyntaxTrivia>.Builder _trivia =
+            ImmutableArray.CreateBuilder<LuaSyntaxTrivia>();
         private int _position;
         private bool _canReadShebang = true;
 
@@ -47,6 +48,10 @@ public static class LuaLexer
         {
             _source = source;
             _options = options;
+            // Typical Lua source averages several bytes per token; presizing avoids the
+            // builder's early growth reallocations for large chunks.
+            _tokens = ImmutableArray.CreateBuilder<LuaSyntaxToken>(
+                Math.Min(source.Length / 4 + 16, options.MaximumTokenCount));
         }
 
         public LuaLexResult Lex()
@@ -85,27 +90,37 @@ public static class LuaLexer
                     throw new InvalidOperationException("The Lua lexer failed to make progress.");
                 }
 
-                var token = new LuaSyntaxToken(
-                    kind,
-                    TextSpan.FromBounds(start, _position),
-                    leadingTrivia);
-
+                var span = TextSpan.FromBounds(start, _position);
+                LuaSyntaxToken token;
                 if (kind is LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral)
                 {
+                    // Decoding before construction keeps one token object per literal
+                    // instead of allocating a record clone to attach the value.
                     var decoded = LuaStringLiteralDecoder.Decode(
                         _source,
-                        token,
+                        span,
+                        kind,
                         _options.LanguageVersion);
-                    token = token with { Value = decoded.Value };
+                    token = new LuaSyntaxToken(kind, span, leadingTrivia)
+                    {
+                        Value = decoded.Value,
+                    };
                     foreach (var diagnostic in decoded.Diagnostics)
                     {
                         AddDiagnostic(diagnostic);
                     }
                 }
                 else if (kind == LuaTokenKind.NumericLiteral &&
-                         LuaNumericLiteralDecoder.TryDecode(_source.GetSpan(token.Span), out var number))
+                         LuaNumericLiteralDecoder.TryDecode(_source.GetSpan(span), out var number))
                 {
-                    token = token with { Value = number };
+                    token = new LuaSyntaxToken(kind, span, leadingTrivia)
+                    {
+                        Value = number,
+                    };
+                }
+                else
+                {
+                    token = new LuaSyntaxToken(kind, span, leadingTrivia);
                 }
 
                 _tokens.Add(token);
@@ -123,7 +138,7 @@ public static class LuaLexer
 
         private ImmutableArray<LuaSyntaxTrivia> ReadLeadingTrivia()
         {
-            var trivia = ImmutableArray.CreateBuilder<LuaSyntaxTrivia>();
+            _trivia.Count = 0;
             while (_position < _source.Length)
             {
                 var start = _position;
@@ -133,7 +148,7 @@ public static class LuaLexer
                     Current == 0xef && Peek(1) == 0xbb && Peek(2) == 0xbf)
                 {
                     _position += 3;
-                    trivia.Add(CreateTrivia(LuaTriviaKind.Utf8ByteOrderMark, start));
+                    _trivia.Add(CreateTrivia(LuaTriviaKind.Utf8ByteOrderMark, start));
                     continue;
                 }
 
@@ -145,7 +160,7 @@ public static class LuaLexer
                     }
 
                     _canReadShebang = false;
-                    trivia.Add(CreateTrivia(LuaTriviaKind.Shebang, start));
+                    _trivia.Add(CreateTrivia(LuaTriviaKind.Shebang, start));
                     continue;
                 }
 
@@ -158,7 +173,7 @@ public static class LuaLexer
                     while (_position < _source.Length && IsHorizontalWhitespace(Current));
 
                     _canReadShebang = false;
-                    trivia.Add(CreateTrivia(LuaTriviaKind.Whitespace, start));
+                    _trivia.Add(CreateTrivia(LuaTriviaKind.Whitespace, start));
                     continue;
                 }
 
@@ -166,7 +181,7 @@ public static class LuaLexer
                 {
                     ReadNewLine();
                     _canReadShebang = false;
-                    trivia.Add(CreateTrivia(LuaTriviaKind.EndOfLine, start));
+                    _trivia.Add(CreateTrivia(LuaTriviaKind.EndOfLine, start));
                     continue;
                 }
 
@@ -181,7 +196,7 @@ public static class LuaLexer
                             start,
                             "LUA1005",
                             "Unterminated long comment.");
-                        trivia.Add(CreateTrivia(LuaTriviaKind.LongComment, start));
+                        _trivia.Add(CreateTrivia(LuaTriviaKind.LongComment, start));
                     }
                     else
                     {
@@ -190,7 +205,7 @@ public static class LuaLexer
                             _position++;
                         }
 
-                        trivia.Add(CreateTrivia(LuaTriviaKind.Comment, start));
+                        _trivia.Add(CreateTrivia(LuaTriviaKind.Comment, start));
                     }
 
                     _canReadShebang = false;
@@ -200,7 +215,11 @@ public static class LuaLexer
                 break;
             }
 
-            return trivia.ToImmutable();
+            // Tokens without leading trivia share the empty array; only tokens that
+            // actually collected trivia pay for an immutable snapshot.
+            return _trivia.Count == 0
+                ? ImmutableArray<LuaSyntaxTrivia>.Empty
+                : _trivia.ToImmutable();
         }
 
         private LuaTokenKind ReadToken()

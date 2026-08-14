@@ -138,6 +138,8 @@ public static class LuaLowerer
             private readonly FunctionBuilder? _parent;
             private readonly List<LuaIrInstruction> _instructions = [];
             private readonly List<LuaIrConstant> _constants = [];
+            private readonly Dictionary<LuaIrConstant, int> _constantIndex =
+                new(ConstantComparer.Instance);
             private readonly List<LuaIrUpvalue> _upvalues = [];
             private readonly Dictionary<int, int> _upvalueBySymbol = [];
             private readonly Dictionary<int, int> _symbolRegisters = [];
@@ -175,13 +177,13 @@ public static class LuaLowerer
                     0,
                     0,
                     span: body.Span,
-                    sourceLine: _owner._model.Syntax.Source.GetLocation(terminalOffset).Line + 1));
+                    sourceLine: _owner._model.Syntax.Source.GetLineIndex(terminalOffset) + 1));
                 ResolveGotos();
             }
 
             public LuaIrFunction Build()
             {
-                var code = _instructions.ToImmutableArray();
+                var code = ToExactSizeImmutable(_instructions);
                 if (_maximumRegister > 255)
                 {
                     _owner._diagnostics.Add(new Diagnostic(
@@ -196,6 +198,15 @@ public static class LuaLowerer
                     local.EndProgramCounter ??= code.Length;
                 }
 
+                var parameterCount = 0;
+                foreach (var symbol in _info.Symbols)
+                {
+                    if (symbol.Kind == LuaSymbolKind.Parameter)
+                    {
+                        parameterCount++;
+                    }
+                }
+
                 return new LuaIrFunction
                 {
                     Id = _info.Id,
@@ -203,16 +214,15 @@ public static class LuaLowerer
                     Span = _info.Span,
                     LineDefined = _info.Id == 0
                         ? 0
-                        : _owner._model.Syntax.Source.GetLocation(_info.Span.Start).Line + 1,
+                        : _owner._model.Syntax.Source.GetLineIndex(_info.Span.Start) + 1,
                     LastLineDefined = _info.Id == 0
                         ? 0
-                        : _owner._model.Syntax.Source.GetLocation(_info.Span.End).Line + 1,
-                    ParameterCount = _info.Symbols.Count(static symbol =>
-                        symbol.Kind == LuaSymbolKind.Parameter),
+                        : _owner._model.Syntax.Source.GetLineIndex(_info.Span.End) + 1,
+                    ParameterCount = parameterCount,
                     IsVarArg = _info.IsVarArg,
                     RegisterCount = Math.Max(_maximumRegister, 1),
-                    Constants = _constants.ToImmutableArray(),
-                    Upvalues = _upvalues.ToImmutableArray(),
+                    Constants = ToExactSizeImmutable(_constants),
+                    Upvalues = ToExactSizeImmutable(_upvalues),
                     Instructions = code,
                     LocalVariables =
                     [
@@ -225,12 +235,38 @@ public static class LuaLowerer
                 };
             }
 
+            /// <summary>Copies a list into an immutable array of exactly its size.</summary>
+            private static ImmutableArray<T> ToExactSizeImmutable<T>(List<T> items)
+            {
+                var builder = ImmutableArray.CreateBuilder<T>(items.Count);
+                foreach (var item in items)
+                {
+                    builder.Add(item);
+                }
+
+                return builder.MoveToImmutable();
+            }
+
             private void InitializeUpvalues()
             {
                 if (_parent is null)
                 {
-                    var environment = _info.Symbols.Single(static symbol =>
-                        symbol.Kind == LuaSymbolKind.Environment);
+                    LuaSymbol? environment = null;
+                    foreach (var symbol in _info.Symbols)
+                    {
+                        if (symbol.Kind == LuaSymbolKind.Environment)
+                        {
+                            environment = symbol;
+                            break;
+                        }
+                    }
+
+                    if (environment is null)
+                    {
+                        throw new InvalidOperationException(
+                            "The bound function is missing its implicit _ENV symbol.");
+                    }
+
                     AddUpvalue(environment, LuaIrUpvalueSourceKind.Environment, 0);
                     return;
                 }
@@ -1016,12 +1052,23 @@ public static class LuaLowerer
                 return source[common];
             }
 
-            private int[] ActiveRegisters() =>
-                [
-                    .. _activeSymbolIds.Select(symbolId => _symbolRegisters[symbolId])
-                        .Concat(_activeSyntheticCloseRegisters)
-                        .OrderBy(static value => value),
-                ];
+            private int[] ActiveRegisters()
+            {
+                var values = new int[_activeSymbolIds.Count + _activeSyntheticCloseRegisters.Count];
+                var count = 0;
+                foreach (var symbolId in _activeSymbolIds)
+                {
+                    values[count++] = _symbolRegisters[symbolId];
+                }
+
+                for (var index = 0; index < _activeSyntheticCloseRegisters.Count; index++)
+                {
+                    values[count++] = _activeSyntheticCloseRegisters[index];
+                }
+
+                Array.Sort(values);
+                return values;
+            }
 
             private void LowerExpressionList(LuaSyntaxNode list, int destination, int resultCount)
             {
@@ -1414,32 +1461,40 @@ public static class LuaLowerer
 
             private int GetOrAddConstant(LuaIrConstant value)
             {
-                var index = FindConstant(value);
-                if (index >= 0)
+                if (_constantIndex.TryGetValue(value, out var index))
                 {
                     return index;
                 }
 
                 index = _constants.Count;
                 _constants.Add(value);
+                _constantIndex.Add(value, index);
                 return index;
             }
 
-            private int FindConstant(LuaIrConstant value)
+            private sealed class ConstantComparer : IEqualityComparer<LuaIrConstant>
             {
-                for (var index = 0; index < _constants.Count; index++)
-                {
-                    var candidate = _constants[index];
-                    if (candidate.Kind == value.Kind && candidate.Integer == value.Integer &&
-                        BitConverter.DoubleToInt64Bits(candidate.Float) ==
-                        BitConverter.DoubleToInt64Bits(value.Float) &&
-                        candidate.Bytes.AsSpan().SequenceEqual(value.Bytes.AsSpan()))
-                    {
-                        return index;
-                    }
-                }
+                public static ConstantComparer Instance { get; } = new();
 
-                return -1;
+                public bool Equals(LuaIrConstant x, LuaIrConstant y) =>
+                    x.Kind == y.Kind &&
+                    x.Integer == y.Integer &&
+                    BitConverter.DoubleToInt64Bits(x.Float) == BitConverter.DoubleToInt64Bits(y.Float) &&
+                    x.Bytes.AsSpan().SequenceEqual(y.Bytes.AsSpan());
+
+                public int GetHashCode(LuaIrConstant value)
+                {
+                    var hash = (int)value.Kind;
+                    hash = hash * 31 + value.Integer.GetHashCode();
+                    hash = hash * 31 + BitConverter.DoubleToInt64Bits(value.Float).GetHashCode();
+                    var bytes = value.Bytes.AsSpan();
+                    foreach (var byteValue in bytes)
+                    {
+                        hash = hash * 31 + byteValue;
+                    }
+
+                    return hash;
+                }
             }
 
             private void FillExtraNil(int destination, int resultCount, TextSpan span)
@@ -1622,7 +1677,7 @@ public static class LuaLowerer
                     instruction = instruction with
                     {
                         SourceLine = _owner._model.Syntax.Source
-                            .GetLocation(instruction.Span.Start).Line + 1,
+                            .GetLineIndex(instruction.Span.Start) + 1,
                     };
                 }
 
@@ -1631,10 +1686,10 @@ public static class LuaLowerer
             }
 
             private int SourceLineAt(int offset) =>
-                _owner._model.Syntax.Source.GetLocation(Math.Clamp(
+                _owner._model.Syntax.Source.GetLineIndex(Math.Clamp(
                     offset,
                     0,
-                    _owner._model.Syntax.Source.Length)).Line + 1;
+                    _owner._model.Syntax.Source.Length)) + 1;
 
             private void PatchTarget(int programCounter, int target)
             {

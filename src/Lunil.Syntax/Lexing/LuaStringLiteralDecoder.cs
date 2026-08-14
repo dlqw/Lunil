@@ -19,32 +19,42 @@ public static class LuaStringLiteralDecoder
     {
         LunilGuard.NotNull(source);
         LunilGuard.NotNull(token);
+        return Decode(source, token.Span, token.Kind, languageVersion);
+    }
 
-        if (token.Kind is not (LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral))
+    internal static LuaStringLiteralDecodeResult Decode(
+        SourceText source,
+        TextSpan span,
+        LuaTokenKind kind,
+        LuaLanguageVersion languageVersion)
+    {
+        LunilGuard.NotNull(source);
+
+        if (kind is not (LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral))
         {
-            throw new ArgumentException("Token is not a Lua string literal.", nameof(token));
+            throw new ArgumentException("Token is not a Lua string literal.", nameof(kind));
         }
 
-        if (token.Span.End > source.Length)
+        if (span.End > source.Length)
         {
-            throw new ArgumentOutOfRangeException(nameof(token));
+            throw new ArgumentOutOfRangeException(nameof(span));
         }
 
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         var output = new ArrayBufferWriter<byte>();
-        var raw = source.GetSpan(token.Span);
+        var raw = source.GetSpan(span);
 
-        if (token.Kind == LuaTokenKind.LongStringLiteral)
+        if (kind == LuaTokenKind.LongStringLiteral)
         {
             DecodeLongString(raw, output);
         }
         else
         {
-            DecodeQuotedString(raw, token.Span.Start, output, diagnostics, languageVersion);
+            DecodeQuotedString(raw, span.Start, output, diagnostics, languageVersion);
         }
 
         return new LuaStringLiteralDecodeResult(
-            new LuaStringTokenValue(ImmutableArray.Create(output.WrittenSpan.ToArray())),
+            new LuaStringTokenValue(ImmutableArray.Create(output.WrittenSpan)),
             diagnostics.ToImmutable());
     }
 

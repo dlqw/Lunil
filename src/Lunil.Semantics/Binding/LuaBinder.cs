@@ -60,6 +60,12 @@ public static class LuaBinder
         private readonly List<LuaCodeReference> _codeReferences = [];
         private readonly List<LuaFunctionInfo> _functions = [];
         private readonly List<LuaSymbol> _activeSymbols = [];
+        private readonly LuaNameInterner _names = new();
+        private readonly Dictionary<string, LuaSymbol> _activeSymbolsByName =
+            new(StringComparer.Ordinal);
+        private readonly List<ActiveSymbolUndo> _activeSymbolUndo = [];
+        private LuaSymbol? _lastGlobalWildcard;
+        private int _explicitGlobalContextCount;
         private FunctionContext _currentFunction = null!;
         private ScopeFrame _currentScope = null!;
         private int _nextSymbolId;
@@ -133,14 +139,34 @@ public static class LuaBinder
 
             try
             {
-                var statements = block.ChildNodes().ToArray();
-                for (var index = 0; index < statements.Length; index++)
+                var children = block.Children;
+                var statements = new LuaSyntaxNode[children.Length];
+                var statementCount = 0;
+                foreach (var child in children)
+                {
+                    if (child.Node is { } node)
+                    {
+                        statements[statementCount++] = node;
+                    }
+                }
+
+                // A trailing label ends the scope only when every following statement is
+                // itself a label or empty; one backward pass marks those suffixes.
+                var suffixIsLabelOnly = new bool[statementCount + 1];
+                suffixIsLabelOnly[statementCount] = true;
+                for (var index = statementCount - 1; index >= 0; index--)
+                {
+                    suffixIsLabelOnly[index] = suffixIsLabelOnly[index + 1] &&
+                        statements[index].Kind is
+                            LuaSyntaxKind.LabelStatement or LuaSyntaxKind.EmptyStatement;
+                }
+
+                for (var index = 0; index < statementCount; index++)
                 {
                     var statement = statements[index];
                     var terminalLabel = terminalLabelsEndScope &&
                         statement.Kind == LuaSyntaxKind.LabelStatement &&
-                        statements[(index + 1)..].All(static following =>
-                            following.Kind is LuaSyntaxKind.LabelStatement or LuaSyntaxKind.EmptyStatement);
+                        suffixIsLabelOnly[index + 1];
                     BindStatement(statement, terminalLabel);
                 }
             }
@@ -869,10 +895,8 @@ public static class LuaBinder
             }
             else
             {
-                var wildcard = _activeSymbols.LastOrDefault(static candidate =>
-                    candidate.Kind == LuaSymbolKind.GlobalWildcard);
-                var hasExplicitGlobalContext = _activeSymbols.Any(static candidate =>
-                    candidate.Kind is LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard);
+                var wildcard = _lastGlobalWildcard;
+                var hasExplicitGlobalContext = _explicitGlobalContextCount > 0;
                 if (wildcard is not null && isWrite && wildcard.IsReadOnly)
                 {
                     AddDiagnostic(
@@ -988,11 +1012,7 @@ public static class LuaBinder
             }
             finally
             {
-                if (_activeSymbols.Count > activeBase)
-                {
-                    _activeSymbols.RemoveRange(activeBase, _activeSymbols.Count - activeBase);
-                }
-
+                DeactivateActiveSymbols(activeBase);
                 _currentFunction = previousFunction;
                 _currentScope = previousScope;
                 _loopDepth = previousLoopDepth;
@@ -1024,12 +1044,13 @@ public static class LuaBinder
                 ? _activeSymbols.Take(_currentScope.EntryActiveSymbolCount).ToImmutableArray()
                 : _activeSymbols.ToImmutableArray();
             var label = new LabelRecord(name, token.Span, _currentScope, active);
-            _currentScope.Labels.Add(name, label);
+            _currentScope.EnsureLabels().Add(name, label);
         }
 
         private LabelRecord? FindDuplicateLabel(string name)
         {
-            if (_currentScope.Labels.TryGetValue(name, out var current))
+            if (_currentScope.Labels is not null &&
+                _currentScope.Labels.TryGetValue(name, out var current))
             {
                 return current;
             }
@@ -1042,7 +1063,7 @@ public static class LuaBinder
 
             for (var scope = _currentScope.Parent; scope is not null; scope = scope.Parent)
             {
-                if (scope.Labels.TryGetValue(name, out var inherited))
+                if (scope.Labels is not null && scope.Labels.TryGetValue(name, out var inherited))
                 {
                     return inherited;
                 }
@@ -1074,7 +1095,7 @@ public static class LuaBinder
                 LabelRecord? label = null;
                 for (var scope = @goto.Scope; scope is not null; scope = scope.Parent)
                 {
-                    if (scope.Labels.TryGetValue(@goto.Name, out label))
+                    if (scope.Labels is not null && scope.Labels.TryGetValue(@goto.Name, out label))
                     {
                         break;
                     }
@@ -1164,6 +1185,21 @@ public static class LuaBinder
 
         private void ActivateSymbol(LuaSymbol symbol)
         {
+            // Undo entries grow in lockstep with _activeSymbols so scope exits can
+            // restore the by-name index, wildcard pointer, and global counters by
+            // popping the same number of entries.
+            _activeSymbolUndo.Add(new ActiveSymbolUndo(
+                symbol.Name,
+                _activeSymbolsByName.TryGetValue(symbol.Name, out var previous) ? previous : null,
+                _lastGlobalWildcard,
+                symbol.Kind is LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard));
+            _activeSymbolsByName[symbol.Name] = symbol;
+            _lastGlobalWildcard = symbol.Kind == LuaSymbolKind.GlobalWildcard ? symbol : _lastGlobalWildcard;
+            if (symbol.Kind is LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard)
+            {
+                _explicitGlobalContextCount++;
+            }
+
             _activeSymbols.Add(symbol);
             if (symbol.Kind is LuaSymbolKind.Environment or
                 LuaSymbolKind.Global or LuaSymbolKind.GlobalWildcard)
@@ -1183,35 +1219,48 @@ public static class LuaBinder
             }
         }
 
-        private LuaSymbol? FindActiveSymbol(string name)
+        private void DeactivateActiveSymbols(int fromIndex)
         {
-            for (var index = _activeSymbols.Count - 1; index >= 0; index--)
+            if (_activeSymbols.Count > fromIndex)
             {
-                if (string.Equals(_activeSymbols[index].Name, name, StringComparison.Ordinal))
+                _activeSymbols.RemoveRange(fromIndex, _activeSymbols.Count - fromIndex);
+            }
+
+            // Restore in reverse activation order so stacked shadowing of one name
+            // unwinds to the correct outer binding.
+            for (var index = _activeSymbolUndo.Count - 1; index >= fromIndex; index--)
+            {
+                var undo = _activeSymbolUndo[index];
+                if (undo.PreviousByName is null)
                 {
-                    return _activeSymbols[index];
+                    _activeSymbolsByName.Remove(undo.Name);
+                }
+                else
+                {
+                    _activeSymbolsByName[undo.Name] = undo.PreviousByName;
+                }
+
+                _lastGlobalWildcard = undo.PreviousWildcard;
+                if (undo.CountedAsExplicitGlobal)
+                {
+                    _explicitGlobalContextCount--;
                 }
             }
 
-            return null;
-        }
-
-        private LuaSymbol? FindActiveEnvironment()
-        {
-            for (var index = _activeSymbols.Count - 1; index >= 0; index--)
+            if (_activeSymbolUndo.Count > fromIndex)
             {
-                // A lexical local named _ENV shadows the implicit environment upvalue.
-                // Keep the lookup here (rather than in every global reference branch) so
-                // nested functions and explicit global declarations share one boundary.
-                if (_activeSymbols[index].Kind == LuaSymbolKind.Environment ||
-                    string.Equals(_activeSymbols[index].Name, "_ENV", StringComparison.Ordinal))
-                {
-                    return _activeSymbols[index];
-                }
+                _activeSymbolUndo.RemoveRange(fromIndex, _activeSymbolUndo.Count - fromIndex);
             }
-
-            return null;
         }
+
+        private LuaSymbol? FindActiveSymbol(string name) =>
+            _activeSymbolsByName.TryGetValue(name, out var symbol) ? symbol : null;
+
+        private LuaSymbol? FindActiveEnvironment() =>
+            // A lexical local named _ENV shadows the implicit environment upvalue.
+            // Keep the lookup here (rather than in every global reference branch) so
+            // nested functions and explicit global declarations share one boundary.
+            _activeSymbolsByName.TryGetValue("_ENV", out var symbol) ? symbol : null;
 
         private ScopeFrame EnterScope()
         {
@@ -1226,12 +1275,7 @@ public static class LuaBinder
 
         private void ExitScope(ScopeFrame previous)
         {
-            var count = _activeSymbols.Count - _currentScope.EntryActiveSymbolCount;
-            if (count > 0)
-            {
-                _activeSymbols.RemoveRange(_currentScope.EntryActiveSymbolCount, count);
-            }
-
+            DeactivateActiveSymbols(_currentScope.EntryActiveSymbolCount);
             _currentFunction.ActiveLocalCount = _currentScope.EntryActiveLocalCount;
             _currentScope = previous;
         }
@@ -1247,10 +1291,141 @@ public static class LuaBinder
         }
 
         private string GetName(LuaSyntaxToken token) =>
-            Encoding.ASCII.GetString(_syntax.Source.GetSpan(token.Span));
+            _names.Intern(_syntax.Source.GetSpan(token.Span));
 
-        private static LuaSyntaxNode GetDirectChild(LuaSyntaxNode node, LuaSyntaxKind kind) =>
-            node.ChildNodes().Single(child => child.Kind == kind);
+        /// <summary>
+        /// Interns identifier names by their UTF-8 source bytes. Lua identifiers are
+        /// ASCII, so a small open-addressing table keyed by a byte hash lets repeated
+        /// occurrences of one name share a single string instead of allocating per use.
+        /// </summary>
+        private sealed class LuaNameInterner
+        {
+            private string?[] _slots = new string[64];
+            private int _count;
+
+            public string Intern(ReadOnlySpan<byte> name)
+            {
+                var slot = FindSlot(name);
+                if (_slots[slot] is { } existing)
+                {
+                    return existing;
+                }
+
+                var result = Encoding.ASCII.GetString(name);
+                _slots[slot] = result;
+                _count++;
+                if (_count * 4 >= _slots.Length * 3)
+                {
+                    Rehash(_slots.Length * 2);
+                }
+
+                return result;
+            }
+
+            private int FindSlot(ReadOnlySpan<byte> name)
+            {
+                var mask = (uint)_slots.Length - 1;
+                var probe = HashBytes(name) & mask;
+                while (_slots[probe] is { } existing && !BytesMatch(existing, name))
+                {
+                    probe = (probe + 1) & mask;
+                }
+
+                return (int)probe;
+            }
+
+            private int FindSlot(string value)
+            {
+                var mask = (uint)_slots.Length - 1;
+                var probe = HashChars(value) & mask;
+                while (_slots[probe] is not null)
+                {
+                    probe = (probe + 1) & mask;
+                }
+
+                return (int)probe;
+            }
+
+            private void Rehash(int newSize)
+            {
+                var previous = _slots;
+                _slots = new string[newSize];
+                foreach (var entry in previous)
+                {
+                    if (entry is not null)
+                    {
+                        _slots[FindSlot(entry)] = entry;
+                    }
+                }
+            }
+
+            private static bool BytesMatch(string existing, ReadOnlySpan<byte> name)
+            {
+                if (existing.Length != name.Length)
+                {
+                    return false;
+                }
+
+                for (var index = 0; index < name.Length; index++)
+                {
+                    if (existing[index] != name[index])
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            private static uint HashBytes(ReadOnlySpan<byte> name)
+            {
+                var hash = (uint)name.Length;
+                foreach (var byteValue in name)
+                {
+                    hash = (hash ^ byteValue) * 16777619u;
+                }
+
+                return hash;
+            }
+
+            private static uint HashChars(string value)
+            {
+                var hash = (uint)value.Length;
+                foreach (var character in value)
+                {
+                    hash = (hash ^ character) * 16777619u;
+                }
+
+                return hash;
+            }
+        }
+
+        private readonly record struct ActiveSymbolUndo(
+            string Name,
+            LuaSymbol? PreviousByName,
+            LuaSymbol? PreviousWildcard,
+            bool CountedAsExplicitGlobal);
+
+        private static LuaSyntaxNode GetDirectChild(LuaSyntaxNode node, LuaSyntaxKind kind)
+        {
+            LuaSyntaxNode? match = null;
+            foreach (var child in node.Children)
+            {
+                if (child.Node is { } candidate && candidate.Kind == kind)
+                {
+                    if (match is not null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Multiple children of kind {kind} exist under {node.Kind}.");
+                    }
+
+                    match = candidate;
+                }
+            }
+
+            return match ?? throw new InvalidOperationException(
+                $"No child of kind {kind} exists under {node.Kind}.");
+        }
 
         private static LuaSyntaxToken CreateSyntheticToken(int position) => new(
             LuaTokenKind.Identifier,
@@ -1327,8 +1502,11 @@ public static class LuaBinder
 
             public int EntryActiveLocalCount { get; }
 
-            public Dictionary<string, LabelRecord> Labels { get; } =
-                new(StringComparer.Ordinal);
+            /// <summary>Label table for this scope, allocated on first label use.</summary>
+            public Dictionary<string, LabelRecord>? Labels { get; private set; }
+
+            public Dictionary<string, LabelRecord> EnsureLabels() =>
+                Labels ??= new Dictionary<string, LabelRecord>(StringComparer.Ordinal);
         }
 
         private sealed record LabelRecord(
