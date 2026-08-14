@@ -67,7 +67,7 @@ internal sealed partial class AnalysisEngine
 
         if (TryGetVariableKey(expression, out var key, out _))
         {
-            var current = state.Types.GetValueOrDefault(
+            var current = state.TypeOf(
                 key,
                 _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
             return NarrowVariable(
@@ -143,7 +143,7 @@ internal sealed partial class AnalysisEngine
         if (TryGetTypeTest(left, right, out var typeKey, out var testedType) ||
             TryGetTypeTest(right, left, out typeKey, out testedType))
         {
-            var current = state.Types.GetValueOrDefault(
+            var current = state.TypeOf(
                 typeKey,
                 _declaredTypes.GetValueOrDefault(typeKey, LuaTypes.Any));
             var matched = _relations.NarrowTo(current, testedType);
@@ -168,7 +168,7 @@ internal sealed partial class AnalysisEngine
         if (TryGetVariableKey(left, out var key, out _) && TryGetLiteralType(right, out var rightLiteral) ||
             TryGetVariableKey(right, out key, out _) && TryGetLiteralType(left, out rightLiteral))
         {
-            var current = state.Types.GetValueOrDefault(
+            var current = state.TypeOf(
                 key,
                 _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
             var matched = _relations.NarrowTo(current, rightLiteral);
@@ -187,7 +187,7 @@ internal sealed partial class AnalysisEngine
         FlowState state,
         Lunil.Core.Text.TextSpan span)
     {
-        var current = state.Types.GetValueOrDefault(
+        var current = state.TypeOf(
             key,
             _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
         var nil = _relations.NarrowTo(current, LuaTypes.Nil);
@@ -206,8 +206,8 @@ internal sealed partial class AnalysisEngine
     {
         var trueState = state.Clone();
         var falseState = state.Clone();
-        trueState.Types[key] = trueType;
-        falseState.Types[key] = falseType;
+        trueState.SetType(key, trueType);
+        falseState.SetType(key, falseType);
         if (trueType.Kind == LuaTypeKind.Never)
         {
             trueState.Reachable = false;
@@ -271,7 +271,7 @@ internal sealed partial class AnalysisEngine
         FlowState state,
         Lunil.Core.Text.TextSpan span)
     {
-        var current = state.Types.GetValueOrDefault(
+        var current = state.TypeOf(
             key,
             _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
         var members = current is LuaUnionType union ? union.Types : [current];
@@ -445,45 +445,70 @@ internal sealed partial class AnalysisEngine
         var reachable = states.Where(static state => state.Reachable).ToArray();
         if (reachable.Length == 0)
         {
-            var unreachable = states.FirstOrDefault()?.Clone() ?? new FlowState(_globalTypes);
+            var unreachable = states.FirstOrDefault()?.Clone() ?? CreateRootState();
             unreachable.Reachable = false;
             return unreachable;
         }
 
         var result = reachable[0].Clone();
-        var keys = reachable.SelectMany(static state => state.Types.Keys).Distinct().ToArray();
-        foreach (var key in keys)
+        // Only overlay keys participate: every state shares the same frozen global
+        // base, so unoverridden globals compare equal on both sides of the merge and
+        // need no union pass. Overridden globals fall back to the base value in the
+        // states that did not override them, matching full-map merge semantics.
+        var keys = new HashSet<VariableKey>();
+        foreach (var state in reachable)
         {
-            var candidates = reachable.Where(state => state.Types.ContainsKey(key))
-                .Select(state => state.Types[key])
-                .ToArray();
-            if (candidates.Length != 0)
+            foreach (var pair in state.OverlayTypes)
             {
-                result.Types[key] = _relations.Union(candidates);
+                keys.Add(pair.Key);
             }
         }
 
-        var paths = reachable.SelectMany(static state => state.PathTypes.Keys).Distinct().ToArray();
+        foreach (var key in keys)
+        {
+            var candidates = new List<LuaType>();
+            foreach (var state in reachable)
+            {
+                if (state.TryGetType(key, out var type))
+                {
+                    candidates.Add(type);
+                }
+            }
+
+            if (candidates.Count != 0)
+            {
+                result.SetType(key, _relations.Union(candidates));
+            }
+        }
+
+        var paths = new HashSet<AccessPathKey>();
+        foreach (var state in reachable)
+        {
+            foreach (var pair in state.PathTypes)
+            {
+                paths.Add(pair.Key);
+            }
+        }
+
         result.PathTypes.Clear();
         foreach (var path in paths)
         {
-            var candidates = reachable
-                .Where(state => state.PathTypes.ContainsKey(path))
-                .Select(state => state.PathTypes[path])
-                .ToArray();
-            if (candidates.Length == reachable.Length)
+            var candidates = new List<LuaType>();
+            foreach (var state in reachable)
+            {
+                if (state.PathTypes.TryGetValue(path, out var type))
+                {
+                    candidates.Add(type);
+                }
+            }
+
+            if (candidates.Count == reachable.Length)
             {
                 result.PathTypes[path] = _relations.Union(candidates);
             }
         }
 
-        result.Assigned.Clear();
-        result.Assigned.UnionWith(reachable[0].Assigned);
-        foreach (var item in reachable.Skip(1))
-        {
-            result.Assigned.IntersectWith(item.Assigned);
-        }
-
+        result.IntersectAssigned(reachable);
         result.Reachable = true;
         return result;
     }
@@ -494,11 +519,11 @@ internal sealed partial class AnalysisEngine
         Lunil.Core.Text.TextSpan span)
     {
         var result = candidate.Clone();
-        foreach (var pair in previous.Types)
+        foreach (var pair in previous.OverlayTypes)
         {
-            if (candidate.Types.TryGetValue(pair.Key, out var next))
+            if (candidate.TryGetType(pair.Key, out var next))
             {
-                result.Types[pair.Key] = _relations.Union(pair.Value, next);
+                result.SetType(pair.Key, _relations.Union(pair.Value, next));
             }
         }
 
@@ -508,36 +533,47 @@ internal sealed partial class AnalysisEngine
     private static bool StatesEquivalent(FlowState left, FlowState right)
     {
         if (left.Reachable != right.Reachable ||
-            !left.Assigned.SetEquals(right.Assigned) ||
-            left.Types.Count != right.Types.Count ||
+            !left.AssignedSetEquals(right) ||
             left.PathTypes.Count != right.PathTypes.Count)
         {
             return false;
         }
 
-        return left.Types.All(pair => right.Types.TryGetValue(pair.Key, out var type) &&
-                string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal)) &&
-            left.PathTypes.All(pair => right.PathTypes.TryGetValue(pair.Key, out var type) &&
-                string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal));
-    }
-
-    private static void CopyState(FlowState source, FlowState destination)
-    {
-        destination.Types.Clear();
-        foreach (var pair in source.Types)
+        // Overlay entries whose value equals the shared base binding are equivalent
+        // to an absent entry, so comparing the union of both overlays against each
+        // state's effective lookup reproduces full-map equality.
+        foreach (var pair in left.OverlayTypes)
         {
-            destination.Types.Add(pair.Key, pair.Value);
+            if (!right.TryGetType(pair.Key, out var type) ||
+                !string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
 
-        destination.Assigned.Clear();
-        destination.Assigned.UnionWith(source.Assigned);
-        destination.PathTypes.Clear();
-        foreach (var pair in source.PathTypes)
+        foreach (var pair in right.OverlayTypes)
         {
-            destination.PathTypes.Add(pair.Key, pair.Value);
+            if (!left.TryGetType(pair.Key, out var type) ||
+                !string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
-        destination.Reachable = source.Reachable;
+
+        foreach (var pair in left.PathTypes)
+        {
+            if (!right.PathTypes.TryGetValue(pair.Key, out var type) ||
+                !string.Equals(pair.Value.DisplayName, type.DisplayName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
+
+    private static void CopyState(FlowState source, FlowState destination) =>
+        destination.CopyFrom(source);
 
     private void CheckAssignable(
         LuaType source,
@@ -735,58 +771,58 @@ internal sealed partial class AnalysisEngine
     {
         foreach (var pair in _hostGlobalTypes)
         {
-            _globalTypes[pair.Key] = pair.Value;
+            SetGlobalType(pair.Key, pair.Value);
         }
 
-        _globalTypes["type"] = new LuaFunctionType(
+        SetGlobalType("type", new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.String]),
-            []);
-        _globalTypes["assert"] = new LuaFunctionType(
+            []));
+        SetGlobalType("assert", new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any),
              new LuaFunctionParameter("message", LuaTypes.Any, IsOptional: true)],
             new LuaTypePack([LuaTypes.Any]),
-            []);
-        _globalTypes["tonumber"] = new LuaFunctionType(
+            []));
+        SetGlobalType("tonumber", new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([_relations.Union(LuaTypes.Number, LuaTypes.Nil)]),
-            []);
-        _globalTypes["tostring"] = new LuaFunctionType(
+            []));
+        SetGlobalType("tostring", new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.String]),
-            []);
-        _globalTypes["require"] = new LuaFunctionType(
+            []));
+        SetGlobalType("require", new LuaFunctionType(
             [new LuaFunctionParameter("module", LuaTypes.String)],
             new LuaTypePack([LuaTypes.Any]),
-            []);
-        _globalTypes["print"] = new LuaFunctionType(
+            []));
+        SetGlobalType("print", new LuaFunctionType(
             [new LuaFunctionParameter("...", LuaTypes.Any, IsOptional: true, IsVararg: true)],
             LuaTypePack.Empty,
-            []);
-        _globalTypes["error"] = new LuaFunctionType(
+            []));
+        SetGlobalType("error", new LuaFunctionType(
             [new LuaFunctionParameter("message", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.Never]),
-            []);
-        _globalTypes["setmetatable"] = new LuaFunctionType(
+            []));
+        SetGlobalType("setmetatable", new LuaFunctionType(
             [new LuaFunctionParameter("table", LuaTypes.Table),
              new LuaFunctionParameter("metatable", LuaTypes.Table)],
             new LuaTypePack([LuaTypes.Table]),
-            []);
-        _globalTypes["getmetatable"] = new LuaFunctionType(
+            []));
+        SetGlobalType("getmetatable", new LuaFunctionType(
             [new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([_relations.Union(LuaTypes.Table, LuaTypes.Nil)]),
-            []);
-        _globalTypes["rawget"] = new LuaFunctionType(
+            []));
+        SetGlobalType("rawget", new LuaFunctionType(
             [new LuaFunctionParameter("table", LuaTypes.Table),
              new LuaFunctionParameter("index", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.Any]),
-            []);
-        _globalTypes["rawset"] = new LuaFunctionType(
+            []));
+        SetGlobalType("rawset", new LuaFunctionType(
             [new LuaFunctionParameter("table", LuaTypes.Table),
              new LuaFunctionParameter("index", LuaTypes.Any),
              new LuaFunctionParameter("value", LuaTypes.Any)],
             new LuaTypePack([LuaTypes.Table]),
-            []);
+            []));
     }
 
     private bool TryGetVariableKey(

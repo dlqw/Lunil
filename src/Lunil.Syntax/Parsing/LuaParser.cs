@@ -144,9 +144,12 @@ public static class LuaParser
             LuaSyntaxKind.Block,
             combinedStatements.MoveToImmutable(),
             0);
+        var combinedRootChildren = ImmutableArray.CreateBuilder<LuaSyntaxElement>(2);
+        combinedRootChildren.Add(combinedBlock);
+        combinedRootChildren.Add(fragmentRootChildren[1].Token!);
         var combinedRoot = new LuaSyntaxNode(
             LuaSyntaxKind.CompilationUnit,
-            [combinedBlock, fragmentRootChildren[1].Token!],
+            combinedRootChildren.MoveToImmutable(),
             0);
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         diagnostics.AddRange(previous.Diagnostics.Where(diagnostic =>
@@ -292,7 +295,7 @@ public static class LuaParser
                 ParseBlock(LuaTokenKind.EndOfFile),
                 Match(LuaTokenKind.EndOfFile),
             };
-            var root = CreateNode(LuaSyntaxKind.CompilationUnit, children, 0);
+            var root = CreateNodeFromList(LuaSyntaxKind.CompilationUnit, children, 0);
             var diagnostics = _diagnostics.ToImmutable();
             var result = _options.UseCompactSyntaxArena
                 ? new LuaParseResult(
@@ -363,7 +366,7 @@ public static class LuaParser
                     }
                 }
 
-                return CreateNode(LuaSyntaxKind.Block, statements, start);
+                return CreateNodeFromList(LuaSyntaxKind.Block, statements, start);
             }
             finally
             {
@@ -416,7 +419,7 @@ public static class LuaParser
                 children.Add(Consume());
                 children.Add(Match(LuaTokenKind.Identifier));
                 children.Add(ParseFunctionBody(children[^2].Token!.Span.Start));
-                return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+                return CreateNodeFromList(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
             }
 
             if (Current.Kind == LuaTokenKind.LessThan)
@@ -431,7 +434,7 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.Star)
             {
                 children.Add(Consume());
-                return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+                return CreateNodeFromList(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
             }
 
             children.Add(ParseGlobalAttributedName());
@@ -447,7 +450,7 @@ public static class LuaParser
                 children.Add(ParseExpressionList());
             }
 
-            return CreateNode(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
+            return CreateNodeFromList(LuaSyntaxKind.GlobalDeclarationStatement, children, start);
         }
 
         private LuaSyntaxNode ParseGlobalAttributedName()
@@ -462,7 +465,7 @@ public static class LuaParser
                 ValidateAttribute(attribute);
             }
 
-            return CreateNode(LuaSyntaxKind.AttributedName, children);
+            return CreateNodeFromList(LuaSyntaxKind.AttributedName, children);
         }
 
         private LuaSyntaxNode ParseLabelStatement()
@@ -472,13 +475,13 @@ public static class LuaParser
                 AddDiagnostic("LUA2011", Current.Span, "Labels are not available in Lua 5.1.");
             }
 
-            var children = new List<LuaSyntaxElement>
-            {
-                Consume(),
-                Match(LuaTokenKind.Identifier),
-                Match(LuaTokenKind.DoubleColon),
-            };
-            return CreateNode(LuaSyntaxKind.LabelStatement, children);
+            return CreateNode(
+                LuaSyntaxKind.LabelStatement,
+                [
+                    Consume(),
+                    Match(LuaTokenKind.Identifier),
+                    Match(LuaTokenKind.DoubleColon),
+                ]);
         }
 
         private LuaSyntaxNode ParseGotoStatement()
@@ -488,49 +491,40 @@ public static class LuaParser
                 AddDiagnostic("LUA2011", Current.Span, "goto is not available in Lua 5.1.");
             }
 
-            var children = new List<LuaSyntaxElement>
-            {
-                Consume(),
-                Match(LuaTokenKind.Identifier),
-            };
-            return CreateNode(LuaSyntaxKind.GotoStatement, children);
+            return CreateNode(
+                LuaSyntaxKind.GotoStatement,
+                [
+                    Consume(),
+                    Match(LuaTokenKind.Identifier),
+                ]);
         }
 
-        private LuaSyntaxNode ParseDoStatement()
-        {
-            var children = new List<LuaSyntaxElement>
-            {
+        private LuaSyntaxNode ParseDoStatement() => CreateNode(
+            LuaSyntaxKind.DoStatement,
+            [
                 Consume(),
                 ParseBlock(LuaTokenKind.EndKeyword),
                 Match(LuaTokenKind.EndKeyword),
-            };
-            return CreateNode(LuaSyntaxKind.DoStatement, children);
-        }
+            ]);
 
-        private LuaSyntaxNode ParseWhileStatement()
-        {
-            var children = new List<LuaSyntaxElement>
-            {
+        private LuaSyntaxNode ParseWhileStatement() => CreateNode(
+            LuaSyntaxKind.WhileStatement,
+            [
                 Consume(),
                 ParseExpression(),
                 Match(LuaTokenKind.DoKeyword),
                 ParseBlock(LuaTokenKind.EndKeyword),
                 Match(LuaTokenKind.EndKeyword),
-            };
-            return CreateNode(LuaSyntaxKind.WhileStatement, children);
-        }
+            ]);
 
-        private LuaSyntaxNode ParseRepeatStatement()
-        {
-            var children = new List<LuaSyntaxElement>
-            {
+        private LuaSyntaxNode ParseRepeatStatement() => CreateNode(
+            LuaSyntaxKind.RepeatStatement,
+            [
                 Consume(),
                 ParseBlock(LuaTokenKind.UntilKeyword),
                 Match(LuaTokenKind.UntilKeyword),
                 ParseExpression(),
-            };
-            return CreateNode(LuaSyntaxKind.RepeatStatement, children);
-        }
+            ]);
 
         private LuaSyntaxNode ParseIfStatement()
         {
@@ -547,31 +541,31 @@ public static class LuaParser
 
             while (Current.Kind == LuaTokenKind.ElseIfKeyword)
             {
-                var clause = new List<LuaSyntaxElement>
-                {
-                    Consume(),
-                    ParseExpression(),
-                    Match(LuaTokenKind.ThenKeyword),
-                    ParseBlock(
-                        LuaTokenKind.ElseIfKeyword,
-                        LuaTokenKind.ElseKeyword,
-                        LuaTokenKind.EndKeyword),
-                };
-                children.Add(CreateNode(LuaSyntaxKind.ElseIfClause, clause));
+                children.Add(CreateNode(
+                    LuaSyntaxKind.ElseIfClause,
+                    [
+                        Consume(),
+                        ParseExpression(),
+                        Match(LuaTokenKind.ThenKeyword),
+                        ParseBlock(
+                            LuaTokenKind.ElseIfKeyword,
+                            LuaTokenKind.ElseKeyword,
+                            LuaTokenKind.EndKeyword),
+                    ]));
             }
 
             if (Current.Kind == LuaTokenKind.ElseKeyword)
             {
-                var clause = new List<LuaSyntaxElement>
-                {
-                    Consume(),
-                    ParseBlock(LuaTokenKind.EndKeyword),
-                };
-                children.Add(CreateNode(LuaSyntaxKind.ElseClause, clause));
+                children.Add(CreateNode(
+                    LuaSyntaxKind.ElseClause,
+                    [
+                        Consume(),
+                        ParseBlock(LuaTokenKind.EndKeyword),
+                    ]));
             }
 
             children.Add(Match(LuaTokenKind.EndKeyword));
-            return CreateNode(LuaSyntaxKind.IfStatement, children);
+            return CreateNodeFromList(LuaSyntaxKind.IfStatement, children);
         }
 
         private LuaSyntaxNode ParseForStatement()
@@ -606,7 +600,7 @@ public static class LuaParser
             children.Add(Match(LuaTokenKind.DoKeyword));
             children.Add(ParseBlock(LuaTokenKind.EndKeyword));
             children.Add(Match(LuaTokenKind.EndKeyword));
-            return CreateNode(LuaSyntaxKind.NumericForStatement, children);
+            return CreateNodeFromList(LuaSyntaxKind.NumericForStatement, children);
         }
 
         private LuaSyntaxNode ParseGenericForStatement(
@@ -620,29 +614,29 @@ public static class LuaParser
                 names.Add(Match(LuaTokenKind.Identifier));
             }
 
-            var children = new List<LuaSyntaxElement>
-            {
-                forKeyword,
-                CreateNode(LuaSyntaxKind.NameList, names),
-                Match(LuaTokenKind.InKeyword),
-                ParseExpressionList(),
-                Match(LuaTokenKind.DoKeyword),
-                ParseBlock(LuaTokenKind.EndKeyword),
-                Match(LuaTokenKind.EndKeyword),
-            };
-            return CreateNode(LuaSyntaxKind.GenericForStatement, children);
+            return CreateNode(
+                LuaSyntaxKind.GenericForStatement,
+                [
+                    forKeyword,
+                    CreateNodeFromList(LuaSyntaxKind.NameList, names),
+                    Match(LuaTokenKind.InKeyword),
+                    ParseExpressionList(),
+                    Match(LuaTokenKind.DoKeyword),
+                    ParseBlock(LuaTokenKind.EndKeyword),
+                    Match(LuaTokenKind.EndKeyword),
+                ]);
         }
 
         private LuaSyntaxNode ParseFunctionDeclarationStatement()
         {
             var functionKeyword = Consume();
-            var children = new List<LuaSyntaxElement>
-            {
-                functionKeyword,
-                ParseFunctionName(),
-                ParseFunctionBody(functionKeyword.Span.Start),
-            };
-            return CreateNode(LuaSyntaxKind.FunctionDeclarationStatement, children);
+            return CreateNode(
+                LuaSyntaxKind.FunctionDeclarationStatement,
+                [
+                    functionKeyword,
+                    ParseFunctionName(),
+                    ParseFunctionBody(functionKeyword.Span.Start),
+                ]);
         }
 
         private LuaSyntaxNode ParseFunctionName()
@@ -664,7 +658,7 @@ public static class LuaParser
                 children.Add(Match(LuaTokenKind.Identifier));
             }
 
-            return CreateNode(LuaSyntaxKind.FunctionName, children);
+            return CreateNodeFromList(LuaSyntaxKind.FunctionName, children);
         }
 
         private LuaSyntaxNode ParseLocalStatement()
@@ -673,16 +667,14 @@ public static class LuaParser
             if (Current.Kind == LuaTokenKind.FunctionKeyword)
             {
                 var functionKeyword = Consume();
-                var functionChildren = new List<LuaSyntaxElement>
-                {
-                    localKeyword,
-                    functionKeyword,
-                    Match(LuaTokenKind.Identifier),
-                    ParseFunctionBody(functionKeyword.Span.Start),
-                };
                 return CreateNode(
                     LuaSyntaxKind.LocalFunctionDeclarationStatement,
-                    functionChildren);
+                    [
+                        localKeyword,
+                        functionKeyword,
+                        Match(LuaTokenKind.Identifier),
+                        ParseFunctionBody(functionKeyword.Span.Start),
+                    ]);
             }
 
             var children = new List<LuaSyntaxElement> { localKeyword, ParseAttributedName() };
@@ -709,7 +701,7 @@ public static class LuaParser
                 children.Add(ParseExpressionList());
             }
 
-            return CreateNode(LuaSyntaxKind.LocalDeclarationStatement, children);
+            return CreateNodeFromList(LuaSyntaxKind.LocalDeclarationStatement, children);
         }
 
         private LuaSyntaxNode ParseAttributedName()
@@ -724,7 +716,7 @@ public static class LuaParser
                 children.Add(Match(LuaTokenKind.GreaterThan));
                 ValidateAttribute(prefixAttribute);
                 children.Add(Match(LuaTokenKind.Identifier));
-                return CreateNode(LuaSyntaxKind.AttributedName, children);
+                return CreateNodeFromList(LuaSyntaxKind.AttributedName, children);
             }
 
             children.Add(Match(LuaTokenKind.Identifier));
@@ -749,7 +741,7 @@ public static class LuaParser
                 }
             }
 
-            return CreateNode(LuaSyntaxKind.AttributedName, children);
+            return CreateNodeFromList(LuaSyntaxKind.AttributedName, children);
         }
 
         private LuaSyntaxNode ParseReturnStatement()
@@ -766,7 +758,7 @@ public static class LuaParser
                 children.Add(Consume());
             }
 
-            return CreateNode(LuaSyntaxKind.ReturnStatement, children);
+            return CreateNodeFromList(LuaSyntaxKind.ReturnStatement, children);
         }
 
         private LuaSyntaxNode ParseAssignmentOrCallStatement()
@@ -784,13 +776,13 @@ public static class LuaParser
                     variables.Add(variable);
                 }
 
-                var children = new List<LuaSyntaxElement>
-                {
-                    CreateNode(LuaSyntaxKind.VariableList, variables),
-                    Match(LuaTokenKind.Assign),
-                    ParseExpressionList(),
-                };
-                return CreateNode(LuaSyntaxKind.AssignmentStatement, children);
+                return CreateNode(
+                    LuaSyntaxKind.AssignmentStatement,
+                    [
+                        CreateNodeFromList(LuaSyntaxKind.VariableList, variables),
+                        Match(LuaTokenKind.Assign),
+                        ParseExpressionList(),
+                    ]);
             }
 
             if (first.Kind is LuaSyntaxKind.CallExpression or LuaSyntaxKind.MethodCallExpression)
@@ -833,7 +825,7 @@ public static class LuaParser
                 children.Add(ParseExpression());
             }
 
-            return CreateNode(LuaSyntaxKind.ExpressionList, children, start);
+            return CreateNodeFromList(LuaSyntaxKind.ExpressionList, children, start);
         }
 
         private LuaSyntaxNode ParseExpression(int minimumPrecedence = 0)
@@ -849,11 +841,6 @@ public static class LuaParser
                 if (IsUnaryOperator(Current.Kind))
                 {
                     var unaryToken = Current;
-                    var unaryChildren = new List<LuaSyntaxElement>
-                    {
-                        Consume(),
-                        ParseExpression(12),
-                    };
                     if (!_grammarFeatures.SupportsBitwiseOperators &&
                         unaryToken.Kind == LuaTokenKind.Tilde)
                     {
@@ -863,7 +850,12 @@ public static class LuaParser
                             "The bitwise-not operator is not available in the selected Lua version.");
                     }
 
-                    left = CreateNode(LuaSyntaxKind.UnaryExpression, unaryChildren);
+                    left = CreateNode(
+                        LuaSyntaxKind.UnaryExpression,
+                        [
+                            Consume(),
+                            ParseExpression(12),
+                        ]);
                 }
                 else
                 {
@@ -874,12 +866,6 @@ public static class LuaParser
                        leftPrecedence > minimumPrecedence)
                 {
                     var operatorToken = Current;
-                    var binaryChildren = new List<LuaSyntaxElement>
-                    {
-                        left,
-                        Consume(),
-                        ParseExpression(rightPrecedence),
-                    };
                     if ((!_grammarFeatures.SupportsFloorDivision &&
                          operatorToken.Kind == LuaTokenKind.FloorDivide) ||
                         (!_grammarFeatures.SupportsBitwiseOperators &&
@@ -892,7 +878,13 @@ public static class LuaParser
                             "This operator is not available in the selected Lua version.");
                     }
 
-                    left = CreateNode(LuaSyntaxKind.BinaryExpression, binaryChildren);
+                    left = CreateNode(
+                        LuaSyntaxKind.BinaryExpression,
+                        [
+                            left,
+                            Consume(),
+                            ParseExpression(rightPrecedence),
+                        ]);
                 }
 
                 return left;
@@ -981,12 +973,12 @@ public static class LuaParser
         private LuaSyntaxNode ParseFunctionExpression()
         {
             var functionKeyword = Consume();
-            var children = new List<LuaSyntaxElement>
-            {
-                functionKeyword,
-                ParseFunctionBody(functionKeyword.Span.Start),
-            };
-            return CreateNode(LuaSyntaxKind.FunctionExpression, children);
+            return CreateNode(
+                LuaSyntaxKind.FunctionExpression,
+                [
+                    functionKeyword,
+                    ParseFunctionBody(functionKeyword.Span.Start),
+                ]);
         }
 
         private LuaSyntaxNode ParseSuffixedExpression()
@@ -998,13 +990,13 @@ public static class LuaParser
             }
             else if (Current.Kind == LuaTokenKind.OpenParenthesis)
             {
-                var children = new List<LuaSyntaxElement>
-                {
-                    Consume(),
-                    ParseExpression(),
-                    Match(LuaTokenKind.CloseParenthesis),
-                };
-                expression = CreateNode(LuaSyntaxKind.ParenthesizedExpression, children);
+                expression = CreateNode(
+                    LuaSyntaxKind.ParenthesizedExpression,
+                    [
+                        Consume(),
+                        ParseExpression(),
+                        Match(LuaTokenKind.CloseParenthesis),
+                    ]);
             }
             else
             {
@@ -1085,7 +1077,7 @@ public static class LuaParser
                 children.Add(CreateMissingToken(LuaTokenKind.CloseParenthesis));
             }
 
-            return CreateNode(LuaSyntaxKind.ArgumentList, children, start);
+            return CreateNodeFromList(LuaSyntaxKind.ArgumentList, children, start);
         }
 
         private LuaSyntaxNode ParseTableConstructor()
@@ -1113,7 +1105,7 @@ public static class LuaParser
             }
 
             children.Add(Match(LuaTokenKind.CloseBrace));
-            return CreateNode(LuaSyntaxKind.TableConstructorExpression, children);
+            return CreateNodeFromList(LuaSyntaxKind.TableConstructorExpression, children);
         }
 
         private LuaSyntaxNode ParseTableField()
@@ -1138,7 +1130,7 @@ public static class LuaParser
                 children.Add(ParseExpression());
             }
 
-            return CreateNode(LuaSyntaxKind.TableField, children);
+            return CreateNodeFromList(LuaSyntaxKind.TableField, children);
         }
 
         private LuaSyntaxNode ParseFunctionBody(int functionStartPosition)
@@ -1146,15 +1138,15 @@ public static class LuaParser
             _functionStartPositions.Push(functionStartPosition);
             try
             {
-                var children = new List<LuaSyntaxElement>
-                {
-                    Match(LuaTokenKind.OpenParenthesis),
-                    ParseParameterList(),
-                    Match(LuaTokenKind.CloseParenthesis),
-                    ParseBlock(LuaTokenKind.EndKeyword),
-                    Match(LuaTokenKind.EndKeyword),
-                };
-                return CreateNode(LuaSyntaxKind.FunctionBody, children);
+                return CreateNode(
+                    LuaSyntaxKind.FunctionBody,
+                    [
+                        Match(LuaTokenKind.OpenParenthesis),
+                        ParseParameterList(),
+                        Match(LuaTokenKind.CloseParenthesis),
+                        ParseBlock(LuaTokenKind.EndKeyword),
+                        Match(LuaTokenKind.EndKeyword),
+                    ]);
             }
             finally
             {
@@ -1211,7 +1203,7 @@ public static class LuaParser
                 }
             }
 
-            return CreateNode(LuaSyntaxKind.ParameterList, children, start);
+            return CreateNodeFromList(LuaSyntaxKind.ParameterList, children, start);
         }
 
         private LuaSyntaxNode ParseMissingExpression()
@@ -1239,7 +1231,7 @@ public static class LuaParser
                 children.Add(Consume());
             }
 
-            return CreateNode(LuaSyntaxKind.Error, children, start);
+            return CreateNodeFromList(LuaSyntaxKind.Error, children, start);
         }
 
         private void ValidateAttribute(LuaSyntaxToken attribute)
@@ -1272,8 +1264,35 @@ public static class LuaParser
 
         private LuaSyntaxNode CreateNode(
             LuaSyntaxKind kind,
-            IEnumerable<LuaSyntaxElement> children,
+            ReadOnlySpan<LuaSyntaxElement> children,
             int? emptyPosition = null)
+        {
+            CheckNodeBudget();
+            return new LuaSyntaxNode(
+                kind,
+                ImmutableArray.Create(children),
+                emptyPosition ?? Current.Span.Start);
+        }
+
+        private LuaSyntaxNode CreateNodeFromList(
+            LuaSyntaxKind kind,
+            List<LuaSyntaxElement> children,
+            int? emptyPosition = null)
+        {
+            CheckNodeBudget();
+            // An exact-capacity builder plus MoveToImmutable produces one array of the
+            // final size; ToImmutableArray() over an IEnumerable would re-enumerate and
+            // grow a second buffer.
+            var builder = ImmutableArray.CreateBuilder<LuaSyntaxElement>(children.Count);
+            foreach (var child in children)
+            {
+                builder.Add(child);
+            }
+
+            return new LuaSyntaxNode(kind, builder.MoveToImmutable(), emptyPosition ?? Current.Span.Start);
+        }
+
+        private void CheckNodeBudget()
         {
             _nodeCount++;
             if ((_nodeCount & 0xff) == 0)
@@ -1289,8 +1308,6 @@ public static class LuaParser
                     Current.Span,
                     $"Syntax node count exceeds the configured {_options.MaximumNodeCount} limit.");
             }
-
-            return new LuaSyntaxNode(kind, children, emptyPosition ?? Current.Span.Start);
         }
 
         private bool TryEnterRecursion(string construct)

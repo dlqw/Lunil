@@ -111,7 +111,7 @@ internal sealed partial class AnalysisEngine
         if (resolutionStatus == LuaCallResolutionStatus.Dynamic &&
             unresolvedReason != LuaCallUnresolvedReasons.ModuleRequestIsDynamic &&
             TryGetCalledGlobalIdentifier(expression, out var projectedGlobal) &&
-            _globalTypes.TryGetValue(projectedGlobal, out var projectedType) &&
+            _globalTypes.TryGetLatest(projectedGlobal, out var projectedType) &&
             !GetCallSignatures(projectedType).IsEmpty)
         {
             calleeType = projectedType;
@@ -271,13 +271,13 @@ internal sealed partial class AnalysisEngine
                 : GetDirectReference(calleeNode);
             if (calleeType.Kind == LuaTypeKind.Unknown &&
                 directReference?.ResolutionKind == LuaNameResolutionKind.Global &&
-                _globalTypes.TryGetValue(directReference.Name, out var globalType))
+                _globalTypes.TryGetLatest(directReference.Name, out var globalType))
             {
                 calleeType = globalType;
             }
             else if (calleeType.Kind == LuaTypeKind.Unknown &&
                      TryGetCalledGlobalIdentifier(expression, out var projectedGlobal) &&
-                     _globalTypes.TryGetValue(projectedGlobal, out globalType))
+                     _globalTypes.TryGetLatest(projectedGlobal, out globalType))
             {
                 calleeType = globalType;
             }
@@ -317,13 +317,38 @@ internal sealed partial class AnalysisEngine
         }
     }
 
-    private int GetContainingFunctionId(TextSpan span) =>
-        _semantics.Functions
-            .Where(function => function.Span.Start <= span.Start && function.Span.End >= span.End)
-            .OrderBy(static function => function.Span.Length)
-            .ThenByDescending(static function => function.Id)
-            .Select(static function => function.Id)
-            .FirstOrDefault();
+    private int GetContainingFunctionId(TextSpan span)
+    {
+        // _functionsInPreOrder is sorted by span start; the entry found by the binary
+        // search starts closest to (but not after) the query span, and walking parent
+        // links from it visits the containing functions from tightest to widest.
+        var low = 0;
+        var high = _functionsInPreOrder.Length - 1;
+        var candidate = -1;
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            if (_functionsInPreOrder[middle].Span.Start <= span.Start)
+            {
+                candidate = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        for (var index = candidate; index >= 0; index = _functionParentsInPreOrder[index])
+        {
+            if (_functionsInPreOrder[index].Span.End >= span.End)
+            {
+                return _functionsInPreOrder[index].Id;
+            }
+        }
+
+        return 0;
+    }
 
     private static TextSpan GetCalleeSpan(
         LuaSyntaxNode expression,

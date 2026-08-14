@@ -69,16 +69,30 @@ public sealed class SourceText
         LunilGuard.NotNegative(byteOffset);
         LunilGuard.LessThanOrEqual(byteOffset, _bytes.Length);
 
+        var line = GetLineIndex(byteOffset);
+        var lineStart = _lineStarts[line];
+        var byteColumn = byteOffset - lineStart;
+        var utf16Column = CountUtf16CodeUnits(_bytes.AsSpan(lineStart, byteColumn));
+        return new SourceLocation(byteOffset, line, byteColumn, utf16Column);
+    }
+
+    /// <summary>
+    /// Gets the zero-based line containing a byte offset without computing the UTF-16
+    /// column. Hot paths that only need the line (for example instruction line
+    /// attribution during lowering) avoid rescanning the line's bytes.
+    /// </summary>
+    public int GetLineIndex(int byteOffset)
+    {
+        LunilGuard.NotNegative(byteOffset);
+        LunilGuard.LessThanOrEqual(byteOffset, _bytes.Length);
+
         var line = Array.BinarySearch(_lineStarts, byteOffset);
         if (line < 0)
         {
             line = ~line - 1;
         }
 
-        var lineStart = _lineStarts[line];
-        var byteColumn = byteOffset - lineStart;
-        var utf16Column = CountUtf16CodeUnits(_bytes.AsSpan(lineStart, byteColumn));
-        return new SourceLocation(byteOffset, line, byteColumn, utf16Column);
+        return line;
     }
 
     private static int[] BuildLineStarts(ReadOnlySpan<byte> bytes)

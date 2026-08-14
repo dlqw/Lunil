@@ -19,8 +19,21 @@ public sealed class LuaSyntaxNode
         LunilGuard.NotNull(children);
         Kind = kind;
         _children = children.ToImmutableArray();
-        Span = CalculateSpan(_children, includeTrivia: false, emptyPosition);
-        FullSpan = CalculateSpan(_children, includeTrivia: true, emptyPosition);
+        ComputeSpans(_children, emptyPosition, out var span, out var fullSpan);
+        Span = span;
+        FullSpan = fullSpan;
+    }
+
+    internal LuaSyntaxNode(
+        LuaSyntaxKind kind,
+        ImmutableArray<LuaSyntaxElement> children,
+        int emptyPosition)
+    {
+        Kind = kind;
+        _children = children;
+        ComputeSpans(children, emptyPosition, out var span, out var fullSpan);
+        Span = span;
+        FullSpan = fullSpan;
     }
 
     internal LuaSyntaxNode(LuaSyntaxArena arena, int arenaIndex, int positionDelta)
@@ -132,33 +145,38 @@ public sealed class LuaSyntaxNode
         }
     }
 
-    private static TextSpan CalculateSpan(
+    private static void ComputeSpans(
         ImmutableArray<LuaSyntaxElement> children,
-        bool includeTrivia,
-        int emptyPosition)
+        int emptyPosition,
+        out TextSpan span,
+        out TextSpan fullSpan)
     {
         int? start = null;
+        int? fullStart = null;
         var end = 0;
+        var fullEnd = 0;
 
         foreach (var child in children)
         {
-            var span = child.Node is not null
-                ? includeTrivia ? child.Node.FullSpan : child.Node.Span
-                : child.Token is not null
-                    ? includeTrivia ? child.Token.FullSpan : child.Token.Span
-                    : default;
-
-            if (child.Node is null && child.Token is null)
+            if (child.Node is { } node)
             {
-                continue;
+                start ??= node.Span.Start;
+                end = node.Span.End;
+                fullStart ??= node.FullSpan.Start;
+                fullEnd = node.FullSpan.End;
             }
-
-            start ??= span.Start;
-            end = span.End;
+            else if (child.Token is { } token)
+            {
+                start ??= token.Span.Start;
+                end = token.Span.End;
+                fullStart ??= token.FullSpan.Start;
+                fullEnd = token.FullSpan.End;
+            }
         }
 
-        return start is int value
-            ? TextSpan.FromBounds(value, end)
+        span = start is int value ? TextSpan.FromBounds(value, end) : new TextSpan(emptyPosition, 0);
+        fullSpan = fullStart is int fullValue
+            ? TextSpan.FromBounds(fullValue, fullEnd)
             : new TextSpan(emptyPosition, 0);
     }
 

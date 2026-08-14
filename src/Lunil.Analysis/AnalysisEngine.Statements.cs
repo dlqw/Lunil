@@ -17,7 +17,34 @@ internal sealed partial class AnalysisEngine
         ImmutableArray<LuaAnnotationSyntax> annotations,
         LuaType? implicitSelfType)
     {
-        var genericAnnotation = annotations.OfType<LuaGenericAnnotationSyntax>().LastOrDefault();
+        LuaGenericAnnotationSyntax? genericAnnotation = null;
+        LuaParamAnnotationSyntax? lastParameterAnnotation = null;
+        LuaVarargAnnotationSyntax? vararg = null;
+        LuaReturnAnnotationSyntax? returnAnnotation = null;
+        var overloads = ImmutableArray<LuaFunctionType>.Empty.ToBuilder();
+        foreach (var annotation in annotations)
+        {
+            switch (annotation)
+            {
+                case LuaGenericAnnotationSyntax generic:
+                    genericAnnotation = generic;
+                    break;
+                case LuaParamAnnotationSyntax parameter:
+                    lastParameterAnnotation = parameter;
+                    break;
+                case LuaVarargAnnotationSyntax variadic:
+                    vararg = variadic;
+                    break;
+                case LuaReturnAnnotationSyntax returns:
+                    returnAnnotation = returns;
+                    break;
+                case LuaOverloadAnnotationSyntax overload when
+                    _types.Resolve(overload.Type) is LuaFunctionType signature:
+                    overloads.Add(signature);
+                    break;
+            }
+        }
+
         var typeParameters = genericAnnotation?.Parameters.Select((item, index) =>
         {
             var constraint = item.Constraint is null
@@ -25,20 +52,59 @@ internal sealed partial class AnalysisEngine
                 : _types.Resolve(item.Constraint);
             return new LuaGenericParameterType(item.Name, index, constraint);
         }).ToImmutableArray() ?? [];
-        var parameterMap = typeParameters.ToDictionary(
-            static item => item.Name,
-            static item => (LuaType)item,
+        var parameterMap = new Dictionary<string, LuaType>(StringComparer.Ordinal);
+        foreach (var parameter in typeParameters)
+        {
+            parameterMap[parameter.Name] = parameter;
+        }
+
+        // Later duplicate @param annotations win, matching GroupBy(...).Last().
+        var annotatedParameters = new Dictionary<string, LuaParamAnnotationSyntax>(
             StringComparer.Ordinal);
-        var annotatedParameters = annotations.OfType<LuaParamAnnotationSyntax>()
-            .GroupBy(static item => item.Name, StringComparer.Ordinal)
-            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
-        var symbols = function.Symbols
-            .Where(static symbol => symbol.Kind == LuaSymbolKind.Parameter)
-            .OrderBy(static symbol => symbol.DeclaringSpan.Start)
-            .ThenBy(static symbol => symbol.Id)
-            .ToArray();
+        foreach (var annotation in annotations)
+        {
+            if (annotation is LuaParamAnnotationSyntax parameter)
+            {
+                annotatedParameters[parameter.Name] = parameter;
+            }
+        }
+
+        // Binder symbols normally arrive in source order; verify that cheaply and
+        // fall back to an explicit sort so the result always matches
+        // OrderBy(DeclaringSpan.Start).ThenBy(Id).
+        var parameterSymbols = new List<LuaSymbol>();
+        var sorted = true;
+        LuaSymbol? previous = null;
+        foreach (var symbol in function.Symbols)
+        {
+            if (symbol.Kind != LuaSymbolKind.Parameter)
+            {
+                continue;
+            }
+
+            if (previous is not null &&
+                (symbol.DeclaringSpan.Start < previous.DeclaringSpan.Start ||
+                 symbol.DeclaringSpan.Start == previous.DeclaringSpan.Start &&
+                 symbol.Id < previous.Id))
+            {
+                sorted = false;
+            }
+
+            previous = symbol;
+            parameterSymbols.Add(symbol);
+        }
+
+        if (!sorted)
+        {
+            parameterSymbols.Sort(static (left, right) =>
+            {
+                var byStart = left.DeclaringSpan.Start.CompareTo(right.DeclaringSpan.Start);
+                return byStart != 0 ? byStart : left.Id.CompareTo(right.Id);
+            });
+        }
+
         var parameters = ImmutableArray.CreateBuilder<LuaFunctionParameter>();
-        foreach (var symbol in symbols)
+        foreach (var symbol in parameterSymbols)
         {
             if (annotatedParameters.TryGetValue(symbol.Name, out var annotation))
             {
@@ -63,7 +129,6 @@ internal sealed partial class AnalysisEngine
             }
         }
 
-        var vararg = annotations.OfType<LuaVarargAnnotationSyntax>().LastOrDefault();
         if (function.IsVarArg)
         {
             parameters.Add(new LuaFunctionParameter(
@@ -73,7 +138,6 @@ internal sealed partial class AnalysisEngine
                 IsVararg: true));
         }
 
-        var returnAnnotation = annotations.OfType<LuaReturnAnnotationSyntax>().LastOrDefault();
         LuaTypePack? expectedReturns = null;
         if (returnAnnotation is not null)
         {
@@ -89,16 +153,13 @@ internal sealed partial class AnalysisEngine
             expectedReturns ?? LuaTypePack.Empty,
             typeParameters,
             syntax.HasImplicitSelf);
-        var overloads = annotations.OfType<LuaOverloadAnnotationSyntax>()
-            .Select(item => _types.Resolve(item.Type, parameterMap))
-            .OfType<LuaFunctionType>()
-            .ToImmutableArray();
-        var valueType = overloads.IsEmpty
+        var overloadArray = overloads.ToImmutable();
+        var valueType = overloadArray.IsEmpty
             ? (LuaType)primary
-            : new LuaOverloadType([primary, .. overloads]);
+            : new LuaOverloadType([primary, .. overloadArray]);
         return new FunctionSpecification(
             primary,
-            overloads,
+            overloadArray,
             valueType,
             expectedReturns,
             returnAnnotation is not null);
@@ -161,14 +222,14 @@ internal sealed partial class AnalysisEngine
                     flowValue,
                     token.Span);
             }
-            state.Types[key] = flowValue;
+            state.SetType(key, flowValue);
             if (expressionList is not null)
             {
-                state.Assigned.Add(key);
+                state.MarkAssigned(key);
             }
             else
             {
-                state.Assigned.Remove(key);
+                state.UnmarkAssigned(key);
             }
 
             RecordSymbolInference(symbol, flowValue);
@@ -240,7 +301,7 @@ internal sealed partial class AnalysisEngine
             var key = reference.ResolutionKind == LuaNameResolutionKind.Global
                 ? VariableKey.Global(reference.Name)
                 : VariableKey.Local(reference.Symbol.Id);
-            var root = state.Types.GetValueOrDefault(
+            var root = state.TypeOf(
                 key,
                 _declaredTypes.GetValueOrDefault(key, LuaTypes.Any));
             var isMember = nameTokens.Length > 1;
@@ -279,9 +340,9 @@ internal sealed partial class AnalysisEngine
             var path = GetFunctionName(statement);
             if (path is not null)
             {
-                state.Types[VariableKey.Global(path)] = type;
-                state.Assigned.Add(VariableKey.Global(path));
-                _globalTypes[path] = type;
+                state.SetType(VariableKey.Global(path), type);
+                state.MarkAssigned(VariableKey.Global(path));
+                SetGlobalType(path, type);
             }
         }
 
@@ -534,8 +595,8 @@ internal sealed partial class AnalysisEngine
         if (token is not null && _declarations.TryGetValue(token.Span, out var symbol))
         {
             var key = VariableKey.Local(symbol.Id);
-            loopState.Types[key] = LuaTypes.Number;
-            loopState.Assigned.Add(key);
+            loopState.SetType(key, LuaTypes.Number);
+            loopState.MarkAssigned(key);
             _declaredTypes[key] = LuaTypes.Number;
             RecordSymbolInference(symbol, LuaTypes.Number);
         }
@@ -570,8 +631,8 @@ internal sealed partial class AnalysisEngine
                 type = LuaTypes.Any;
             }
 
-            loopState.Types[key] = type;
-            loopState.Assigned.Add(key);
+            loopState.SetType(key, type);
+            loopState.MarkAssigned(key);
             _declaredTypes[key] = type;
             RecordSymbolInference(symbol, type);
         }
@@ -725,8 +786,8 @@ internal sealed partial class AnalysisEngine
             CheckAssignable(value, declared, span, $"assignment to '{symbol.Name}'");
         }
 
-        state.Types[key] = value;
-        state.Assigned.Add(key);
+        state.SetType(key, value);
+        state.MarkAssigned(key);
         var pathPrefix = key.IsGlobal ? "g:" + key.GlobalName : "s:" + key.SymbolId;
         foreach (var path in state.PathTypes.Keys.Where(path =>
                      string.Equals(path.Value, pathPrefix, StringComparison.Ordinal) ||
@@ -740,9 +801,11 @@ internal sealed partial class AnalysisEngine
         }
         if (key.IsGlobal)
         {
-            _globalTypes[key.GlobalName!] = _globalTypes.TryGetValue(key.GlobalName!, out var previous)
-                ? _relations.Union(previous, value)
-                : value;
+            SetGlobalType(
+                key.GlobalName!,
+                _globalTypes.TryGetLatest(key.GlobalName!, out var previous)
+                    ? _relations.Union(previous, value)
+                    : value);
         }
         else
         {
@@ -754,22 +817,23 @@ internal sealed partial class AnalysisEngine
     {
         foreach (var cast in GetAnnotations(statement).OfType<LuaCastAnnotationSyntax>())
         {
-            var matches = state.Types.Keys.Where(key =>
-                key.IsGlobal
-                    ? string.Equals(key.GlobalName, cast.Name, StringComparison.Ordinal)
-                    : _semantics.Symbols.Any(symbol =>
-                        symbol.Id == key.SymbolId &&
-                        string.Equals(symbol.Name, cast.Name, StringComparison.Ordinal)))
-                .OrderByDescending(static key => key.SymbolId)
-                .ToArray();
-            var key = matches.FirstOrDefault();
-            if (matches.Length == 0)
+            var matches = new List<VariableKey>();
+            foreach (var key in state.EnumerateTypeKeys())
             {
-                key = VariableKey.Global(cast.Name);
+                if (key.IsGlobal
+                    ? string.Equals(key.GlobalName, cast.Name, StringComparison.Ordinal)
+                    : _symbolsById.TryGetValue(key.SymbolId, out var symbol) &&
+                        string.Equals(symbol.Name, cast.Name, StringComparison.Ordinal))
+                {
+                    matches.Add(key);
+                }
             }
 
+            matches.Sort(static (left, right) => right.SymbolId.CompareTo(left.SymbolId));
+            var castKey = matches.Count > 0 ? matches[0] : VariableKey.Global(cast.Name);
+
             var castType = _types.Resolve(cast.Type);
-            var current = state.Types.GetValueOrDefault(key, LuaTypes.Any);
+            var current = state.TypeOf(castKey, LuaTypes.Any);
             var next = cast.Operation switch
             {
                 LuaCastOperation.Add => _relations.Union(current, castType),
@@ -784,13 +848,18 @@ internal sealed partial class AnalysisEngine
                     $"Cast of '{cast.Name}' produces the impossible type never.");
             }
 
-            state.Types[key] = next;
-            state.Assigned.Add(key);
+            state.SetType(castKey, next);
+            state.MarkAssigned(castKey);
         }
     }
 
     private string? GetFunctionName(LuaSyntaxNode statement)
     {
+        if (_functionNamesByOwnerSpan.TryGetValue(statement.Span, out var cached))
+        {
+            return cached;
+        }
+
         var name = statement.ChildNodes().FirstOrDefault(static node =>
             node.Kind == LuaSyntaxKind.FunctionName);
         if (name is null)
@@ -805,6 +874,8 @@ internal sealed partial class AnalysisEngine
             text.Append(Encoding.UTF8.GetString(_semantics.Syntax.Source.GetSpan(token.Span)));
         }
 
-        return text.ToString().Replace(':', '.');
+        var result = text.ToString().Replace(':', '.');
+        _functionNamesByOwnerSpan[statement.Span] = result;
+        return result;
     }
 }

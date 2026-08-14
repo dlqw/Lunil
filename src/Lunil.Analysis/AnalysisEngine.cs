@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text;
 using System.Runtime.CompilerServices;
+using System.Diagnostics.CodeAnalysis;
 using Lunil.Core.Text;
 using Lunil.EmmyLua;
 using Lunil.Semantics.Binding;
@@ -25,10 +26,16 @@ internal sealed partial class AnalysisEngine
     private readonly Dictionary<int, FunctionSyntax> _functionSyntax;
     private readonly Dictionary<TextSpan, int> _functionIdsByOwnerSpan;
     private readonly Dictionary<TextSpan, ImmutableArray<LuaAnnotationSyntax>> _attachedAnnotations;
+    private readonly Dictionary<int, LuaFunctionInfo> _functionsById;
+    private readonly Dictionary<int, LuaSymbol> _symbolsById;
+    private readonly Dictionary<int, LuaControlFlowGraph> _graphsById;
+    private readonly LuaFunctionInfo[] _functionsInPreOrder;
+    private readonly int[] _functionParentsInPreOrder;
+    private readonly Dictionary<TextSpan, string> _functionNamesByOwnerSpan = [];
     private readonly Dictionary<VariableKey, LuaType> _declaredTypes = [];
     private readonly Dictionary<int, LuaType> _symbolInferences = [];
     private readonly Dictionary<TextSpan, LuaType> _expressionInferences = [];
-    private readonly Dictionary<string, LuaType> _globalTypes = new(StringComparer.Ordinal);
+    private readonly VersionedGlobalTypeTable _globalTypes = new();
     private readonly Dictionary<int, LuaType> _functionValueTypes = [];
     private readonly Dictionary<int, LuaFunctionAnalysis> _functionAnalyses = [];
     private readonly Dictionary<int, string> _functionCaptureSignatures = [];
@@ -65,16 +72,163 @@ internal sealed partial class AnalysisEngine
         _relations = types.Relations;
         _graphs = graphs;
         _context = context;
-        _references = semantics.References
-            .GroupBy(static reference => reference.Span)
-            .ToDictionary(static group => group.Key, static group => group.Last());
-        _declarations = semantics.Symbols
-            .GroupBy(static symbol => symbol.DeclaringSpan)
-            .ToDictionary(static group => group.Key, static group => group.Last());
+        _references = new Dictionary<TextSpan, LuaNameReference>(semantics.References.Length);
+        foreach (var reference in semantics.References)
+        {
+            _references[reference.Span] = reference;
+        }
+
+        _declarations = new Dictionary<TextSpan, LuaSymbol>(semantics.Symbols.Length);
+        foreach (var symbol in semantics.Symbols)
+        {
+            _declarations[symbol.DeclaringSpan] = symbol;
+        }
+
+        _functionsById = new Dictionary<int, LuaFunctionInfo>(semantics.Functions.Length);
+        foreach (var function in semantics.Functions)
+        {
+            _functionsById.Add(function.Id, function);
+        }
+
+        _graphsById = new Dictionary<int, LuaControlFlowGraph>(graphs.Length);
+        foreach (var graph in graphs)
+        {
+            _graphsById.Add(graph.FunctionId, graph);
+        }
+
+        _symbolsById = new Dictionary<int, LuaSymbol>(semantics.Symbols.Length);
+        foreach (var symbol in semantics.Symbols)
+        {
+            _symbolsById.Add(symbol.Id, symbol);
+        }
+
+        (_functionsInPreOrder, _functionParentsInPreOrder) = BuildFunctionPreOrderIndex();
         (_functionSyntax, _functionIdsByOwnerSpan) = BuildFunctionIndex();
         BuildFunctionTargetIndex();
         _attachedAnnotations = AttachAnnotations();
         InstallBuiltIns();
+    }
+
+    private (LuaFunctionInfo[] Functions, int[] Parents) BuildFunctionPreOrderIndex()
+    {
+        // Function spans either nest or are disjoint, so ordering by start and then by
+        // descending end yields a pre-order walk whose parent links can be resolved
+        // with a stack. GetContainingFunctionId then answers containment queries in
+        // O(log n + nesting depth) instead of scanning every function.
+        var functions = _semantics.Functions.OrderBy(static item => item.Span.Start)
+            .ThenByDescending(static item => item.Span.End)
+            .ToArray();
+        var parents = new int[functions.Length];
+        var stack = new int[functions.Length];
+        var depth = 0;
+        for (var index = 0; index < functions.Length; index++)
+        {
+            var span = functions[index].Span;
+            while (depth > 0 && functions[stack[depth - 1]].Span.End < span.End)
+            {
+                depth--;
+            }
+
+            parents[index] = depth > 0 ? stack[depth - 1] : -1;
+            stack[depth++] = index;
+        }
+
+        return (functions, parents);
+    }
+
+    /// <summary>
+    /// Creates a state whose global bindings read through to the versioned global
+    /// table as of the current version. Cloning such a state copies only the
+    /// function-local overlay, so straight-line flow analysis no longer scales with
+    /// global count and state creation never copies the global environment.
+    /// </summary>
+    private FlowState CreateRootState() => new(_globalTypes, _globalTypes.Version);
+
+    private void SetGlobalType(string name, LuaType type) => _globalTypes.Set(name, type);
+
+    /// <summary>
+    /// Append-only global environment. Each write records the table version it became
+    /// visible at, so a flow state created at version v reads exactly the bindings a
+    /// full copy would have captured, without ever materializing that copy.
+    /// </summary>
+    internal sealed class VersionedGlobalTypeTable
+    {
+        private readonly Dictionary<string, List<(int Version, LuaType Type)>> _entries =
+            new(StringComparer.Ordinal);
+
+        public int Version { get; private set; }
+
+        public void Set(string name, LuaType type)
+        {
+            if (!_entries.TryGetValue(name, out var history))
+            {
+                history = [];
+                _entries.Add(name, history);
+            }
+
+            history.Add((Version, type));
+            Version++;
+        }
+
+        public bool TryGet(string name, int version, out LuaType type)
+        {
+            if (!_entries.TryGetValue(name, out var history))
+            {
+                type = null!;
+                return false;
+            }
+
+            // Histories are appended in ascending version order; find the newest
+            // entry that was already visible at the requested version.
+            var low = 0;
+            var high = history.Count - 1;
+            var index = -1;
+            while (low <= high)
+            {
+                var middle = low + (high - low) / 2;
+                if (history[middle].Version <= version)
+                {
+                    index = middle;
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle - 1;
+                }
+            }
+
+            if (index < 0)
+            {
+                type = null!;
+                return false;
+            }
+
+            type = history[index].Type;
+            return true;
+        }
+
+        public bool TryGetLatest(string name, out LuaType type)
+        {
+            if (_entries.TryGetValue(name, out var history))
+            {
+                type = history[^1].Type;
+                return true;
+            }
+
+            type = null!;
+            return false;
+        }
+
+        public IEnumerable<string> EnumerateNames(int version)
+        {
+            foreach (var pair in _entries)
+            {
+                if (pair.Value[0].Version <= version)
+                {
+                    yield return pair.Key;
+                }
+            }
+        }
     }
 
     public LuaAnalysisResult Analyze()
@@ -193,7 +347,7 @@ internal sealed partial class AnalysisEngine
         ImmutableArray<LuaAnnotationSyntax> annotations,
         LuaType? implicitSelfType = null)
     {
-        var functionInfo = _semantics.Functions.Single(item => item.Id == functionId);
+        var functionInfo = _functionsById[functionId];
         var captureSignature = GetCaptureSignature(functionInfo);
         if (_functionValueTypes.TryGetValue(functionId, out var cached) &&
             !_functionsInProgress.Contains(functionId) &&
@@ -227,7 +381,7 @@ internal sealed partial class AnalysisEngine
             var state = CreateInitialState(functionInfo, specification);
             var result = AnalyzeBlock(syntax.Body, state, insideLoop: false);
             foreach (var symbol in functionInfo.Symbols.Where(symbol =>
-                         result.Fallthrough.Assigned.Contains(VariableKey.Local(symbol.Id))))
+                         result.Fallthrough.IsAssigned(VariableKey.Local(symbol.Id))))
             {
                 _definitelyAssignedSymbols.Add(symbol.Id);
             }
@@ -244,7 +398,7 @@ internal sealed partial class AnalysisEngine
                 ? (LuaType)primary
                 : new LuaOverloadType([primary, .. specification.Overloads]);
             _functionValueTypes[functionId] = valueType;
-            var graph = _graphs.Single(item => item.FunctionId == functionId);
+            var graph = _graphsById[functionId];
             _functionAnalyses[functionId] = new LuaFunctionAnalysis(
                 functionId,
                 primary,
@@ -287,7 +441,7 @@ internal sealed partial class AnalysisEngine
         LuaFunctionInfo function,
         FunctionSpecification specification)
     {
-        var state = new FlowState(_globalTypes);
+        var state = CreateRootState();
         var parameters = function.Symbols
             .Where(static symbol => symbol.Kind == LuaSymbolKind.Parameter)
             .OrderBy(static symbol => symbol.DeclaringSpan.Start)
@@ -300,8 +454,8 @@ internal sealed partial class AnalysisEngine
                 ? specification.Primary.Parameters[index].Type
                 : LuaTypes.Any;
             var key = VariableKey.Local(parameter.Id);
-            state.Types[key] = type;
-            state.Assigned.Add(key);
+            state.SetType(key, type);
+            state.MarkAssigned(key);
             _definitelyAssignedSymbols.Add(parameter.Id);
             _declaredTypes[key] = type;
             RecordSymbolInference(parameter, type);
@@ -320,8 +474,8 @@ internal sealed partial class AnalysisEngine
             }
 
             type = cell.Type;
-            state.Types[key] = type;
-            state.Assigned.Add(key);
+            state.SetType(key, type);
+            state.MarkAssigned(key);
         }
 
         return state;
@@ -420,7 +574,7 @@ internal sealed partial class AnalysisEngine
             mainBody,
             null,
             false);
-        bySpan[_semantics.Functions.Single(static function => function.Id == 0).Span] = 0;
+        bySpan[_functionsById[0].Span] = 0;
         var owners = _semantics.Syntax.Root.DescendantNodes()
             .Where(static node => node.Kind is
                 LuaSyntaxKind.FunctionDeclarationStatement or
@@ -463,12 +617,31 @@ internal sealed partial class AnalysisEngine
                      LuaVarargAnnotationSyntax or
                      LuaCastAnnotationSyntax))
         {
-            var target = attachable.FirstOrDefault(node => node.Span.Start >= annotation.Span.End);
-            if (target is null)
+            // attachable is ordered by span start, so a lower-bound binary search finds
+            // the first statement at or after the annotation without scanning the list.
+            var low = 0;
+            var high = attachable.Length - 1;
+            var targetIndex = -1;
+            while (low <= high)
+            {
+                var middle = (int)((uint)low + (uint)high) / 2;
+                if (attachable[middle].Span.Start >= annotation.Span.End)
+                {
+                    targetIndex = middle;
+                    high = middle - 1;
+                }
+                else
+                {
+                    low = middle + 1;
+                }
+            }
+
+            if (targetIndex < 0)
             {
                 continue;
             }
 
+            var target = attachable[targetIndex];
             if (!builders.TryGetValue(target.Span, out var builder))
             {
                 builder = ImmutableArray.CreateBuilder<LuaAnnotationSyntax>();
@@ -550,44 +723,307 @@ internal sealed partial class AnalysisEngine
 
     private readonly record struct AccessPathKey(string Value, int HopCount);
 
+    /// <summary>
+    /// Mutable flow-analysis state. Global bindings read through the versioned global
+    /// table as of the state's creation version; only function-local entries and
+    /// global overrides are stored per state, so cloning stays proportional to the
+    /// overlay instead of the whole global environment.
+    /// </summary>
     private sealed class FlowState
     {
-        public FlowState(IReadOnlyDictionary<string, LuaType> globals)
+        private readonly VersionedGlobalTypeTable? _globalTable;
+        private readonly int _globalBaseVersion;
+        private readonly Dictionary<VariableKey, LuaType> _types = [];
+        private readonly HashSet<VariableKey> _assigned = [];
+        private readonly HashSet<string> _unassignedGlobals = [];
+        private bool _reachable = true;
+
+        public FlowState(VersionedGlobalTypeTable globalTable, int globalBaseVersion)
         {
-            foreach (var pair in globals)
-            {
-                Types[VariableKey.Global(pair.Key)] = pair.Value;
-                Assigned.Add(VariableKey.Global(pair.Key));
-            }
+            _globalTable = globalTable;
+            _globalBaseVersion = globalBaseVersion;
         }
 
-        private FlowState()
+        private FlowState(
+            VersionedGlobalTypeTable? globalTable,
+            int globalBaseVersion,
+            bool reachable)
         {
+            _globalTable = globalTable;
+            _globalBaseVersion = globalBaseVersion;
+            _reachable = reachable;
         }
 
-        public Dictionary<VariableKey, LuaType> Types { get; } = [];
-
-        public HashSet<VariableKey> Assigned { get; } = [];
+        public bool Reachable
+        {
+            get => _reachable;
+            set => _reachable = value;
+        }
 
         public Dictionary<AccessPathKey, LuaType> PathTypes { get; } = [];
 
-        public bool Reachable { get; set; } = true;
+        public bool TryGetType(VariableKey key, [MaybeNullWhen(false)] out LuaType type)
+        {
+            if (_types.TryGetValue(key, out type))
+            {
+                return true;
+            }
+
+            if (key.IsGlobal && _globalTable is not null &&
+                _globalTable.TryGet(key.GlobalName!, _globalBaseVersion, out type))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        public LuaType TypeOf(VariableKey key, LuaType fallback)
+        {
+            return TryGetType(key, out var type) ? type : fallback;
+        }
+
+        public void SetType(VariableKey key, LuaType value) => _types[key] = value;
+
+        public bool ContainsType(VariableKey key) => TryGetType(key, out _);
+
+        /// <summary>
+        /// Enumerates every tracked type key: the per-state overlay first, then the
+        /// global names visible at this state's base version. Enumeration order
+        /// matches lookup precedence.
+        /// </summary>
+        public IEnumerable<VariableKey> EnumerateTypeKeys()
+        {
+            foreach (var pair in _types)
+            {
+                yield return pair.Key;
+            }
+
+            if (_globalTable is not null)
+            {
+                foreach (var name in _globalTable.EnumerateNames(_globalBaseVersion))
+                {
+                    yield return VariableKey.Global(name);
+                }
+            }
+        }
+
+        /// <summary>Entries written into this state, excluding the shared global base.</summary>
+        public IEnumerable<KeyValuePair<VariableKey, LuaType>> OverlayTypes => _types;
+
+        public bool IsAssigned(VariableKey key) => key.IsGlobal
+            ? _assigned.Contains(key) ||
+              (!_unassignedGlobals.Contains(key.GlobalName!) &&
+               _globalTable is not null &&
+               _globalTable.TryGet(key.GlobalName!, _globalBaseVersion, out _))
+            : _assigned.Contains(key);
+
+        public void MarkAssigned(VariableKey key)
+        {
+            _assigned.Add(key);
+            if (key.IsGlobal)
+            {
+                _unassignedGlobals.Remove(key.GlobalName!);
+            }
+        }
+
+        public void UnmarkAssigned(VariableKey key)
+        {
+            _assigned.Remove(key);
+            if (key.IsGlobal && _globalTable is not null &&
+                _globalTable.TryGet(key.GlobalName!, _globalBaseVersion, out _))
+            {
+                _unassignedGlobals.Add(key.GlobalName!);
+            }
+        }
+
+        /// <summary>
+        /// Replaces the assigned set with the intersection of the effective assigned
+        /// sets of the input states, preserving global tombstones where some state
+        /// explicitly unassigned a base global.
+        /// </summary>
+        public void IntersectAssigned(IReadOnlyList<FlowState> states)
+        {
+            _assigned.Clear();
+            _assigned.UnionWith(states[0]._assigned);
+            for (var index = 1; index < states.Count; index++)
+            {
+                _assigned.IntersectWith(states[index]._assigned);
+            }
+
+            var candidates = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var state in states)
+            {
+                foreach (var key in state._assigned)
+                {
+                    if (key.IsGlobal)
+                    {
+                        candidates.Add(key.GlobalName!);
+                    }
+                }
+
+                candidates.UnionWith(state._unassignedGlobals);
+            }
+
+            foreach (var name in candidates)
+            {
+                var all = true;
+                foreach (var state in states)
+                {
+                    if (!state.IsAssigned(VariableKey.Global(name)))
+                    {
+                        all = false;
+                        break;
+                    }
+                }
+
+                if (all)
+                {
+                    _unassignedGlobals.Remove(name);
+                }
+                else
+                {
+                    _assigned.Remove(VariableKey.Global(name));
+                    if (_globalTable is not null &&
+                        _globalTable.TryGet(name, _globalBaseVersion, out _))
+                    {
+                        _unassignedGlobals.Add(name);
+                    }
+                }
+            }
+        }
+
+        public bool AssignedSetEquals(FlowState other)
+        {
+            if (!ReferenceEquals(_globalTable, other._globalTable) ||
+                _globalBaseVersion != other._globalBaseVersion)
+            {
+                return MaterializeAssigned().SetEquals(other.MaterializeAssigned());
+            }
+
+            if (!_unassignedGlobals.SetEquals(other._unassignedGlobals))
+            {
+                return false;
+            }
+
+            return NormalizeAssignedOverlay().SetEquals(other.NormalizeAssignedOverlay());
+        }
+
+        private HashSet<VariableKey> NormalizeAssignedOverlay()
+        {
+            if (_globalTable is null)
+            {
+                return _assigned;
+            }
+
+            var normalized = new HashSet<VariableKey>();
+            foreach (var key in _assigned)
+            {
+                if (!key.IsGlobal ||
+                    !_globalTable.TryGet(key.GlobalName!, _globalBaseVersion, out _))
+                {
+                    normalized.Add(key);
+                }
+            }
+
+            return normalized;
+        }
+
+        private HashSet<VariableKey> MaterializeAssigned()
+        {
+            var effective = new HashSet<VariableKey>(_assigned);
+            if (_globalTable is not null)
+            {
+                foreach (var name in _globalTable.EnumerateNames(_globalBaseVersion))
+                {
+                    if (!_unassignedGlobals.Contains(name))
+                    {
+                        effective.Add(VariableKey.Global(name));
+                    }
+                }
+            }
+
+            return effective;
+        }
 
         public FlowState Clone()
         {
-            var clone = new FlowState { Reachable = Reachable };
-            foreach (var pair in Types)
+            var clone = new FlowState(_globalTable, _globalBaseVersion, _reachable);
+            foreach (var pair in _types)
             {
-                clone.Types.Add(pair.Key, pair.Value);
+                clone._types.Add(pair.Key, pair.Value);
             }
 
-            clone.Assigned.UnionWith(Assigned);
+            clone._assigned.UnionWith(_assigned);
+            clone._unassignedGlobals.UnionWith(_unassignedGlobals);
             foreach (var pair in PathTypes)
             {
                 clone.PathTypes.Add(pair.Key, pair.Value);
             }
 
             return clone;
+        }
+
+        /// <summary>
+        /// Replaces this state's contents with the source state's effective contents.
+        /// When the states share one global table version only the overlay is copied;
+        /// otherwise the source's base bindings are materialized into the overlay.
+        /// </summary>
+        public void CopyFrom(FlowState source)
+        {
+            _reachable = source._reachable;
+            _types.Clear();
+            _assigned.Clear();
+            _unassignedGlobals.Clear();
+            PathTypes.Clear();
+            if (ReferenceEquals(_globalTable, source._globalTable) &&
+                _globalBaseVersion == source._globalBaseVersion)
+            {
+                foreach (var pair in source._types)
+                {
+                    _types.Add(pair.Key, pair.Value);
+                }
+
+                _assigned.UnionWith(source._assigned);
+                _unassignedGlobals.UnionWith(source._unassignedGlobals);
+            }
+            else
+            {
+                foreach (var pair in source._types)
+                {
+                    _types.Add(pair.Key, pair.Value);
+                }
+
+                if (source._globalTable is not null)
+                {
+                    foreach (var name in source._globalTable.EnumerateNames(source._globalBaseVersion))
+                    {
+                        if (source._globalTable.TryGet(name, source._globalBaseVersion, out var value))
+                        {
+                            _types[VariableKey.Global(name)] = value;
+                            if (!source._unassignedGlobals.Contains(name))
+                            {
+                                _assigned.Add(VariableKey.Global(name));
+                            }
+                        }
+                    }
+                }
+
+                foreach (var key in source._assigned)
+                {
+                    if (!key.IsGlobal)
+                    {
+                        _assigned.Add(key);
+                    }
+                }
+
+                _unassignedGlobals.UnionWith(source._unassignedGlobals);
+            }
+
+            foreach (var pair in source.PathTypes)
+            {
+                PathTypes.Add(pair.Key, pair.Value);
+            }
         }
     }
 
