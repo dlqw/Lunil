@@ -1,4 +1,6 @@
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 
 export async function run(): Promise<void> {
@@ -12,9 +14,31 @@ export async function run(): Promise<void> {
     'lunil.clearCache',
     'lunil.reindexWorkspace',
     'lunil.showOutput',
+    'lunil.showMenu',
     'lunil.showHostContract'
   ]) {
     assert.ok(commands.includes(command), `${command} must be registered.`);
+  }
+
+  const packageJson = JSON.parse(fs.readFileSync(
+    path.join(extension.extensionPath, 'package.json'), 'utf8')) as {
+      contributes?: {
+        snippets?: { path: string }[];
+        walkthroughs?: { steps: { media: { markdown: string } }[] }[];
+      };
+    };
+  const snippets = packageJson.contributes?.snippets ?? [];
+  assert.equal(snippets.length, 1, 'The Lua snippet library must be contributed.');
+  assert.ok(
+    fs.existsSync(path.join(extension.extensionPath, snippets[0]!.path)),
+    'The snippet file must ship with the extension.');
+  const walkthrough = packageJson.contributes?.walkthroughs?.[0];
+  assert.ok(walkthrough, 'The getting-started walkthrough must be contributed.');
+  assert.ok(walkthrough.steps.length >= 5, 'The walkthrough must cover the core flows.');
+  for (const step of walkthrough.steps) {
+    assert.ok(
+      fs.existsSync(path.join(extension.extensionPath, step.media.markdown)),
+      `Walkthrough media ${step.media.markdown} must ship with the extension.`);
   }
 
   const document = await vscode.workspace.openTextDocument(

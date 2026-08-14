@@ -7,6 +7,7 @@ import {
   ErrorAction,
   LanguageClient,
   LanguageClientOptions,
+  ProgressType,
   ServerOptions,
   State
 } from 'vscode-languageclient/node';
@@ -53,10 +54,33 @@ class LunilDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   }
 }
 
+type ServerState =
+  | 'restricted'
+  | 'starting'
+  | 'running'
+  | 'indexing'
+  | 'restarting'
+  | 'stopped'
+  | 'error';
+
+interface IndexProgressPayload {
+  readonly phase?: string;
+  readonly completed?: number;
+  readonly total?: number;
+  readonly succeeded?: number;
+  readonly failed?: number;
+  readonly inProgress?: number;
+  readonly pending?: number;
+}
+
+const indexProgressThrottleMs = 200;
+
 class LunilClientController implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Lunil', { log: true });
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
   private readonly hostDocuments = new HostDocumentProvider();
+  /** One watcher for the controller lifetime; restarting the server must not stack duplicates. */
+  private readonly watcher = vscode.workspace.createFileSystemWatcher('**/*.lua');
   private readonly disposables: vscode.Disposable[] = [];
   private client: LanguageClient | undefined;
   private restartTimer: NodeJS.Timeout | undefined;
@@ -64,20 +88,26 @@ class LunilClientController implements vscode.Disposable {
   private restartAttempts = 0;
   private stopping = false;
   private disposed = false;
+  private state: ServerState = 'stopped';
+  private stateText = 'idle';
+  private lastIndexDetail = '';
+  private lastIndexUpdate = 0;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
     this.status.name = 'Lunil';
-    this.status.command = 'lunil.showOutput';
-    this.setStatus('idle', 'Lunil: idle');
+    this.status.command = 'lunil.showMenu';
+    this.setStatus('stopped', 'idle');
     this.status.show();
     this.disposables.push(
       this.output,
       this.status,
+      this.watcher,
       vscode.workspace.registerTextDocumentContentProvider('lunil-host', this.hostDocuments),
       vscode.commands.registerCommand('lunil.restartServer', () => this.restart()),
-      vscode.commands.registerCommand('lunil.clearCache', () => this.request('lunil/clearCache')),
-      vscode.commands.registerCommand('lunil.reindexWorkspace', () => this.request('lunil/reindex')),
+      vscode.commands.registerCommand('lunil.clearCache', () => this.clearCache()),
+      vscode.commands.registerCommand('lunil.reindexWorkspace', () => this.reindexWorkspace()),
       vscode.commands.registerCommand('lunil.showOutput', () => this.output.show(true)),
+      vscode.commands.registerCommand('lunil.showMenu', () => this.showMenu()),
       vscode.commands.registerCommand('lunil.showIndexStatus', () => this.showIndexStatus()),
       vscode.commands.registerCommand('lunil.showHostContract', () => this.showHostContract()),
       vscode.workspace.onDidChangeConfiguration(event => this.configurationChanged(event)),
@@ -89,7 +119,7 @@ class LunilClientController implements vscode.Disposable {
     const folders = vscode.workspace.workspaceFolders?.map(f => f.uri.toString()) ?? [];
     this.output.appendLine(`[${timestamp()}] activate: trusted=${vscode.workspace.isTrusted} folders=[${folders.join(', ')}]`);
     if (!vscode.workspace.isTrusted) {
-      this.setStatus('restricted', 'Lunil: disabled in Restricted Mode');
+      this.setStatus('restricted', 'disabled in Restricted Mode');
       this.output.appendLine('Lunil waits for Workspace Trust before starting executable workspace code.');
       return;
     }
@@ -108,7 +138,7 @@ class LunilClientController implements vscode.Disposable {
       }
       await current.dispose().catch(error => this.logError('dispose', error));
     }
-    this.setStatus('stopped', 'Lunil: stopped');
+    this.setStatus('stopped', 'stopped');
   }
 
   public dispose(): void {
@@ -126,7 +156,7 @@ class LunilClientController implements vscode.Disposable {
     }
 
     this.stopping = false;
-    this.setStatus('starting', 'Lunil: starting');
+    this.setStatus('starting', 'starting');
     try {
       const executable = await this.resolveServer();
       this.output.appendLine(`[${timestamp()}] start: server = ${executable}`);
@@ -143,7 +173,6 @@ class LunilClientController implements vscode.Disposable {
           }
         }
       };
-      const watcher = vscode.workspace.createFileSystemWatcher('**/*.lua');
       const clientOptions: LanguageClientOptions = {
         documentSelector: [
           { language: 'lua', scheme: 'file' },
@@ -151,7 +180,7 @@ class LunilClientController implements vscode.Disposable {
         ],
         synchronize: {
           configurationSection: 'lunil',
-          fileEvents: watcher
+          fileEvents: this.watcher
         },
         workspaceFolder: vscode.workspace.workspaceFolders?.[0],
         outputChannel: this.output,
@@ -172,7 +201,10 @@ class LunilClientController implements vscode.Disposable {
         clientOptions
       );
       this.client = client;
-      this.disposables.push(watcher, client.onDidChangeState(event => this.stateChanged(event.newState)));
+      this.disposables.push(
+        client.onDidChangeState(event => this.stateChanged(event.newState)),
+        client.onProgress(new ProgressType<LunilWorkDoneProgress>(), 'lunil-workspace-index',
+          progress => this.workDoneProgress(progress)));
       client.onNotification('lunil/indexProgress', progress => this.indexProgress(progress));
       await client.start();
       await client.setTrace(traceLevel(configuration.get<string>('server.trace', 'off')));
@@ -197,16 +229,16 @@ class LunilClientController implements vscode.Disposable {
   private stateChanged(state: State): void {
     this.output.appendLine(`[${timestamp()}] stateChanged: ${state}`);
     if (state === State.Running) {
-      this.setStatus('running', 'Lunil: ready');
+      this.setStatus('running', 'ready');
       this.output.appendLine(`[${timestamp()}] server running (Lunil: ready)`);
       if (this.stableTimer !== undefined) {
         clearTimeout(this.stableTimer);
       }
       this.stableTimer = setTimeout(() => { this.restartAttempts = 0; }, 30_000);
     } else if (state === State.Starting) {
-      this.setStatus('starting', 'Lunil: starting');
+      this.setStatus('starting', 'starting');
     } else {
-      this.setStatus('stopped', 'Lunil: stopped');
+      this.setStatus('stopped', 'stopped');
       this.output.appendLine(`[${timestamp()}] server stopped (stopping=${this.stopping})`);
       const stopped = this.client;
       this.client = undefined;
@@ -226,7 +258,7 @@ class LunilClientController implements vscode.Disposable {
     const maximum = vscode.workspace.getConfiguration('lunil')
       .get<number>('server.maximumRestartCount', 5);
     if (this.restartAttempts >= maximum) {
-      this.setStatus('error', 'Lunil: server stopped; restart required');
+      this.setStatus('error', 'server stopped; restart required');
       void vscode.window.showErrorMessage(
         'Lunil Language Server stopped repeatedly.',
         'Restart'
@@ -235,7 +267,7 @@ class LunilClientController implements vscode.Disposable {
     }
     const delay = Math.min(30_000, 500 * (2 ** this.restartAttempts));
     this.restartAttempts++;
-    this.setStatus('restarting', `Lunil: restarting in ${Math.ceil(delay / 1000)}s`);
+    this.setStatus('restarting', `restarting in ${Math.ceil(delay / 1000)}s`);
     this.restartTimer = setTimeout(() => void this.start(), delay);
   }
 
@@ -279,6 +311,28 @@ class LunilClientController implements vscode.Disposable {
     }
   }
 
+  private async clearCache(): Promise<void> {
+    const result = await this.request('lunil/clearCache') as { cleared?: boolean } | undefined;
+    if (result === undefined) {
+      return;
+    }
+    vscode.window.setStatusBarMessage(
+      result.cleared === true
+        ? 'Lunil: analysis cache cleared.'
+        : 'Lunil: no analysis cache to clear.',
+      4_000);
+  }
+
+  private async reindexWorkspace(): Promise<void> {
+    const result = await this.request('lunil/reindex') as { modules?: number } | undefined;
+    if (result === undefined) {
+      return;
+    }
+    vscode.window.setStatusBarMessage(
+      `Lunil: reindexed ${result.modules ?? 0} modules.`,
+      4_000);
+  }
+
   private async showHostContract(): Promise<void> {
     const result = await this.request('lunil/virtualHostDocument') as HostDocument | undefined;
     if (result === undefined) {
@@ -288,6 +342,34 @@ class LunilClientController implements vscode.Disposable {
     const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(result.uri));
     await vscode.languages.setTextDocumentLanguage(document, result.languageId);
     await vscode.window.showTextDocument(document, { preview: true });
+  }
+
+  private async showMenu(): Promise<void> {
+    interface MenuAction extends vscode.QuickPickItem {
+      readonly run: () => unknown;
+    }
+    const actions: MenuAction[] = [
+      {
+        label: '$(list-ordered) Show Index Status',
+        description: `${this.stateText}${this.lastIndexDetail === '' ? '' : ` · ${this.lastIndexDetail}`}`,
+        run: () => vscode.commands.executeCommand('lunil.showIndexStatus')
+      },
+      { label: '$(sync) Reindex Workspace', run: () => vscode.commands.executeCommand('lunil.reindexWorkspace') },
+      { label: '$(refresh) Restart Language Server', run: () => vscode.commands.executeCommand('lunil.restartServer') },
+      { label: '$(file-code) Show Virtual Host Contract', run: () => vscode.commands.executeCommand('lunil.showHostContract') },
+      { label: '$(trash) Clear Analysis Cache', run: () => vscode.commands.executeCommand('lunil.clearCache') },
+      { label: '$(output) Show Output', run: () => vscode.commands.executeCommand('lunil.showOutput') },
+      {
+        label: '$(settings-gear) Open Settings',
+        run: () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:dlqw.lunil-lua')
+      }
+    ];
+    const pick = await vscode.window.showQuickPick(actions, {
+      placeHolder: `Lunil Language Server — ${this.stateText}`
+    });
+    if (pick !== undefined) {
+      void pick.run();
+    }
   }
 
   private configurationChanged(event: vscode.ConfigurationChangeEvent): void {
@@ -307,8 +389,21 @@ class LunilClientController implements vscode.Disposable {
     }
   }
 
+  private workDoneProgress(value: LunilWorkDoneProgress): void {
+    if (value.kind === 'end') {
+      this.indexingFinished();
+    }
+  }
+
+  private indexingFinished(): void {
+    if (this.state === 'indexing') {
+      this.setStatus('running', 'ready');
+      this.lastIndexDetail = '';
+    }
+  }
+
   private indexProgress(value: unknown): void {
-    const progress = value as { phase?: string; completed?: number; total?: number; succeeded?: number; failed?: number; inProgress?: number; pending?: number };
+    const progress = value as IndexProgressPayload;
     const total = progress.total ?? 0;
     const completed = progress.completed ?? 0;
     const detail = [
@@ -317,8 +412,24 @@ class LunilClientController implements vscode.Disposable {
       `failed:${progress.failed ?? 0}`,
       `pending:${progress.pending ?? 0}`
     ].join(' ');
-    this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${completed}/${total} ${detail}`);
-    this.setStatus('indexing', `Lunil: ${progress.phase ?? 'indexing'} ${completed}/${total} (${detail})`);
+    const summary = `${completed}/${total} (${detail})`;
+    this.lastIndexDetail = summary;
+    if (total > 0 && completed >= total) {
+      this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${summary}`);
+      this.indexingFinished();
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastIndexUpdate < indexProgressThrottleMs) {
+      return;
+    }
+    this.lastIndexUpdate = now;
+    this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${summary}`);
+    this.state = 'indexing';
+    this.stateText = progress.phase ?? 'indexing';
+    this.status.text = `$(sync~spin) Lunil ${Math.floor(100 * completed / Math.max(total, 1))}%`;
+    this.status.tooltip = `Lunil: ${this.stateText} ${summary}`;
   }
 
   private async showIndexStatus(): Promise<void> {
@@ -342,11 +453,11 @@ class LunilClientController implements vscode.Disposable {
       ].join('  ');
       const failed = status.failedFiles ?? [];
       const pending = status.pendingFiles ?? [];
-      const items: vscode.QuickPickItem[] = [];
+      const items: IndexStatusItem[] = [];
       if (failed.length > 0) {
         items.push({ label: `$(error) Failed (${failed.length})`, kind: vscode.QuickPickItemKind.Separator });
         for (const file of failed.slice(0, 50)) {
-          items.push({ label: file, description: 'failed', detail: 'Analysis threw for this document' });
+          items.push(indexStatusItem(file, 'failed', 'Analysis threw for this document'));
         }
         if (failed.length > 50) {
           items.push({ label: `... and ${failed.length - 50} more failed files`, kind: vscode.QuickPickItemKind.Separator });
@@ -355,7 +466,7 @@ class LunilClientController implements vscode.Disposable {
       if (pending.length > 0) {
         items.push({ label: `$(clock) Pending (${pending.length})`, kind: vscode.QuickPickItemKind.Separator });
         for (const file of pending.slice(0, 50)) {
-          items.push({ label: file, description: 'pending', detail: 'Not yet analyzed' });
+          items.push(indexStatusItem(file, 'pending', 'Not yet analyzed'));
         }
         if (pending.length > 50) {
           items.push({ label: `... and ${pending.length - 50} more pending files`, kind: vscode.QuickPickItemKind.Separator });
@@ -364,10 +475,13 @@ class LunilClientController implements vscode.Disposable {
       if (items.length === 0) {
         items.push({ label: '$(check) All documents analyzed', detail: summary });
       }
-      const pick = await vscode.window.showQuickPick(items, { placeHolder: summary });
-      if (pick !== undefined && pick.label !== undefined && pick.label.startsWith('file://')) {
-        const uri = vscode.Uri.parse(pick.label);
-        await vscode.window.showTextDocument(uri, { preview: true });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: summary,
+        matchOnDescription: true,
+        matchOnDetail: true
+      });
+      if (pick?.uri !== undefined) {
+        await vscode.window.showTextDocument(pick.uri, { preview: true });
       }
     } catch (error) {
       this.output.appendLine(`[${timestamp()}] showIndexStatus FAILED: ${error instanceof Error ? error.message : String(error)}`);
@@ -375,9 +489,14 @@ class LunilClientController implements vscode.Disposable {
     }
   }
 
-  private setStatus(kind: string, text: string): void {
-    this.status.text = kind === 'running' ? '$(check) Lunil' : `$(pulse) ${text}`;
-    this.status.tooltip = text;
+  private setStatus(kind: ServerState, text: string): void {
+    this.state = kind;
+    this.stateText = text;
+    this.status.text = statusIcon(kind, text);
+    this.status.tooltip = `Lunil: ${text}`;
+    this.status.backgroundColor = kind === 'error'
+      ? new vscode.ThemeColor('statusBarItem.errorBackground')
+      : undefined;
   }
 
   private logError(operation: string, error: unknown): void {
@@ -391,6 +510,37 @@ class LunilClientController implements vscode.Disposable {
     this.restartTimer = undefined;
     this.stableTimer = undefined;
   }
+}
+
+interface LunilWorkDoneProgress {
+  readonly kind?: 'begin' | 'report' | 'end';
+  readonly title?: string;
+  readonly message?: string;
+  readonly percentage?: number;
+}
+
+interface IndexStatusItem extends vscode.QuickPickItem {
+  readonly uri?: vscode.Uri;
+}
+
+function indexStatusItem(file: string, description: string, detail: string): IndexStatusItem {
+  const uri = vscode.Uri.parse(file);
+  return {
+    label: file.startsWith('file://') ? vscode.workspace.asRelativePath(uri, false) : file,
+    description,
+    detail,
+    uri: uri.scheme === 'file' ? uri : undefined
+  };
+}
+
+function statusIcon(kind: ServerState, text: string): string {
+  const icon = kind === 'running' ? '$(check)'
+    : kind === 'indexing' ? '$(sync~spin)'
+    : kind === 'starting' || kind === 'restarting' ? '$(loading~spin)'
+    : kind === 'error' ? '$(error)'
+    : kind === 'restricted' ? '$(shield)'
+    : '$(circle-slash)';
+  return `${icon} Lunil${text === 'ready' ? '' : `: ${text}`}`;
 }
 
 class HostDocumentProvider implements vscode.TextDocumentContentProvider {

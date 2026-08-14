@@ -10,7 +10,8 @@
   },
   "categories": [
     "Programming Languages",
-    "Linters"
+    "Linters",
+    "Debuggers"
   ],
   "keywords": [
     "lua",
@@ -28,6 +29,7 @@
     "workspaceContains:**/*.lua",
     "onCommand:lunil.restartServer",
     "onCommand:lunil.clearCache",
+    "onCommand:lunil.showMenu",
     "onCommand:lunil.showIndexStatus",
     "onCommand:lunil.showHostContract",
     "onDebugResolve:lunil"
@@ -44,6 +46,64 @@
           ".lua"
         ],
         "configuration": "./language-configuration.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "lua",
+        "path": "./snippets/lua.json"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "lunil.getStarted",
+        "title": "Get Started with Lunil Lua",
+        "description": "Index a workspace, edit with rich Lua intelligence, connect a host contract, and debug scripts.",
+        "steps": [
+          {
+            "id": "lunil.welcome",
+            "title": "Welcome to Lunil Lua",
+            "description": "What Lunil provides and where the server state lives.",
+            "media": {
+              "markdown": "walkthroughs/welcome.md"
+            }
+          },
+          {
+            "id": "lunil.indexing",
+            "title": "Index your workspace",
+            "description": "Watch indexing progress and inspect failed or pending documents.",
+            "media": {
+              "markdown": "walkthroughs/indexing.md"
+            },
+            "completionEvents": [
+              "onCommand:lunil.showIndexStatus"
+            ]
+          },
+          {
+            "id": "lunil.editing",
+            "title": "Rich Lua editing",
+            "description": "Completions, hover, rename, semantic tokens, inlay hints, and snippets.",
+            "media": {
+              "markdown": "walkthroughs/editing.md"
+            }
+          },
+          {
+            "id": "lunil.hostContract",
+            "title": "Connect a host contract",
+            "description": "Give Lunil the host API surface of Unity, Godot, or a .NET application.",
+            "media": {
+              "markdown": "walkthroughs/host-contract.md"
+            }
+          },
+          {
+            "id": "lunil.debugging",
+            "title": "Debug Lua scripts",
+            "description": "Launch scripts with the Lunil interpreter or attach to a game-loop host.",
+            "media": {
+              "markdown": "walkthroughs/debugging.md"
+            }
+          }
+        ]
       }
     ],
     "commands": [
@@ -79,7 +139,8 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "description": "Optional absolute path to a compatible lunil-language-server executable. The bundled server is used by default."
+          "order": 0,
+          "markdownDescription": "Optional absolute path to a compatible `lunil-language-server` executable. The bundled server is used by default."
         },
         "lunil.server.trace": {
           "type": "string",
@@ -88,8 +149,14 @@
             "messages",
             "verbose"
           ],
+          "enumDescriptions": [
+            "No protocol tracing.",
+            "Log request and response message heads.",
+            "Log full request and response payloads."
+          ],
           "default": "off",
           "scope": "window",
+          "order": 1,
           "description": "LSP message tracing written to the Lunil output channel."
         },
         "lunil.server.maximumRestartCount": {
@@ -98,6 +165,7 @@
           "minimum": 0,
           "maximum": 20,
           "scope": "window",
+          "order": 2,
           "description": "Maximum automatic restarts after unexpected server termination."
         },
         "lunil.server.gcHeapHardLimitPercent": {
@@ -106,19 +174,8 @@
           "minimum": 20,
           "maximum": 90,
           "scope": "machine-overridable",
+          "order": 3,
           "description": "Managed heap hard-limit percentage passed to the bundled server."
-        },
-        "lunil.hostContractPath": {
-          "type": "string",
-          "default": "",
-          "scope": "resource",
-          "description": "Path to a versioned Lunil host analysis contract exported by a C++, C#, Unity, Godot, or other host."
-        },
-        "lunil.hostContractJson": {
-          "type": "string",
-          "default": "",
-          "scope": "resource",
-          "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
         },
         "lunil.server.suppressedDiagnosticCodes": {
           "type": "array",
@@ -127,7 +184,22 @@
           },
           "default": [],
           "scope": "window",
-          "description": "Diagnostic codes (for example LUA6003) suppressed by the language server analysis."
+          "order": 4,
+          "markdownDescription": "Diagnostic codes (for example `LUA6003`) suppressed by the language server analysis. Suppression applies without restarting."
+        },
+        "lunil.hostContractPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "order": 5,
+          "markdownDescription": "Path to a versioned Lunil host analysis contract exported by a C++, C#, Unity, Godot, or other host. See **Lunil: Show Virtual Host Contract** to inspect the indexed surface."
+        },
+        "lunil.hostContractJson": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "order": 6,
+          "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
         }
       }
     },
