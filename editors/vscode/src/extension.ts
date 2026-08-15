@@ -197,6 +197,41 @@ class LunilClientController implements vscode.Disposable {
           platform: platformRid()
         },
         middleware: {
+          provideHover: async (document, position, token, next) => {
+            const hover = await next(document, position, token);
+            if (hover === undefined || hover === null) {
+              return hover;
+            }
+
+            // Hover cards embed command links (definitions, the builtin library). VS Code
+            // only renders command links in markdown that is marked trusted, and only
+            // for the commands listed here.
+            const trust = { enabledCommands: ['lunil._openLocation', 'lunil._openBuiltinLocation'] };
+            const trusted = (contents: vscode.MarkdownString | vscode.MarkedString): vscode.MarkdownString => {
+              if (typeof contents === 'string') {
+                const wrapped = new vscode.MarkdownString(contents);
+                wrapped.isTrusted = trust;
+                return wrapped;
+              }
+
+              if (contents instanceof vscode.MarkdownString) {
+                contents.isTrusted = trust;
+                return contents;
+              }
+
+              const fromMarked = new vscode.MarkdownString(contents.value);
+              fromMarked.isTrusted = trust;
+              return fromMarked;
+            };
+
+            if (Array.isArray(hover.contents)) {
+              hover.contents = hover.contents.map(trusted);
+            } else {
+              hover.contents = [trusted(hover.contents)];
+            }
+
+            return hover;
+          },
           provideCodeActions: async (document, range, context, token, next) => {
             const provided = await next(document, range, context, token);
             const items: (vscode.CodeAction | vscode.Command)[] =
