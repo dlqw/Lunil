@@ -310,6 +310,95 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task AnnotationElementsNavigateAndHover()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var vecUri = new Uri("file:///src/vec.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        var vecSource = string.Join("\n",
+        [
+            "---A two-component vector.",
+            "---@class Vec",
+            "---@field x number",
+            "local Vec = {}",
+            "Vec.__index = Vec",
+            "---Adds two vectors.",
+            "function Vec:add(other) return Vec.new() end",
+            "function Vec.new() return setmetatable({}, Vec) end",
+            "return Vec",
+        ]);
+        var appSource = string.Join("\n",
+        [
+            "local Vec = require(\"vec\")",
+            "---@param v Vec",
+            "---@return Vec",
+            "local function length(v)",
+            "  return (v.x ^ 2) ^ 0.5",
+            "end",
+            "return length",
+        ]);
+        workspace.Open(vecUri, 1, vecSource);
+        workspace.Open(appUri, 1, appSource);
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // F12 on the type reference in app's @param jumps to vec.lua's class declaration.
+        var definition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(definition);
+        Assert.Equal(vecUri.AbsoluteUri, definition!["uri"]!.GetValue<string>());
+        Assert.Equal(3, definition["range"]!["start"]!["line"]!.GetValue<int>());
+
+        // References on the type name cover both files' annotation mentions.
+        var references = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), CancellationToken.None);
+        var referenceUris = references!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(vecUri.AbsoluteUri, referenceUris);
+        Assert.Contains(appUri.AbsoluteUri, referenceUris);
+
+        // Hover on the type reference shows the class card.
+        var typeHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), CancellationToken.None);
+        var typeHoverValue = typeHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("class Vec", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("module `vec`", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("add(other", typeHoverValue, StringComparison.Ordinal);
+
+        // Hover on the class declaration name in the annotation shows the same card.
+        var declarationHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = vecUri.AbsoluteUri },
+            position = new { line = 1, character = 10 },
+        }), CancellationToken.None);
+        Assert.Contains(
+            "class Vec",
+            declarationHover!["contents"]!["value"]!.GetValue<string>(),
+            StringComparison.Ordinal);
+
+        // References from the class declaration name include the require site.
+        var declarationReferences = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = vecUri.AbsoluteUri },
+            position = new { line = 1, character = 10 },
+        }), CancellationToken.None);
+        var declarationReferenceUris = declarationReferences!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(appUri.AbsoluteUri, declarationReferenceUris);
+    }
+
+    [Fact]
     public async Task ClassValueNavigationFromDeclarationAndAlias()
     {
         var folder = new Uri("file:///src/");

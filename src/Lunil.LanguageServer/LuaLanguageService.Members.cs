@@ -202,6 +202,205 @@ internal sealed partial class LuaLanguageService
         return builder.ToImmutable();
     }
 
+    internal enum AnnotationElementKind
+    {
+        TypeName,
+        ClassDeclaration,
+        AliasDeclaration,
+        EnumDeclaration,
+        FieldName,
+        ParamName,
+    }
+
+    internal readonly record struct AnnotationElement(
+        AnnotationElementKind Kind,
+        string Name,
+        TextSpan Span,
+        Lunil.EmmyLua.LuaAnnotationSyntax Owner);
+
+    private static readonly HashSet<string> AnnotationBuiltIns = new(StringComparer.Ordinal)
+    {
+        "any", "unknown", "never", "nil", "boolean", "bool", "true", "false",
+        "integer", "int", "float", "number", "string", "str", "table", "function",
+        "thread", "userdata", "lightuserdata", "void", "self",
+    };
+
+    /// <summary>
+    /// The annotation element under the cursor: a type name inside any type expression,
+    /// a declared class/alias/enum name, or a field/param name. Annotation text is not
+    /// bound, so navigation resolves it structurally.
+    /// </summary>
+    private static AnnotationElement? FindAnnotationElementAt(
+        LanguageDocumentAnalysis analysis,
+        int offset)
+    {
+        AnnotationElement? best = null;
+        var bestLength = int.MaxValue;
+        foreach (var annotation in analysis.Compilation.Annotations.Annotations)
+        {
+            Consider(annotation, AnnotationElementKind.ClassDeclaration, NameOf(annotation), offset, analysis, ref best, ref bestLength);
+            WalkAnnotationTypes(annotation, type =>
+            {
+                if (type is Lunil.EmmyLua.LuaNamedTypeSyntax named &&
+                    !AnnotationBuiltIns.Contains(named.Name) &&
+                    Contains(type.Span, offset) && type.Span.Length < bestLength)
+                {
+                    best = new AnnotationElement(AnnotationElementKind.TypeName, named.Name, type.Span, annotation);
+                    bestLength = type.Span.Length;
+                }
+            });
+        }
+
+        return best;
+
+        static string? NameOf(Lunil.EmmyLua.LuaAnnotationSyntax annotation) => annotation switch
+        {
+            Lunil.EmmyLua.LuaClassAnnotationSyntax @class => @class.Name,
+            Lunil.EmmyLua.LuaAliasAnnotationSyntax alias => alias.Name,
+            Lunil.EmmyLua.LuaEnumAnnotationSyntax @enum => @enum.Name,
+            _ => null,
+        };
+
+        void Consider(
+            Lunil.EmmyLua.LuaAnnotationSyntax annotation,
+            AnnotationElementKind kind,
+            string? name,
+            int at,
+            LanguageDocumentAnalysis a,
+            ref AnnotationElement? current,
+            ref int length)
+        {
+            var span = annotation switch
+            {
+                Lunil.EmmyLua.LuaClassAnnotationSyntax @class => @class.NameSpan,
+                Lunil.EmmyLua.LuaAliasAnnotationSyntax alias => alias.NameSpan,
+                Lunil.EmmyLua.LuaEnumAnnotationSyntax @enum => @enum.NameSpan,
+                _ => default,
+            };
+            if (name is not null && span.Length > 0 && Contains(span, at) && span.Length < length)
+            {
+                current = new AnnotationElement(kind, name, span, annotation);
+                length = span.Length;
+            }
+        }
+    }
+
+    private static void WalkAnnotationTypes(
+        Lunil.EmmyLua.LuaAnnotationSyntax annotation,
+        Action<Lunil.EmmyLua.LuaTypeSyntax> visit)
+    {
+        switch (annotation)
+        {
+            case Lunil.EmmyLua.LuaClassAnnotationSyntax @class:
+                WalkTypes(@class.BaseTypes, visit);
+                break;
+            case Lunil.EmmyLua.LuaAliasAnnotationSyntax alias:
+                if (alias.Type is not null) WalkTypes([alias.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaEnumAnnotationSyntax @enum:
+                if (@enum.KeyType is not null) WalkTypes([@enum.KeyType], visit);
+                break;
+            case Lunil.EmmyLua.LuaFieldAnnotationSyntax field:
+                WalkTypes([field.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaParamAnnotationSyntax param:
+                WalkTypes([param.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaTypeAnnotationSyntax type:
+                WalkTypes(type.Types, visit);
+                break;
+            case Lunil.EmmyLua.LuaVarargAnnotationSyntax vararg:
+                WalkTypes([vararg.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaReturnAnnotationSyntax @return:
+                foreach (var returned in @return.Returns)
+                {
+                    WalkTypes([returned.Type], visit);
+                }
+
+                break;
+            case Lunil.EmmyLua.LuaOverloadAnnotationSyntax overload:
+                WalkTypes([overload.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaAliasContinuationAnnotationSyntax continuation:
+                WalkTypes([continuation.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaCastAnnotationSyntax cast:
+                WalkTypes([cast.Type], visit);
+                break;
+            case Lunil.EmmyLua.LuaOperatorAnnotationSyntax @operator:
+                if (@operator.OperandType is not null) WalkTypes([@operator.OperandType], visit);
+                WalkTypes([@operator.ResultType], visit);
+                break;
+            case Lunil.EmmyLua.LuaGenericAnnotationSyntax generic:
+                foreach (var parameter in generic.Parameters)
+                {
+                    if (parameter.Constraint is not null) WalkTypes([parameter.Constraint], visit);
+                }
+
+                break;
+        }
+    }
+
+    private static void WalkTypes(
+        System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaTypeSyntax> types,
+        Action<Lunil.EmmyLua.LuaTypeSyntax> visit)
+    {
+        foreach (var type in types)
+        {
+            WalkType(type, visit);
+        }
+    }
+
+    private static void WalkType(Lunil.EmmyLua.LuaTypeSyntax? type, Action<Lunil.EmmyLua.LuaTypeSyntax> visit)
+    {
+        switch (type)
+        {
+            case null:
+                return;
+            case Lunil.EmmyLua.LuaNamedTypeSyntax:
+                visit(type);
+                return;
+            case Lunil.EmmyLua.LuaUnionTypeSyntax union:
+                WalkTypes(union.Types, visit);
+                return;
+            case Lunil.EmmyLua.LuaIntersectionTypeSyntax intersection:
+                WalkTypes(intersection.Types, visit);
+                return;
+            case Lunil.EmmyLua.LuaNullableTypeSyntax nullable:
+                WalkType(nullable.Type, visit);
+                return;
+            case Lunil.EmmyLua.LuaArrayTypeSyntax array:
+                WalkType(array.ElementType, visit);
+                return;
+            case Lunil.EmmyLua.LuaTupleTypeSyntax tuple:
+                WalkTypes(tuple.Elements, visit);
+                return;
+            case Lunil.EmmyLua.LuaVarargTypeSyntax vararg:
+                WalkType(vararg.ElementType, visit);
+                return;
+            case Lunil.EmmyLua.LuaFunctionTypeSyntax function:
+                foreach (var parameter in function.Parameters)
+                {
+                    WalkType(parameter.Type, visit);
+                }
+
+                WalkTypes(function.Returns, visit);
+                return;
+            case Lunil.EmmyLua.LuaTableTypeSyntax table:
+                foreach (var field in table.Fields)
+                {
+                    if (field.KeyType is not null) WalkType(field.KeyType, visit);
+                    WalkType(field.ValueType, visit);
+                }
+
+                return;
+            default:
+                visit(type);
+                return;
+        }
+    }
+
     /// <summary>
     /// The symbol whose declaration contains the offset, when no reference does: the
     /// cursor sits on a declaration token (`local Movable = {}`), which the binder does

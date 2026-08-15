@@ -1016,6 +1016,30 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
+    /// <summary>
+    /// The annotation declaration of a named type (class, alias, or enum): the document
+    /// that declares it and the span of its root annotation.
+    /// </summary>
+    public bool TryGetTypeDeclarationLocation(string name, out Uri uri, out Lunil.Core.Text.TextSpan span)
+    {
+        lock (_gate)
+        {
+            foreach (var pair in _perDocumentDeclarations)
+            {
+                if (pair.Value.TryGetValue(name, out var declaration))
+                {
+                    uri = new Uri(pair.Key, UriKind.Absolute);
+                    span = declaration.Root.Span;
+                    return true;
+                }
+            }
+        }
+
+        uri = null!;
+        span = default;
+        return false;
+    }
+
     /// <summary>Returns the per-document index status counts for progress display.</summary>
     public JsonObject GetIndexStatus()    {
         var failedFiles = new List<(string Uri, string? Error)>();

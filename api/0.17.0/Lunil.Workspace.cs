@@ -239,6 +239,7 @@ namespace Lunil.Workspace
         public Lunil.Workspace.LuaWorkspaceCompactModule? GetModule(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindReferences(Lunil.Semantics.Binding.LuaSymbolKey key) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceMemberReference> FindMemberReferences(string name) => throw null;
+        public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceMemberReference> FindAnnotationReferences(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindGlobalReferences(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceModuleCallBinding> FindCallsToExport(string targetSymbolKey) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceExportSymbol> FindCallbackRegistrations(string hostTargetKey) => throw null;

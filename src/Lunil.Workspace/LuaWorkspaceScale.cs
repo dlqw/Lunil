@@ -39,8 +39,10 @@ public sealed class LuaWorkspaceCompactSnapshot
 {
     private readonly ImmutableArray<CompactReference> _references;
     private readonly ImmutableArray<CompactMemberReference> _memberReferences;
+    private readonly ImmutableArray<CompactAnnotationReference> _annotationReferences;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _targetIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _memberIndexes;
+    private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _annotationIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _globalIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _callIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<string>>> _callbackIndexes;
@@ -56,8 +58,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         LuaWorkspaceModuleCallBindings calls,
         ImmutableArray<CompactReference> references,
         ImmutableArray<CompactMemberReference> memberReferences,
+        ImmutableArray<CompactAnnotationReference> annotationReferences,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> targetIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> memberIndexes,
+        ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> annotationIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> globalIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> callIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<string>>> callbackIndexes,
@@ -73,8 +77,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         CallBindings = calls;
         _references = references;
         _memberReferences = memberReferences;
+        _annotationReferences = annotationReferences;
         _targetIndexes = targetIndexes;
         _memberIndexes = memberIndexes;
+        _annotationIndexes = annotationIndexes;
         _globalIndexes = globalIndexes;
         _callIndexes = callIndexes;
         _callbackIndexes = callbackIndexes;
@@ -136,6 +142,32 @@ public sealed class LuaWorkspaceCompactSnapshot
                 Modules[reference.ModuleIndex].Identity,
                 reference.Span,
                 _strings[reference.NameIndex]));
+        }
+
+        return result.MoveToImmutable();
+    }
+
+    /// <summary>
+    /// Finds every annotation element that mentions the type name across the workspace:
+    /// named type references inside type expressions plus the declaration lines of
+    /// classes, aliases, and enums. Lookup is name-based.
+    /// </summary>
+    public ImmutableArray<LuaWorkspaceMemberReference> FindAnnotationReferences(string name)
+    {
+        LunilGuard.NotNullOrWhiteSpace(name);
+        if (!GetShard(_annotationIndexes, name).TryGetValue(name, out var indexes))
+        {
+            return [];
+        }
+
+        var result = ImmutableArray.CreateBuilder<LuaWorkspaceMemberReference>(indexes.Length);
+        foreach (var index in indexes)
+        {
+            var reference = _annotationReferences[index];
+            result.Add(new LuaWorkspaceMemberReference(
+                Modules[reference.ModuleIndex].Identity,
+                reference.Span,
+                name));
         }
 
         return result.MoveToImmutable();
@@ -217,9 +249,12 @@ public sealed class LuaWorkspaceCompactSnapshot
         private readonly List<LuaWorkspaceCompactModule> _modules = [];
         private readonly List<CompactReference> _references = [];
         private readonly List<CompactMemberReference> _memberReferences = [];
+        private readonly List<CompactAnnotationReference> _annotationReferences = [];
         private readonly Dictionary<string, ImmutableArray<int>.Builder> _targetIndexes =
             new(StringComparer.Ordinal);
         private readonly Dictionary<string, ImmutableArray<int>.Builder> _memberIndexes =
+            new(StringComparer.Ordinal);
+        private readonly Dictionary<string, ImmutableArray<int>.Builder> _annotationIndexes =
             new(StringComparer.Ordinal);
         private readonly Dictionary<string, ImmutableArray<int>.Builder> _globals =
             new(StringComparer.Ordinal);
@@ -250,6 +285,7 @@ public sealed class LuaWorkspaceCompactSnapshot
                 module.DependencySummaryHash,
                 module.ExportedSymbols));
             AddReferences(module, moduleIndex);
+            AddAnnotationReferences(module, moduleIndex);
             _totalCallCount += module.Compilation.Analysis.CallGraph.Edges.Length;
             var projection = WorkspaceSymbolGraphBuilder.Build([module], _hostContract);
             _symbols.AddRange(projection.Exports.Symbols.Where(static symbol => !symbol.IsExternal));
@@ -355,8 +391,10 @@ public sealed class LuaWorkspaceCompactSnapshot
                 new LuaWorkspaceModuleCallBindings(resolvedCalls),
                 [.. _references],
                 [.. _memberReferences],
+                [.. _annotationReferences],
                 _targetIndexes,
                 _memberIndexes,
+                _annotationIndexes,
                 _globals,
                 _strings.ToImmutable(),
                 _totalCallCount,
@@ -423,7 +461,18 @@ public sealed class LuaWorkspaceCompactSnapshot
             }
         }
 
-        private static LuaWorkspaceModuleCallBinding ResolveCall(
+        /// <summary>Adds one entry per annotation element naming a type (references and declarations).</summary>
+    private void AddAnnotationReferences(LuaWorkspaceModuleResult module, int moduleIndex)
+    {
+        AnnotationReferenceCollector.Collect(module.Compilation.Annotations, name =>
+        {
+            var annotationIndex = _annotationReferences.Count;
+            _annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
+            GetIndexBuilder(_annotationIndexes, name.Name).Add(annotationIndex);
+        });
+    }
+
+    private static LuaWorkspaceModuleCallBinding ResolveCall(
             LuaWorkspaceModuleCallBinding call,
             Dictionary<(bool IsExternal, string ModuleName, string Path), LuaWorkspaceExportSymbol> lookup,
             HashSet<string> externalModules,
@@ -487,8 +536,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         var strings = new StringPool();
         var references = new List<CompactReference>();
         var memberReferences = new List<CompactMemberReference>();
+        var annotationReferences = new List<CompactAnnotationReference>();
         var targetIndexes = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
         var memberIndexes = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
+        var annotationIndexes = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
         var globals = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
         var modules = workspace.Modules.Select(module => new LuaWorkspaceCompactModule(
             module.Identity,
@@ -576,6 +627,19 @@ public sealed class LuaWorkspaceCompactSnapshot
 
                 memberList.Add(memberIndex);
             }
+
+            AnnotationReferenceCollector.Collect(module.Compilation.Annotations, name =>
+            {
+                var annotationIndex = annotationReferences.Count;
+                annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
+                if (!annotationIndexes.TryGetValue(name.Name, out var annotationList))
+                {
+                    annotationList = ImmutableArray.CreateBuilder<int>();
+                    annotationIndexes.Add(name.Name, annotationList);
+                }
+
+                annotationList.Add(annotationIndex);
+            });
         }
 
         var frozenStrings = strings.ToImmutable();
@@ -617,6 +681,7 @@ public sealed class LuaWorkspaceCompactSnapshot
         var estimatedBytes = checked(
             (long)references.Count * 40 +
             (long)memberReferences.Count * 16 +
+            (long)annotationReferences.Count * 16 +
             frozenStrings.Sum(static value => 24L + value.Length * sizeof(char)) +
             modules.Length * 160L +
             workspace.CallBindings.Edges.Length * 160L);
@@ -637,11 +702,16 @@ public sealed class LuaWorkspaceCompactSnapshot
             workspace.CallBindings,
             [.. references],
             [.. memberReferences],
+            [.. annotationReferences],
             CreateShards(targetIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
             CreateShards(memberIndexes.ToImmutableDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.ToImmutable(),
+                StringComparer.Ordinal), shardCount),
+            CreateShards(annotationIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
@@ -668,8 +738,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         LuaWorkspaceModuleCallBindings calls,
         ImmutableArray<CompactReference> references,
         ImmutableArray<CompactMemberReference> memberReferences,
+        ImmutableArray<CompactAnnotationReference> annotationReferences,
         Dictionary<string, ImmutableArray<int>.Builder> targetIndexes,
         Dictionary<string, ImmutableArray<int>.Builder> memberIndexes,
+        Dictionary<string, ImmutableArray<int>.Builder> annotationIndexes,
         Dictionary<string, ImmutableArray<int>.Builder> globals,
         ImmutableArray<string> strings,
         int indexedCallCount,
@@ -707,6 +779,7 @@ public sealed class LuaWorkspaceCompactSnapshot
         var estimatedBytes = checked(
             (long)references.Length * 40 +
             (long)memberReferences.Length * 16 +
+            (long)annotationReferences.Length * 16 +
             strings.Sum(static value => 24L + value.Length * sizeof(char)) +
             modules.Length * 160L +
             calls.Edges.Length * 160L);
@@ -725,11 +798,16 @@ public sealed class LuaWorkspaceCompactSnapshot
             calls,
             references,
             memberReferences,
+            annotationReferences,
             CreateShards(targetIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
             CreateShards(memberIndexes.ToImmutableDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.ToImmutable(),
+                StringComparer.Ordinal), shardCount),
+            CreateShards(annotationIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
@@ -776,6 +854,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         int ModuleIndex,
         TextSpan Span,
         int NameIndex);
+
+    private readonly record struct CompactAnnotationReference(
+        int ModuleIndex,
+        TextSpan Span);
 
     private static ImmutableDictionary<string, TValue> GetShard<TValue>(
         ImmutableArray<ImmutableDictionary<string, TValue>> shards,

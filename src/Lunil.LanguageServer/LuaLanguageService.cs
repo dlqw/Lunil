@@ -95,6 +95,14 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return null;
         }
 
+        var annotationElement = FindAnnotationElementAt(context.Analysis, context.ByteOffset);
+        if (annotationElement is { } element && TryBuildAnnotationHover(context.Analysis, element) is { } annotationHover)
+        {
+            return HoverResult(
+                annotationHover,
+                context.Analysis.Document.ToRange(element.Span));
+        }
+
         var reference = FindReference(context.Analysis, context.ByteOffset);
         if (reference is null)
         {
@@ -212,6 +220,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
 
             return null;
+        }
+
+        // Annotation elements (type names, declared class/alias/enum names) navigate to
+        // their declaration site.
+        var annotationElement = FindAnnotationElementAt(context.Analysis, context.ByteOffset);
+        if (annotationElement is { } element &&
+            await TryGetAnnotationDeclarationLocationAsync(element.Name, cancellationToken)
+                .ConfigureAwait(false) is { } annotationDeclaration)
+        {
+            return annotationDeclaration;
         }
 
         var snapshot = workspace.GetSnapshot();
@@ -343,6 +361,68 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         return root.DefinitionSpan.Length > 0
             ? Location(uri, document.ToRange(root.DefinitionSpan))
             : null;
+    }
+
+    /// <summary>An annotation element hover: class cards for type names, field/param types.</summary>
+    private string? TryBuildAnnotationHover(LanguageDocumentAnalysis analysis, AnnotationElement element)
+    {
+        switch (element.Kind)
+        {
+            case AnnotationElementKind.TypeName:
+            case AnnotationElementKind.ClassDeclaration:
+            {
+                var className = element.Name;
+                var declaration = workspace.GetClassDeclarations().FirstOrDefault(declaration =>
+                    string.Equals(declaration.Name, className, StringComparison.Ordinal));
+                if (declaration is null)
+                {
+                    return element.Kind == AnnotationElementKind.ClassDeclaration
+                        ? "```lua\nclass " + className + "\n```"
+                        : null;
+                }
+
+                if (declaration.ModuleName == analysis.Module.Name ||
+                    element.Kind == AnnotationElementKind.TypeName)
+                {
+                    return TryBuildClassHover(declaration.ModuleName, className);
+                }
+
+                return TryBuildClassHover(declaration.ModuleName, className);
+            }
+
+            case AnnotationElementKind.AliasDeclaration:
+                return "```lua\nalias " + element.Name + "\n```";
+            case AnnotationElementKind.EnumDeclaration:
+                return "```lua\nenum " + element.Name + "\n```";
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// The declaration location for an annotation-named type: the class declaration
+    /// line when a class declares it, otherwise the annotation itself.
+    /// </summary>
+    private async Task<JsonObject?> TryGetAnnotationDeclarationLocationAsync(
+        string name,
+        CancellationToken cancellationToken)
+    {
+        var declaration = workspace.GetClassDeclarations().FirstOrDefault(declaration =>
+            string.Equals(declaration.Name, name, StringComparison.Ordinal));
+        if (declaration is not null &&
+            await TryGetClassDeclarationLocationAsync(declaration.ModuleName, cancellationToken)
+                .ConfigureAwait(false) is { } classLocation)
+        {
+            return classLocation;
+        }
+
+        if (workspace.TryGetTypeDeclarationLocation(name, out var uri, out var span) &&
+            workspace.TryGetDocument(uri, out var document))
+        {
+            return Location(uri, document.ToRange(span));
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -671,6 +751,34 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
 
             return LocationsToJsonArray(requireBuilder);
+        }
+
+        // Annotation type names report every annotation mention across the workspace.
+        var annotationElement = FindAnnotationElementAt(context.Analysis, context.ByteOffset);
+        if (annotationElement is { } element)
+        {
+            var annotationBuilder = ImmutableArray.CreateBuilder<JsonObject>();
+            if (workspace.GetSnapshot() is { } annotationSnapshot)
+            {
+                foreach (var mention in annotationSnapshot.FindAnnotationReferences(element.Name))
+                {
+                    AddSnapshotLocation(annotationBuilder, mention.Module.Name, mention.Span);
+                }
+
+                // A class name also covers the class identity: its module's require
+                // sites and the declaration line.
+                if (workspace.GetClassDeclarations().FirstOrDefault(declaration =>
+                        string.Equals(declaration.Name, element.Name, StringComparison.Ordinal)) is { } namedClass)
+                {
+                    foreach (var dependency in annotationSnapshot.Graph.Dependencies.Where(dependency =>
+                                 string.Equals(dependency.RequestedName, namedClass.ModuleName, StringComparison.Ordinal)))
+                    {
+                        AddSnapshotLocation(annotationBuilder, dependency.Source.Name, dependency.Span);
+                    }
+                }
+            }
+
+            return LocationsToJsonArray(annotationBuilder);
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
