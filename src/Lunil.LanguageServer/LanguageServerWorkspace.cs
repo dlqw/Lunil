@@ -13,7 +13,11 @@ namespace Lunil.LanguageServer;
 internal sealed record LanguageDocumentAnalysis(
     LspTextDocument Document,
     LuaModuleIdentity Module,
-    LuaCompilationResult Compilation);
+    LuaCompilationResult Compilation)
+{
+    /// <summary>Shared lazily built lookups for request handlers on this analysis.</summary>
+    internal LuaLanguageService.ServiceCaches ServiceCaches { get; } = new();
+}
 
 internal enum FileIndexStatus : byte
 {
@@ -42,6 +46,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
     });
     private readonly Dictionary<string, LspTextDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LanguageDocumentAnalysis> _analyses = new(StringComparer.Ordinal);
+    /** Insertion-order keys bounding <see cref="_analyses"/>; oldest entries evict first. */
+    private readonly LinkedList<string> _analysisOrder = new();
+    private const int MaximumCachedAnalyses = 256;
+    private ImmutableDictionary<string, Uri>? _uriByModuleName;
+    private int _uriIndexGeneration = -1;
+    private int _documentSetGeneration;
     private ImmutableArray<Uri> _folders = [];
     private LuaWorkspace _workspace;
     private LuaHostAnalysisContract? _hostContract;
@@ -54,6 +64,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private readonly Dictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>
         _perDocumentDeclarations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FileIndexStatus> _indexStatus = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _indexErrors = new(StringComparer.Ordinal);
     private int _generation;
     private int _declarationsGeneration;
     private readonly SemaphoreSlim _analysisConcurrency = new(8, 8);
@@ -89,6 +100,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public Func<LuaWorkspaceProgress, Task>? ProgressReported { get; set; }
 
+    /// <summary>Raised when a document leaves the workspace so per-document caches follow.</summary>
+    public event Action<Uri>? DocumentRemoved;
+
     public ImmutableArray<Uri> Folders
     {
         get
@@ -115,9 +129,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
                      .Select(static pair => pair.Key).ToArray())
             {
                 _documents.Remove(key);
-                _analyses.Remove(key);
+                RemoveAnalysis(key);
+                DocumentRemoved?.Invoke(new Uri(key, UriKind.Absolute));
             }
 
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
 
@@ -140,9 +156,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
                          IsUnderRoot(ToLocalPath(pair.Value.Uri), root)).Select(static pair => pair.Key).ToArray())
             {
                 _documents.Remove(key);
-                _analyses.Remove(key);
+                RemoveAnalysis(key);
+                DocumentRemoved?.Invoke(new Uri(key, UriKind.Absolute));
             }
 
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
 
@@ -155,8 +173,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
             ThrowIfDisposed();
             _documents[uri.AbsoluteUri] = new LspTextDocument(uri, version, text);
-            _analyses.Remove(uri.AbsoluteUri);
+            RemoveAnalysis(uri.AbsoluteUri);
             _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+            _indexErrors.Remove(uri.AbsoluteUri);
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
 
@@ -266,8 +286,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
 
             _documents[uri.AbsoluteUri] = document.Apply(version, changes);
-            _analyses.Remove(uri.AbsoluteUri);
+            RemoveAnalysis(uri.AbsoluteUri);
             _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+            _indexErrors.Remove(uri.AbsoluteUri);
             InvalidateIndexNoLock();
         }
 
@@ -298,14 +319,18 @@ internal sealed class LanguageServerWorkspace : IDisposable
             {
                 _documents.Remove(uri.AbsoluteUri);
                 _indexStatus.Remove(uri.AbsoluteUri);
+                _indexErrors.Remove(uri.AbsoluteUri);
+                DocumentRemoved?.Invoke(uri);
             }
             else
             {
                 _documents[uri.AbsoluteUri] = disk;
                 _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                _indexErrors.Remove(uri.AbsoluteUri);
             }
 
-            _analyses.Remove(uri.AbsoluteUri);
+            RemoveAnalysis(uri.AbsoluteUri);
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
 
@@ -343,6 +368,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
             {
                 _documents.Remove(uri.AbsoluteUri);
                 _indexStatus.Remove(uri.AbsoluteUri);
+                _indexErrors.Remove(uri.AbsoluteUri);
+                DocumentRemoved?.Invoke(uri);
             }
             else
             {
@@ -352,9 +379,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     File.ReadAllText(ToLocalPath(uri)),
                     isOpen: false);
                 _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                _indexErrors.Remove(uri.AbsoluteUri);
             }
 
-            _analyses.Remove(uri.AbsoluteUri);
+            RemoveAnalysis(uri.AbsoluteUri);
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
 
@@ -392,7 +421,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             var previous = _workspace;
             _workspace = CreateWorkspace(contract);
             previous.Dispose();
-            _analyses.Clear();
+            ClearAnalyses();
             InvalidateIndexNoLock();
         }
 
@@ -423,11 +452,17 @@ internal sealed class LanguageServerWorkspace : IDisposable
             foreach (var document in documents)
             {
                 _documents[document.Uri.AbsoluteUri] = document;
-                _analyses.Remove(document.Uri.AbsoluteUri);
+                _indexStatus.TryAdd(document.Uri.AbsoluteUri, FileIndexStatus.Pending);
+                RemoveAnalysis(document.Uri.AbsoluteUri);
             }
 
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
+
+        // Parity with LoadFolders: a loaded document set must lift the declaration gate
+        // so analyses of these documents cannot wait on it forever.
+        SignalDeclarationsReady();
     }
 
     public async Task<LanguageDocumentAnalysis?> GetAnalysisAsync(
@@ -472,7 +507,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        var source = LuaSourceDocument.FromUtf8(document.Text, document.Uri.AbsoluteUri);
+        var source = LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri);
         var environment = new LuaAnalysisEnvironment
         {
             HostContract = hostContract,
@@ -495,12 +530,37 @@ internal sealed class LanguageServerWorkspace : IDisposable
             if (_documents.TryGetValue(uri.AbsoluteUri, out var current) &&
                 current.Version == document.Version && current.Text == document.Text)
             {
-                _analyses[uri.AbsoluteUri] = result;
+                StoreAnalysis(uri.AbsoluteUri, result);
                 return result;
             }
         }
 
         return null;
+    }
+
+    /// <summary>Stores an analysis and keeps the cache bounded by insertion recency.</summary>
+    private void StoreAnalysis(string key, LanguageDocumentAnalysis analysis)
+    {
+        _analyses[key] = analysis;
+        _analysisOrder.Remove(key);
+        _analysisOrder.AddLast(key);
+        while (_analysisOrder.Count > MaximumCachedAnalyses && _analysisOrder.First is { } oldest)
+        {
+            _analysisOrder.RemoveFirst();
+            _analyses.Remove(oldest.Value);
+        }
+    }
+
+    private void RemoveAnalysis(string key)
+    {
+        _analyses.Remove(key);
+        _analysisOrder.Remove(key);
+    }
+
+    private void ClearAnalyses()
+    {
+        _analyses.Clear();
+        _analysisOrder.Clear();
     }
 
     public LuaWorkspaceCompactSnapshot? GetSnapshot()
@@ -515,8 +575,22 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         lock (_gate)
         {
-            return _documents.Values.FirstOrDefault(document =>
-                string.Equals(GetModuleIdentity(document.Uri).Name, moduleName, StringComparison.Ordinal))?.Uri;
+            // The module-name reverse index is rebuilt only when the document set or the
+            // folder layout changes; reference-heavy requests query it in tight loops.
+            if (_uriByModuleName is null || _uriIndexGeneration != _documentSetGeneration)
+            {
+                var builder = ImmutableDictionary.CreateBuilder<string, Uri>(StringComparer.Ordinal);
+                foreach (var document in _documents.Values)
+                {
+                    var name = GetModuleIdentity(document.Uri).Name;
+                    builder.TryAdd(name, document.Uri);
+                }
+
+                _uriByModuleName = builder.ToImmutable();
+                _uriIndexGeneration = _documentSetGeneration;
+            }
+
+            return _uriByModuleName.TryGetValue(moduleName, out var uri) ? uri : null;
         }
     }
 
@@ -553,7 +627,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             workspace = _workspace;
             documents = [.. _documents.Values.Select(document => new LuaWorkspaceDocument(
                 GetModuleIdentity(document.Uri),
-                LuaSourceDocument.FromUtf8(document.Text, document.Uri.AbsoluteUri)))];
+                LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri)))];
         }
 
         var snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
@@ -562,8 +636,66 @@ internal sealed class LanguageServerWorkspace : IDisposable
             if (generation == _generation && ReferenceEquals(workspace, _workspace))
             {
                 _snapshot = snapshot;
+                // The compact pass analyzed every tracked document; files that were queued
+                // or previously failed are now covered unless a per-document publish is
+                // still running for them. Documents that entered through paths that do not
+                // register status (for example scale loads) are enrolled here.
+                foreach (var document in _documents.Values)
+                {
+                    _indexStatus.TryAdd(document.Uri.AbsoluteUri, FileIndexStatus.Pending);
+                }
+
+                foreach (var key in _indexStatus.Keys.ToArray())
+                {
+                    if (_indexStatus[key] is FileIndexStatus.Pending or FileIndexStatus.Failed)
+                    {
+                        _indexStatus[key] = FileIndexStatus.Succeeded;
+                        _indexErrors.Remove(key);
+                    }
+                }
             }
         }
+    }
+
+    /// <summary>The URIs of documents whose last analysis failed.</summary>
+    public Uri[] GetFailedDocuments()
+    {
+        lock (_gate)
+        {
+            return _indexStatus.Where(pair => pair.Value == FileIndexStatus.Failed)
+                .Select(pair => new Uri(pair.Key, UriKind.Absolute))
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Re-analyzes specific documents (a failed-file retry) and waits until their per-document
+    /// analysis finished so callers observe the updated index status.
+    /// </summary>
+    public async Task<int> RetryFilesAsync(IEnumerable<Uri> uris, CancellationToken cancellationToken)
+    {
+        var tasks = new List<Task>();
+        foreach (var uri in uris)
+        {
+            int version;
+            lock (_gate)
+            {
+                if (!_documents.TryGetValue(uri.AbsoluteUri, out var document))
+                {
+                    continue;
+                }
+
+                version = document.Version;
+                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                _indexErrors.Remove(uri.AbsoluteUri);
+            }
+
+            tasks.Add(AnalyzeAndPublishAsync(uri, version, cancellationToken));
+        }
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        ScheduleIndex();
+        return tasks.Count;
     }
 
     public void ClearCache()
@@ -571,7 +703,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         lock (_gate)
         {
             _workspace.ClearCache();
-            _analyses.Clear();
+            ClearAnalyses();
             InvalidateIndexNoLock();
         }
 
@@ -598,7 +730,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// <summary>Returns the per-document index status counts for progress display.</summary>
     public JsonObject GetIndexStatus()
     {
-        var failedFiles = new List<string>();
+        var failedFiles = new List<(string Uri, string? Error)>();
         var pendingFiles = new List<string>();
         int total, succeeded, failed, inProgress, pending;
         lock (_gate)
@@ -617,7 +749,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
                         break;
                     case FileIndexStatus.Failed:
                         failed++;
-                        failedFiles.Add(pair.Key);
+                        failedFiles.Add((pair.Key, _indexErrors.GetValueOrDefault(pair.Key)));
                         break;
                     case FileIndexStatus.InProgress:
                         inProgress++;
@@ -638,7 +770,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
             ["failed"] = failed,
             ["inProgress"] = inProgress,
             ["pending"] = pending,
-            ["failedFiles"] = new JsonArray(failedFiles.Take(200).Select(static item => (JsonNode?)item).ToArray()),
+            ["failedFiles"] = new JsonArray(failedFiles.Take(200).Select(static item => (JsonNode?)new JsonObject
+            {
+                ["uri"] = item.Uri,
+                ["error"] = item.Error,
+            }).ToArray()),
             ["pendingFiles"] = new JsonArray(pendingFiles.Take(200).Select(static item => (JsonNode?)item).ToArray()),
         };
     }
@@ -686,7 +822,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
             RebuildExternalTypeDeclarationsNoLock();
             _declarationsGeneration++;
-            _analyses.Clear();
+            ClearAnalyses();
             InvalidateIndexNoLock();
         }
 
@@ -747,8 +883,21 @@ internal sealed class LanguageServerWorkspace : IDisposable
             try
             {
                 var analysis = await GetAnalysisAsync(uri, cancellationToken).ConfigureAwait(false);
-                if (analysis is null || analysis.Document.Version != version || DiagnosticsPublished is not { } publish)
+                if (analysis is null || analysis.Document.Version != version)
                 {
+                    // Superseded by a newer edit; that edit's task owns the outcome.
+                    return;
+                }
+
+                if (DiagnosticsPublished is not { } publish)
+                {
+                    // Analysis completed; there is simply no diagnostic sink attached.
+                    lock (_gate)
+                    {
+                        _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Succeeded;
+                        _indexErrors.Remove(uri.AbsoluteUri);
+                    }
+
                     return;
                 }
 
@@ -777,14 +926,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 lock (_gate)
                 {
                     _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Succeeded;
+                    _indexErrors.Remove(uri.AbsoluteUri);
                 }
             }
-            catch (Exception exception) when (exception is OperationCanceledException or IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
             {
+                // Any failure must land in a retryable Failed state with its reason; a
+                // fire-and-forget task that escapes would leave the document stuck in
+                // InProgress forever with no visible cause.
                 lock (_gate)
                 {
                     _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Failed;
+                    _indexErrors[uri.AbsoluteUri] = exception.Message;
                 }
+
+                Console.Error.WriteLine(
+                    $"Lunil workspace: analysis failed for {uri}: {exception.Message}");
             }
         }
         finally
@@ -818,6 +976,13 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                // A debounced background rebuild must never surface as an unobserved
+                // task exception; the next edit reschedules a fresh attempt anyway.
+                Console.Error.WriteLine($"Lunil workspace: reindex failed: {exception.Message}");
             }
         }, token);
     }

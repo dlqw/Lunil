@@ -30,13 +30,85 @@ internal sealed partial class LuaLanguageService
         reference.Kind is LuaReferenceKind.Member or LuaReferenceKind.Index &&
         !string.IsNullOrEmpty(reference.Name);
 
-    private sealed record RequireCall(string ModuleName, TextSpan StringSpan, LuaSymbol? AliasSymbol);
+    internal sealed record RequireCall(string ModuleName, TextSpan StringSpan, LuaSymbol? AliasSymbol);
+
+    /// <summary>
+    /// Lazily built per-analysis lookups shared by request handlers so repeated requests
+    /// for the same document version do not rescan the whole model.
+    /// </summary>
+    internal sealed class ServiceCaches
+    {
+        private readonly object _gate = new();
+        private LanguageDocumentAnalysis? _owner;
+        private Dictionary<int, LuaType>? _symbolTypes;
+        private ImmutableArray<RequireCall> _requireCalls;
+
+        public static ServiceCaches Get(LanguageDocumentAnalysis analysis)
+        {
+            var caches = analysis.ServiceCaches;
+            lock (caches._gate)
+            {
+                caches._owner ??= analysis;
+            }
+
+            return caches;
+        }        /// <summary>Symbol id to its inferred type; replaces a linear scan per lookup.</summary>
+        public Dictionary<int, LuaType> SymbolTypes
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    if (_symbolTypes is null)
+                    {
+                        var builder = new Dictionary<int, LuaType>();
+                        foreach (var info in _owner!.Compilation.Analysis.Symbols)
+                        {
+                            // First info wins, matching the previous FirstOrDefault lookup.
+                            builder.TryAdd(info.Symbol.Id, info.InferredType);
+                        }
+
+                        _symbolTypes = builder;
+                    }
+
+                    return _symbolTypes;
+                }
+            }
+        }
+
+        /// <summary>Every require("...") call, computed once per analysis.</summary>
+        public ImmutableArray<RequireCall> RequireCalls
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    if (_requireCalls.IsDefault)
+                    {
+                        _requireCalls = FindRequireCallsUncached(_owner!);
+                    }
+
+                    return _requireCalls;
+                }
+            }
+        }
+    }
 
     /// <summary>Every require("...") call in the document with its string span and bound alias.</summary>
-    private static ImmutableArray<RequireCall> FindRequireCalls(LanguageDocumentAnalysis analysis)
+    private static ImmutableArray<RequireCall> FindRequireCalls(LanguageDocumentAnalysis analysis) =>
+        ServiceCaches.Get(analysis).RequireCalls;
+
+    private static ImmutableArray<RequireCall> FindRequireCallsUncached(LanguageDocumentAnalysis analysis)
     {
         var builder = ImmutableArray.CreateBuilder<RequireCall>();
         var root = analysis.Compilation.SemanticModel.Syntax.Root;
+        // Declaration statements are collected once and kept in document order so each
+        // require call finds its alias without re-walking the whole syntax tree.
+        var declarations = root.DescendantNodes()
+            .Where(static node => node.Kind is LuaSyntaxKind.LocalDeclarationStatement or
+                LuaSyntaxKind.AssignmentStatement)
+            .OrderBy(static node => node.Span.Start)
+            .ToArray();
         foreach (var call in root.DescendantNodes().Where(static node =>
                      node.Kind == LuaSyntaxKind.CallExpression))
         {
@@ -105,10 +177,21 @@ internal sealed partial class LuaLanguageService
             }
 
             var moduleName = System.Text.Encoding.UTF8.GetString(raw[1..^1]);
-            var declaration = root.DescendantNodes().FirstOrDefault(node =>
-                (node.Kind == LuaSyntaxKind.LocalDeclarationStatement ||
-                 node.Kind == LuaSyntaxKind.AssignmentStatement) &&
-                node.Span.Start <= call.Span.Start && node.Span.End >= call.Span.End);
+            LuaSyntaxNode? declaration = null;
+            foreach (var candidate in declarations)
+            {
+                if (candidate.Span.Start > call.Span.Start)
+                {
+                    break;
+                }
+
+                if (candidate.Span.End >= call.Span.End)
+                {
+                    declaration = candidate;
+                    break;
+                }
+            }
+
             var aliasToken = declaration?.DescendantTokens().FirstOrDefault(static token =>
                 token.Kind == Lunil.Syntax.Lexing.LuaTokenKind.Identifier && !token.IsMissing);
             var alias = aliasToken is null ? null : analysis.Compilation.SemanticModel.Symbols.FirstOrDefault(item =>
@@ -236,6 +319,39 @@ internal sealed partial class LuaLanguageService
             string.Equals(symbol.ModuleName, moduleName, StringComparison.Ordinal) &&
             (symbol.Path == memberName ||
              symbol.Path.EndsWith("." + memberName, StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// Resolves a member reference to the workspace export symbol it belongs to, if any:
+    /// a require-alias receiver maps to the required module's exports, a resolved local
+    /// receiver maps to the current module's own exports (the definition-site pattern
+    /// <c>function M.f</c>), and an unresolved receiver accepts a unique same-named export.
+    /// </summary>
+    private LuaWorkspaceExportSymbol? TryResolveMemberExport(
+        LanguageDocumentAnalysis analysis,
+        LuaCodeReference member)
+    {
+        var snapshot = workspace.GetSnapshot();
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        var name = member.Name!;
+        var receiver = ResolveReceiverSymbol(analysis, member);
+        if (receiver is not null)
+        {
+            var aliases = BuildRequireAliases(analysis);
+            var moduleName = aliases.TryGetValue(receiver.Id, out var required)
+                ? required
+                : analysis.Module.Name;
+            return FindExportSymbol(moduleName, name);
+        }
+
+        var unique = snapshot.ExportGraph.Symbols.Where(symbol =>
+            !symbol.IsExternal &&
+            (symbol.Path == name || symbol.Path.EndsWith("." + name, StringComparison.Ordinal))).ToArray();
+        return unique.Length == 1 ? unique[0] : null;
     }
 
     /// <summary>The inferred type of a member, for hover text and completion details.</summary>

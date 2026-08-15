@@ -221,6 +221,73 @@ public sealed class LuaAnnotationParserTests
         }
     }
 
+    [Fact]
+    public void DirectivesExposeTagAndNameSpansForHighlighting()
+    {
+        var document = Parse(
+            """
+            ---@class Point
+            --- @field x number
+            ---@param origin Point
+            ---@cast origin any
+            return 1
+            """);
+
+        var @class = Assert.IsType<LuaClassAnnotationSyntax>(document.Annotations[0]);
+        Assert.Equal("@class", TextOf(document, @class.TagSpan));
+        Assert.Equal("Point", TextOf(document, @class.NameSpan));
+
+        // "--- @field x number": whitespace between --- and @field is tolerated.
+        var field = Assert.IsType<LuaFieldAnnotationSyntax>(document.Annotations[1]);
+        Assert.Equal("@field", TextOf(document, field.TagSpan));
+        Assert.Equal("x", TextOf(document, field.NameSpan));
+        Assert.Equal("number", TextOf(document, field.Type.Span));
+
+        var param = Assert.IsType<LuaParamAnnotationSyntax>(document.Annotations[2]);
+        Assert.Equal("@param", TextOf(document, param.TagSpan));
+        Assert.Equal("origin", TextOf(document, param.NameSpan));
+        Assert.Equal("Point", TextOf(document, param.Type.Span));
+
+        var cast = Assert.IsType<LuaCastAnnotationSyntax>(document.Annotations[3]);
+        Assert.Equal("@cast", TextOf(document, cast.TagSpan));
+        Assert.Equal("origin", TextOf(document, cast.NameSpan));
+
+        var continuation = Assert.IsType<LuaAliasContinuationAnnotationSyntax>(
+            Parse("---@alias List\n---| string\nreturn 1").Annotations[1]);
+        Assert.Equal(default, continuation.TagSpan);
+    }
+
+    [Fact]
+    public void TypeExpressionsExposeLabelSpansForHighlighting()
+    {
+        var document = Parse(
+            """
+            ---@alias Handler fun(cb: fun(name: string): boolean): {label: number, [string]: integer}
+            ---@generic K: string, V
+            ---@return number total
+            return 1
+            """);
+
+        var alias = Assert.IsType<LuaAliasAnnotationSyntax>(document.Annotations[0]);
+        Assert.Equal("Handler", TextOf(document, alias.NameSpan));
+        var function = Assert.IsType<LuaFunctionTypeSyntax>(alias.Type);
+        Assert.Equal("fun", TextOf(document, new TextSpan(function.Span.Start, 3)));
+        var callback = Assert.IsType<LuaFunctionTypeSyntax>(Assert.Single(function.Parameters).Type);
+        Assert.Equal("name", TextOf(document, callback.Parameters[0].NameSpan));
+        var table = Assert.IsType<LuaTableTypeSyntax>(Assert.Single(function.Returns));
+        Assert.Equal("label", TextOf(document, table.Fields[0].NameSpan));
+
+        var generic = Assert.IsType<LuaGenericAnnotationSyntax>(document.Annotations[1]);
+        Assert.Equal("K", TextOf(document, generic.Parameters[0].NameSpan));
+        Assert.Equal("V", TextOf(document, generic.Parameters[1].NameSpan));
+
+        var @return = Assert.IsType<LuaReturnAnnotationSyntax>(document.Annotations[2]);
+        Assert.Equal("total", TextOf(document, @return.Returns[0].NameSpan));
+    }
+
+    private static string TextOf(LuaAnnotationDocument document, TextSpan span) =>
+        System.Text.Encoding.UTF8.GetString(document.Source.GetSpan(span));
+
     private static LuaAnnotationDocument Parse(
         string source,
         LuaAnnotationOptions? options = null)

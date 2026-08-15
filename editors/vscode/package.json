@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0-alpha.4",
+  "version": "0.17.0-alpha.5",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -29,8 +29,10 @@
     "workspaceContains:**/*.lua",
     "onCommand:lunil.restartServer",
     "onCommand:lunil.clearCache",
+    "onCommand:lunil.reindexWorkspace",
     "onCommand:lunil.showMenu",
     "onCommand:lunil.showIndexStatus",
+    "onCommand:lunil.showOutput",
     "onCommand:lunil.showHostContract",
     "onDebugResolve:lunil"
   ],
@@ -46,6 +48,36 @@
           ".lua"
         ],
         "configuration": "./language-configuration.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "lua",
+        "scopes": {
+          "macro": [
+            "keyword.annotation.lua",
+            "keyword.annotation",
+            "keyword"
+          ],
+          "class": [
+            "entity.name.type.class.lua",
+            "entity.name.type.class",
+            "entity.name.class"
+          ],
+          "type": [
+            "entity.name.type.lua",
+            "entity.name.type",
+            "support.type.lua"
+          ],
+          "typeParameter": [
+            "entity.name.type.parameter.lua",
+            "entity.name.type.parameter"
+          ],
+          "enum": [
+            "entity.name.type.enum.lua",
+            "entity.name.type.enum"
+          ]
+        }
       }
     ],
     "snippets": [

@@ -22,6 +22,8 @@ internal sealed class LuaLanguageServer : IDisposable
         _service = new LuaLanguageService(_workspace);
         _workspace.DiagnosticsPublished = PublishDiagnosticsAsync;
         _workspace.ProgressReported = PublishProgressAsync;
+        // Per-document caches follow their documents out of the workspace.
+        _workspace.DocumentRemoved += uri => _service.ForgetSemanticTokens(uri);
     }
 
     public CancellationToken ExitToken => _exit.Token;
@@ -96,7 +98,7 @@ internal sealed class LuaLanguageServer : IDisposable
                 request.Parameters, cancellationToken).ConfigureAwait(false),
             "callHierarchy/incomingCalls" => _service.IncomingCalls(request.Parameters),
             "callHierarchy/outgoingCalls" => _service.OutgoingCalls(request.Parameters),
-            "lunil/reindex" => await ReindexAsync(cancellationToken).ConfigureAwait(false),
+            "lunil/reindex" => await ReindexAsync(request.Parameters, cancellationToken).ConfigureAwait(false),
             "lunil/clearCache" => ClearCache(),
             "lunil/indexStatus" => _workspace.GetIndexStatus(),
             "lunil/virtualHostDocument" => VirtualHostDocument(),
@@ -189,7 +191,11 @@ internal sealed class LuaLanguageServer : IDisposable
         {
             ["legend"] = new JsonObject
             {
-                ["tokenTypes"] = new JsonArray("variable", "parameter", "function", "property", "method"),
+                // Indexes are positional: annotation token kinds append after the code
+                // reference kinds and must never be inserted before them.
+                ["tokenTypes"] = new JsonArray(
+                    "variable", "parameter", "function", "property", "method",
+                    "macro", "class", "type", "typeParameter", "enum", "string", "number"),
                 ["tokenModifiers"] = new JsonArray("declaration", "readonly", "modification", "captured"),
             },
             ["range"] = false,
@@ -358,9 +364,35 @@ internal sealed class LuaLanguageServer : IDisposable
         return result;
     }
 
-    private async Task<JsonNode?> ReindexAsync(CancellationToken cancellationToken)
+    private async Task<JsonNode?> ReindexAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
-        await _workspace.ReindexNowAsync(cancellationToken).ConfigureAwait(false);
+        // Optional targeted retries: { "files": [uri, ...] } re-analyzes specific documents
+        // (a failed-file retry), and { "retryFailed": true } re-analyzes everything that failed.
+        var files = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("files", out var filesElement) &&
+            filesElement.ValueKind == JsonValueKind.Array
+            ? filesElement.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => new Uri(item.GetString()!, UriKind.Absolute))
+                .ToArray()
+            : null;
+        var retryFailed = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("retryFailed", out var retryElement) &&
+            retryElement.ValueKind == JsonValueKind.True;
+        if (files is { Length: > 0 })
+        {
+            await _workspace.RetryFilesAsync(files, cancellationToken).ConfigureAwait(false);
+        }
+        else if (retryFailed)
+        {
+            await _workspace.RetryFilesAsync(_workspace.GetFailedDocuments(), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            await _workspace.ReindexNowAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         return new JsonObject
         {
             ["modules"] = _workspace.GetSnapshot()?.Modules.Length ?? 0,

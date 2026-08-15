@@ -6,6 +6,10 @@
     <AssemblyName>lunil-language-server</AssemblyName>
     <RootNamespace>Lunil.LanguageServer</RootNamespace>
     <Description>LSP 3.17 language server for Lunil Lua analysis.</Description>
+    <!-- A long-running multi-core analysis host: server GC with DATAS keeps indexing
+         bursts off the message loop while shrinking heaps when the session is idle. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <PublishReadyToRun Condition="'$(LunilReadyToRunPublish)' == 'true'">true</PublishReadyToRun>
     <SelfContained Condition="'$(LunilReadyToRunPublish)' == 'true'">true</SelfContained>
   </PropertyGroup>

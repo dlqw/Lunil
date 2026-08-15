@@ -30,14 +30,25 @@ public enum LuaDiagnosticAction : byte
 public abstract record LuaAnnotationSyntax(
     string Tag,
     LuaAnnotationDialect Dialect,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>
+    /// Gets the span of the leading <c>@tag</c> keyword including the <c>@</c>. Empty when the
+    /// directive has no tag, for example a continuation line.
+    /// </summary>
+    public TextSpan TagSpan { get; init; }
+}
 
 public sealed record LuaClassAnnotationSyntax(
     string Name,
     ImmutableArray<string> TypeParameters,
     ImmutableArray<LuaTypeSyntax> BaseTypes,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("class", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("class", Dialect, Span)
+{
+    /// <summary>Gets the span of the declared class name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaFieldAnnotationSyntax(
     string Name,
@@ -45,13 +56,21 @@ public sealed record LuaFieldAnnotationSyntax(
     LuaAnnotationVisibility Visibility,
     bool IsOptional,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("field", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("field", Dialect, Span)
+{
+    /// <summary>Gets the span of the declared field name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaAliasAnnotationSyntax(
     string Name,
     LuaTypeSyntax? Type,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("alias", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("alias", Dialect, Span)
+{
+    /// <summary>Gets the span of the declared alias name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaAliasContinuationAnnotationSyntax(
     LuaTypeSyntax Type,
@@ -62,7 +81,11 @@ public sealed record LuaEnumAnnotationSyntax(
     string Name,
     LuaTypeSyntax? KeyType,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("enum", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("enum", Dialect, Span)
+{
+    /// <summary>Gets the span of the declared enum name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaTypeAnnotationSyntax(
     ImmutableArray<LuaTypeSyntax> Types,
@@ -74,12 +97,20 @@ public sealed record LuaParamAnnotationSyntax(
     LuaTypeSyntax Type,
     bool IsOptional,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("param", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("param", Dialect, Span)
+{
+    /// <summary>Gets the span of the documented parameter name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaReturnTypeSyntax(
     LuaTypeSyntax Type,
     string? Name,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>Gets the span of the optional return label.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaReturnAnnotationSyntax(
     ImmutableArray<LuaReturnTypeSyntax> Returns,
@@ -89,7 +120,11 @@ public sealed record LuaReturnAnnotationSyntax(
 public sealed record LuaGenericParameterSyntax(
     string Name,
     LuaTypeSyntax? Constraint,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>Gets the span of the generic parameter name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaGenericAnnotationSyntax(
     ImmutableArray<LuaGenericParameterSyntax> Parameters,
@@ -111,7 +146,11 @@ public sealed record LuaCastAnnotationSyntax(
     LuaTypeSyntax Type,
     LuaCastOperation Operation,
     LuaAnnotationDialect Dialect,
-    TextSpan Span) : LuaAnnotationSyntax("cast", Dialect, Span);
+    TextSpan Span) : LuaAnnotationSyntax("cast", Dialect, Span)
+{
+    /// <summary>Gets the span of the cast target name.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaDiagnosticAnnotationSyntax(
     LuaDiagnosticAction Action,

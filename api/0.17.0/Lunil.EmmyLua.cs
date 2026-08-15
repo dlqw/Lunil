@@ -18,6 +18,7 @@ namespace Lunil.EmmyLua
         protected System.Type EqualityContract { get => throw null; }
         public string Name { get => throw null; init { } }
         public Lunil.EmmyLua.LuaTypeSyntax? Type { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaAliasAnnotationSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax? Type, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -125,6 +126,7 @@ namespace Lunil.EmmyLua
         public string Tag { get => throw null; init { } }
         public Lunil.EmmyLua.LuaAnnotationDialect Dialect { get => throw null; init { } }
         public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan TagSpan { get => throw null; init { } }
         protected LuaAnnotationSyntax(string Tag, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) { }
         public override string ToString() => throw null;
         protected virtual bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -213,6 +215,7 @@ namespace Lunil.EmmyLua
         public string Name { get => throw null; init { } }
         public Lunil.EmmyLua.LuaTypeSyntax Type { get => throw null; init { } }
         public Lunil.EmmyLua.LuaCastOperation Operation { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaCastAnnotationSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax Type, Lunil.EmmyLua.LuaCastOperation Operation, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -238,6 +241,7 @@ namespace Lunil.EmmyLua
         public string Name { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<string> TypeParameters { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaTypeSyntax> BaseTypes { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaClassAnnotationSyntax(string Name, System.Collections.Immutable.ImmutableArray<string> TypeParameters, System.Collections.Immutable.ImmutableArray<Lunil.EmmyLua.LuaTypeSyntax> BaseTypes, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -279,6 +283,7 @@ namespace Lunil.EmmyLua
         protected System.Type EqualityContract { get => throw null; }
         public string Name { get => throw null; init { } }
         public Lunil.EmmyLua.LuaTypeSyntax? KeyType { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaEnumAnnotationSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax? KeyType, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -298,6 +303,7 @@ namespace Lunil.EmmyLua
         public Lunil.EmmyLua.LuaTypeSyntax Type { get => throw null; init { } }
         public Lunil.EmmyLua.LuaAnnotationVisibility Visibility { get => throw null; init { } }
         public bool IsOptional { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaFieldAnnotationSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax Type, Lunil.EmmyLua.LuaAnnotationVisibility Visibility, bool IsOptional, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -317,6 +323,7 @@ namespace Lunil.EmmyLua
         public bool IsOptional { get => throw null; init { } }
         public bool IsVararg { get => throw null; init { } }
         public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaFunctionParameterTypeSyntax(string? Name, Lunil.EmmyLua.LuaTypeSyntax Type, bool IsOptional, bool IsVararg, Lunil.Core.Text.TextSpan Span) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.EmmyLua.LuaFunctionParameterTypeSyntax? left, Lunil.EmmyLua.LuaFunctionParameterTypeSyntax? right) => throw null;
@@ -365,6 +372,7 @@ namespace Lunil.EmmyLua
         public string Name { get => throw null; init { } }
         public Lunil.EmmyLua.LuaTypeSyntax? Constraint { get => throw null; init { } }
         public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaGenericParameterSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax? Constraint, Lunil.Core.Text.TextSpan Span) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.EmmyLua.LuaGenericParameterSyntax? left, Lunil.EmmyLua.LuaGenericParameterSyntax? right) => throw null;
@@ -503,6 +511,7 @@ namespace Lunil.EmmyLua
         public string Name { get => throw null; init { } }
         public Lunil.EmmyLua.LuaTypeSyntax Type { get => throw null; init { } }
         public bool IsOptional { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaParamAnnotationSyntax(string Name, Lunil.EmmyLua.LuaTypeSyntax Type, bool IsOptional, Lunil.EmmyLua.LuaAnnotationDialect Dialect, Lunil.Core.Text.TextSpan Span) : base(default(string), default(Lunil.EmmyLua.LuaAnnotationDialect), default(Lunil.Core.Text.TextSpan)) { }
         public override string ToString() => throw null;
         protected override bool PrintMembers(System.Text.StringBuilder builder) => throw null;
@@ -536,6 +545,7 @@ namespace Lunil.EmmyLua
         public Lunil.EmmyLua.LuaTypeSyntax Type { get => throw null; init { } }
         public string? Name { get => throw null; init { } }
         public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaReturnTypeSyntax(Lunil.EmmyLua.LuaTypeSyntax Type, string? Name, Lunil.Core.Text.TextSpan Span) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.EmmyLua.LuaReturnTypeSyntax? left, Lunil.EmmyLua.LuaReturnTypeSyntax? right) => throw null;
@@ -553,6 +563,7 @@ namespace Lunil.EmmyLua
         public Lunil.EmmyLua.LuaTypeSyntax ValueType { get => throw null; init { } }
         public bool IsOptional { get => throw null; init { } }
         public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan NameSpan { get => throw null; init { } }
         public LuaTableFieldTypeSyntax(string? Name, Lunil.EmmyLua.LuaTypeSyntax? KeyType, Lunil.EmmyLua.LuaTypeSyntax ValueType, bool IsOptional, Lunil.Core.Text.TextSpan Span) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.EmmyLua.LuaTableFieldTypeSyntax? left, Lunil.EmmyLua.LuaTableFieldTypeSyntax? right) => throw null;

@@ -95,6 +95,23 @@ internal sealed class AnnotationParseContext
         return null;
     }
 
+    /// <summary>
+    /// Reads an identifier and also returns its source span so downstream tooling
+    /// (semantic highlighting, navigation) can address the name token itself.
+    /// </summary>
+    public (string? Name, TextSpan Span) ReadIdentifierWithSpan(string message)
+    {
+        if (Current.Kind is LuaAnnotationTokenKind.Identifier or
+            LuaAnnotationTokenKind.StringLiteral)
+        {
+            var token = Advance();
+            return (Unquote(token.Text), token.Span);
+        }
+
+        AddError(Current.Span, message);
+        return (null, default);
+    }
+
     public LuaTypeSyntax ParseType()
     {
         if (++_typeDepth > Options.MaximumTypeDepth)
@@ -388,13 +405,16 @@ internal sealed class AnnotationParseContext
                 }
 
                 string? name = null;
+                TextSpan nameSpan = default;
                 var optional = false;
                 if (Current.Kind == LuaAnnotationTokenKind.Identifier &&
                     (PeekKind(1) == LuaAnnotationTokenKind.Colon ||
                      PeekKind(1) == LuaAnnotationTokenKind.Question &&
                      PeekKind(2) == LuaAnnotationTokenKind.Colon))
                 {
-                    name = Advance().Text;
+                    var label = Advance();
+                    name = label.Text;
+                    nameSpan = label.Span;
                     optional = Match(LuaAnnotationTokenKind.Question);
                     Advance();
                 }
@@ -405,7 +425,10 @@ internal sealed class AnnotationParseContext
                     type,
                     optional,
                     false,
-                    TextSpan.FromBounds(parameterStart, type.Span.End)));
+                    TextSpan.FromBounds(parameterStart, type.Span.End))
+                {
+                    NameSpan = nameSpan,
+                });
             }
             while (Match(LuaAnnotationTokenKind.Comma));
 
@@ -457,7 +480,9 @@ internal sealed class AnnotationParseContext
                      PeekKind(1) == LuaAnnotationTokenKind.Question &&
                      PeekKind(2) == LuaAnnotationTokenKind.Colon))
                 {
-                    var name = Unquote(Advance().Text);
+                    var label = Advance();
+                    var name = Unquote(label.Text);
+                    var nameSpan = label.Span;
                     var optional = Match(LuaAnnotationTokenKind.Question);
                     Expect(LuaAnnotationTokenKind.Colon, "Expected ':' after table field name.");
                     var value = ParseType();
@@ -466,7 +491,10 @@ internal sealed class AnnotationParseContext
                         null,
                         value,
                         optional,
-                        TextSpan.FromBounds(fieldStart, value.Span.End)));
+                        TextSpan.FromBounds(fieldStart, value.Span.End))
+                    {
+                        NameSpan = nameSpan,
+                    });
                     continue;
                 }
 
@@ -526,7 +554,7 @@ internal static class AnnotationDirectiveParser
 
     public static LuaAnnotationSyntax ParseClass(AnnotationParseContext context)
     {
-        var name = context.ReadIdentifier("Expected a class name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a class name.");
         var typeParameters = ImmutableArray.CreateBuilder<string>();
         if (context.Match(LuaAnnotationTokenKind.LessThan))
         {
@@ -552,33 +580,42 @@ internal static class AnnotationDirectiveParser
             ? context.ParseTypeList()
             : ImmutableArray<LuaTypeSyntax>.Empty;
         return new LuaClassAnnotationSyntax(
-            name,
+            name ?? "<missing>",
             typeParameters.ToImmutable(),
             bases,
             context.Dialect,
-            context.Line.FullSpan);
+            context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseField(AnnotationParseContext context)
     {
         var visibility = ParseVisibility(context);
-        var name = context.ReadIdentifier("Expected a field name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a field name.");
         var optional = context.Match(LuaAnnotationTokenKind.Question);
         var type = context.ParseType();
         return new LuaFieldAnnotationSyntax(
-            name,
+            name ?? "<missing>",
             type,
             visibility,
             optional,
             context.Dialect,
-            context.Line.FullSpan);
+            context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseAlias(AnnotationParseContext context)
     {
-        var name = context.ReadIdentifier("Expected an alias name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected an alias name.");
         var type = context.IsAtEnd ? null : context.ParseType();
-        return new LuaAliasAnnotationSyntax(name, type, context.Dialect, context.Line.FullSpan);
+        return new LuaAliasAnnotationSyntax(name ?? "<missing>", type, context.Dialect, context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseContinuation(AnnotationParseContext context) =>
@@ -589,13 +626,16 @@ internal static class AnnotationDirectiveParser
 
     public static LuaAnnotationSyntax ParseEnum(AnnotationParseContext context)
     {
-        var name = context.ReadIdentifier("Expected an enum name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected an enum name.");
         var keyType = context.Match(LuaAnnotationTokenKind.Colon) ? context.ParseType() : null;
         return new LuaEnumAnnotationSyntax(
-            name,
+            name ?? "<missing>",
             keyType,
             context.Dialect,
-            context.Line.FullSpan);
+            context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseType(AnnotationParseContext context) =>
@@ -606,14 +646,17 @@ internal static class AnnotationDirectiveParser
 
     public static LuaAnnotationSyntax ParseParam(AnnotationParseContext context)
     {
-        var name = context.ReadIdentifier("Expected a parameter name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a parameter name.");
         var optional = context.Match(LuaAnnotationTokenKind.Question);
         return new LuaParamAnnotationSyntax(
-            name,
+            name ?? "<missing>",
             context.ParseType(),
             optional,
             context.Dialect,
-            context.Line.FullSpan);
+            context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseReturn(AnnotationParseContext context)
@@ -623,11 +666,14 @@ internal static class AnnotationDirectiveParser
         {
             var type = context.ParseType();
             string? name = null;
+            TextSpan nameSpan = default;
             if (context.Current.Kind == LuaAnnotationTokenKind.Identifier &&
                 context.PeekKind(1) is LuaAnnotationTokenKind.Comma or
                     LuaAnnotationTokenKind.EndOfFile)
             {
-                name = context.Advance().Text;
+                var label = context.Advance();
+                name = label.Text;
+                nameSpan = label.Span;
             }
 
             returns.Add(new LuaReturnTypeSyntax(
@@ -635,7 +681,10 @@ internal static class AnnotationDirectiveParser
                 name,
                 TextSpan.FromBounds(type.Span.Start, name is null
                     ? type.Span.End
-                    : context.Previous.Span.End)));
+                    : context.Previous.Span.End))
+            {
+                NameSpan = nameSpan,
+            });
         }
         while (context.Match(LuaAnnotationTokenKind.Comma));
 
@@ -674,18 +723,21 @@ internal static class AnnotationDirectiveParser
 
     public static LuaAnnotationSyntax ParseCast(AnnotationParseContext context)
     {
-        var name = context.ReadIdentifier("Expected a cast target name.") ?? "<missing>";
+        var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a cast target name.");
         var operation = context.Match(LuaAnnotationTokenKind.Plus)
             ? LuaCastOperation.Add
             : context.Match(LuaAnnotationTokenKind.Minus)
                 ? LuaCastOperation.Remove
                 : LuaCastOperation.Replace;
         return new LuaCastAnnotationSyntax(
-            name,
+            name ?? "<missing>",
             context.ParseType(),
             operation,
             context.Dialect,
-            context.Line.FullSpan);
+            context.Line.FullSpan)
+        {
+            NameSpan = nameSpan,
+        };
     }
 
     public static LuaAnnotationSyntax ParseDiagnostic(AnnotationParseContext context)
@@ -797,7 +849,7 @@ internal static class AnnotationDirectiveParser
         do
         {
             var start = context.Current.Span.Start;
-            var name = context.ReadIdentifier("Expected a generic parameter name.") ?? "<missing>";
+            var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a generic parameter name.");
             LuaTypeSyntax? constraint = null;
             if (legacy ? context.MatchIdentifier("extends") : context.Match(LuaAnnotationTokenKind.Colon))
             {
@@ -820,9 +872,12 @@ internal static class AnnotationDirectiveParser
             }
 
             parameters.Add(new LuaGenericParameterSyntax(
-                name,
+                name ?? "<missing>",
                 constraint,
-                TextSpan.FromBounds(start, constraint?.Span.End ?? context.Previous.Span.End)));
+                TextSpan.FromBounds(start, constraint?.Span.End ?? context.Previous.Span.End))
+            {
+                NameSpan = nameSpan,
+            });
         }
         while (context.Match(LuaAnnotationTokenKind.Comma));
 

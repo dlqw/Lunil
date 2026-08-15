@@ -38,7 +38,9 @@ public sealed record LuaWorkspaceCompactModule(
 public sealed class LuaWorkspaceCompactSnapshot
 {
     private readonly ImmutableArray<CompactReference> _references;
+    private readonly ImmutableArray<CompactMemberReference> _memberReferences;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _targetIndexes;
+    private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _memberIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _globalIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> _callIndexes;
     private readonly ImmutableArray<ImmutableDictionary<string, ImmutableArray<string>>> _callbackIndexes;
@@ -53,7 +55,9 @@ public sealed class LuaWorkspaceCompactSnapshot
         LuaWorkspaceExportGraph exports,
         LuaWorkspaceModuleCallBindings calls,
         ImmutableArray<CompactReference> references,
+        ImmutableArray<CompactMemberReference> memberReferences,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> targetIndexes,
+        ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> memberIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> globalIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<int>>> callIndexes,
         ImmutableArray<ImmutableDictionary<string, ImmutableArray<string>>> callbackIndexes,
@@ -68,7 +72,9 @@ public sealed class LuaWorkspaceCompactSnapshot
         ExportGraph = exports;
         CallBindings = calls;
         _references = references;
+        _memberReferences = memberReferences;
         _targetIndexes = targetIndexes;
+        _memberIndexes = memberIndexes;
         _globalIndexes = globalIndexes;
         _callIndexes = callIndexes;
         _callbackIndexes = callbackIndexes;
@@ -105,6 +111,31 @@ public sealed class LuaWorkspaceCompactSnapshot
         foreach (var index in indexes)
         {
             result.Add(Materialize(_references[index]));
+        }
+
+        return result.MoveToImmutable();
+    }
+
+    /// <summary>
+    /// Finds every indexed member or index reference with the given name across the workspace.
+    /// Member references have no lexical symbol identity, so lookup is name-based.
+    /// </summary>
+    public ImmutableArray<LuaWorkspaceMemberReference> FindMemberReferences(string name)
+    {
+        LunilGuard.NotNullOrWhiteSpace(name);
+        if (!GetShard(_memberIndexes, name).TryGetValue(name, out var indexes))
+        {
+            return [];
+        }
+
+        var result = ImmutableArray.CreateBuilder<LuaWorkspaceMemberReference>(indexes.Length);
+        foreach (var index in indexes)
+        {
+            var reference = _memberReferences[index];
+            result.Add(new LuaWorkspaceMemberReference(
+                Modules[reference.ModuleIndex].Identity,
+                reference.Span,
+                _strings[reference.NameIndex]));
         }
 
         return result.MoveToImmutable();
@@ -185,7 +216,10 @@ public sealed class LuaWorkspaceCompactSnapshot
         private readonly StringPool _strings = new();
         private readonly List<LuaWorkspaceCompactModule> _modules = [];
         private readonly List<CompactReference> _references = [];
+        private readonly List<CompactMemberReference> _memberReferences = [];
         private readonly Dictionary<string, ImmutableArray<int>.Builder> _targetIndexes =
+            new(StringComparer.Ordinal);
+        private readonly Dictionary<string, ImmutableArray<int>.Builder> _memberIndexes =
             new(StringComparer.Ordinal);
         private readonly Dictionary<string, ImmutableArray<int>.Builder> _globals =
             new(StringComparer.Ordinal);
@@ -320,7 +354,9 @@ public sealed class LuaWorkspaceCompactSnapshot
                 exports,
                 new LuaWorkspaceModuleCallBindings(resolvedCalls),
                 [.. _references],
+                [.. _memberReferences],
                 _targetIndexes,
+                _memberIndexes,
                 _globals,
                 _strings.ToImmutable(),
                 _totalCallCount,
@@ -366,6 +402,24 @@ public sealed class LuaWorkspaceCompactSnapshot
                 {
                     GetIndexBuilder(_globals, reference.Name).Add(index);
                 }
+            }
+
+            // Member and index references have no lexical symbol identity; they are indexed
+            // by member name so cross-file member navigation can find them workspace-wide.
+            foreach (var reference in model.UnifiedReferences)
+            {
+                if (reference.Kind is not (LuaReferenceKind.Member or LuaReferenceKind.Index) ||
+                    string.IsNullOrEmpty(reference.Name))
+                {
+                    continue;
+                }
+
+                var memberIndex = _memberReferences.Count;
+                _memberReferences.Add(new CompactMemberReference(
+                    moduleIndex,
+                    reference.Span,
+                    _strings.GetOrAdd(reference.Name)));
+                GetIndexBuilder(_memberIndexes, reference.Name).Add(memberIndex);
             }
         }
 
@@ -432,7 +486,9 @@ public sealed class LuaWorkspaceCompactSnapshot
     {
         var strings = new StringPool();
         var references = new List<CompactReference>();
+        var memberReferences = new List<CompactMemberReference>();
         var targetIndexes = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
+        var memberIndexes = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
         var globals = new Dictionary<string, ImmutableArray<int>.Builder>(StringComparer.Ordinal);
         var modules = workspace.Modules.Select(module => new LuaWorkspaceCompactModule(
             module.Identity,
@@ -498,6 +554,28 @@ public sealed class LuaWorkspaceCompactSnapshot
                     globalList.Add(index);
                 }
             }
+
+            foreach (var reference in model.UnifiedReferences)
+            {
+                if (reference.Kind is not (LuaReferenceKind.Member or LuaReferenceKind.Index) ||
+                    string.IsNullOrEmpty(reference.Name))
+                {
+                    continue;
+                }
+
+                var memberIndex = memberReferences.Count;
+                memberReferences.Add(new CompactMemberReference(
+                    moduleIndex,
+                    reference.Span,
+                    strings.GetOrAdd(reference.Name)));
+                if (!memberIndexes.TryGetValue(reference.Name, out var memberList))
+                {
+                    memberList = ImmutableArray.CreateBuilder<int>();
+                    memberIndexes.Add(reference.Name, memberList);
+                }
+
+                memberList.Add(memberIndex);
+            }
         }
 
         var frozenStrings = strings.ToImmutable();
@@ -538,6 +616,7 @@ public sealed class LuaWorkspaceCompactSnapshot
                 StringComparer.Ordinal);
         var estimatedBytes = checked(
             (long)references.Count * 40 +
+            (long)memberReferences.Count * 16 +
             frozenStrings.Sum(static value => 24L + value.Length * sizeof(char)) +
             modules.Length * 160L +
             workspace.CallBindings.Edges.Length * 160L);
@@ -553,11 +632,16 @@ public sealed class LuaWorkspaceCompactSnapshot
             modules,
             workspace.Graph,
             workspace.Diagnostics,
-            metrics,
+            workspace.Metrics,
             workspace.ExportGraph,
             workspace.CallBindings,
             [.. references],
+            [.. memberReferences],
             CreateShards(targetIndexes.ToImmutableDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.ToImmutable(),
+                StringComparer.Ordinal), shardCount),
+            CreateShards(memberIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
@@ -583,7 +667,9 @@ public sealed class LuaWorkspaceCompactSnapshot
         LuaWorkspaceExportGraph exports,
         LuaWorkspaceModuleCallBindings calls,
         ImmutableArray<CompactReference> references,
+        ImmutableArray<CompactMemberReference> memberReferences,
         Dictionary<string, ImmutableArray<int>.Builder> targetIndexes,
+        Dictionary<string, ImmutableArray<int>.Builder> memberIndexes,
         Dictionary<string, ImmutableArray<int>.Builder> globals,
         ImmutableArray<string> strings,
         int indexedCallCount,
@@ -620,6 +706,7 @@ public sealed class LuaWorkspaceCompactSnapshot
                 StringComparer.Ordinal);
         var estimatedBytes = checked(
             (long)references.Length * 40 +
+            (long)memberReferences.Length * 16 +
             strings.Sum(static value => 24L + value.Length * sizeof(char)) +
             modules.Length * 160L +
             calls.Edges.Length * 160L);
@@ -637,7 +724,12 @@ public sealed class LuaWorkspaceCompactSnapshot
             exports,
             calls,
             references,
+            memberReferences,
             CreateShards(targetIndexes.ToImmutableDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value.ToImmutable(),
+                StringComparer.Ordinal), shardCount),
+            CreateShards(memberIndexes.ToImmutableDictionary(
                 static pair => pair.Key,
                 static pair => pair.Value.ToImmutable(),
                 StringComparer.Ordinal), shardCount),
@@ -679,6 +771,11 @@ public sealed class LuaWorkspaceCompactSnapshot
         bool IsWrite,
         LuaNameResolutionKind ResolutionKind,
         int TargetKeyIndex);
+
+    private readonly record struct CompactMemberReference(
+        int ModuleIndex,
+        TextSpan Span,
+        int NameIndex);
 
     private static ImmutableDictionary<string, TValue> GetShard<TValue>(
         ImmutableArray<ImmutableDictionary<string, TValue>> shards,

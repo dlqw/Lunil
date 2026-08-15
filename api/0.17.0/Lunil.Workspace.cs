@@ -238,6 +238,7 @@ namespace Lunil.Workspace
         public long EstimatedResidentBytes { get => throw null; }
         public Lunil.Workspace.LuaWorkspaceCompactModule? GetModule(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindReferences(Lunil.Semantics.Binding.LuaSymbolKey key) => throw null;
+        public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceMemberReference> FindMemberReferences(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceReference> FindGlobalReferences(string name) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceModuleCallBinding> FindCallsToExport(string targetSymbolKey) => throw null;
         public System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceExportSymbol> FindCallbackRegistrations(string hostTargetKey) => throw null;
@@ -374,6 +375,21 @@ namespace Lunil.Workspace
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Workspace.LuaWorkspaceFunction? other) => throw null;
         public void Deconstruct(out Lunil.Workspace.LuaModuleIdentity Module, out string SourceIdentity, out int FunctionId, out Lunil.Semantics.Binding.LuaSymbolKey FunctionKey) => throw null;
+    }
+
+    public sealed class LuaWorkspaceMemberReference : System.IEquatable<Lunil.Workspace.LuaWorkspaceMemberReference>
+    {
+        public Lunil.Workspace.LuaModuleIdentity Module { get => throw null; init { } }
+        public Lunil.Core.Text.TextSpan Span { get => throw null; init { } }
+        public string Name { get => throw null; init { } }
+        public LuaWorkspaceMemberReference(Lunil.Workspace.LuaModuleIdentity Module, Lunil.Core.Text.TextSpan Span, string Name) { }
+        public override string ToString() => throw null;
+        public static bool operator !=(Lunil.Workspace.LuaWorkspaceMemberReference? left, Lunil.Workspace.LuaWorkspaceMemberReference? right) => throw null;
+        public static bool operator ==(Lunil.Workspace.LuaWorkspaceMemberReference? left, Lunil.Workspace.LuaWorkspaceMemberReference? right) => throw null;
+        public override int GetHashCode() => throw null;
+        public override bool Equals(object? obj) => throw null;
+        public bool Equals(Lunil.Workspace.LuaWorkspaceMemberReference? other) => throw null;
+        public void Deconstruct(out Lunil.Workspace.LuaModuleIdentity Module, out Lunil.Core.Text.TextSpan Span, out string Name) => throw null;
     }
 
     public sealed class LuaWorkspaceMetrics : System.IEquatable<Lunil.Workspace.LuaWorkspaceMetrics>

@@ -36,6 +36,208 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task SemanticTokensCoverAnnotationDirectives()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///annotated.lua");
+        workspace.Open(uri, 1,
+            "---@class Point\n" +
+            "---@field x number\n" +
+            "---@param p Point\n" +
+            "local function len(p) return p.x end\n" +
+            "return len");
+        var service = new LuaLanguageService(workspace);
+        var tokens = await service.SemanticTokensAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+        }), false, CancellationToken.None);
+        var decoded = DecodeTokens(tokens!);
+
+        // @tag keywords are macros; declared names carry the declaration modifier; type
+        // expressions (class references and primitives) use the type kind.
+        Assert.Contains((0, 3, 6, MacroTokenType, 0), decoded);          // @class
+        Assert.Contains((0, 10, 5, ClassTokenType, DeclarationModifier), decoded); // Point
+        Assert.Contains((1, 3, 6, MacroTokenType, 0), decoded);          // @field
+        Assert.Contains((1, 10, 1, 3, DeclarationModifier), decoded);    // x
+        Assert.Contains((1, 12, 6, TypeTokenType, 0), decoded);          // number
+        Assert.Contains((2, 3, 6, MacroTokenType, 0), decoded);          // @param
+        Assert.Contains((2, 10, 1, 1, DeclarationModifier), decoded);    // p
+        Assert.Contains((2, 12, 5, TypeTokenType, 0), decoded);          // Point
+    }
+
+    private const int MacroTokenType = 5;
+    private const int ClassTokenType = 6;
+    private const int TypeTokenType = 7;
+    private const int DeclarationModifier = 1;
+
+    private static List<(int Line, int Character, int Length, int Type, int Modifiers)> DecodeTokens(JsonNode tokens)
+    {
+        var data = tokens["data"]!.AsArray().Select(static value => value!.GetValue<int>()).ToArray();
+        var result = new List<(int, int, int, int, int)>(data.Length / 5);
+        var line = 0;
+        var character = 0;
+        for (var index = 0; index < data.Length; index += 5)
+        {
+            var lineDelta = data[index];
+            line += lineDelta;
+            character = lineDelta == 0 ? character + data[index + 1] : data[index + 1];
+            result.Add((line, character, data[index + 2], data[index + 3], data[index + 4]));
+        }
+
+        return result;
+    }
+
+    [Fact]
+    public async Task SemanticTokenDeltaIsEmptyWhenDocumentIsUnchanged()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///stable.lua");
+        workspace.Open(uri, 1, "local value = 1\nreturn value");
+        var service = new LuaLanguageService(workspace);
+        var parameters = Element(new { textDocument = new { uri = uri.AbsoluteUri } });
+        var full = await service.SemanticTokensAsync(parameters, false, CancellationToken.None);
+        var deltaParameters = Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            previousResultId = full!["resultId"]!.GetValue<string>(),
+        });
+
+        var delta = await service.SemanticTokensAsync(deltaParameters, true, CancellationToken.None);
+
+        Assert.Empty(delta!["edits"]!.AsArray());
+        Assert.Equal(full["resultId"]!.GetValue<string>(), delta["resultId"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task MemberReferencesIncludeCrossModuleCallSitesFromTheDefinitionModule()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var utilUri = new Uri("file:///src/lib/util.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(utilUri, 1,
+            "local M = {}\nfunction M.greet(name) return name end\nM.version = 2\nreturn M");
+        workspace.Open(appUri, 1,
+            "local util = require(\"lib.util\")\nreturn util.greet(\"world\")");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // References from the definition site (receiver M is the local module table) must
+        // reach the cross-module call site, not just same-file occurrences.
+        var fromDefinition = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = utilUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), CancellationToken.None);
+        var definitionUris = fromDefinition!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(appUri.AbsoluteUri, definitionUris);
+        Assert.Contains(utilUri.AbsoluteUri, definitionUris);
+
+        // References from the call site still include the exported definition.
+        var fromCallSite = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), CancellationToken.None);
+        Assert.Contains(fromCallSite!.AsArray(),
+            location => location!["uri"]!.GetValue<string>() == utilUri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task GlobalNameReferencesAndDefinitionUseTheWorkspaceIndex()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var helperUri = new Uri("file:///src/helper.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(helperUri, 1, "function helper() return 1 end\nreturn helper()");
+        workspace.Open(appUri, 1, "return helper() + 1");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+        var parameters = Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 9 },
+        });
+
+        var references = await service.ReferencesAsync(parameters, CancellationToken.None);
+        var referenceUris = references!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(helperUri.AbsoluteUri, referenceUris);
+        Assert.Contains(appUri.AbsoluteUri, referenceUris);
+
+        var definition = await service.DefinitionAsync(parameters, false, CancellationToken.None);
+        Assert.NotNull(definition);
+        Assert.Equal(helperUri.AbsoluteUri, definition!["uri"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task RequireStringReferencesListEveryRequireSite()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var utilUri = new Uri("file:///src/lib/util.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        var secondUri = new Uri("file:///src/second.lua");
+        workspace.Open(utilUri, 1, "local M = {}\nfunction M.f() return 1 end\nreturn M");
+        workspace.Open(appUri, 1, "local util = require(\"lib.util\")\nreturn util.f()");
+        workspace.Open(secondUri, 1, "local u2 = require('lib.util')\nreturn u2.f()");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var references = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 26 },
+        }), CancellationToken.None);
+        var referenceUris = references!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+
+        Assert.Contains(appUri.AbsoluteUri, referenceUris);
+        Assert.Contains(secondUri.AbsoluteUri, referenceUris);
+    }
+
+    [Fact]
+    public async Task ReindexResolvesPendingStatusAndRetryFilesRepublish()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        // Loaded (not opened) documents carry no fire-and-forget publish task, so the
+        // pending state before reindexing is deterministic.
+        workspace.LoadDocumentsForScale(
+        [
+            new LspTextDocument(new Uri("file:///src/first.lua"), 0, "return 1", isOpen: false),
+            new LspTextDocument(new Uri("file:///src/second.lua"), 0, "return 2", isOpen: false),
+        ]);
+
+        var pending = workspace.GetIndexStatus();
+        Assert.Equal(2, (int)pending["pending"]!);
+        Assert.Equal(0, (int)pending["succeeded"]!);
+
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var indexed = workspace.GetIndexStatus();
+        Assert.Equal(0, (int)indexed["pending"]!);
+        Assert.Equal(2, (int)indexed["succeeded"]!);
+
+        var retried = await workspace.RetryFilesAsync(
+            [new Uri("file:///src/first.lua")], CancellationToken.None);
+        Assert.Equal(1, retried);
+        var afterRetry = workspace.GetIndexStatus();
+        Assert.Equal(0, (int)afterRetry["failed"]!);
+        Assert.Equal(0, (int)afterRetry["inProgress"]!);
+        Assert.Equal(0, (int)afterRetry["pending"]!);
+        Assert.Empty(afterRetry["failedFiles"]!.AsArray());
+        Assert.Empty(workspace.GetFailedDocuments());
+    }
+
+    [Fact]
     public async Task WorkspaceRejectsStaleVersionsAndKeepsUnsavedOverlay()
     {
         using var workspace = new LanguageServerWorkspace();
@@ -346,8 +548,10 @@ public sealed class LanguageServerTests
         });
         var full = await service.SemanticTokensAsync(parameters, false, CancellationToken.None);
         var previousId = full!["resultId"]!.GetValue<string>();
+        // Rename a reference use (declarations are not references, so their tokens do
+        // not change; the use on line 1 does).
         Assert.True(workspace.Change(uri, 2,
-            [new LspTextChange(new LspRange(new LspPosition(0, 6), new LspPosition(0, 11)), "answer")]));
+            [new LspTextChange(new LspRange(new LspPosition(1, 7), new LspPosition(1, 12)), "answer")]));
         var deltaParameters = Element(new
         {
             textDocument = new { uri = uri.AbsoluteUri },

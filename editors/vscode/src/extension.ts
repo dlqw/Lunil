@@ -327,13 +327,13 @@ class LunilClientController implements vscode.Disposable {
     return executable;
   }
 
-  private async request(method: string): Promise<unknown> {
+  private async request(method: string, params?: unknown): Promise<unknown> {
     if (this.client === undefined || !this.client.isRunning()) {
       void vscode.window.showWarningMessage('Lunil Language Server is not running.');
       return undefined;
     }
     try {
-      return await this.client.sendRequest(method);
+      return await this.client.sendRequest(method, params);
     } catch (error) {
       this.logError(method, error);
       throw error;
@@ -512,53 +512,78 @@ class LunilClientController implements vscode.Disposable {
       return;
     }
     try {
-      const status = await this.client.sendRequest('lunil/indexStatus') as {
-        total?: number; analyzed?: number; succeeded?: number; failed?: number;
-        inProgress?: number; pending?: number; failedFiles?: string[]; pendingFiles?: string[];
-      };
-      this.output.appendLine(`[${timestamp()}] indexStatus result: ${JSON.stringify(status)}`);
-      const summary = [
-        `total:${status.total ?? 0}`,
-        `succeeded:${status.succeeded ?? 0}`,
-        `in-progress:${status.inProgress ?? 0}`,
-        `failed:${status.failed ?? 0}`,
-        `pending:${status.pending ?? 0}`
-      ].join('  ');
-      const failed = status.failedFiles ?? [];
-      const pending = status.pendingFiles ?? [];
-      const items: IndexStatusItem[] = [];
-      if (failed.length > 0) {
-        items.push({ label: `$(error) Failed (${failed.length})`, kind: vscode.QuickPickItemKind.Separator });
-        for (const file of failed.slice(0, 50)) {
-          items.push(indexStatusItem(file, 'failed', 'Analysis threw for this document'));
+      const pick = vscode.window.createQuickPick<IndexStatusItem>();
+      pick.title = 'Lunil Index Status';
+      pick.matchOnDescription = true;
+      pick.matchOnDetail = true;
+      pick.buttons = [reindexAllButton, refreshStatusButton];
+      pick.busy = true;
+      pick.show();
+      pick.onDidHide(() => pick.dispose());
+      pick.onDidTriggerButton(button => {
+        if (button === reindexAllButton) {
+          void this.runIndexStatusAction(pick, 'reindex');
+        } else if (button === refreshStatusButton) {
+          void this.refreshIndexStatusItems(pick);
         }
-        if (failed.length > 50) {
-          items.push({ label: `... and ${failed.length - 50} more failed files`, kind: vscode.QuickPickItemKind.Separator });
-        }
-      }
-      if (pending.length > 0) {
-        items.push({ label: `$(clock) Pending (${pending.length})`, kind: vscode.QuickPickItemKind.Separator });
-        for (const file of pending.slice(0, 50)) {
-          items.push(indexStatusItem(file, 'pending', 'Not yet analyzed'));
-        }
-        if (pending.length > 50) {
-          items.push({ label: `... and ${pending.length - 50} more pending files`, kind: vscode.QuickPickItemKind.Separator });
-        }
-      }
-      if (items.length === 0) {
-        items.push({ label: '$(check) All documents analyzed', detail: summary });
-      }
-      const pick = await vscode.window.showQuickPick(items, {
-        placeHolder: summary,
-        matchOnDescription: true,
-        matchOnDetail: true
       });
-      if (pick?.uri !== undefined) {
-        await vscode.window.showTextDocument(pick.uri, { preview: true });
-      }
+      pick.onDidTriggerItemButton(event => {
+        const item = event.item;
+        if (event.button === retryFileButton) {
+          void this.runIndexStatusAction(pick, 'retryFile', item);
+        } else if (event.button === openFileButton && item.fileUri !== undefined) {
+          void vscode.window.showTextDocument(item.fileUri, { preview: true });
+        }
+      });
+      pick.onDidAccept(() => {
+        const item = pick.selectedItems[0];
+        if (item === undefined) {
+          return;
+        }
+        if (item.action === 'reindex' || item.action === 'retryFailed') {
+          void this.runIndexStatusAction(pick, item.action);
+        } else if (item.fileUri !== undefined) {
+          void vscode.window.showTextDocument(item.fileUri, { preview: true });
+        }
+      });
+      await this.refreshIndexStatusItems(pick);
     } catch (error) {
       this.output.appendLine(`[${timestamp()}] showIndexStatus FAILED: ${error instanceof Error ? error.message : String(error)}`);
       this.logError('showIndexStatus', error);
+    }
+  }
+
+  /** Runs an index-status action and reloads the picker contents afterwards. */
+  private async runIndexStatusAction(
+    pick: vscode.QuickPick<IndexStatusItem>,
+    action: 'reindex' | 'retryFailed' | 'retryFile',
+    item?: IndexStatusItem): Promise<void> {
+    pick.busy = true;
+    try {
+      if (action === 'reindex') {
+        await this.request('lunil/reindex');
+        await this.refreshIndexedCount();
+      } else if (action === 'retryFailed') {
+        await this.request('lunil/reindex', { retryFailed: true });
+      } else if (item?.fileUri !== undefined) {
+        await this.request('lunil/reindex', { files: [item.fileUri.toString()] });
+      }
+      await this.refreshIndexStatusItems(pick);
+    } catch {
+      // request() already logged; keep the picker usable.
+      pick.busy = false;
+    }
+  }
+
+  private async refreshIndexStatusItems(pick: vscode.QuickPick<IndexStatusItem>): Promise<void> {
+    pick.busy = true;
+    try {
+      const status = await this.client!.sendRequest('lunil/indexStatus') as IndexStatusResponse;
+      this.output.appendLine(`[${timestamp()}] indexStatus result: ${JSON.stringify(status)}`);
+      pick.placeholder = indexStatusSummary(status);
+      pick.items = indexStatusItems(status);
+    } finally {
+      pick.busy = false;
     }
   }
 
@@ -592,17 +617,110 @@ interface LunilWorkDoneProgress {
   readonly percentage?: number;
 }
 
-interface IndexStatusItem extends vscode.QuickPickItem {
-  readonly uri?: vscode.Uri;
+interface IndexStatusResponse {
+  readonly total?: number;
+  readonly analyzed?: number;
+  readonly succeeded?: number;
+  readonly failed?: number;
+  readonly inProgress?: number;
+  readonly pending?: number;
+  readonly failedFiles?: (string | { readonly uri?: string; readonly error?: string })[];
+  readonly pendingFiles?: string[];
 }
 
-function indexStatusItem(file: string, description: string, detail: string): IndexStatusItem {
+interface IndexStatusItem extends vscode.QuickPickItem {
+  readonly action?: 'reindex' | 'retryFailed';
+  readonly fileUri?: vscode.Uri;
+}
+
+const retryFileButton: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon('debug-restart'),
+  tooltip: 'Retry analyzing this document'
+};
+
+const openFileButton: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon('go-to-file'),
+  tooltip: 'Open document'
+};
+
+const reindexAllButton: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon('sync'),
+  tooltip: 'Reindex workspace'
+};
+
+const refreshStatusButton: vscode.QuickInputButton = {
+  iconPath: new vscode.ThemeIcon('refresh'),
+  tooltip: 'Refresh index status'
+};
+
+function indexStatusSummary(status: IndexStatusResponse): string {
+  return [
+    `total:${status.total ?? 0}`,
+    `succeeded:${status.succeeded ?? 0}`,
+    `in-progress:${status.inProgress ?? 0}`,
+    `failed:${status.failed ?? 0}`,
+    `pending:${status.pending ?? 0}`
+  ].join('  ');
+}
+
+function indexStatusItems(status: IndexStatusResponse): IndexStatusItem[] {
+  const items: IndexStatusItem[] = [
+    { label: '$(sync) Reindex Workspace', description: 'rebuild the index', action: 'reindex' }
+  ];
+  const failedCount = status.failed ?? 0;
+  if (failedCount > 0) {
+    items.push({
+      label: `$(debug-restart) Retry Failed (${failedCount})`,
+      description: 're-analyze failed documents',
+      action: 'retryFailed'
+    });
+  }
+
+  const failed = status.failedFiles ?? [];
+  const pending = status.pendingFiles ?? [];
+  if (failed.length === 0 && pending.length === 0 && (status.succeeded ?? 0) > 0) {
+    items.push({ label: '$(check) All documents analyzed', detail: indexStatusSummary(status) });
+  }
+  if (failed.length > 0) {
+    items.push({ label: `Failed (${failed.length})`, kind: vscode.QuickPickItemKind.Separator });
+    for (const entry of failed.slice(0, 200)) {
+      const uri = typeof entry === 'string' ? entry : entry.uri;
+      if (uri === undefined) {
+        continue;
+      }
+      const error = typeof entry === 'string' ? undefined : entry.error;
+      items.push({
+        ...fileStatusItem(uri, 'failed'),
+        detail: error === undefined || error === '' ? 'Analysis failed for this document' : error,
+        buttons: [retryFileButton, openFileButton]
+      });
+    }
+    if (failed.length > 200) {
+      items.push({ label: `... and ${failed.length - 200} more failed files`, kind: vscode.QuickPickItemKind.Separator });
+    }
+  }
+  if (pending.length > 0) {
+    items.push({ label: `Pending (${pending.length})`, kind: vscode.QuickPickItemKind.Separator });
+    for (const file of pending.slice(0, 200)) {
+      items.push({
+        ...fileStatusItem(file, 'pending'),
+        detail: 'Queued for analysis; retried automatically after edits or reindex',
+        buttons: [openFileButton]
+      });
+    }
+    if (pending.length > 200) {
+      items.push({ label: `... and ${pending.length - 200} more pending files`, kind: vscode.QuickPickItemKind.Separator });
+    }
+  }
+  return items;
+}
+
+function fileStatusItem(file: string, description: string): IndexStatusItem {
   const uri = vscode.Uri.parse(file);
   return {
     label: file.startsWith('file://') ? vscode.workspace.asRelativePath(uri, false) : file,
     description,
-    detail,
-    uri: uri.scheme === 'file' ? uri : undefined
+    fileUri: uri.scheme === 'file' ? uri : undefined
   };
 }
 

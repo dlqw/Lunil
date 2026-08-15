@@ -53,7 +53,11 @@ public sealed record LuaFunctionParameterTypeSyntax(
     LuaTypeSyntax Type,
     bool IsOptional,
     bool IsVararg,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>Gets the span of the optional parameter label.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaFunctionTypeSyntax(
     ImmutableArray<LuaFunctionParameterTypeSyntax> Parameters,
@@ -65,7 +69,11 @@ public sealed record LuaTableFieldTypeSyntax(
     LuaTypeSyntax? KeyType,
     LuaTypeSyntax ValueType,
     bool IsOptional,
-    TextSpan Span);
+    TextSpan Span)
+{
+    /// <summary>Gets the span of the field name when the field is named.</summary>
+    public TextSpan NameSpan { get; init; }
+}
 
 public sealed record LuaTableTypeSyntax(
     ImmutableArray<LuaTableFieldTypeSyntax> Fields,

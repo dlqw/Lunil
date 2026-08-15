@@ -729,6 +729,32 @@ public sealed class LuaWorkspaceTests
     }
 
     [Fact]
+    public async Task CompactSnapshotsIndexMemberReferencesByName()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document(
+                "lib",
+                "local M = {}\nfunction M.fetch() return 1 end\nM.count = 2\nreturn M"),
+            Document(
+                "app",
+                "local lib = require('lib')\nlocal n = lib.count\nreturn lib.fetch() + n"),
+        ];
+
+        var compact = await workspace.AnalyzeCompactAsync(documents);
+
+        var fetch = compact.FindMemberReferences("fetch");
+        Assert.Equal(2, fetch.Length);
+        Assert.Contains(fetch, static item => item.Module.Name == "lib");
+        Assert.Contains(fetch, static item => item.Module.Name == "app");
+        Assert.All(fetch, static item => Assert.Equal("fetch", item.Name));
+
+        var count = compact.FindMemberReferences("count");
+        Assert.Equal(2, count.Length);
+        Assert.Empty(compact.FindMemberReferences("missing"));
+    }
+
+    [Fact]
     public async Task CompactSnapshotsKeepQueryableReferencesWithoutCompilerModels()
     {
         using var workspace = new LuaWorkspace();

@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Lunil.Analysis;
+using Lunil.Core.Text;
+using Lunil.EmmyLua;
 using Lunil.Semantics.Binding;
 using Lunil.Workspace;
 
@@ -19,6 +21,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     ];
     private readonly ConcurrentDictionary<string, SemanticTokenState> _semanticTokens =
         new(StringComparer.Ordinal);
+    /** Insertion-order keys used to bound the semantic token cache. */
+    private readonly ConcurrentQueue<string> _semanticTokenOrder = new();
+    private const int MaximumCachedSemanticTokens = 256;
 
     public async Task<JsonNode?> CompletionAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
@@ -219,9 +224,37 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
-        if (reference is null || reference.Symbol.Kind == LuaSymbolKind.Environment)
+        if (reference is null)
         {
             return null;
+        }
+
+        if (reference.Symbol.Kind == LuaSymbolKind.Environment)
+        {
+            // Globals fold into the implicit _ENV symbol. Jump to the first write site,
+            // which is the global's definition, preferring the workspace index.
+            if (workspace.GetSnapshot() is { } globalSnapshot)
+            {
+                var write = globalSnapshot.FindGlobalReferences(reference.Name)
+                    .Where(static item => item.IsWrite)
+                    .OrderBy(static item => item.Module.Name, StringComparer.Ordinal)
+                    .ThenBy(static item => item.Span.Start)
+                    .FirstOrDefault();
+                if (write is not null && workspace.GetUri(write.Module.Name) is { } uri &&
+                    workspace.TryGetDocument(uri, out var document))
+                {
+                    return Location(uri, document.ToRange(write.Span));
+                }
+            }
+
+            var localWrite = context.Analysis.Compilation.SemanticModel.References
+                .Where(item => item.Symbol.Kind == LuaSymbolKind.Environment && item.IsWrite &&
+                    string.Equals(item.Name, reference.Name, StringComparison.Ordinal))
+                .OrderBy(static item => item.Span.Start)
+                .FirstOrDefault();
+            return localWrite is null
+                ? null
+                : Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(localWrite.Span));
         }
 
         var span = NormalizeDeclaringSpan(reference.Symbol, context.Analysis.Document);
@@ -236,17 +269,62 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return new JsonArray();
         }
 
+        // A require("...") string reports every require site of that module.
+        if (FindRequireAt(context.Analysis, context.ByteOffset) is { } required)
+        {
+            var requireBuilder = ImmutableArray.CreateBuilder<JsonObject>();
+            requireBuilder.Add(Location(context.Analysis.Document.Uri,
+                context.Analysis.Document.ToRange(required.StringSpan)));
+            if (workspace.GetSnapshot() is { } snapshot)
+            {
+                foreach (var dependency in snapshot.Graph.Dependencies.Where(dependency =>
+                             string.Equals(dependency.RequestedName, required.ModuleName, StringComparison.Ordinal)))
+                {
+                    AddSnapshotLocation(requireBuilder, dependency.Source.Name, dependency.Span);
+                }
+            }
+
+            return LocationsToJsonArray(requireBuilder);
+        }
+
         var reference = FindReference(context.Analysis, context.ByteOffset);
-        if (reference is not null && reference.Symbol.Kind != LuaSymbolKind.Environment)
+        if (reference is not null)
         {
             var includeDeclaration = parameters.TryGetProperty("context", out var referenceContext) &&
                 referenceContext.TryGetProperty("includeDeclaration", out var include) && include.GetBoolean();
+            if (reference.Symbol.Kind == LuaSymbolKind.Environment)
+            {
+                // Globals fold into the implicit _ENV symbol; the workspace index keeps
+                // them addressable by name across every module.
+                var globalBuilder = ImmutableArray.CreateBuilder<JsonObject>();
+                if (workspace.GetSnapshot() is { } snapshot)
+                {
+                    foreach (var item in snapshot.FindGlobalReferences(reference.Name))
+                    {
+                        AddSnapshotLocation(globalBuilder, item.Module.Name, item.Span);
+                    }
+                }
+                else
+                {
+                    foreach (var item in context.Analysis.Compilation.SemanticModel.References.Where(item =>
+                                 item.Symbol.Kind == LuaSymbolKind.Environment &&
+                                 string.Equals(item.Name, reference.Name, StringComparison.Ordinal)))
+                    {
+                        globalBuilder.Add(Location(context.Analysis.Document.Uri,
+                            context.Analysis.Document.ToRange(item.Span)));
+                    }
+                }
+
+                return LocationsToJsonArray(globalBuilder);
+            }
+
             var locations = GetReferenceLocations(context.Analysis, reference, includeDeclaration);
             return new JsonArray(locations.Select(static location => (JsonNode)location).ToArray());
         }
 
-        // Member references: same-file occurrences plus cross-module export hits when
-        // the member resolves to a workspace export.
+        // Member references: same-file occurrences plus cross-module hits when the member
+        // resolves to a workspace export (require alias receiver, the defining module's
+        // own table, or a unique same-named export).
         var codeReference = FindCodeReference(context.Analysis, context.ByteOffset);
         if (codeReference is not null && IsNamedMember(codeReference))
         {
@@ -259,40 +337,56 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     context.Analysis.Document.ToRange(item.Span)));
             }
 
-            var aliases = BuildRequireAliases(context.Analysis);
-            var receiver = ResolveReceiverSymbol(context.Analysis, codeReference);
-            if (receiver is not null && aliases.TryGetValue(receiver.Id, out var moduleName))
+            var snapshot = workspace.GetSnapshot();
+            var exported = snapshot is null ? null : TryResolveMemberExport(context.Analysis, codeReference);
+            if (exported is not null && snapshot is not null)
             {
-                var exported = FindExportSymbol(moduleName, name);
-                if (exported is not null && workspace.GetSnapshot() is { } snapshot)
+                // The definition itself is reported so "find references" on a member
+                // shows where it is defined, matching editor expectations.
+                if (workspace.GetUri(exported.ModuleName) is { } exportUri &&
+                    workspace.TryGetDocument(exportUri, out var exportDocument))
                 {
-                    // The definition itself is reported so "find references" on a member
-                    // shows where it is defined, matching editor expectations.
-                    if (workspace.GetUri(exported.ModuleName) is { } exportUri &&
-                        workspace.TryGetDocument(exportUri, out var exportDocument))
-                    {
-                        builder.Add(Location(exportUri, exportDocument.ToRange(exported.DefinitionSpan)));
-                    }
+                    builder.Add(Location(exportUri, exportDocument.ToRange(exported.DefinitionSpan)));
+                }
 
-                    var key = new LuaSymbolKey(exported.FunctionKey ?? exported.Key);
-                    foreach (var item in snapshot.FindReferences(key))
-                    {
-                        var uri = workspace.GetUri(item.Module.Name);
-                        if (uri is not null && workspace.TryGetDocument(uri, out var document))
-                        {
-                            builder.Add(Location(uri, document.ToRange(item.Span)));
-                        }
-                    }
+                // Precise cross-file call sites resolved against the export graph, then
+                // every same-named member reference (reads, writes, and calls through
+                // receivers the binder could not resolve).
+                foreach (var call in snapshot.FindCallsToExport(exported.Key))
+                {
+                    AddSnapshotLocation(builder, call.SourceModuleName, call.Span);
+                }
+
+                foreach (var item in snapshot.FindMemberReferences(name))
+                {
+                    AddSnapshotLocation(builder, item.Module.Name, item.Span);
                 }
             }
 
-            return new JsonArray(builder
-                .DistinctBy(static location => location.ToJsonString())
-                .Select(static location => (JsonNode)location).ToArray());
+            return LocationsToJsonArray(builder);
         }
 
         return new JsonArray();
     }
+
+    private void AddSnapshotLocation(ImmutableArray<JsonObject>.Builder builder, string moduleName, Lunil.Core.Text.TextSpan span)
+    {
+        if (workspace.GetUri(moduleName) is { } uri && workspace.TryGetDocument(uri, out var document))
+        {
+            builder.Add(Location(uri, document.ToRange(span)));
+        }
+    }
+
+    private static JsonArray LocationsToJsonArray(ImmutableArray<JsonObject>.Builder builder) => new(
+        DeduplicateLocations(builder).Select(static location => (JsonNode)location).ToArray());
+
+    private static IEnumerable<JsonObject> DeduplicateLocations(IEnumerable<JsonObject> locations) =>
+        locations.DistinctBy(static location => (
+            location["uri"]!.GetValue<string>(),
+            location["range"]!["start"]!["line"]!.GetValue<int>(),
+            location["range"]!["start"]!["character"]!.GetValue<int>(),
+            location["range"]!["end"]!["line"]!.GetValue<int>(),
+            location["range"]!["end"]!["character"]!.GetValue<int>()));
 
     public async Task<JsonNode?> PrepareRenameAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
@@ -456,21 +550,34 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var data = BuildSemanticTokens(context.Analysis);
-        var resultId = context.Analysis.Document.Version.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
-            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan())))[..12];
+        // The document version identifies the analyzed content, so it doubles as the
+        // result identity; a content hash would re-cost a full pass over every request.
+        var resultId = "v" + context.Analysis.Document.Version.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
         var key = context.Analysis.Document.Uri.AbsoluteUri;
         var previousId = parameters.TryGetProperty("previousResultId", out var previous) ? previous.GetString() : null;
+        var cached = _semanticTokens.TryGetValue(key, out var old) ? old : null;
         JsonNode result;
-        if (delta && _semanticTokens.TryGetValue(key, out var old) && old.ResultId == previousId)
+        if (delta && cached is not null && cached.ResultId == previousId)
         {
+            if (data.AsSpan().SequenceEqual(cached.Data.AsSpan()))
+            {
+                // Tokens are byte-identical to what the client already holds; an empty
+                // edit set avoids resending the full array on every no-change request.
+                return new JsonObject
+                {
+                    ["resultId"] = cached.ResultId,
+                    ["edits"] = new JsonArray(),
+                };
+            }
+
             result = new JsonObject
             {
                 ["resultId"] = resultId,
                 ["edits"] = new JsonArray(new JsonObject
                 {
                     ["start"] = 0,
-                    ["deleteCount"] = old.Data.Length,
+                    ["deleteCount"] = cached.Data.Length,
                     ["data"] = new JsonArray(data.Select(static value => (JsonNode?)value).ToArray()),
                 }),
             };
@@ -484,9 +591,25 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             };
         }
 
-        _semanticTokens[key] = new SemanticTokenState(resultId, data);
+        StoreSemanticTokens(key, new SemanticTokenState(resultId, data));
         return result;
     }
+
+    private void StoreSemanticTokens(string key, SemanticTokenState state)
+    {
+        _semanticTokens[key] = state;
+        _semanticTokenOrder.Enqueue(key);
+        while (_semanticTokenOrder.Count > MaximumCachedSemanticTokens &&
+               _semanticTokenOrder.TryDequeue(out var oldest))
+        {
+            // A racing store may have replaced the entry; removing the fresh state only
+            // costs the client a full resend, never correctness.
+            _semanticTokens.TryRemove(oldest, out _);
+        }
+    }
+
+    /// <summary>Drops cached semantic tokens for documents that left the workspace.</summary>
+    internal void ForgetSemanticTokens(Uri uri) => _semanticTokens.TryRemove(uri.AbsoluteUri, out _);
 
     public async Task<JsonNode?> InlayHintsAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
@@ -687,13 +810,25 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 NormalizeDeclaringSpan(reference.Symbol, analysis.Document))));
         }
 
-        return builder.DistinctBy(static location => location.ToJsonString()).ToImmutableArray();
+        return DeduplicateLocations(builder).ToImmutableArray();
     }
+
+    private const int MacroTokenType = 5;
+    private const int ClassTokenType = 6;
+    private const int TypeTokenType = 7;
+    private const int TypeParameterTokenType = 8;
+    private const int EnumTokenType = 9;
+    private const int StringTokenType = 10;
+    private const int NumberTokenType = 11;
+    private const int DeclarationTokenModifier = 1;
 
     private static ImmutableArray<int> BuildSemanticTokens(LanguageDocumentAnalysis analysis)
     {
         // Name references and member/index references are both highlighted; member
         // tokens distinguish method calls, plain calls, and plain field accesses.
+        // Parsed annotations contribute their own tokens — @tag keywords, declared
+        // names, and type expressions — so LuaLS/EmmyLua directives get the same
+        // structural highlighting as the code they document.
         var tokens = analysis.Compilation.SemanticModel.UnifiedReferences
             .Select(reference =>
             {
@@ -721,9 +856,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     };
                 }
 
-                return (range.Start.Line, range.Start.Character,
-                    Math.Max(1, range.End.Character - range.Start.Character), type, modifiers);
+                return (Line: range.Start.Line, Character: range.Start.Character,
+                    Length: Math.Max(1, range.End.Character - range.Start.Character), Type: type,
+                    Modifiers: modifiers);
             })
+            .Concat(BuildAnnotationTokens(analysis))
             .OrderBy(static token => token.Line).ThenBy(static token => token.Character).ToArray();
         var builder = ImmutableArray.CreateBuilder<int>(tokens.Length * 5);
         var previousLine = 0;
@@ -734,14 +871,218 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             var characterDelta = lineDelta == 0 ? token.Character - previousCharacter : token.Character;
             builder.Add(lineDelta);
             builder.Add(characterDelta);
-            builder.Add(token.Item3);
-            builder.Add(token.type);
-            builder.Add(token.modifiers);
+            builder.Add(token.Length);
+            builder.Add(token.Type);
+            builder.Add(token.Modifiers);
             previousLine = token.Line;
             previousCharacter = token.Character;
         }
 
         return builder.MoveToImmutable();
+    }
+
+    /// <summary>
+    /// Highlights annotation directives: the <c>@tag</c> keyword as a macro, declared
+    /// class/field/param names with the declaration modifier, and every type expression.
+    /// </summary>
+    private static List<(int Line, int Character, int Length, int Type, int Modifiers)> BuildAnnotationTokens(
+        LanguageDocumentAnalysis analysis)
+    {
+        var annotationDocument = analysis.Compilation.Annotations;
+        if (annotationDocument is null || annotationDocument.Annotations.IsDefaultOrEmpty)
+        {
+            return [];
+        }
+
+        var tokens = new List<(int Line, int Character, int Length, int Type, int Modifiers)>();
+
+        void Walk(LuaTypeSyntax? type)
+        {
+            switch (type)
+            {
+                case null:
+                    break;
+                case LuaNamedTypeSyntax:
+                    // The span covers the dotted name and its generic arguments; nested
+                    // arguments are left to the parent token so spans never overlap.
+                    Emit(annotationDocument, analysis.Document, type.Span, TypeTokenType, 0, tokens);
+                    break;
+                case LuaLiteralTypeSyntax literal:
+                    Emit(
+                        annotationDocument,
+                        analysis.Document,
+                        literal.Span,
+                        literal.Kind switch
+                        {
+                            LuaTypeLiteralKind.Text => StringTokenType,
+                            LuaTypeLiteralKind.Number => NumberTokenType,
+                            _ => TypeTokenType,
+                        },
+                        0,
+                        tokens);
+                    break;
+                case LuaFunctionTypeSyntax function:
+                    // 'fun' starts the function type span; the keyword is highlighted as a
+                    // function so signature types read like code.
+                    Emit(
+                        annotationDocument,
+                        analysis.Document,
+                        new TextSpan(function.Span.Start, 3),
+                        2,
+                        0,
+                        tokens);
+                    foreach (var parameter in function.Parameters)
+                    {
+                        Emit(annotationDocument, analysis.Document, parameter.NameSpan, 1, 0, tokens);
+                        Walk(parameter.Type);
+                    }
+
+                    foreach (var returnType in function.Returns)
+                    {
+                        Walk(returnType);
+                    }
+
+                    break;
+                case LuaTableTypeSyntax table:
+                    foreach (var field in table.Fields)
+                    {
+                        Emit(annotationDocument, analysis.Document, field.NameSpan, 3, 0, tokens);
+                        Walk(field.KeyType);
+                        Walk(field.ValueType);
+                    }
+
+                    break;
+                case LuaUnionTypeSyntax union:
+                    foreach (var member in union.Types)
+                    {
+                        Walk(member);
+                    }
+
+                    break;
+                case LuaIntersectionTypeSyntax intersection:
+                    foreach (var member in intersection.Types)
+                    {
+                        Walk(member);
+                    }
+
+                    break;
+                case LuaNullableTypeSyntax nullable:
+                    Walk(nullable.Type);
+                    break;
+                case LuaArrayTypeSyntax array:
+                    Walk(array.ElementType);
+                    break;
+                case LuaTupleTypeSyntax tuple:
+                    foreach (var element in tuple.Elements)
+                    {
+                        Walk(element);
+                    }
+
+                    break;
+                case LuaVarargTypeSyntax vararg:
+                    Walk(vararg.ElementType);
+                    break;
+            }
+        }
+
+        foreach (var annotation in annotationDocument.Annotations)
+        {
+            Emit(annotationDocument, analysis.Document, annotation.TagSpan, MacroTokenType, 0, tokens);
+            switch (annotation)
+            {
+                case LuaClassAnnotationSyntax classAnnotation:
+                    Emit(annotationDocument, analysis.Document, classAnnotation.NameSpan, ClassTokenType,
+                        DeclarationTokenModifier, tokens);
+                    foreach (var baseType in classAnnotation.BaseTypes)
+                    {
+                        Walk(baseType);
+                    }
+
+                    break;
+                case LuaFieldAnnotationSyntax fieldAnnotation:
+                    Emit(annotationDocument, analysis.Document, fieldAnnotation.NameSpan, 3,
+                        DeclarationTokenModifier, tokens);
+                    Walk(fieldAnnotation.Type);
+                    break;
+            case LuaAliasAnnotationSyntax aliasAnnotation:
+                Emit(annotationDocument, analysis.Document, aliasAnnotation.NameSpan, TypeTokenType,
+                    DeclarationTokenModifier, tokens);
+                Walk(aliasAnnotation.Type);
+                break;
+            case LuaEnumAnnotationSyntax enumAnnotation:
+                Emit(annotationDocument, analysis.Document, enumAnnotation.NameSpan, EnumTokenType,
+                    DeclarationTokenModifier, tokens);
+                Walk(enumAnnotation.KeyType);
+                break;
+                case LuaParamAnnotationSyntax paramAnnotation:
+                    Emit(annotationDocument, analysis.Document, paramAnnotation.NameSpan, 1,
+                        DeclarationTokenModifier, tokens);
+                    Walk(paramAnnotation.Type);
+                    break;
+                case LuaTypeAnnotationSyntax typeAnnotation:
+                    foreach (var type in typeAnnotation.Types)
+                    {
+                        Walk(type);
+                    }
+
+                    break;
+                case LuaVarargAnnotationSyntax varargAnnotation:
+                    Walk(varargAnnotation.Type);
+                    break;
+                case LuaReturnAnnotationSyntax returnAnnotation:
+                    foreach (var returned in returnAnnotation.Returns)
+                    {
+                        Emit(annotationDocument, analysis.Document, returned.NameSpan, 1, 0, tokens);
+                        Walk(returned.Type);
+                    }
+
+                    break;
+                case LuaGenericAnnotationSyntax genericAnnotation:
+                    foreach (var parameter in genericAnnotation.Parameters)
+                    {
+                        Emit(annotationDocument, analysis.Document, parameter.NameSpan, TypeParameterTokenType,
+                            DeclarationTokenModifier, tokens);
+                        Walk(parameter.Constraint);
+                    }
+
+                    break;
+                case LuaOverloadAnnotationSyntax overloadAnnotation:
+                    Walk(overloadAnnotation.Type);
+                    break;
+                case LuaAliasContinuationAnnotationSyntax continuation:
+                    Walk(continuation.Type);
+                    break;
+                case LuaCastAnnotationSyntax castAnnotation:
+                    Emit(annotationDocument, analysis.Document, castAnnotation.NameSpan, 0, 0, tokens);
+                    Walk(castAnnotation.Type);
+                    break;
+            }
+        }
+
+        return tokens;
+
+        static void Emit(
+            LuaAnnotationDocument document,
+            LspTextDocument text,
+            TextSpan span,
+            int type,
+            int modifiers,
+            List<(int Line, int Character, int Length, int Type, int Modifiers)> tokens)
+        {
+            if (span.Length <= 0 || span.End > text.ByteLength)
+            {
+                return;
+            }
+
+            var range = text.ToRange(span);
+            if (range.End.Line != range.Start.Line || range.End.Character <= range.Start.Character)
+            {
+                return;
+            }
+
+            tokens.Add((range.Start.Line, range.Start.Character,
+                range.End.Character - range.Start.Character, type, modifiers));
+        }
     }
 
     private async Task<DocumentContext?> GetContextAsync(JsonElement parameters, CancellationToken cancellationToken)
@@ -762,7 +1103,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             .OrderBy(static reference => reference.Span.Length).FirstOrDefault();
 
     private static LuaType? GetType(LanguageDocumentAnalysis analysis, LuaSymbol symbol) =>
-        analysis.Compilation.Analysis.Symbols.FirstOrDefault(info => info.Symbol.Id == symbol.Id)?.InferredType;
+        ServiceCaches.Get(analysis).SymbolTypes.TryGetValue(symbol.Id, out var type)
+            ? type
+            : null;
 
     private static int GetSymbolKind(LuaSymbol symbol, LanguageDocumentAnalysis analysis) =>
         GetType(analysis, symbol) is LuaFunctionType ? 12 : symbol.Kind == LuaSymbolKind.Parameter ? 26 : 13;

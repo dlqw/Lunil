@@ -34,6 +34,9 @@ internal sealed class LspTextDocument
 
     public int ByteLength => _utf8.Length;
 
+    /// <summary>The cached UTF-8 encoding of <see cref="Text"/>; reused instead of re-encoding.</summary>
+    public ReadOnlyMemory<byte> Utf8 => _utf8;
+
     public LspTextDocument WithOpen(bool isOpen) => new(Uri, Version, Text, isOpen);
 
     public LspTextDocument Apply(int version, IReadOnlyList<LspTextChange> changes)
