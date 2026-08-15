@@ -628,7 +628,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 ? moduleDocument.Text
                 : null;
         var declarations = workspace.GetClassDeclarations();
-        var bases = CollectBaseClassNames(declarations, className);
+        var runtimeBases = workspace.GetRuntimeClassBases();
+        var bases = CollectBaseClassNames(declarations, className, runtimeBases);
 
         var markdown = new StringBuilder();
         markdown.Append("```lua\nclass ").Append(className);
@@ -653,7 +654,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
         var shownGroups = 0;
         var shownSignatures = new StringBuilder();
-        foreach (var (groupClass, groupModule, inherited) in CollectChainClasses(declarations, className, module))
+        foreach (var (groupClass, groupModule, inherited) in CollectChainClasses(declarations, className, module, runtimeBases))
         {
             var members = snapshot.ExportGraph.Symbols
                 .Where(symbol => !symbol.IsExternal &&
@@ -765,14 +766,33 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     }
 
     /// <summary>
-    /// A compact type display for hover cards: structural tables with more than a
-    /// handful of fields collapse to `table`, since rendering every member of a large
-    /// library table as one line is unreadable.
+    /// A compact type display for hover cards: structural tables collapse to `table`
+    /// when they have more than a handful of fields or more than one unnamed positional
+    /// entry (`{[unknown]: any, ...}` arrays), since the full dump is unreadable.
     /// </summary>
-    private static string? DisplayType(LuaType? type) => type is LuaStructuralTableType shape &&
-        shape.Fields.Count(static field => field.Name is not null) > 4
-            ? "table"
-            : type?.DisplayName;
+    private static string? DisplayType(LuaType? type)
+    {
+        if (type is not LuaStructuralTableType shape)
+        {
+            return type?.DisplayName;
+        }
+
+        var named = 0;
+        var unnamed = 0;
+        foreach (var field in shape.Fields)
+        {
+            if (field.Name is null)
+            {
+                unnamed++;
+            }
+            else
+            {
+                named++;
+            }
+        }
+
+        return named + unnamed > 4 || unnamed >= 2 ? "table" : type.DisplayName;
+    }
 
     /// <summary>
     /// Appends a `**Types**` line linking every workspace class name that occurs in
@@ -906,12 +926,14 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
     /// <summary>
     /// The class chain as (class, module, inherited) tuples: the class's own module
-    /// first, then each base class's declaring module, following declared bases.
+    /// first, then each base class's declaring module, following declared bases and
+    /// runtime `local X = Y:extend(...)` edges.
     /// </summary>
     private static IEnumerable<(string ClassName, string Module, bool Inherited)> CollectChainClasses(
         ImmutableArray<WorkspaceClassDeclaration> declarations,
         string className,
-        string module)
+        string module,
+        ImmutableDictionary<string, string>? runtimeBases = null)
     {
         var declarationsByClass = declarations
             .GroupBy(static item => item.Name, StringComparer.Ordinal)
@@ -932,7 +954,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             yield return (currentClass, currentModule, inherited);
             inherited = true;
             currentClass = declarationsByClass[currentClass].BaseNames
-                .FirstOrDefault(declarationsByClass.ContainsKey);
+                .FirstOrDefault(declarationsByClass.ContainsKey) ??
+                (runtimeBases is not null && runtimeBases.TryGetValue(currentClass, out var runtimeBase) &&
+                    declarationsByClass.ContainsKey(runtimeBase)
+                    ? runtimeBase
+                    : null);
             if (currentClass is { } next)
             {
                 currentModule = declarationsByClass[next].ModuleName;
@@ -943,7 +969,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     /// <summary>The declared base class names above a class, outermost last.</summary>
     private static List<string> CollectBaseClassNames(
         ImmutableArray<WorkspaceClassDeclaration> declarations,
-        string className)
+        string className,
+        ImmutableDictionary<string, string>? runtimeBases = null)
     {
         var declarationsByClass = declarations
             .GroupBy(static item => item.Name, StringComparer.Ordinal)
@@ -956,15 +983,22 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var current = className;
         while (declarationsByClass.TryGetValue(current, out var declaration) && visited.Add(current))
         {
-            if (declaration.BaseNames.FirstOrDefault(declarationsByClass.ContainsKey) is { } next)
+            var next = declaration.BaseNames.FirstOrDefault(declarationsByClass.ContainsKey);
+            if (next is null &&
+                runtimeBases is not null &&
+                runtimeBases.TryGetValue(current, out var runtimeBase) &&
+                declarationsByClass.ContainsKey(runtimeBase))
             {
-                bases.Add(next);
-                current = next;
+                next = runtimeBase;
             }
-            else
+
+            if (next is null)
             {
                 break;
             }
+
+            bases.Add(next);
+            current = next;
         }
 
         return bases;

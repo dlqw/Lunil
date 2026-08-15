@@ -1259,6 +1259,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             var mixinPattern = new System.Text.RegularExpressions.Regex(
                 @"[.:]mixin\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
+            var runtimeBases = BuildRuntimeClassBasesNoLock(declarations);
             foreach (var document in _documents.Values)
             {
                 foreach (System.Text.RegularExpressions.Match match in mixinPattern.Matches(document.Text))
@@ -1341,6 +1342,18 @@ internal sealed class LanguageServerWorkspace : IDisposable
                                 }
                             }
                         }
+
+                        // The runtime `local X = Y:extend(...)` edge continues chains the
+                        // annotations leave undeclared (`---@class System` built from
+                        // `Class:extend`), so `new` and friends resolve for subclasses.
+                        if (runtimeBases.TryGetValue(@class.Name, out var runtimeBase) &&
+                            visitedClasses.Add(runtimeBase))
+                        {
+                            foreach (var baseOwnerModule in ClassModules(runtimeBase))
+                            {
+                                pending.Enqueue(baseOwnerModule);
+                            }
+                        }
                     }
                 }
 
@@ -1352,6 +1365,59 @@ internal sealed class LanguageServerWorkspace : IDisposable
             _externalClassMembersGeneration = _declarationsGeneration;
             return _externalClassMembers;
         }
+    }
+
+    private ImmutableDictionary<string, string>? _runtimeClassBases;
+    private int _runtimeClassBasesGeneration = -1;
+
+    /// <summary>
+    /// Runtime class-library edges `local X = Y:extend(...)` keyed by the defined class
+    /// name. Annotation chains may stop short of the library root (`---@class System`
+    /// with no declared base while the code builds it from `Class:extend`), which would
+    /// cut inherited members such as `new` off from every subclass.
+    /// </summary>
+    public ImmutableDictionary<string, string> GetRuntimeClassBases()
+    {
+        var declarations = GetClassDeclarations();
+        lock (_gate)
+        {
+            if (_runtimeClassBases is not null && _runtimeClassBasesGeneration == _documentSetGeneration)
+            {
+                return _runtimeClassBases;
+            }
+
+            var result = BuildRuntimeClassBasesNoLock(declarations);
+            _runtimeClassBases = result;
+            _runtimeClassBasesGeneration = _documentSetGeneration;
+            return result;
+        }
+    }
+
+    /// <summary>Caller must hold <see cref="_gate"/>.</summary>
+    private ImmutableDictionary<string, string> BuildRuntimeClassBasesNoLock(
+        ImmutableArray<WorkspaceClassDeclaration> declarations)
+    {
+        var declaredNames = declarations.Select(static declaration => declaration.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var extendPattern = new System.Text.RegularExpressions.Regex(
+            @"local\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:.]extend\s*\(",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+        var builder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+        foreach (var document in _documents.Values)
+        {
+            foreach (System.Text.RegularExpressions.Match match in extendPattern.Matches(document.Text))
+            {
+                var className = match.Groups[1].Value;
+                var baseName = match.Groups[2].Value;
+                if (declaredNames.Contains(className) && declaredNames.Contains(baseName) &&
+                    !builder.ContainsKey(className))
+                {
+                    builder[className] = baseName;
+                }
+            }
+        }
+
+        return builder.ToImmutable();
     }
 
     /// <summary>

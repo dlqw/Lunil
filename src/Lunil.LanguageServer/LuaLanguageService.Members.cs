@@ -603,7 +603,8 @@ internal sealed partial class LuaLanguageService
                 ? required
                 : analysis.Module.Name;
             foreach (var symbol in FindChainExports(
-                         workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops))
+                         workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
+                         workspace.GetRuntimeClassBases()))
             {
                 yield return symbol;
             }
@@ -632,9 +633,10 @@ internal sealed partial class LuaLanguageService
         LuaWorkspaceCompactSnapshot snapshot,
         string moduleName,
         string memberName,
-        int maximumHops)
+        int maximumHops,
+        ImmutableDictionary<string, string>? runtimeBases = null)
     {
-        var chain = CollectChainModules(classDeclarations, moduleName, maximumHops);
+        var chain = CollectChainModules(classDeclarations, moduleName, maximumHops, runtimeBases);
         foreach (var module in chain)
         {
             var exported = FindExportSymbolIn(snapshot, module, memberName);
@@ -648,11 +650,14 @@ internal sealed partial class LuaLanguageService
     /// <summary>
     /// A module and every module declaring a base class of its classes, nearest first.
     /// Member completion offers the exports of all of them so inherited members appear.
+    /// Runtime `local X = Y:extend(...)` edges continue chains the annotations leave
+    /// undeclared.
     /// </summary>
     private static IEnumerable<string> CollectChainModules(
         ImmutableArray<WorkspaceClassDeclaration> classDeclarations,
         string moduleName,
-        int maximumHops = 8)
+        int maximumHops = 8,
+        ImmutableDictionary<string, string>? runtimeBases = null)
     {
         var classesByModule = classDeclarations
             .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
@@ -690,6 +695,14 @@ internal sealed partial class LuaLanguageService
                     {
                         pending.Enqueue(baseModule);
                     }
+                }
+
+                if (runtimeBases is not null &&
+                    runtimeBases.TryGetValue(@class.Name, out var runtimeBase) &&
+                    visitedClasses.Add(runtimeBase) &&
+                    modulesByClass.TryGetValue(runtimeBase, out var runtimeModule))
+                {
+                    pending.Enqueue(runtimeModule);
                 }
             }
         }
@@ -907,7 +920,8 @@ internal sealed partial class LuaLanguageService
             if (aliases.TryGetValue(receiver.Id, out var moduleName) && snapshot is not null)
             {
                 foreach (var chainModule in CollectChainModules(
-                             workspace.GetClassDeclarations(), moduleName))
+                             workspace.GetClassDeclarations(), moduleName,
+                             runtimeBases: workspace.GetRuntimeClassBases()))
                 {
                     foreach (var symbol in snapshot.ExportGraph.Symbols.Where(symbol =>
                                  string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&

@@ -195,6 +195,82 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task RuntimeExtendEdgesCarryInheritedMembers()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var classUri = new Uri("file:///src/classlib.lua");
+        var midUri = new Uri("file:///src/mid.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(classUri, 1,
+            "---@class Class\n" +
+            "local Class = {}\n" +
+            "function Class:new(...) return setmetatable({}, self) end\n" +
+            "return Class");
+        // `---@class Mid` declares no base; the runtime `Class:extend` edge must carry
+        // `new` through to Mid and its subclass anyway.
+        workspace.Open(midUri, 1,
+            "local Class = require(\"classlib\")\n" +
+            "---@class Mid\n" +
+            "local Mid = Class:extend(\"Mid\", {})\n" +
+            "return Mid");
+        workspace.Open(appUri, 1,
+            "local Mid = require(\"mid\")\n" +
+            "local instance = Mid:new()\n" +
+            "return instance");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var newDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 23 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(newDefinition);
+        Assert.Equal(classUri.AbsoluteUri, newDefinition!["uri"]!.GetValue<string>());
+
+        var newHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 23 },
+        }), CancellationToken.None);
+        Assert.Contains("new(", newHover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        // The class card lists the runtime base group and extends row.
+        var midHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = midUri.AbsoluteUri },
+            position = new { line = 2, character = 6 },
+        }), CancellationToken.None);
+        var midValue = midHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("Inherited from Class", midValue, StringComparison.Ordinal);
+        Assert.Contains("**Extends** [Class](", midValue, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PositionalArrayTablesSummarizeInHovers()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///scratch.lua");
+        workspace.Open(uri, 1,
+            "local systems = { make(), make(), make() }\n" +
+            "function make() return { id = 1 } end\n" +
+            "return systems");
+        var service = new LuaLanguageService(workspace);
+
+        var hover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 8 },
+        }), CancellationToken.None);
+        var value = hover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("systems: table", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("[unknown]", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LocalizedHoverCardsFollowLocale()
     {
         var folder = new Uri("file:///src/");
