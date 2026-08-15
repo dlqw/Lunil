@@ -109,6 +109,19 @@ internal sealed class BuiltinLibrary
             }
         }
 
+        // Library tables (`local math = {}`) are local declarations the unified-reference
+        // walk above never sees; their declaring spans anchor F12/hover on `math`,
+        // `string`, and friends.
+        foreach (var symbol in snapshot.SemanticModel.Symbols)
+        {
+            if (symbol.Kind == LuaSymbolKind.Local &&
+                globals.ContainsKey(symbol.Name) &&
+                !memberSpans.ContainsKey(symbol.Name))
+            {
+                memberSpans[symbol.Name] = symbol.DeclaringSpan;
+            }
+        }
+
         foreach (var path in memberSpans.Keys)
         {
             if (TryReadDocComment(source, memberSpans[path], out var doc))

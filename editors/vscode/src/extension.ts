@@ -81,7 +81,8 @@ class LunilClientController implements vscode.Disposable {
   private readonly hostDocuments = new HostDocumentProvider(
     'lunil-host:/contract.lua',
     '-- No external host contract symbols are indexed.\n');
-  private readonly builtinDocuments = new HostDocumentProvider('lunil-builtin:lua');
+  private readonly builtinDocuments = new BuiltinDocumentProvider(
+    () => this.fetchBuiltinSource());
   /** One watcher for the controller lifetime; restarting the server must not stack duplicates. */
   private readonly watcher = vscode.workspace.createFileSystemWatcher('**/*.lua');
   private readonly disposables: vscode.Disposable[] = [];
@@ -447,26 +448,31 @@ class LunilClientController implements vscode.Disposable {
     await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
   }
 
-  private async openBuiltinDocument(): Promise<vscode.TextDocument | undefined> {
+  /** Fetches the builtin library source text from the server. */
+  private async fetchBuiltinSource(): Promise<string> {
     if (this.client === undefined || !this.client.isRunning()) {
-      return undefined;
+      return '';
     }
 
     try {
       const source = await this.client.sendRequest('lunil/builtinSource') as
-        { uri?: string; languageId?: string; text?: string } | undefined;
-      if (source?.uri === undefined || source.text === undefined) {
-        return undefined;
-      }
+        { text?: string } | undefined;
+      return source?.text ?? '';
+    } catch {
+      return '';
+    }
+  }
 
-      this.builtinDocuments.update(source.text);
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(source.uri));
-      await vscode.languages.setTextDocumentLanguage(document, source.languageId ?? 'lua');
-      return document;
-    } catch (error) {
-      this.logError('openBuiltinDocument', error);
+  private async openBuiltinDocument(): Promise<vscode.TextDocument | undefined> {
+    const text = await this.fetchBuiltinSource();
+    if (text === '') {
       return undefined;
     }
+
+    this.builtinDocuments.update(text);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.parse('lunil-builtin:lua'));
+    await vscode.languages.setTextDocumentLanguage(document, 'lua');
+    return document;
   }
 
   private async showHostContract(): Promise<void> {
@@ -843,6 +849,35 @@ class HostDocumentProvider implements vscode.TextDocumentContentProvider {
   public update(content: string): void {
     this.content = content;
     this.changed.fire(vscode.Uri.parse(this.documentUri));
+  }
+}
+
+/**
+ * Serves the readonly builtin Lua library document. VS Code's own definition opener
+ * (F12) calls provideTextDocumentContent directly, bypassing our commands, so the
+ * provider must be able to fetch the source from the server on demand.
+ */
+class BuiltinDocumentProvider implements vscode.TextDocumentContentProvider {
+  private content = '';
+  private readonly changed = new vscode.EventEmitter<vscode.Uri>();
+  public readonly onDidChange = this.changed.event;
+
+  public constructor(private readonly fetchSource: () => Thenable<string>) {}
+
+  public provideTextDocumentContent(): string | Thenable<string> {
+    if (this.content !== '') {
+      return this.content;
+    }
+
+    return this.fetchSource().then(text => {
+      this.content = text;
+      return text;
+    });
+  }
+
+  public update(content: string): void {
+    this.content = content;
+    this.changed.fire(vscode.Uri.parse('lunil-builtin:lua'));
   }
 }
 
