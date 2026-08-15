@@ -120,20 +120,25 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return null;
                 }
 
-                var memberMarkdown = $"```lua\n{codeReference.Name}{FormatMemberSignature(memberType)}\n```";
+                var memberMarkdown = new StringBuilder(
+                    $"```lua\n{codeReference.Name}{FormatMemberSignature(memberType)}\n```");
                 if (TryGetBuiltinMember(context.Analysis, codeReference) is { } builtinMember)
                 {
                     if (builtinMember.Doc is not null)
                     {
-                        memberMarkdown += "\n\n" + builtinMember.Doc;
+                        memberMarkdown.Append("\n\n").Append(builtinMember.Doc);
                     }
 
-                    memberMarkdown += "\n\n" + BuiltinLocationLink(
-                        builtinMember.Document, builtinMember.Span, Localization.BuiltinLibraryLabel);
+                    memberMarkdown.Append("\n\n").Append(BuiltinLocationLink(
+                        builtinMember.Document, builtinMember.Span, Localization.BuiltinLibraryLabel));
+                }
+                else
+                {
+                    AppendTypeNameLinks(memberMarkdown, FormatMemberSignature(memberType));
                 }
 
                 return HoverResult(
-                    memberMarkdown,
+                    memberMarkdown.ToString(),
                     context.Analysis.Document.ToRange(codeReference.Span));
             }
 
@@ -149,9 +154,13 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return HoverResult(declaredHover, context.Analysis.Document.ToRange(declaredSpan));
                 }
 
-                var declaredType = GetType(context.Analysis, declared)?.DisplayName ?? "unknown";
+                var declaredType = GetType(context.Analysis, declared);
+                var declaredMarkdown = new StringBuilder(
+                    $"```lua\n{declared.Name}: {DisplayType(declaredType)}\n```");
+                AppendTypeNameLinks(declaredMarkdown, declaredType?.DisplayName ?? string.Empty);
+                declaredMarkdown.Append('\n').Append(Localization.DeclarationLabel);
                 return HoverResult(
-                    $"```lua\n{declared.Name}: {declaredType}\n```\n{Localization.DeclarationLabel}",
+                    declaredMarkdown.ToString(),
                     context.Analysis.Document.ToRange(declaredSpan));
             }
 
@@ -159,13 +168,24 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         // Builtin globals (print, string, math, ...) hover with their documented
-        // signature and a link into the readonly builtin library.
+        // signature and a link into the readonly builtin library. Library tables
+        // (`math`, `string`) show a compact card: dumping every member of a
+        // structural table renders as one unreadable line.
         if (reference.Symbol.Kind == LuaSymbolKind.Environment &&
             Builtin.Globals.TryGetValue(reference.Name, out var builtinGlobalType) &&
             Builtin.TryGetMemberLocation(reference.Name, out var builtinPage, out var builtinSpan))
         {
-            var builtinHover =
-                $"```lua\n{reference.Name}{FormatMemberSignature(builtinGlobalType)}\n```";
+            string builtinHover;
+            if (builtinGlobalType is LuaStructuralTableType libraryShape)
+            {
+                var memberCount = libraryShape.Fields.Count(static field => field.Name is not null);
+                builtinHover = $"```lua\n{reference.Name}\n```\n{Localization.LibraryMembers(memberCount)}";
+            }
+            else
+            {
+                builtinHover = $"```lua\n{reference.Name}{FormatMemberSignature(builtinGlobalType)}\n```";
+            }
+
             if (builtinPage.Docs.TryGetValue(reference.Name, out var builtinDoc))
             {
                 builtinHover += "\n\n" + builtinDoc;
@@ -186,13 +206,17 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
         var type = reference.Symbol.Kind == LuaSymbolKind.Environment &&
             workspace.TryGetKnownGlobalType(reference.Name, out var knownGlobal)
-                ? knownGlobal.DisplayName
-                : GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
+                ? knownGlobal
+                : GetType(context.Analysis, reference.Symbol);
         var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue
             ? Localization.CapturedUpvalueSuffix
             : string.Empty;
+        var fallbackMarkdown = new StringBuilder(
+            $"```lua\n{reference.Name}: {DisplayType(type)}\n```");
+        AppendTypeNameLinks(fallbackMarkdown, type?.DisplayName ?? string.Empty);
+        fallbackMarkdown.Append('\n').Append(Localization.ResolutionKindLabel(reference.ResolutionKind)).Append(capture);
         return HoverResult(
-            $"```lua\n{reference.Name}: {type}\n```\n{Localization.ResolutionKindLabel(reference.ResolutionKind)}{capture}",
+            fallbackMarkdown.ToString(),
             context.Analysis.Document.ToRange(reference.Span));
     }
 
@@ -520,6 +544,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     {
         switch (element.Kind)
         {
+            case AnnotationElementKind.PrimitiveTypeName:
+                return Localization.PrimitiveTypeDescription(element.Name) is { } primitive
+                    ? $"```lua\n{element.Name}\n```\n{primitive}"
+                    : null;
+
             case AnnotationElementKind.TypeName:
             case AnnotationElementKind.ClassDeclaration:
             {
@@ -623,6 +652,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var shownGroups = 0;
+        var shownSignatures = new StringBuilder();
         foreach (var (groupClass, groupModule, inherited) in CollectChainClasses(declarations, className, module))
         {
             var members = snapshot.ExportGraph.Symbols
@@ -643,6 +673,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             if (members.Count == 0)
             {
                 continue;
+            }
+
+            foreach (var member in members)
+            {
+                shownSignatures.Append(member.Signature).Append(' ');
             }
 
             markdown.Append(inherited || shownGroups == 0 ? "\n\n---\n" : "\n\n");
@@ -674,6 +709,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
         }
 
+        AppendTypeNameLinks(markdown, shownSignatures.ToString());
         return markdown.Length == 0 ? null : markdown.ToString();
     }
 
@@ -724,9 +760,55 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
 
             default:
-                return ": " + type.DisplayName;
+                return ": " + DisplayType(type);
         }
     }
+
+    /// <summary>
+    /// A compact type display for hover cards: structural tables with more than a
+    /// handful of fields collapse to `table`, since rendering every member of a large
+    /// library table as one line is unreadable.
+    /// </summary>
+    private static string? DisplayType(LuaType? type) => type is LuaStructuralTableType shape &&
+        shape.Fields.Count(static field => field.Name is not null) > 4
+            ? "table"
+            : type?.DisplayName;
+
+    /// <summary>
+    /// Appends a `**Types**` line linking every workspace class name that occurs in
+    /// the given signature text. Links cannot live inside fenced code blocks, so the
+    /// fence stays plain and type names link below it.
+    /// </summary>
+    private void AppendTypeNameLinks(StringBuilder markdown, string signatureText)
+    {
+        var declarations = workspace.GetClassDeclarations();
+        if (declarations.IsEmpty || signatureText.Length == 0)
+        {
+            return;
+        }
+
+        var declaredNames = declarations.Select(static declaration => declaration.Name).ToHashSet();
+        var seen = new List<string>();
+        foreach (var match in TypeNameRegex().Matches(signatureText))
+        {
+            var name = match.ToString()!;
+            if (declaredNames.Contains(name) && !seen.Contains(name))
+            {
+                seen.Add(name);
+            }
+        }
+
+        if (seen.Count == 0)
+        {
+            return;
+        }
+
+        markdown.Append("\n\n**").Append(Localization.TypesLabel).Append("** ")
+            .Append(string.Join(" · ", seen.Take(8).Select(ClassLink)));
+    }
+
+    [GeneratedRegex("[A-Za-z_][A-Za-z0-9_]*")]
+    private static partial Regex TypeNameRegex();
 
     /// <summary>
     /// The prose lines of the `---` comment block that ends at the line preceding the

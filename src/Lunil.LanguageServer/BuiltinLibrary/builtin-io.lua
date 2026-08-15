@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:io.lua`.
 
 ---@class iolib
+---Basic input and output with the default file handles.
 local io = {}
 
 ---Writes values to the default output file.

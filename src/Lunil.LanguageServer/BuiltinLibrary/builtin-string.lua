@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:string.lua`.
 
 ---@class stringlib
+---Pattern matching and string manipulation.
 local string = {}
 
 ---Formats values under format directives similar to C `printf`.

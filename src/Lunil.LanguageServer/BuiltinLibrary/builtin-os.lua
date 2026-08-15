@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:os.lua`.
 
 ---@class oslib
+---Operating system facilities: time, clock, environment, and files.
 local os = {}
 
 ---Returns the current calendar time, or formats a time table into a number.

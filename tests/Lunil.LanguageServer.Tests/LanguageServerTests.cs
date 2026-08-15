@@ -89,6 +89,112 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task BuiltinLibraryReceiverHoverIsCompact()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///scratch.lua");
+        workspace.Open(uri, 1, "local m = math.max(1, 4)\nreturn m");
+        var service = new LuaLanguageService(workspace);
+
+        // Hovering the `math` receiver shows a compact library card: member count,
+        // doc comment, page link — never the full structural table dump.
+        var receiverHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 11 },
+        }), CancellationToken.None);
+        var receiverValue = receiverHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("```lua\nmath\n```", receiverValue, StringComparison.Ordinal);
+        Assert.Contains("members", receiverValue, StringComparison.Ordinal);
+        Assert.Contains("Standard mathematical functions", receiverValue, StringComparison.Ordinal);
+        Assert.Contains("command:lunil._openBuiltinLocation", receiverValue, StringComparison.Ordinal);
+        Assert.DoesNotContain("huge: 0", receiverValue, StringComparison.Ordinal);
+        Assert.DoesNotContain("floor: fun(", receiverValue, StringComparison.Ordinal);
+
+        // `print` (a function global) keeps its signature form.
+        var printHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 1 },
+        }), CancellationToken.None);
+        Assert.Null(printHover);
+    }
+
+    [Fact]
+    public async Task PrimitiveAnnotationTypesHoverWithDescription()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///scratch.lua");
+        workspace.Open(uri, 1, "---@param count number\nlocal function add(count) return count end\nreturn add");
+        var service = new LuaLanguageService(workspace);
+
+        var hover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 20 },
+        }), CancellationToken.None);
+        var value = hover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("```lua\nnumber\n```", value, StringComparison.Ordinal);
+        Assert.Contains("Lua number", value, StringComparison.Ordinal);
+
+        service.Localization.Locale = LunilLocale.SimplifiedChinese;
+        var chinese = (await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 20 },
+        }), CancellationToken.None))!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("64 位浮点", chinese, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HoverSignaturesLinkNamedTypesAndSummarizeLargeTables()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var vecUri = new Uri("file:///src/vec.lua");
+        var utilUri = new Uri("file:///src/util.lua");
+        workspace.Open(vecUri, 1,
+            "---@class Vec\n" +
+            "---@field x number\n" +
+            "---@field y number\n" +
+            "local Vec = {}\n" +
+            "function Vec.new(x, y) return setmetatable({}, Vec) end\n" +
+            "return Vec");
+        workspace.Open(utilUri, 1,
+            "local Vec = require(\"vec\")\n" +
+            "---@param a Vec\n" +
+            "---@return Vec\n" +
+            "local function flip(a) return Vec.new(-a.x, -a.y) end\n" +
+            "local config = { width = 1, height = 2, depth = 3, scale = 4, bias = 5, alpha = 6 }\n" +
+            "return { flip = flip, config = config }");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // A member signature links the workspace class names it mentions below the fence.
+        var flipHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = utilUri.AbsoluteUri },
+            position = new { line = 3, character = 18 },
+        }), CancellationToken.None);
+        var flipValue = flipHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("flip: fun(a: Vec): Vec", flipValue, StringComparison.Ordinal);
+        Assert.Contains("**Types** [Vec](command:lunil._openLocation", flipValue, StringComparison.Ordinal);
+
+        // Large structural tables summarize as `table` instead of dumping every field.
+        var configHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = utilUri.AbsoluteUri },
+            position = new { line = 4, character = 8 },
+        }), CancellationToken.None);
+        var configValue = configHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("config: table", configValue, StringComparison.Ordinal);
+        Assert.DoesNotContain("width: 1", configValue, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LocalizedHoverCardsFollowLocale()
     {
         var folder = new Uri("file:///src/");

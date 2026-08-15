@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:utf8.lua`.
 
 ---@class utf8lib
+---UTF-8 encoding support (Lua 5.3+).
 local utf8 = {}
 
 ---Converts code points to a UTF-8 string.

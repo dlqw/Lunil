@@ -68,6 +68,46 @@ internal sealed class ServerLocalization
 
     public string SignatureHelpDocumentation => IsChinese ? "由 Lunil 流分析推断。" : "Inferred by Lunil flow analysis.";
 
+    public string TypesLabel => IsChinese ? "类型" : "Types";
+
+    public string LibraryMembers(int count) => IsChinese
+        ? $"Lua 标准库 · {count} 个成员"
+        : $"Lua standard library · {count} members";
+
+    /// <summary>A short bilingual description of a primitive annotation type name.</summary>
+    public string? PrimitiveTypeDescription(string name) => (IsChinese, name) switch
+    {
+        (false, "number") => "A Lua number: 64-bit float; integer values keep an integer subtype.",
+        (false, "integer") or (false, "int") => "A 64-bit integer.",
+        (false, "float") => "A 64-bit floating-point number.",
+        (false, "string") or (false, "str") => "An immutable byte string.",
+        (false, "boolean") or (false, "bool") => "true or false.",
+        (false, "nil") => "The absence of a value.",
+        (false, "any") => "Any Lua value; member checks are disabled.",
+        (false, "unknown") => "A value whose type is not known yet; members are not checked.",
+        (false, "never") or (false, "void") => "A value that never flows to this position.",
+        (false, "table") => "A Lua table.",
+        (false, "function") => "A function or callable value.",
+        (false, "thread") => "A coroutine.",
+        (false, "userdata") or (false, "lightuserdata") => "A value backed by host memory.",
+        (false, "self") => "The receiver of the surrounding method.",
+        (true, "number") => "Lua 数值：64 位浮点；整数值保留 integer 子类型。",
+        (true, "integer") or (true, "int") => "64 位整数。",
+        (true, "float") => "64 位浮点数。",
+        (true, "string") or (true, "str") => "不可变字节串。",
+        (true, "boolean") or (true, "bool") => "true 或 false。",
+        (true, "nil") => "表示没有值。",
+        (true, "any") => "任意 Lua 值；关闭成员检查。",
+        (true, "unknown") => "类型未知的值；不检查成员。",
+        (true, "never") or (true, "void") => "永远不会流动到该位置的值。",
+        (true, "table") => "Lua 表。",
+        (true, "function") => "函数或可调用值。",
+        (true, "thread") => "协程。",
+        (true, "userdata") or (true, "lightuserdata") => "由宿主内存支持的值。",
+        (true, "self") => "所在方法的接收者。",
+        _ => null,
+    };
+
     public string ResolutionKindLabel(Lunil.Semantics.Binding.LuaNameResolutionKind kind) => kind switch
     {
         Lunil.Semantics.Binding.LuaNameResolutionKind.Local => IsChinese ? "局部变量" : "local",

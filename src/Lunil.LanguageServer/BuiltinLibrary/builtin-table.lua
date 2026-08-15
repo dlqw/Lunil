@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:table.lua`.
 
 ---@class tablelib
+---Table manipulation: insert, remove, concat, sort, pack, and move.
 local table = {}
 
 ---Appends a value to the end of an array part.

@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:debug.lua`.
 
 ---@class debuglib
+---Debugging hooks and introspection.
 local debug = {}
 
 ---Returns a string with a traceback of the call stack.

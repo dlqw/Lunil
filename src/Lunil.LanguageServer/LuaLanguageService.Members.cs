@@ -205,6 +205,7 @@ internal sealed partial class LuaLanguageService
     internal enum AnnotationElementKind
     {
         TypeName,
+        PrimitiveTypeName,
         ClassDeclaration,
         AliasDeclaration,
         EnumDeclaration,
@@ -242,10 +243,17 @@ internal sealed partial class LuaLanguageService
             WalkAnnotationTypes(annotation, type =>
             {
                 if (type is Lunil.EmmyLua.LuaNamedTypeSyntax named &&
-                    !AnnotationBuiltIns.Contains(named.Name) &&
                     Contains(type.Span, offset) && type.Span.Length < bestLength)
                 {
-                    best = new AnnotationElement(AnnotationElementKind.TypeName, named.Name, type.Span, annotation);
+                    // Primitive names (`number`, `string`, ...) get their own hover card;
+                    // named user types navigate to their declaration.
+                    best = new AnnotationElement(
+                        AnnotationBuiltIns.Contains(named.Name)
+                            ? AnnotationElementKind.PrimitiveTypeName
+                            : AnnotationElementKind.TypeName,
+                        named.Name,
+                        type.Span,
+                        annotation);
                     bestLength = type.Span.Length;
                 }
             });

@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:math.lua`.
 
 ---@class mathlib
+---Standard mathematical functions and constants.
 local math = {}
 
 ---The floating-point infinity value.

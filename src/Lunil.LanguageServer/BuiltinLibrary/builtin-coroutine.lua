@@ -2,6 +2,7 @@
 -- Readonly documentation page served as `lunil-builtin:coroutine.lua`.
 
 ---@class coroutinelib
+---Coroutine creation and control.
 local coroutine = {}
 
 ---Creates a coroutine from a function.
