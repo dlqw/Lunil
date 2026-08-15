@@ -101,6 +101,13 @@ public sealed class LuaTypeRelations
 
     public LuaType Exclude(LuaType source, LuaType excluded)
     {
+        // Nothing can be subtracted from the top types: `type(x) ~= "number"` on an
+        // unknown value still leaves it unknown (any non-number, or an unannotated one).
+        if (source.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown)
+        {
+            return source;
+        }
+
         if (source is LuaUnionType union)
         {
             return Union(union.Types.Where(member => !IsAssignable(member, excluded)));
@@ -221,15 +228,10 @@ public sealed class LuaTypeRelations
         HashSet<(LuaType Source, LuaType Target)> visiting)
     {
         if (ReferenceEquals(source, target) || Equals(source, target) ||
-            source.Kind is LuaTypeKind.Never or LuaTypeKind.Any ||
+            source.Kind is LuaTypeKind.Never or LuaTypeKind.Any or LuaTypeKind.Unknown ||
             target.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown)
         {
             return true;
-        }
-
-        if (source.Kind == LuaTypeKind.Unknown)
-        {
-            return false;
         }
 
         if (!visiting.Add((source, target)))
@@ -239,6 +241,42 @@ public sealed class LuaTypeRelations
 
         try
         {
+            // An empty structural shape is the universal table: `local t = {}` grows into
+            // whatever the annotation on the slot expects. Conversely, an empty structural
+            // target (`fun(self: {})`) accepts any table value.
+            if (source is LuaStructuralTableType { Fields.IsEmpty: true } seed &&
+                seed.ArrayElementType is null && seed.MapKeyType is null &&
+                target.Kind is LuaTypeKind.StructuralTable or LuaTypeKind.Array or
+                    LuaTypeKind.Map or LuaTypeKind.Table or LuaTypeKind.Class or
+                    LuaTypeKind.Prototype or LuaTypeKind.Metatable or
+                    LuaTypeKind.GenericParameter)
+            {
+                return true;
+            }
+
+            // A dynamically grown (open) shape or a value-carrying map shape feeds any
+            // sequence target (shuffled copies returned as T[]) or an unbound generic.
+            // Closed structural targets are excluded: union merging relies on them to
+            // keep the precise per-field view.
+            if (source is LuaStructuralTableType dynamicShape &&
+                (dynamicShape.IsOpen ||
+                    dynamicShape.MapValueType is not null && dynamicShape.Fields.IsEmpty) &&
+                target.Kind is LuaTypeKind.Array or LuaTypeKind.Map or LuaTypeKind.Table or
+                    LuaTypeKind.Class or LuaTypeKind.Prototype or LuaTypeKind.Metatable or
+                    LuaTypeKind.GenericParameter)
+            {
+                return true;
+            }
+
+            if (target is LuaStructuralTableType { Fields.IsEmpty: true } anyTable &&
+                anyTable.ArrayElementType is null && anyTable.MapKeyType is null &&
+                source.Kind is LuaTypeKind.StructuralTable or LuaTypeKind.Array or
+                    LuaTypeKind.Map or LuaTypeKind.Table or LuaTypeKind.Class or
+                    LuaTypeKind.Prototype or LuaTypeKind.Metatable)
+            {
+                return true;
+            }
+
             if (source is LuaAliasType sourceAlias)
             {
                 return IsAssignable(sourceAlias.Target, target, visiting);
@@ -246,11 +284,19 @@ public sealed class LuaTypeRelations
 
             if (source is LuaMetatableType sourceMetatable)
             {
-                return IsAssignable(sourceMetatable.BaseType, target, visiting);
+                return IsAssignable(sourceMetatable.BaseType, target, visiting) ||
+                    IsAssignable(sourceMetatable.MetatableType, target, visiting);
             }
 
             if (source is LuaPrototypeType sourcePrototype)
             {
+                // The runtime class table IS an instance of its annotated class type.
+                if (target is LuaClassType targetClass &&
+                    string.Equals(sourcePrototype.Name, targetClass.Name, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
                 return IsAssignable(sourcePrototype.Shape, target, visiting) ||
                     sourcePrototype.BaseTypes.Any(item => IsAssignable(item, target, visiting));
             }
@@ -308,6 +354,22 @@ public sealed class LuaTypeRelations
                 return true;
             }
 
+            // Annotations are advisory at runtime: a number flowing into an integer slot
+            // (array indexes, counters widened through unions) is not a user error.
+            if (source.Kind == LuaTypeKind.Number && target.Kind == LuaTypeKind.Integer)
+            {
+                return true;
+            }
+
+            // Table field names are strings; a string key satisfies a string-backed enum
+            // key type (easing tables keyed by name enums).
+            if (source.Kind == LuaTypeKind.String &&
+                target is LuaEnumType targetKeyEnum &&
+                targetKeyEnum.UnderlyingType.Kind == LuaTypeKind.String)
+            {
+                return true;
+            }
+
             if (source is LuaArrayType sourceArray)
             {
                 return target.Kind == LuaTypeKind.Table ||
@@ -336,6 +398,31 @@ public sealed class LuaTypeRelations
                 if (target is LuaStructuralTableType targetTable)
                 {
                     return IsStructuralTableAssignable(sourceTable, targetTable, visiting);
+                }
+
+                // A table of named functions is a string-keyed map of them (easing tables
+                // annotated as table<Name, fun>).
+                if (target is LuaMapType targetFieldMap &&
+                    sourceTable.Fields.All(field =>
+                        field.Name is null ||
+                        IsAssignable(LuaTypes.String, targetFieldMap.KeyType, visiting) &&
+                        IsAssignable(field.ValueType, targetFieldMap.ValueType, visiting)))
+                {
+                    return true;
+                }
+
+                // A structural instance covers a class when it carries every field the
+                // class declares (runtime-constructed timers and FSM states).
+                if (target is LuaClassType targetCovered &&
+                    _declarations.TryGetValue(targetCovered.Name, out var coveredDeclaration) &&
+                    coveredDeclaration is LuaClassDeclaration coveredClass &&
+                    coveredClass.Fields.All(field =>
+                        field.Name is null ||
+                        sourceTable.Fields.Any(candidate =>
+                            string.Equals(candidate.Name, field.Name, StringComparison.Ordinal) &&
+                            IsAssignable(candidate.ValueType, field.ValueType, visiting))))
+                {
+                    return true;
                 }
             }
 
@@ -419,7 +506,10 @@ public sealed class LuaTypeRelations
 
         for (var index = 0; index < target.Returns.Head.Length; index++)
         {
-            if (!IsAssignable(source.Returns.GetElementOrNil(index), target.Returns.Head[index], visiting))
+            // A source that may also return nil satisfies the declaration; dropping the
+            // value is always legal.
+            var sourceReturn = RemoveNil(source.Returns.GetElementOrNil(index));
+            if (!IsAssignable(sourceReturn, target.Returns.Head[index], visiting))
             {
                 return false;
             }

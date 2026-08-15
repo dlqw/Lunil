@@ -236,18 +236,30 @@ internal sealed partial class AnalysisEngine
             return operatorResult;
         }
 
+        // An any/unknown operand can carry an invisible metamethod and can produce any
+        // result: claiming `number` would poison every later member access on it.
+        var dynamicOperand = left.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown ||
+            rightType.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown;
         return operation switch
         {
             LuaTokenKind.Equal or LuaTokenKind.NotEqual => LuaTypes.Boolean,
             LuaTokenKind.LessThan or LuaTokenKind.LessThanOrEqual or
             LuaTokenKind.GreaterThan or LuaTokenKind.GreaterThanOrEqual when
-                CheckComparableOperands(left, rightType, expression.Span) => LuaTypes.Boolean,
+                !dynamicOperand && !CheckComparableOperands(left, rightType, expression.Span) =>
+                    LuaTypes.Boolean,
+            LuaTokenKind.LessThan or LuaTokenKind.LessThanOrEqual or
+            LuaTokenKind.GreaterThan or LuaTokenKind.GreaterThanOrEqual => LuaTypes.Boolean,
+            LuaTokenKind.Concatenate when dynamicOperand => LuaTypes.Any,
             LuaTokenKind.Concatenate when CheckConcatenationOperand(left, nodes[0].Span) &
                 CheckConcatenationOperand(rightType, nodes[1].Span) => LuaTypes.String,
+            LuaTokenKind.Ampersand or LuaTokenKind.Pipe or LuaTokenKind.Tilde or
+            LuaTokenKind.ShiftLeft or LuaTokenKind.ShiftRight when dynamicOperand => LuaTypes.Any,
             LuaTokenKind.Ampersand or LuaTokenKind.Pipe or LuaTokenKind.Tilde or
             LuaTokenKind.ShiftLeft or LuaTokenKind.ShiftRight when
                 CheckIntegerOperand(left, nodes[0].Span) &
                 CheckIntegerOperand(rightType, nodes[1].Span) => LuaTypes.Integer,
+            LuaTokenKind.Plus or LuaTokenKind.Minus or LuaTokenKind.Star or
+            LuaTokenKind.Percent or LuaTokenKind.FloorDivide when dynamicOperand => LuaTypes.Any,
             LuaTokenKind.Plus or LuaTokenKind.Minus or LuaTokenKind.Star or
             LuaTokenKind.Percent or LuaTokenKind.FloorDivide when
                 CheckNumericOperand(left, nodes[0].Span) &
@@ -255,6 +267,7 @@ internal sealed partial class AnalysisEngine
                     IsIntegerLike(left) && IsIntegerLike(rightType)
                         ? LuaTypes.Integer
                         : LuaTypes.Number,
+            LuaTokenKind.Slash or LuaTokenKind.Caret when dynamicOperand => LuaTypes.Any,
             LuaTokenKind.Slash or LuaTokenKind.Caret when
                 CheckNumericOperand(left, nodes[0].Span) &
                 CheckNumericOperand(rightType, nodes[1].Span) => LuaTypes.Number,
@@ -388,11 +401,88 @@ internal sealed partial class AnalysisEngine
             return LuaTypes.Any;
         }
 
+        if (TryGetExternalClassMember(target, name, out var external))
+        {
+            return external;
+        }
+
+        // A class object is a table with a metatable chain (and mixins); annotations not
+        // covering a member is the norm for class libraries, not an error. An unbound
+        // generic parameter's members are unresolved for this instantiation, and a map
+        // accepts runtime-attached members.
+        if (target is LuaPrototypeType or LuaGenericParameterType or LuaMapType)
+        {
+            return LuaTypes.Unknown;
+        }
+
+        // An instance of a known class can carry fields attached at runtime
+        // (`self.speed = options.speed` in a constructor the local document cannot see).
+        if (target is LuaMetatableType { MetatableType: LuaPrototypeType instanceClass } &&
+            (_types.Declarations.OfType<LuaClassDeclaration>().Any(declaration =>
+                 string.Equals(declaration.Name, instanceClass.Name, StringComparison.Ordinal)) ||
+             _environment.ExternalClassMembers.ContainsKey(instanceClass.Name)))
+        {
+            return LuaTypes.Unknown;
+        }
+
         _context.AddDiagnostic(
             "LUA6007",
             span,
             $"Type '{target.DisplayName}' has no known member '{name}'.");
         return LuaTypes.Unknown;
+    }
+
+    /// <summary>
+    /// Resolves a member through the workspace's runtime knowledge of the receiver's class:
+    /// annotation-declared classes expose members their declaring module writes at runtime
+    /// (extend/new/mixin, metamethods), which the local document cannot see.
+    /// </summary>
+    private bool TryGetExternalClassMember(LuaType target, string name, out LuaType member)
+    {
+        member = LuaTypes.Unknown;
+        string? className = target switch
+        {
+            LuaClassType @class => @class.Name,
+            LuaPrototypeType prototype => prototype.Name,
+            LuaMetatableType { MetatableType: LuaPrototypeType meta } => meta.Name,
+            _ => null,
+        };
+        if (className is null)
+        {
+            return false;
+        }
+
+        if (_environment.ExternalClassMembers.TryGetValue(className, out var members) &&
+            members.TryGetValue(name, out member!))
+        {
+            return true;
+        }
+
+        // The local document may know the class's runtime shape even without workspace
+        // knowledge (single-file sessions).
+        if (_latestPrototypes.TryGetValue(className, out var latest))
+        {
+            var field = _relations.FindField(latest, name);
+            if (field is not null)
+            {
+                member = field.ValueType;
+                return true;
+            }
+        }
+
+        // An instance's annotated class declares fields the runtime shape has not grown
+        // yet; annotations are authoritative for them.
+        if (_types.Declarations.OfType<LuaClassDeclaration>().FirstOrDefault(declaration =>
+                string.Equals(declaration.Name, className, StringComparison.Ordinal)) is
+            { } declared &&
+            declared.Fields.FirstOrDefault(field =>
+                string.Equals(field.Name, name, StringComparison.Ordinal)) is { } declaredField)
+        {
+            member = declaredField.ValueType;
+            return true;
+        }
+
+        return false;
     }
 
     private bool IsEmptyClass(LuaClassType type)
@@ -422,7 +512,14 @@ internal sealed partial class AnalysisEngine
 
         if (target is LuaArrayType array)
         {
-            CheckAssignable(index, LuaTypes.Integer, nodes[1].Span, "array index");
+            // Lua coerces float indexes with integer values; only clearly non-number
+            // indexes are worth reporting.
+            if (index.Kind is not (LuaTypeKind.Integer or LuaTypeKind.Float or
+                LuaTypeKind.Number or LuaTypeKind.Any or LuaTypeKind.Unknown))
+            {
+                CheckAssignable(index, LuaTypes.Integer, nodes[1].Span, "array index");
+            }
+
             RecordPathType(expression, array.ElementType, state);
             return array.ElementType;
         }
@@ -464,6 +561,26 @@ internal sealed partial class AnalysisEngine
                 return table.ArrayElementType;
             }
 
+            // A non-literal string index over named fields reads one of the field values:
+            // level lookup tables (`order[level]`) and shuffled arrays stay typed instead
+            // of degrading to an opaque unknown.
+            if ((index.Kind is LuaTypeKind.String or LuaTypeKind.Any or LuaTypeKind.Unknown or
+                    LuaTypeKind.Alias or LuaTypeKind.Union) &&
+                table.Fields.Any(static field => field.Name is not null))
+            {
+                var fieldValues = table.Fields
+                    .Where(static field => field.Name is not null)
+                    .Select(static field => field.ValueType);
+                if (table.MapValueType is not null)
+                {
+                    fieldValues = fieldValues.Append(table.MapValueType);
+                }
+
+                var fieldUnion = _relations.Union(fieldValues);
+                RecordPathType(expression, fieldUnion, state);
+                return fieldUnion;
+            }
+
             if (table.MapKeyType is not null && table.MapValueType is not null)
             {
                 CheckAssignable(index, table.MapKeyType, nodes[1].Span, "table index");
@@ -475,6 +592,18 @@ internal sealed partial class AnalysisEngine
             {
                 return LuaTypes.Any;
             }
+        }
+
+        if (target.Kind is LuaTypeKind.StructuralTable or LuaTypeKind.Array or
+                LuaTypeKind.Map or LuaTypeKind.Table or LuaTypeKind.Class or
+                LuaTypeKind.Prototype or LuaTypeKind.Metatable)
+        {
+            // Dynamically indexing a table reads one of its values; which one is unknown,
+            // but the access itself is not an error.
+            var dynamic = InferIndexedMember(target, index, nodes[1].Span);
+            var result = dynamic.Kind == LuaTypeKind.Unknown ? LuaTypes.Any : dynamic;
+            RecordPathType(expression, result, state);
+            return result;
         }
 
         if (target is LuaUnionType union)
@@ -638,7 +767,8 @@ internal sealed partial class AnalysisEngine
         var signatures = GetCallSignatures(callee);
         if (signatures.IsEmpty)
         {
-            if (callee.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown or LuaTypeKind.Function)
+            if (callee.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown or LuaTypeKind.Function ||
+                callee is LuaAliasType)
             {
                 InvalidateEscapedMetatables(arguments, state);
                 RecordCallSite(
@@ -676,6 +806,7 @@ internal sealed partial class AnalysisEngine
             IsCallCompatible(signature, argumentTypes)) ?? instantiated[0];
         if (expression.Kind == LuaSyntaxKind.MethodCallExpression &&
             !selected.HasImplicitSelf &&
+            !selected.Parameters.Any(static parameter => parameter.IsVararg) &&
             (selected.Parameters.IsEmpty ||
              !string.Equals(selected.Parameters[0].Name, "self", StringComparison.Ordinal)))
         {
@@ -1154,12 +1285,21 @@ internal sealed partial class AnalysisEngine
                 next = prototype with { IsPrecise = false };
                 break;
             case LuaArrayType array:
-                CheckAssignable(indexType, LuaTypes.Integer, nodes[1].Span, "array index");
-                CheckAssignable(value, array.ElementType, target.Span, "array element");
+                if (value.Kind != LuaTypeKind.Nil)
+                {
+                    CheckAssignable(indexType, LuaTypes.Integer, nodes[1].Span, "array index");
+                    CheckAssignable(value, array.ElementType, target.Span, "array element");
+                }
+
                 break;
             case LuaMapType map:
-                CheckAssignable(indexType, map.KeyType, nodes[1].Span, "map index");
-                CheckAssignable(value, map.ValueType, target.Span, "map value");
+                if (value.Kind != LuaTypeKind.Nil)
+                {
+                    // Writing nil is deletion and always legal.
+                    CheckAssignable(indexType, map.KeyType, nodes[1].Span, "map index");
+                    CheckAssignable(value, map.ValueType, target.Span, "map value");
+                }
+
                 break;
             case LuaStructuralTableType table when indexType is LuaStringLiteralType text:
                 next = AddOrReplaceField(table, DecodeLiteral(text), value);
@@ -1300,7 +1440,7 @@ internal sealed partial class AnalysisEngine
             .FirstOrDefault(item => string.Equals(item.Name, @class.Name, StringComparison.Ordinal));
         if (declaration is null || !declaration.Operators.TryGetValue(name, out var signature))
         {
-            return false;
+            return TryInferRuntimeMetamethod(owner, name, out result);
         }
 
         var substitutions = declaration.TypeParameters
@@ -1316,6 +1456,64 @@ internal sealed partial class AnalysisEngine
 
         result = signature.Returns.GetElementOrNil(0);
         return true;
+    }
+
+    /// <summary>
+    /// Satisfies an operator through a runtime metamethod (<c>Vec2.__add = function...</c>)
+    /// the class's module writes. The declaring document is not part of this analysis, so
+    /// the workspace's exported member types (or the local prototype in single-file
+    /// sessions) provide the signature.
+    /// </summary>
+    private bool TryInferRuntimeMetamethod(LuaType owner, string name, out LuaType result)
+    {
+        result = LuaTypes.Unknown;
+        string? className = owner switch
+        {
+            LuaClassType @class => @class.Name,
+            LuaPrototypeType prototype => prototype.Name,
+            _ => null,
+        };
+        if (className is null)
+        {
+            return false;
+        }
+
+        var metamethodName = "__" + name;
+        if (_environment.ExternalClassMembers.TryGetValue(className, out var members))
+        {
+            if (members.TryGetValue(metamethodName, out var signature) &&
+                FirstSignatureReturn(signature, out result))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        if (_latestPrototypes.TryGetValue(className, out var localPrototype) &&
+            _relations.FindField(localPrototype, metamethodName) is { } field &&
+            FirstSignatureReturn(field.ValueType, out result))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool FirstSignatureReturn(LuaType signature, out LuaType result)
+    {
+        switch (signature)
+        {
+            case LuaFunctionType function:
+                result = function.Returns.GetElementOrNil(0);
+                return true;
+            case LuaOverloadType overload when overload.Signatures.Length > 0:
+                result = overload.Signatures[0].Returns.GetElementOrNil(0);
+                return true;
+            default:
+                result = LuaTypes.Unknown;
+                return false;
+        }
     }
 
     private bool TryInferEffectiveMember(LuaType target, string name, out LuaType result)
@@ -1672,10 +1870,31 @@ internal sealed partial class AnalysisEngine
             return prototype with { Shape = AddOrReplaceField(prototype.Shape, name, value) };
         }
 
-        if (type is not LuaMetatableType metatable)
+        if (type is LuaMetatableType metatable)
         {
-            return AddOrReplaceField(type, name, value);
+            return AssignEffectiveMetatableMember(metatable, name, value, span);
         }
+
+        // Writing a member of a name-only class or enum value cannot refine the type; the
+        // declared fields already describe it and a narrow runtime shape would hide them.
+        if (type.Kind is LuaTypeKind.Class or LuaTypeKind.Enum)
+        {
+            return LuaTypes.Any;
+        }
+
+        // Growing an unknown value produces an open shape: later fields are expected.
+        var grown = AddOrReplaceField(type, name, value);
+        return grown is LuaStructuralTableType { IsOpen: false } closed
+            ? closed with { IsOpen = true }
+            : grown;
+    }
+
+    private LuaMetatableType AssignEffectiveMetatableMember(
+        LuaMetatableType metatable,
+        string name,
+        LuaType value,
+        Lunil.Core.Text.TextSpan span)
+    {
 
         if (_relations.FindField(metatable.BaseType, name) is not null)
         {

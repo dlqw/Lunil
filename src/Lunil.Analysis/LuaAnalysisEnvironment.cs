@@ -22,6 +22,17 @@ public sealed record LuaAnalysisEnvironment
     public ImmutableDictionary<string, LuaExternalTypeDeclaration> ExternalTypeDeclarations { get; init; } =
         ImmutableDictionary<string, LuaExternalTypeDeclaration>.Empty.WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets the runtime members each annotation-declared class exposes through its declaring
+    /// module's exports (methods, metamethods, and fields written at runtime but not covered by
+    /// annotations). Member checks consult this before reporting missing members, so the
+    /// class-library pattern (<c>Base:extend</c>, <c>Vec2.new</c>, runtime <c>__add</c>) is not
+    /// flagged in documents that cannot see the defining module's code.
+    /// </summary>
+    public ImmutableDictionary<string, ImmutableDictionary<string, LuaType>> ExternalClassMembers { get; init; } =
+        ImmutableDictionary<string, ImmutableDictionary<string, LuaType>>.Empty
+            .WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

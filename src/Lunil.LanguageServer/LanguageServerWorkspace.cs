@@ -17,6 +17,12 @@ internal sealed record LanguageDocumentAnalysis(
 {
     /// <summary>Shared lazily built lookups for request handlers on this analysis.</summary>
     internal LuaLanguageService.ServiceCaches ServiceCaches { get; } = new();
+
+    /// <summary>
+    /// The workspace-knowledge generation this analysis was built with. Analyses cached
+    /// before the workspace index existed must not survive the index becoming available.
+    /// </summary>
+    internal int EnvironmentGeneration { get; init; }
 }
 
 /// <summary>An annotation-declared class and its declared base class names.</summary>
@@ -73,6 +79,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private readonly Dictionary<string, string> _indexErrors = new(StringComparer.Ordinal);
     private ImmutableArray<WorkspaceClassDeclaration>? _classDeclarations;
     private int _classDeclarationsGeneration = -1;
+    private ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>? _externalClassMembers;
+    private LuaWorkspaceCompactSnapshot? _externalClassMembersSnapshot;
+    private int _externalClassMembersGeneration = -1;
+    private string? _externalClassMemberSignature;
+    private int _environmentGeneration;
     private int _generation;
     private int _declarationsGeneration;
     private readonly SemaphoreSlim _analysisConcurrency = new(8, 8);
@@ -478,6 +489,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         CancellationToken cancellationToken)
     {
         LspTextDocument document;
+        int environmentGeneration;
         lock (_gate)
         {
             if (!_documents.TryGetValue(uri.AbsoluteUri, out document!))
@@ -485,8 +497,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return null;
             }
 
+            environmentGeneration = _environmentGeneration;
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
-                cached.Document.Version == document.Version && cached.Document.Text == document.Text)
+                cached.Document.Version == document.Version && cached.Document.Text == document.Text &&
+                cached.EnvironmentGeneration == environmentGeneration)
             {
                 return cached;
             }
@@ -520,6 +534,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
             HostContract = hostContract,
             ExternalTypeDeclarations = _externalTypeDeclarations,
+            ExternalClassMembers = GetExternalClassMembers(),
         };
         // The front-end analysis is CPU-bound and synchronous. Run it on the thread pool so a
         // large document (for example a multi-megabyte generated config file) cannot stall the
@@ -532,7 +547,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 environment,
                 cancellationToken)),
             cancellationToken).ConfigureAwait(false);
-        var result = new LanguageDocumentAnalysis(document, module, compilation);
+        var result = new LanguageDocumentAnalysis(document, module, compilation)
+        {
+            EnvironmentGeneration = environmentGeneration,
+        };
         lock (_gate)
         {
             if (_documents.TryGetValue(uri.AbsoluteUri, out var current) &&
@@ -639,11 +657,25 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         var snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+        List<LspTextDocument>? openDocuments = null;
         lock (_gate)
         {
             if (generation == _generation && ReferenceEquals(workspace, _workspace))
             {
                 _snapshot = snapshot;
+                // Analyses produced before this snapshot existed were denied workspace
+                // member knowledge; when the exported class-member surface changed, their
+                // cache entries are stale and open documents are re-published with it.
+                var signature = BuildClassMemberSignatureNoLock(snapshot);
+                if (!string.Equals(signature, _externalClassMemberSignature, StringComparison.Ordinal))
+                {
+                    _externalClassMemberSignature = signature;
+                    _environmentGeneration++;
+                    openDocuments = _documents.Values.Where(static document => document.IsOpen)
+                        .OrderBy(static document => document.Uri.AbsoluteUri, StringComparer.Ordinal)
+                        .ToList();
+                }
+
                 // The compact pass analyzed every tracked document; files that were queued
                 // or previously failed are now covered unless a per-document publish is
                 // still running for them. Documents that entered through paths that do not
@@ -663,6 +695,42 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 }
             }
         }
+
+        if (openDocuments is not null)
+        {
+            foreach (var document in openDocuments)
+            {
+                _ = AnalyzeAndPublishAsync(document.Uri, document.Version, CancellationToken.None);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A stable signature of the exported class-member surface: class names, their member
+    /// names, and module ownership. Type drift alone does not invalidate analyses; a member
+    /// appearing or disappearing does.
+    /// </summary>
+    private string BuildClassMemberSignatureNoLock(LuaWorkspaceCompactSnapshot snapshot)
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var declaration in GetClassDeclarations())
+        {
+            builder.Append(declaration.ModuleName).Append(':').Append(declaration.Name).Append('=');
+            foreach (var symbol in snapshot.ExportGraph.Symbols)
+            {
+                if (!symbol.IsExternal &&
+                    string.Equals(symbol.ModuleName, declaration.ModuleName, StringComparison.Ordinal) &&
+                    symbol.Path.Length > 0 &&
+                    !symbol.Path.Contains('.', StringComparison.Ordinal))
+                {
+                    builder.Append(symbol.Path).Append(',');
+                }
+            }
+
+            builder.Append('\n');
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>The URIs of documents whose last analysis failed.</summary>
@@ -771,6 +839,145 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
 
             return _classDeclarations.Value;
+        }
+    }
+
+    /// <summary>
+    /// Runtime members each annotation-declared class exposes through its declaring module's
+    /// exports, rebuilt when the snapshot or the declaration map changes. Member and operator
+    /// checks consult this so class-library patterns are not flagged as missing members.
+    /// </summary>
+    private ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>> GetExternalClassMembers()
+    {
+        lock (_gate)
+        {
+            var snapshot = _snapshot;
+            if (snapshot is null)
+            {
+                return ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>.Empty;
+            }
+
+            if (_externalClassMembers is not null &&
+                ReferenceEquals(_externalClassMembersSnapshot, snapshot) &&
+                _externalClassMembersGeneration == _declarationsGeneration)
+            {
+                return _externalClassMembers;
+            }
+
+            var builder = ImmutableDictionary.CreateBuilder<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>(
+                StringComparer.Ordinal);
+            var declarations = GetClassDeclarations();
+            var classesByModule = declarations
+                .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.ToArray(),
+                    StringComparer.Ordinal);
+            var modulesByClass = declarations
+                .GroupBy(static item => item.Name, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.First().ModuleName,
+                    StringComparer.Ordinal);
+            // Mixin edges (`Class.mixin(Character, Movable)`) add the source class's
+            // members to the target. Arguments are matched against declared class names,
+            // which is how the idiom is written in practice.
+            var mixinTargets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            var mixinPattern = new System.Text.RegularExpressions.Regex(
+                @"[.:]mixin\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            foreach (var document in _documents.Values)
+            {
+                foreach (System.Text.RegularExpressions.Match match in mixinPattern.Matches(document.Text))
+                {
+                    var targetName = match.Groups[1].Value;
+                    var sourceName = match.Groups[2].Value;
+                    if (modulesByClass.ContainsKey(targetName) && modulesByClass.ContainsKey(sourceName))
+                    {
+                        if (!mixinTargets.TryGetValue(targetName, out var sources))
+                        {
+                            mixinTargets[targetName] = sources = [];
+                        }
+
+                        sources.Add(sourceName);
+                    }
+                }
+            }
+
+            IEnumerable<string> ClassModules(string className)
+            {
+                if (!modulesByClass.TryGetValue(className, out var owningModule))
+                {
+                    yield break;
+                }
+
+                yield return owningModule;
+                foreach (var mixinSource in mixinTargets.GetValueOrDefault(className) ?? [])
+                {
+                    if (modulesByClass.TryGetValue(mixinSource, out var sourceModule))
+                    {
+                        yield return sourceModule;
+                    }
+                }
+            }
+
+            foreach (var declaration in declarations)
+            {
+                var members = ImmutableDictionary.CreateBuilder<string, Lunil.Analysis.LuaType>(StringComparer.Ordinal);
+                // The class's own module first, then its base-class and mixin modules, so
+                // inherited runtime members (extend/new on a Class base) resolve too.
+                // Nearest wins.
+                var visitedModules = new HashSet<string>(StringComparer.Ordinal);
+                var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
+                var pending = new Queue<string>();
+                foreach (var module in ClassModules(declaration.Name))
+                {
+                    pending.Enqueue(module);
+                }
+
+                while (pending.Count > 0)
+                {
+                    var module = pending.Dequeue();
+                    if (!visitedModules.Add(module))
+                    {
+                        continue;
+                    }
+
+                    foreach (var symbol in snapshot.ExportGraph.Symbols)
+                    {
+                        if (symbol.IsExternal ||
+                            !string.Equals(symbol.ModuleName, module, StringComparison.Ordinal) ||
+                            symbol.Path.Contains('.', StringComparison.Ordinal) ||
+                            symbol.Path.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        members.TryAdd(symbol.Path, symbol.Type);
+                    }
+
+                    foreach (var @class in classesByModule.GetValueOrDefault(module) ?? [])
+                    {
+                        foreach (var baseName in @class.BaseNames)
+                        {
+                            if (visitedClasses.Add(baseName))
+                            {
+                                foreach (var baseOwnerModule in ClassModules(baseName))
+                                {
+                                    pending.Enqueue(baseOwnerModule);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                builder[declaration.Name] = members.ToImmutable();
+            }
+
+            _externalClassMembers = builder.ToImmutable();
+            _externalClassMembersSnapshot = snapshot;
+            _externalClassMembersGeneration = _declarationsGeneration;
+            return _externalClassMembers;
         }
     }
 
