@@ -310,6 +310,89 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task ClassValueNavigationFromDeclarationAndAlias()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var baseUri = new Uri("file:///src/base.lua");
+        var toolUri = new Uri("file:///src/tool.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(baseUri, 1,
+            "---@class Base" + "\n" +
+            "local Base = {}" + "\n" +
+            "Base.__index = Base" + "\n" +
+            "function Base:extend(name) return Base end" + "\n" +
+            "function Base:new() return setmetatable({}, Base) end" + "\n" +
+            "return Base");
+        workspace.Open(toolUri, 1,
+            "local Base = require(\"base\")" + "\n" +
+            "---@class Tool : Base" + "\n" +
+            "---@field size number" + "\n" +
+            "local Tool = Base:extend(\"Tool\")" + "\n" +
+            "function Tool:use() return 1 end" + "\n" +
+            "return Tool");
+        workspace.Open(appUri, 1,
+            "local Tool = require(\"tool\")" + "\n" + "return Tool.use");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // References from the class declaration include the module's require sites.
+        var references = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = toolUri.AbsoluteUri },
+            position = new { line = 3, character = 6 },
+        }), CancellationToken.None);
+        var referenceUris = references!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(appUri.AbsoluteUri, referenceUris);
+        Assert.Contains(toolUri.AbsoluteUri, referenceUris);
+
+        // Hover on the declaration shows the class, its inheritance, and members.
+        var declaredHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = toolUri.AbsoluteUri },
+            position = new { line = 3, character = 6 },
+        }), CancellationToken.None);
+        var declaredValue = declaredHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("Tool", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("module tool", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("Inherits", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("Base", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("use", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("extend", declaredValue, StringComparison.Ordinal);
+
+        // The alias in the consuming module hovers with the same class view.
+        var aliasHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 7 },
+        }), CancellationToken.None);
+        var aliasValue = aliasHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("module tool", aliasValue, StringComparison.Ordinal);
+        Assert.Contains("use", aliasValue, StringComparison.Ordinal);
+
+        // F12 on the alias declaration passes through to the class line.
+        var aliasDeclaration = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 7 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(aliasDeclaration);
+        Assert.Equal(toolUri.AbsoluteUri, aliasDeclaration!["uri"]!.GetValue<string>());
+        Assert.Equal(3, aliasDeclaration["range"]!["start"]!["line"]!.GetValue<int>());
+
+        // Rename prepares from the declaration token as well.
+        var prepare = await service.PrepareRenameAsync(Element(new
+        {
+            textDocument = new { uri = toolUri.AbsoluteUri },
+            position = new { line = 3, character = 6 },
+        }), CancellationToken.None);
+        Assert.NotNull(prepare);
+        Assert.Equal("Tool", prepare!["placeholder"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task ClassInheritanceMembersAppearInCompletion()
     {
         var folder = new Uri("file:///src/");

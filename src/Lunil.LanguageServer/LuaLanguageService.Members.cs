@@ -202,6 +202,62 @@ internal sealed partial class LuaLanguageService
         return builder.ToImmutable();
     }
 
+    /// <summary>
+    /// The symbol whose declaration contains the offset, when no reference does: the
+    /// cursor sits on a declaration token (`local Movable = {}`), which the binder does
+    /// not record as a reference.
+    /// </summary>
+    private static LuaSymbol? FindDeclaredSymbolAt(LanguageDocumentAnalysis analysis, int offset)
+    {
+        LuaSymbol? best = null;
+        var bestLength = int.MaxValue;
+        foreach (var symbol in analysis.Compilation.SemanticModel.Symbols)
+        {
+            if (symbol.Kind == LuaSymbolKind.Environment || symbol.DeclaringSpan.Length == 0)
+            {
+                continue;
+            }
+
+            var span = NormalizeDeclaringSpan(symbol, analysis.Document);
+            if (Contains(span, offset) && span.Length < bestLength)
+            {
+                best = symbol;
+                bestLength = span.Length;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// The module behind a class value: a require alias resolves to the required module,
+    /// and the defining module's exported class local (its root export declares a class
+    /// named like the symbol) resolves to that module.
+    /// </summary>
+    private bool TryResolveClassValueModule(
+        LanguageDocumentAnalysis analysis,
+        LuaSymbol symbol,
+        out string module)
+    {
+        var aliases = BuildRequireAliases(analysis);
+        if (aliases.TryGetValue(symbol.Id, out var required))
+        {
+            module = required;
+            return true;
+        }
+
+        module = analysis.Module.Name;
+        var root = FindModuleRootExport(module);
+        if (root?.Type is LuaPrototypeType prototype &&
+            string.Equals(prototype.Name, symbol.Name, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        module = string.Empty;
+        return false;
+    }
+
     /// <summary>The require call whose string literal contains the offset, if any.</summary>
     private static RequireCall? FindRequireAt(LanguageDocumentAnalysis analysis, int offset)
     {

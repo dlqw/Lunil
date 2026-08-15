@@ -108,48 +108,56 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return null;
                 }
 
-                return new JsonObject
+                return HoverResult(
+                    $"```lua\n{codeReference.Name}: {memberType.DisplayName}\n```\nmember",
+                    context.Analysis.Document.ToRange(codeReference.Span));
+            }
+
+            // The cursor may sit on a declaration token (`local Movable = {}`), which the
+            // binder does not record as a reference.
+            var declared = FindDeclaredSymbolAt(context.Analysis, context.ByteOffset);
+            if (declared is not null)
+            {
+                var declaredSpan = NormalizeDeclaringSpan(declared, context.Analysis.Document);
+                if (TryResolveClassValueModule(context.Analysis, declared, out var declaredModule) &&
+                    TryBuildClassHover(declaredModule, declared.Name) is { } declaredHover)
                 {
-                    ["contents"] = new JsonObject
-                    {
-                        ["kind"] = "markdown",
-                        ["value"] = $"```lua\n{codeReference.Name}: {memberType.DisplayName}\n```\nmember",
-                    },
-                    ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(codeReference.Span)),
-                };
+                    return HoverResult(declaredHover, context.Analysis.Document.ToRange(declaredSpan));
+                }
+
+                var declaredType = GetType(context.Analysis, declared)?.DisplayName ?? "unknown";
+                return HoverResult(
+                    $"```lua\n{declared.Name}: {declaredType}\n```\ndeclaration",
+                    context.Analysis.Document.ToRange(declaredSpan));
             }
 
             return null;
         }
 
-        var type = GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
-        var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue ? " captured upvalue" : string.Empty;
-        // A require alias shows the exported module value's indexed type instead of the
-        // unresolvable require() call result.
-        if (BuildRequireAliases(context.Analysis).TryGetValue(reference.Symbol.Id, out var requiredModule) &&
-            FindModuleRootExport(requiredModule) is { } root)
+        // Class values (require aliases and the defining module's exported class local)
+        // hover with their inheritance chain and member list.
+        if (TryResolveClassValueModule(context.Analysis, reference.Symbol, out var classModule) &&
+            TryBuildClassHover(classModule, reference.Symbol.Name) is { } classHover)
         {
-            return new JsonObject
-            {
-                ["contents"] = new JsonObject
-                {
-                    ["kind"] = "markdown",
-                    ["value"] = $"```lua\n{reference.Name}: {root.Type.DisplayName}\n```\nmodule {root.ModuleName}",
-                },
-                ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(reference.Span)),
-            };
+            return HoverResult(classHover, context.Analysis.Document.ToRange(reference.Span));
         }
 
-        return new JsonObject
-        {
-            ["contents"] = new JsonObject
-            {
-                ["kind"] = "markdown",
-                ["value"] = $"```lua\n{reference.Name}: {type}\n```\n{reference.ResolutionKind}{capture}",
-            },
-            ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(reference.Span)),
-        };
+        var type = GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
+        var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue ? " captured upvalue" : string.Empty;
+        return HoverResult(
+            $"```lua\n{reference.Name}: {type}\n```\n{reference.ResolutionKind}{capture}",
+            context.Analysis.Document.ToRange(reference.Span));
     }
+
+    private static JsonObject HoverResult(string value, LspRange range) => new()
+    {
+        ["contents"] = new JsonObject
+        {
+            ["kind"] = "markdown",
+            ["value"] = value,
+        },
+        ["range"] = LanguageServerWorkspace.ToJson(range),
+    };
 
     public async Task<JsonNode?> SignatureHelpAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
@@ -240,12 +248,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
-        if (reference is null)
-        {
-            return null;
-        }
-
-        if (reference.Symbol.Kind == LuaSymbolKind.Environment)
+        if (reference is not null && reference.Symbol.Kind == LuaSymbolKind.Environment)
         {
             // Globals fold into the implicit _ENV symbol. Jump to the first write site,
             // which is the global's definition, preferring the workspace index.
@@ -273,35 +276,159 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 : Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(localWrite.Span));
         }
 
-        // A require alias passes through to the exported module value's definition (for
-        // example the `local Character = GameEntity:extend(...)` class line). The root
-        // export's span covers the trailing return statement; prefer the declaration of
-        // the returned class when its name is known.
+        // A require alias passes through to the exported class value's definition (for
+        // example the `local Character = GameEntity:extend(...)` class line).
         var aliases = BuildRequireAliases(context.Analysis);
-        if (aliases.TryGetValue(reference.Symbol.Id, out var requiredModule) &&
-            FindModuleRootExport(requiredModule) is { } root &&
-            workspace.GetUri(root.ModuleName) is { } rootUri &&
-            workspace.TryGetDocument(rootUri, out var rootDocument) &&
-            root.DefinitionSpan.Length > 0)
+        if (reference is not null &&
+            aliases.TryGetValue(reference.Symbol.Id, out var aliasModule) &&
+            await TryGetClassDeclarationLocationAsync(aliasModule, cancellationToken)
+                .ConfigureAwait(false) is { } aliasLocation)
         {
-            if (root.Type is LuaPrototypeType { Name: { Length: > 0 } className } &&
-                await workspace.GetAnalysisAsync(rootUri, cancellationToken).ConfigureAwait(false) is { } rootAnalysis)
+            return aliasLocation;
+        }
+
+        // The cursor may sit on the declaration itself (`local Movable = {}`), which the
+        // binder does not record as a reference.
+        if (reference is null)
+        {
+            var declared = FindDeclaredSymbolAt(context.Analysis, context.ByteOffset);
+            if (declared is null)
             {
-                var declared = rootAnalysis.Compilation.SemanticModel.Symbols.FirstOrDefault(symbol =>
-                    string.Equals(symbol.Name, className, StringComparison.Ordinal) &&
-                    symbol.DeclaringSpan.Length > 0);
-                if (declared is not null)
-                {
-                    return Location(rootUri, rootDocument.ToRange(
-                        NormalizeDeclaringSpan(declared, rootDocument)));
-                }
+                return null;
             }
 
-            return Location(rootUri, rootDocument.ToRange(root.DefinitionSpan));
+            if (aliases.TryGetValue(declared.Id, out var declaredAliasModule) &&
+                await TryGetClassDeclarationLocationAsync(declaredAliasModule, cancellationToken)
+                    .ConfigureAwait(false) is { } declaredAliasLocation)
+            {
+                return declaredAliasLocation;
+            }
+
+            return Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(
+                NormalizeDeclaringSpan(declared, context.Analysis.Document)));
         }
 
         var span = NormalizeDeclaringSpan(reference.Symbol, context.Analysis.Document);
         return Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(span));
+    }
+
+    /// <summary>
+    /// The declaration location of a module's exported class value: the
+    /// `local Character = GameEntity:extend(...)` line when its name is known, otherwise
+    /// the root export's span.
+    /// </summary>
+    private async Task<JsonObject?> TryGetClassDeclarationLocationAsync(
+        string module,
+        CancellationToken cancellationToken)
+    {
+        if (FindModuleRootExport(module) is not { } root ||
+            workspace.GetUri(root.ModuleName) is not { } uri ||
+            !workspace.TryGetDocument(uri, out var document))
+        {
+            return null;
+        }
+
+        if (root.Type is LuaPrototypeType { Name: { Length: > 0 } className } &&
+            await workspace.GetAnalysisAsync(uri, cancellationToken).ConfigureAwait(false) is { } analysis)
+        {
+            var declared = analysis.Compilation.SemanticModel.Symbols.FirstOrDefault(symbol =>
+                string.Equals(symbol.Name, className, StringComparison.Ordinal) &&
+                symbol.DeclaringSpan.Length > 0);
+            if (declared is not null)
+            {
+                return Location(uri, document.ToRange(NormalizeDeclaringSpan(declared, document)));
+            }
+        }
+
+        return root.DefinitionSpan.Length > 0
+            ? Location(uri, document.ToRange(root.DefinitionSpan))
+            : null;
+    }
+
+    /// <summary>
+    /// A class-value hover: the class name, its declared inheritance chain, and the
+    /// members its module (and each base module) expose, names only.
+    /// </summary>
+    private string? TryBuildClassHover(string module, string symbolName)
+    {
+        var snapshot = workspace.GetSnapshot();
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        var root = FindModuleRootExport(module);
+        var className = root?.Type is LuaPrototypeType prototype && prototype.Name.Length > 0
+            ? prototype.Name
+            : symbolName;
+        var markdown = new StringBuilder();
+        markdown.Append("```lua\n").Append(className).Append("\n```\nmodule ").Append(module);
+
+        var declarations = workspace.GetClassDeclarations();
+        var bases = CollectBaseClassNames(declarations, className);
+        if (bases.Count > 0)
+        {
+            markdown.Append("\n\n**Inherits**: ").Append(string.Join(" > ", bases.Prepend(className)));
+        }
+
+        var first = true;
+        foreach (var chainModule in CollectChainModules(declarations, module))
+        {
+            var names = snapshot.ExportGraph.Symbols
+                .Where(symbol => !symbol.IsExternal &&
+                    string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&
+                    symbol.Path.Length > 0 &&
+                    !symbol.Path.Contains('.', StringComparison.Ordinal))
+                .Select(static symbol => symbol.Path)
+                .OrderBy(static name => name, StringComparer.Ordinal)
+                .ToList();
+            if (names.Count == 0)
+            {
+                continue;
+            }
+
+            var label = first ? "Members" : $"Inherited ({chainModule})";
+            first = false;
+            markdown.Append("\n\n**").Append(label).Append("**: ");
+            const int shown = 12;
+            markdown.Append(string.Join(", ", names.Take(shown)));
+            if (names.Count > shown)
+            {
+                markdown.Append(", … +").Append(names.Count - shown);
+            }
+        }
+
+        return markdown.ToString();
+    }
+
+    /// <summary>The declared base class names above a class, outermost last.</summary>
+    private static List<string> CollectBaseClassNames(
+        ImmutableArray<WorkspaceClassDeclaration> declarations,
+        string className)
+    {
+        var declarationsByClass = declarations
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First(),
+                StringComparer.Ordinal);
+        var bases = new List<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = className;
+        while (declarationsByClass.TryGetValue(current, out var declaration) && visited.Add(current))
+        {
+            if (declaration.BaseNames.FirstOrDefault(declarationsByClass.ContainsKey) is { } next)
+            {
+                bases.Add(next);
+                current = next;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return bases;
     }
 
     /// <summary>The module's root export symbol (its returned value), if indexed.</summary>
@@ -341,38 +468,71 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
-        if (reference is not null)
+        if (reference is not null && reference.Symbol.Kind == LuaSymbolKind.Environment)
+        {
+            // Globals fold into the implicit _ENV symbol; the workspace index keeps
+            // them addressable by name across every module.
+            var globalBuilder = ImmutableArray.CreateBuilder<JsonObject>();
+            if (workspace.GetSnapshot() is { } snapshot)
+            {
+                foreach (var item in snapshot.FindGlobalReferences(reference.Name))
+                {
+                    AddSnapshotLocation(globalBuilder, item.Module.Name, item.Span);
+                }
+            }
+            else
+            {
+                foreach (var item in context.Analysis.Compilation.SemanticModel.References.Where(item =>
+                             item.Symbol.Kind == LuaSymbolKind.Environment &&
+                             string.Equals(item.Name, reference.Name, StringComparison.Ordinal)))
+                {
+                    globalBuilder.Add(Location(context.Analysis.Document.Uri,
+                        context.Analysis.Document.ToRange(item.Span)));
+                }
+            }
+
+            return LocationsToJsonArray(globalBuilder);
+        }
+
+        var symbol = reference?.Symbol ??
+            (reference is null ? FindDeclaredSymbolAt(context.Analysis, context.ByteOffset) : null);
+        if (symbol is not null)
         {
             var includeDeclaration = parameters.TryGetProperty("context", out var referenceContext) &&
                 referenceContext.TryGetProperty("includeDeclaration", out var include) && include.GetBoolean();
-            if (reference.Symbol.Kind == LuaSymbolKind.Environment)
+            var builder = ImmutableArray.CreateBuilder<JsonObject>();
+            foreach (var item in context.Analysis.Compilation.SemanticModel.References.Where(item =>
+                         item.Symbol.Id == symbol.Id))
             {
-                // Globals fold into the implicit _ENV symbol; the workspace index keeps
-                // them addressable by name across every module.
-                var globalBuilder = ImmutableArray.CreateBuilder<JsonObject>();
-                if (workspace.GetSnapshot() is { } snapshot)
-                {
-                    foreach (var item in snapshot.FindGlobalReferences(reference.Name))
-                    {
-                        AddSnapshotLocation(globalBuilder, item.Module.Name, item.Span);
-                    }
-                }
-                else
-                {
-                    foreach (var item in context.Analysis.Compilation.SemanticModel.References.Where(item =>
-                                 item.Symbol.Kind == LuaSymbolKind.Environment &&
-                                 string.Equals(item.Name, reference.Name, StringComparison.Ordinal)))
-                    {
-                        globalBuilder.Add(Location(context.Analysis.Document.Uri,
-                            context.Analysis.Document.ToRange(item.Span)));
-                    }
-                }
-
-                return LocationsToJsonArray(globalBuilder);
+                builder.Add(Location(context.Analysis.Document.Uri,
+                    context.Analysis.Document.ToRange(item.Span)));
             }
 
-            var locations = GetReferenceLocations(context.Analysis, reference, includeDeclaration);
-            return new JsonArray(locations.Select(static location => (JsonNode)location).ToArray());
+            if (includeDeclaration)
+            {
+                builder.Add(Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(
+                    NormalizeDeclaringSpan(symbol, context.Analysis.Document))));
+            }
+
+            // A class value (require alias or the exported class local) also reports its
+            // declaration site and every require of the module across the workspace.
+            if (workspace.GetSnapshot() is { } classSnapshot &&
+                TryResolveClassValueModule(context.Analysis, symbol, out var classModule))
+            {
+                if (await TryGetClassDeclarationLocationAsync(classModule, cancellationToken)
+                        .ConfigureAwait(false) is { } declarationLocation)
+                {
+                    builder.Add(declarationLocation);
+                }
+
+                foreach (var dependency in classSnapshot.Graph.Dependencies.Where(dependency =>
+                             string.Equals(dependency.RequestedName, classModule, StringComparison.Ordinal)))
+                {
+                    AddSnapshotLocation(builder, dependency.Source.Name, dependency.Span);
+                }
+            }
+
+            return LocationsToJsonArray(builder);
         }
 
         // Member references: same-file occurrences plus cross-module hits when the member
@@ -445,17 +605,20 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     {
         var context = await GetContextAsync(parameters, cancellationToken).ConfigureAwait(false);
         var reference = context is null ? null : FindReference(context.Analysis, context.ByteOffset);
-        if (context is null || reference is null || reference.Symbol.Kind == LuaSymbolKind.Environment ||
-            reference.Symbol.IsReadOnly ||
-            reference.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is null)
+        var symbol = reference?.Symbol ??
+            (context is null ? null : FindDeclaredSymbolAt(context.Analysis, context.ByteOffset));
+        if (context is null || symbol is null || symbol.Kind == LuaSymbolKind.Environment ||
+            symbol.IsReadOnly ||
+            reference?.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is null)
         {
             return null;
         }
 
+        var span = reference?.Span ?? NormalizeDeclaringSpan(symbol, context.Analysis.Document);
         return new JsonObject
         {
-            ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(reference.Span)),
-            ["placeholder"] = reference.Name,
+            ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(span)),
+            ["placeholder"] = symbol.Name,
         };
     }
 
@@ -469,25 +632,29 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
         var context = await GetContextAsync(parameters, cancellationToken).ConfigureAwait(false);
         var reference = context is null ? null : FindReference(context.Analysis, context.ByteOffset);
-        if (context is null || reference is null || reference.Symbol.IsReadOnly ||
-            reference.Symbol.Kind == LuaSymbolKind.Environment)
+        var symbol = reference?.Symbol ??
+            (context is null ? null : FindDeclaredSymbolAt(context.Analysis, context.ByteOffset));
+        if (context is null || symbol is null || symbol.IsReadOnly ||
+            symbol.Kind == LuaSymbolKind.Environment)
         {
             return null;
         }
 
-        if (context.Analysis.Compilation.SemanticModel.Symbols.Any(symbol =>
-                symbol.FunctionId == reference.Symbol.FunctionId && symbol.Name == newName &&
-                symbol.Id != reference.Symbol.Id))
+        if (context.Analysis.Compilation.SemanticModel.Symbols.Any(existing =>
+                existing.FunctionId == symbol.FunctionId && existing.Name == newName &&
+                existing.Id != symbol.Id))
         {
             throw new JsonRpcException(-32803, $"Rename would collide with '{newName}' in the same function.");
         }
 
-        if (reference.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is null)
+        if (reference?.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is null)
         {
             throw new JsonRpcException(-32803, "Workspace indexing is not complete; a global rename would be partial.");
         }
 
-        var locations = GetReferenceLocations(context.Analysis, reference, includeDeclaration: true);
+        var locations = reference is null
+            ? GetSymbolReferenceLocations(context.Analysis, symbol, includeDeclaration: true)
+            : GetReferenceLocations(context.Analysis, reference, includeDeclaration: true);
         var changes = new JsonObject();
         foreach (var group in locations.GroupBy(location => location["uri"]!.GetValue<string>(), StringComparer.Ordinal))
         {
@@ -835,9 +1002,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         LuaNameReference reference,
         bool includeDeclaration)
     {
-        var builder = ImmutableArray.CreateBuilder<JsonObject>();
         if (reference.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is { } snapshot)
         {
+            var builder = ImmutableArray.CreateBuilder<JsonObject>();
             var key = analysis.Compilation.SemanticModel.GetSymbolKey(reference.Symbol, analysis.Module);
             foreach (var item in snapshot.FindReferences(key))
             {
@@ -847,20 +1014,36 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     builder.Add(Location(uri, document.ToRange(item.Span)));
                 }
             }
-        }
-        else
-        {
-            foreach (var item in analysis.Compilation.SemanticModel.References.Where(item =>
-                         item.Symbol.Id == reference.Symbol.Id))
+
+            if (includeDeclaration)
             {
-                builder.Add(Location(analysis.Document.Uri, analysis.Document.ToRange(item.Span)));
+                builder.Add(Location(analysis.Document.Uri, analysis.Document.ToRange(
+                    NormalizeDeclaringSpan(reference.Symbol, analysis.Document))));
             }
+
+            return DeduplicateLocations(builder).ToImmutableArray();
+        }
+
+        return GetSymbolReferenceLocations(analysis, reference.Symbol, includeDeclaration);
+    }
+
+    /// <summary>Same-file references of a symbol plus its declaration.</summary>
+    private static ImmutableArray<JsonObject> GetSymbolReferenceLocations(
+        LanguageDocumentAnalysis analysis,
+        LuaSymbol symbol,
+        bool includeDeclaration)
+    {
+        var builder = ImmutableArray.CreateBuilder<JsonObject>();
+        foreach (var item in analysis.Compilation.SemanticModel.References.Where(item =>
+                     item.Symbol.Id == symbol.Id))
+        {
+            builder.Add(Location(analysis.Document.Uri, analysis.Document.ToRange(item.Span)));
         }
 
         if (includeDeclaration)
         {
             builder.Add(Location(analysis.Document.Uri, analysis.Document.ToRange(
-                NormalizeDeclaringSpan(reference.Symbol, analysis.Document))));
+                NormalizeDeclaringSpan(symbol, analysis.Document))));
         }
 
         return DeduplicateLocations(builder).ToImmutableArray();
