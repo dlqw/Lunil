@@ -15,7 +15,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="BuiltinLibrary\lua-builtin.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-base.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-coroutine.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-debug.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-io.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-math.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-os.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-string.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-table.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-utf8.lua" />
   </ItemGroup>
 
   <ItemGroup>

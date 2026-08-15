@@ -10,85 +10,190 @@ using Lunil.Syntax.Parsing;
 namespace Lunil.LanguageServer;
 
 /// <summary>
-/// The embedded Lua standard library definitions: one annotated Lua source analyzed
-/// with the same front end as user code. Provides global types for analysis, per-member
-/// spans for navigation into the readonly builtin document, and doc comments for hover.
+/// One readonly page of the embedded Lua standard library (`base`, `math`, `string`,
+/// ...): its annotated Lua source plus the member spans and doc comments extracted
+/// from it. Served to editors as the virtual document <c>lunil-builtin:&lt;name&gt;.lua</c>.
+/// </summary>
+internal sealed record BuiltinDocument(
+    string Name,
+    string Source,
+    ImmutableDictionary<string, TextSpan> MemberSpans,
+    ImmutableDictionary<string, string> Docs,
+    int[] LineStarts)
+{
+    public string Uri => $"lunil-builtin:{Name}.lua";
+
+    /// <summary>Converts a span in this document to a line/character pair.</summary>
+    public (int Line, int Character) ToPosition(TextSpan span)
+    {
+        var line = Array.BinarySearch(LineStarts, span.Start);
+        if (line < 0)
+        {
+            line = Math.Max(0, ~line - 1);
+        }
+
+        return (line, span.Start - LineStarts[line]);
+    }
+}
+
+/// <summary>
+/// The embedded Lua standard library definitions: one annotated Lua source per page,
+/// each analyzed with the same front end as user code. Provides global types for
+/// analysis, per-member spans for navigation into the readonly builtin documents,
+/// and doc comments for hover.
 /// </summary>
 internal sealed class BuiltinLibrary
 {
+    /// <summary>Page names in a stable display order; `base` holds the global functions.</summary>
+    private static readonly string[] PageNames =
+    [
+        "base", "coroutine", "debug", "io", "math", "os", "string", "table", "utf8",
+    ];
+
+    /// <summary>
+    /// The process-wide library instance, loaded eagerly. Declared after
+    /// <see cref="PageNames"/>: static initializers run in declaration order.
+    /// </summary>
+    internal static BuiltinLibrary Value { get; } = Load();
+
     private BuiltinLibrary(
-        string source,
-        ImmutableDictionary<string, LuaType> globals,
-        ImmutableDictionary<string, TextSpan> memberSpans,
-        ImmutableDictionary<string, string> docs,
-        int[] lineStarts)
+        BuiltinDocument basePage,
+        ImmutableArray<BuiltinDocument> documents,
+        ImmutableDictionary<string, LuaType> globals)
     {
-        Source = source;
+        Base = basePage;
+        Documents = documents;
         Globals = globals;
-        MemberSpans = memberSpans;
-        Docs = docs;
-        LineStarts = lineStarts;
     }
 
-    public string Source { get; }
+    public BuiltinDocument Base { get; }
+
+    public ImmutableArray<BuiltinDocument> Documents { get; }
 
     public ImmutableDictionary<string, LuaType> Globals { get; }
 
-    /// <summary>Member paths (`string.format`, `print`) to their defining spans.</summary>
-    public ImmutableDictionary<string, TextSpan> MemberSpans { get; }
-
-    /// <summary>Member paths to their leading doc comment prose.</summary>
-    public ImmutableDictionary<string, string> Docs { get; }
-
-    private int[] LineStarts { get; }
-
     public static BuiltinLibrary Load()
     {
-        var source = ReadSource();
         var frontEnd = new LuaFrontEndSession(new LuaCompilerOptions
         {
             Binder = LuaBinderOptions.Default with { CollectCodeReferences = true },
         });
-        var snapshot = frontEnd.Process(
-            LuaSourceDocument.FromUtf8(source, "lunil-builtin://lua"),
-            LuaFrontEndStage.Analysis,
-            LuaAnalysisEnvironment.Empty);
 
         var globals = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
-        var memberSpans = ImmutableDictionary.CreateBuilder<string, TextSpan>(StringComparer.Ordinal);
-        var docs = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-
-        // Global functions and libraries are the fields of the returned table; their
-        // member writes carry the spans the readonly document navigates to.
-        var exported = snapshot.Analysis!.Functions.FirstOrDefault(static function => function.FunctionId == 0)
-            ?.InferredReturns.GetElementOrNil(0);
-        if (exported is LuaStructuralTableType shape)
+        var pages = new List<BuiltinDocument>(PageNames.Length);
+        foreach (var name in PageNames)
         {
-            foreach (var field in shape.Fields)
+            var source = ReadSource(name);
+            var snapshot = frontEnd.Process(
+                LuaSourceDocument.FromUtf8(source, $"lunil-builtin:{name}.lua"),
+                LuaFrontEndStage.Analysis,
+                LuaAnalysisEnvironment.Empty);
+
+            // Each page returns its surface: the globals table for `base`, the library
+            // table itself for library pages. Its fields become the page's globals.
+            var exported = snapshot.Analysis!.Functions.FirstOrDefault(static function => function.FunctionId == 0)
+                ?.InferredReturns.GetElementOrNil(0);
+            if (exported is LuaStructuralTableType shape)
             {
-                if (field.Name is not null)
+                if (name == "base")
                 {
-                    globals[field.Name] = field.ValueType;
+                    foreach (var field in shape.Fields)
+                    {
+                        if (field.Name is not null)
+                        {
+                            globals[field.Name] = field.ValueType;
+                        }
+                    }
                 }
+                else
+                {
+                    globals[name] = exported;
+                }
+            }
+
+            pages.Add(LoadPage(name, source, snapshot, globals));
+        }
+
+        return new BuiltinLibrary(
+            pages[0],
+            [.. pages],
+            globals.ToImmutable());
+    }
+
+    /// <summary>Resolves a page by name, with or without the `.lua` suffix.</summary>
+    public bool TryGetDocument(string name, out BuiltinDocument document)
+    {
+        var normalized = name.EndsWith(".lua", StringComparison.Ordinal)
+            ? name[..^4]
+            : name;
+        document = Documents.FirstOrDefault(page =>
+            string.Equals(page.Name, normalized, StringComparison.Ordinal))!;
+        return document is not null;
+    }
+
+    /// <summary>Finds the page and span defining a member path (`string.format`, `print`).</summary>
+    public bool TryGetMemberLocation(string path, out BuiltinDocument document, out TextSpan span)
+    {
+        foreach (var page in Documents)
+        {
+            if (page.MemberSpans.TryGetValue(path, out span))
+            {
+                document = page;
+                return true;
             }
         }
 
+        document = null!;
+        span = default;
+        return false;
+    }
+
+    /// <summary>The doc comment prose for a member path, when its page carries one.</summary>
+    public string? FindDoc(string path)
+    {
+        foreach (var page in Documents)
+        {
+            if (page.Docs.TryGetValue(path, out var doc))
+            {
+                return doc;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The `owner.member` path for a member access on a named receiver, when known.</summary>
+    public bool TryGetMemberPath(string receiverName, string memberName, out string path)
+    {
+        path = receiverName + "." + memberName;
+        var known = path;
+        return Documents.Any(page => page.MemberSpans.ContainsKey(known));
+    }
+
+    private static BuiltinDocument LoadPage(
+        string name,
+        string source,
+        LuaFrontEndSnapshot snapshot,
+        ImmutableDictionary<string, LuaType>.Builder globals)
+    {
+        var memberSpans = ImmutableDictionary.CreateBuilder<string, TextSpan>(StringComparer.Ordinal);
+
+        // Global function declarations (`function print(...)`) write without a
+        // receiver; library members (`function string.format`) write with a receiver
+        // span that includes the trailing separator.
         foreach (var reference in snapshot.SemanticModel!.UnifiedReferences)
         {
-            if (reference.Name is not { Length: > 0 } name ||
+            if (reference.Name is not { Length: > 0 } ||
                 !reference.Access.HasFlag(LuaReferenceAccess.Write))
             {
                 continue;
             }
 
-            // Global function declarations (`function print(...)`) write without a
-            // receiver; library members (`function string.format`) write with a receiver
-            // span that includes the trailing separator.
             if (reference.ReceiverSpan is not { Length: > 0 } receiver)
             {
-                if (globals.ContainsKey(name) && !memberSpans.ContainsKey(name))
+                if (globals.ContainsKey(reference.Name) && !memberSpans.ContainsKey(reference.Name))
                 {
-                    memberSpans[name] = reference.Span;
+                    memberSpans[reference.Name] = reference.Span;
                 }
 
                 continue;
@@ -102,7 +207,7 @@ internal sealed class BuiltinLibrary
                 continue;
             }
 
-            var path = receiverName + "." + name;
+            var path = receiverName + "." + reference.Name;
             if (!memberSpans.ContainsKey(path))
             {
                 memberSpans[path] = reference.Span;
@@ -122,6 +227,7 @@ internal sealed class BuiltinLibrary
             }
         }
 
+        var docs = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
         foreach (var path in memberSpans.Keys)
         {
             if (TryReadDocComment(source, memberSpans[path], out var doc))
@@ -139,39 +245,20 @@ internal sealed class BuiltinLibrary
             }
         }
 
-        return new BuiltinLibrary(
+        return new BuiltinDocument(
+            name,
             source,
-            globals.ToImmutable(),
             memberSpans.ToImmutable(),
             docs.ToImmutable(),
             [.. lineStarts]);
     }
 
-    /// <summary>Converts a builtin source span to a line/character pair.</summary>
-    public (int Line, int Character) ToPosition(TextSpan span)
-    {
-        var line = Array.BinarySearch(LineStarts, span.Start);
-        if (line < 0)
-        {
-            line = Math.Max(0, ~line - 1);
-        }
-
-        return (line, span.Start - LineStarts[line]);
-    }
-
-    /// <summary>The `owner.member` path for a member access on a named receiver, when known.</summary>
-    public bool TryGetMemberPath(string receiverName, string memberName, out string path)
-    {
-        path = receiverName + "." + memberName;
-        return MemberSpans.ContainsKey(path);
-    }
-
-    private static string ReadSource()
+    private static string ReadSource(string name)
     {
         var assembly = Assembly.GetExecutingAssembly();
-        const string resourceName = "Lunil.LanguageServer.BuiltinLibrary.lua-builtin.lua";
+        var resourceName = $"Lunil.LanguageServer.BuiltinLibrary.builtin-{name}.lua";
         using var stream = assembly.GetManifestResourceStream(resourceName) ??
-            throw new InvalidOperationException("The builtin Lua library resource is missing.");
+            throw new InvalidOperationException($"The builtin Lua library resource is missing: {resourceName}.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
@@ -213,9 +300,9 @@ internal sealed class BuiltinLibrary
         }
 
         doc = string.Join(' ', prose);
-        if (doc.Length > 160)
+        if (doc.Length > 200)
         {
-            doc = doc[..160] + "…";
+            doc = doc[..200] + "…";
         }
 
         return true;

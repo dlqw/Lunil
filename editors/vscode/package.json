@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0-alpha.13",
+  "version": "0.17.0-alpha.14",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -233,11 +233,38 @@
           "order": 6,
           "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
         },
+        "lunil.workspace.library": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 7,
+          "markdownDescription": "Read-only folders with Lua declaration stubs (`---@meta` files) describing globals and classes injected by a host at runtime (C++, C#, Unity, Godot, game engines). Relative paths resolve against the first workspace folder. Editing stubs takes effect after **Lunil: Reindex Workspace**."
+        },
+        "lunil.locale": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "zh-cn"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code UI language.",
+            "English.",
+            "简体中文。"
+          ],
+          "default": "auto",
+          "scope": "window",
+          "order": 8,
+          "markdownDescription": "Language for Lunil hover cards, menus, and status messages. `auto` follows the VS Code UI language. Applies without a restart."
+        },
         "lunil.statusBar.showModuleCount": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "order": 7,
+          "order": 9,
           "markdownDescription": "Show the indexed module count in the Lunil status item once indexing completes. The workspace folder name is shown alongside it."
         }
       }

@@ -12,8 +12,11 @@ using Lunil.Workspace;
 
 namespace Lunil.LanguageServer;
 
-internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspace)
+internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspace, ServerLocalization? localization = null)
 {
+    /// <summary>Localizes user-facing strings; switching the locale applies at once.</summary>
+    public ServerLocalization Localization { get; } = localization ?? new ServerLocalization();
+
     private static readonly ImmutableArray<string> Keywords =
     [
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto",
@@ -122,14 +125,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 {
                     if (builtinMember.Doc is not null)
                     {
-                        memberMarkdown += "\n" + builtinMember.Doc;
+                        memberMarkdown += "\n\n" + builtinMember.Doc;
                     }
 
-                    memberMarkdown += "\n" + BuiltinLocationLink(builtinMember.Span, "builtin library");
-                }
-                else
-                {
-                    memberMarkdown += "\nmember";
+                    memberMarkdown += "\n\n" + BuiltinLocationLink(
+                        builtinMember.Document, builtinMember.Span, Localization.BuiltinLibraryLabel);
                 }
 
                 return HoverResult(
@@ -151,7 +151,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
                 var declaredType = GetType(context.Analysis, declared)?.DisplayName ?? "unknown";
                 return HoverResult(
-                    $"```lua\n{declared.Name}: {declaredType}\n```\ndeclaration",
+                    $"```lua\n{declared.Name}: {declaredType}\n```\n{Localization.DeclarationLabel}",
                     context.Analysis.Document.ToRange(declaredSpan));
             }
 
@@ -161,17 +161,18 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         // Builtin globals (print, string, math, ...) hover with their documented
         // signature and a link into the readonly builtin library.
         if (reference.Symbol.Kind == LuaSymbolKind.Environment &&
-            Builtin.Value.Globals.TryGetValue(reference.Name, out var builtinGlobalType) &&
-            Builtin.Value.MemberSpans.TryGetValue(reference.Name, out var builtinSpan))
+            Builtin.Globals.TryGetValue(reference.Name, out var builtinGlobalType) &&
+            Builtin.TryGetMemberLocation(reference.Name, out var builtinPage, out var builtinSpan))
         {
             var builtinHover =
                 $"```lua\n{reference.Name}{FormatMemberSignature(builtinGlobalType)}\n```";
-            if (Builtin.Value.Docs.TryGetValue(reference.Name, out var builtinDoc))
+            if (builtinPage.Docs.TryGetValue(reference.Name, out var builtinDoc))
             {
-                builtinHover += "\n" + builtinDoc;
+                builtinHover += "\n\n" + builtinDoc;
             }
 
-            builtinHover += "\n" + BuiltinLocationLink(builtinSpan, "builtin library");
+            builtinHover += "\n\n" + BuiltinLocationLink(
+                builtinPage, builtinSpan, Localization.BuiltinLibraryLabel);
             return HoverResult(builtinHover, context.Analysis.Document.ToRange(reference.Span));
         }
 
@@ -183,10 +184,15 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return HoverResult(classHover, context.Analysis.Document.ToRange(reference.Span));
         }
 
-        var type = GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
-        var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue ? " captured upvalue" : string.Empty;
+        var type = reference.Symbol.Kind == LuaSymbolKind.Environment &&
+            workspace.TryGetKnownGlobalType(reference.Name, out var knownGlobal)
+                ? knownGlobal.DisplayName
+                : GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
+        var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue
+            ? Localization.CapturedUpvalueSuffix
+            : string.Empty;
         return HoverResult(
-            $"```lua\n{reference.Name}: {type}\n```\n{reference.ResolutionKind}{capture}",
+            $"```lua\n{reference.Name}: {type}\n```\n{Localization.ResolutionKindLabel(reference.ResolutionKind)}{capture}",
             context.Analysis.Document.ToRange(reference.Span));
     }
 
@@ -226,7 +232,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             ["signatures"] = new JsonArray(new JsonObject
             {
                 ["label"] = label,
-                ["documentation"] = "Inferred by Lunil flow analysis.",
+                ["documentation"] = Localization.SignatureHelpDocumentation,
             }),
             ["activeSignature"] = 0,
             ["activeParameter"] = activeParameter,
@@ -259,16 +265,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var builtinReference = FindReference(context.Analysis, context.ByteOffset);
         if (builtinReference is not null &&
             builtinReference.Symbol.Kind == LuaSymbolKind.Environment &&
-            Builtin.Value.MemberSpans.TryGetValue(builtinReference.Name, out var builtinGlobalSpan))
+            Builtin.TryGetMemberLocation(builtinReference.Name, out var builtinGlobalPage, out var builtinGlobalSpan))
         {
-            return BuiltinVirtualLocation(builtinGlobalSpan);
+            return BuiltinVirtualLocation(builtinGlobalPage, builtinGlobalSpan);
         }
 
         var builtinMemberReference = FindCodeReference(context.Analysis, context.ByteOffset);
         if (builtinMemberReference is not null && IsNamedMember(builtinMemberReference) &&
             TryGetBuiltinMember(context.Analysis, builtinMemberReference) is { } builtinMemberDefinition)
         {
-            return BuiltinVirtualLocation(builtinMemberDefinition.Span);
+            return BuiltinVirtualLocation(builtinMemberDefinition.Document, builtinMemberDefinition.Span);
         }
 
         // Annotation elements (type names, declared class/alias/enum names) navigate to
@@ -412,16 +418,13 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             : null;
     }
 
-    private static readonly Lazy<BuiltinLibrary> Builtin = new(
-        () => BuiltinLibrary.Load(), LazyThreadSafetyMode.PublicationOnly);
+    private static BuiltinLibrary Builtin => BuiltinLibrary.Value;
 
-    private static readonly Uri BuiltinDocumentUri = new("lunil-builtin:lua", UriKind.Absolute);
-
-    private sealed record BuiltinMember(string Path, TextSpan Span, string? Doc);
+    private sealed record BuiltinMember(string Path, BuiltinDocument Document, TextSpan Span, string? Doc);
 
     /// <summary>
     /// The builtin member under the cursor when its receiver names a stdlib global
-    /// (`string.format`, `math.floor`); spans and docs index the embedded library.
+    /// (`string.format`, `math.floor`); the page, span, and doc index the embedded library.
     /// </summary>
     private static BuiltinMember? TryGetBuiltinMember(
         LanguageDocumentAnalysis analysis,
@@ -437,22 +440,22 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var receiverText = analysis.Document.Text[receiverStart..Math.Min(receiverEnd, analysis.Document.Text.Length)];
         var separator = receiverText.IndexOfAny(['.', ':']);
         var receiverName = (separator < 0 ? receiverText : receiverText[..separator]).Trim();
-        if (receiverName.Length == 0 || !Builtin.Value.Globals.ContainsKey(receiverName) ||
-            !Builtin.Value.TryGetMemberPath(receiverName, member.Name!, out var path))
+        if (receiverName.Length == 0 || !Builtin.Globals.ContainsKey(receiverName) ||
+            !Builtin.TryGetMemberPath(receiverName, member.Name!, out var path) ||
+            !Builtin.TryGetMemberLocation(path, out var page, out var span))
         {
             return null;
         }
 
-        var span = Builtin.Value.MemberSpans[path];
-        return new BuiltinMember(path, span, Builtin.Value.Docs.GetValueOrDefault(path));
+        return new BuiltinMember(path, page, span, page.Docs.GetValueOrDefault(path));
     }
 
-    private static JsonObject BuiltinVirtualLocation(TextSpan span)
+    private static JsonObject BuiltinVirtualLocation(BuiltinDocument document, TextSpan span)
     {
-        var (line, character) = Builtin.Value.ToPosition(span);
+        var (line, character) = document.ToPosition(span);
         return new JsonObject
         {
-            ["uri"] = BuiltinDocumentUri.AbsoluteUri,
+            ["uri"] = document.Uri,
             ["range"] = LanguageServerWorkspace.ToJson(new LspRange(
                 new LspPosition(line, character),
                 new LspPosition(line, character + Math.Max(1, span.Length)))),
@@ -489,11 +492,12 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         return LocationLink(uri.AbsoluteUri, position.Line, position.Character, module);
     }
 
-    private static string BuiltinLocationLink(TextSpan span, string label)
+    private static string BuiltinLocationLink(BuiltinDocument document, TextSpan span, string label)
     {
-        var (line, character) = Builtin.Value.ToPosition(span);
-        var arguments = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, int>
+        var (line, character) = document.ToPosition(span);
+        var arguments = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
         {
+            ["document"] = document.Name,
             ["line"] = line,
             ["character"] = character,
         });
@@ -574,8 +578,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     }
 
     /// <summary>
-    /// A class-value hover: the class name, its declared inheritance chain, and the
-    /// members its module (and each base module) expose, names only.
+    /// A class-value hover card: a signature header, the defining module and the
+    /// inheritance chain as clickable links, the leading doc comment, and the members
+    /// its module (and each base module) expose.
     /// </summary>
     private string? TryBuildClassHover(string module, string symbolName)
     {
@@ -603,11 +608,13 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             markdown.Append(" : ").Append(bases[0]);
         }
 
-        markdown.Append("\n```\nmodule ");
+        markdown.Append("\n```");
+        markdown.Append("\n**").Append(Localization.ModuleLabel).Append("** ");
         markdown.Append(workspace.GetUri(module) is { } moduleUri ? ModuleLink(moduleUri, module) : module);
-        if (bases.Count > 1)
+        if (bases.Count > 0)
         {
-            markdown.Append(" · inherits ").Append(string.Join(" > ", bases));
+            markdown.Append("  \n**").Append(Localization.ExtendsLabel).Append("** ")
+                .Append(string.Join(" → ", bases.Select(ClassLink)));
         }
 
         if (documentText is not null && TryGetLeadingDocComment(documentText, 0, 200) is { } description)
@@ -638,8 +645,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 continue;
             }
 
-            markdown.Append("\n\n**");
-            markdown.Append(inherited ? "Inherited \u00b7 " + groupClass : "Members");
+            markdown.Append(inherited || shownGroups == 0 ? "\n\n---\n" : "\n\n");
+            markdown.Append("**");
+            markdown.Append(inherited ? Localization.InheritedFrom(groupClass) : Localization.MembersLabel);
             markdown.Append(" (").Append(members.Count).Append(")**\n");
             const int shown = 10;
             foreach (var member in members.Take(shown))
@@ -656,7 +664,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
             if (members.Count > shown)
             {
-                markdown.Append("- \u2026 +").Append(members.Count - shown).Append(" more\n");
+                markdown.Append("- ").Append(Localization.MoreMembers(members.Count - shown)).Append('\n');
             }
 
             shownGroups++;
@@ -667,6 +675,19 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         return markdown.Length == 0 ? null : markdown.ToString();
+    }
+
+    /// <summary>A class name linked to its declaration site, or plain code when unknown.</summary>
+    private string ClassLink(string className)
+    {
+        if (workspace.TryGetTypeDeclarationLocation(className, out var uri, out var span) &&
+            workspace.TryGetDocument(uri, out var document))
+        {
+            var position = document.ToPosition(span.Start);
+            return LocationLink(uri.AbsoluteUri, position.Line, position.Character, className);
+        }
+
+        return "`" + className + "`";
     }
 
     /// <summary>Formats a member as `(params): returns` for functions or `: type` otherwise.</summary>

@@ -8,6 +8,7 @@ internal sealed class LuaLanguageServer : IDisposable
 {
     private readonly JsonRpcConnection _connection;
     private readonly LanguageServerWorkspace _workspace = new();
+    private readonly ServerLocalization _localization = new();
     private readonly LuaLanguageService _service;
     private readonly CancellationTokenSource _exit = new();
     private bool _initialized;
@@ -19,7 +20,7 @@ internal sealed class LuaLanguageServer : IDisposable
     public LuaLanguageServer(JsonRpcConnection connection)
     {
         _connection = connection;
-        _service = new LuaLanguageService(_workspace);
+        _service = new LuaLanguageService(_workspace, _localization);
         _workspace.DiagnosticsPublished = PublishDiagnosticsAsync;
         _workspace.ProgressReported = PublishProgressAsync;
         // Per-document caches follow their documents out of the workspace.
@@ -117,7 +118,7 @@ internal sealed class LuaLanguageServer : IDisposable
             "lunil/reindex" => await ReindexAsync(request.Parameters, cancellationToken).ConfigureAwait(false),
             "lunil/clearCache" => ClearCache(),
             "lunil/indexStatus" => _workspace.GetIndexStatus(),
-            "lunil/builtinSource" => BuiltinLibrarySource(),
+            "lunil/builtinSource" => BuiltinLibrarySource(request.Parameters),
             "lunil/virtualHostDocument" => VirtualHostDocument(),
             "$/setTrace" or "$/cancelRequest" => null,
             _ when request.IsNotification => null,
@@ -161,6 +162,14 @@ internal sealed class LuaLanguageServer : IDisposable
         }
 
         _workspace.Initialize(folders);
+        if (parameters.TryGetProperty("initializationOptions", out var initializationOptions) &&
+            initializationOptions.TryGetProperty("locale", out var localeElement) &&
+            localeElement.ValueKind == JsonValueKind.String &&
+            ServerLocalization.TryParse(localeElement.GetString(), out var locale))
+        {
+            _localization.Locale = locale;
+        }
+
         _initialized = true;
         Console.Error.WriteLine(
             $"Lunil language server {GetVersion()} initialized with {folders.Count} workspace folder(s): " +
@@ -339,6 +348,22 @@ internal sealed class LuaLanguageServer : IDisposable
     {
         if (!parameters.TryGetProperty("settings", out var settings)) return null;
         var lunil = settings.TryGetProperty("lunil", out var nested) ? nested : settings;
+        if (lunil.TryGetProperty("locale", out var localeElement) &&
+            localeElement.ValueKind == JsonValueKind.String &&
+            ServerLocalization.TryParse(localeElement.GetString(), out var locale))
+        {
+            _localization.Locale = locale;
+        }
+
+        if (lunil.TryGetProperty("workspace", out var workspace) &&
+            workspace.TryGetProperty("library", out var libraryElement) &&
+            libraryElement.ValueKind == JsonValueKind.Array)
+        {
+            _workspace.ConfigureLibraryFolders(libraryElement.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => item.GetString()));
+        }
+
         var json = lunil.TryGetProperty("hostContractJson", out var jsonElement) &&
             jsonElement.ValueKind == JsonValueKind.String ? jsonElement.GetString() : null;
         var path = lunil.TryGetProperty("hostContractPath", out var pathElement) &&
@@ -407,6 +432,9 @@ internal sealed class LuaLanguageServer : IDisposable
         }
         else
         {
+            // An explicit reindex also refreshes library stub folders from disk, so
+            // editing host-API declarations needs no restart.
+            _workspace.ReloadLibraryFolders();
             await _workspace.ReindexNowAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -423,12 +451,29 @@ internal sealed class LuaLanguageServer : IDisposable
         return new JsonObject { ["cleared"] = true };
     }
 
-    private static JsonObject BuiltinLibrarySource() => new()
+    /// <summary>
+    /// The readonly source of one builtin library page: `{ "document": "math" }`
+    /// (or `"math.lua"`); without a document name, the base globals page.
+    /// </summary>
+    private static JsonObject BuiltinLibrarySource(JsonElement parameters)
     {
-        ["uri"] = "lunil-builtin:lua",
-        ["languageId"] = "lua",
-        ["text"] = BuiltinLibrary.Load().Source,
-    };
+        var name = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("document", out var documentElement) &&
+            documentElement.ValueKind == JsonValueKind.String
+                ? documentElement.GetString()
+                : "base";
+        if (name is null || !BuiltinLibrary.Value.TryGetDocument(name, out var document))
+        {
+            throw new JsonRpcException(-32602, $"Unknown builtin library document: {name}");
+        }
+
+        return new JsonObject
+        {
+            ["uri"] = document.Uri,
+            ["languageId"] = "lua",
+            ["text"] = document.Source,
+        };
+    }
 
     private JsonObject VirtualHostDocument()
     {

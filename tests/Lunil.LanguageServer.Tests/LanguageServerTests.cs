@@ -8,6 +8,132 @@ namespace Lunil.LanguageServer.Tests;
 public sealed class LanguageServerTests
 {
     [Fact]
+    public void BuiltinLibraryServesPerLibraryPages()
+    {
+        var library = BuiltinLibrary.Value;
+
+        Assert.True(library.TryGetDocument("math", out var math));
+        Assert.Equal("lunil-builtin:math.lua", math.Uri);
+        Assert.StartsWith("-- Lunil builtin Lua standard library: the `math` library.",
+            math.Source, StringComparison.Ordinal);
+
+        // Members resolve to the page that defines them, with docs attached.
+        Assert.True(library.TryGetMemberLocation("math.max", out var maxPage, out var maxSpan));
+        Assert.Equal("math", maxPage.Name);
+        Assert.True(maxPage.ToPosition(maxSpan).Line > 0);
+        Assert.Contains("Returns the maximum of the arguments",
+            maxPage.Docs["math.max"], StringComparison.Ordinal);
+
+        // Globals span pages: stdlib tables and base global functions.
+        Assert.True(library.Globals.ContainsKey("math"));
+        Assert.True(library.Globals.ContainsKey("string"));
+        Assert.True(library.Globals.ContainsKey("print"));
+        Assert.True(library.TryGetMemberLocation("print", out var basePage, out _));
+        Assert.Equal("base", basePage.Name);
+    }
+
+    [Fact]
+    public async Task LibraryFoldersTypeHostInjectedGlobals()
+    {
+        var metaRoot = Path.Combine(Path.GetTempPath(), "lunil-library-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(metaRoot);
+        await File.WriteAllTextAsync(Path.Combine(metaRoot, "game_api.lua"), string.Join("\n",
+        [
+            "---@meta",
+            "---@class Vector",
+            "---@field x number",
+            "---@field y number",
+            "Game = {}",
+            "---@param v Vector",
+            "---@return number",
+            "function Game.sum(v) return v.x + v.y end",
+        ]));
+        try
+        {
+            var folder = new Uri("file:///src/");
+            using var workspace = new LanguageServerWorkspace();
+            workspace.Initialize([folder]);
+            workspace.ConfigureLibraryFolders([metaRoot]);
+            await WaitForAsync(() => workspace.GetDocuments().Any(document =>
+                document.Uri.AbsoluteUri.EndsWith("game_api.lua", StringComparison.Ordinal)));
+
+            var appUri = new Uri("file:///src/app.lua");
+            workspace.Open(appUri, 1, "local total = Game.sum({ x = 1, y = 2 })\nreturn total");
+            await workspace.ReindexNowAsync(CancellationToken.None);
+            var service = new LuaLanguageService(workspace);
+
+            // The host-injected global's member keeps its declared signature instead
+            // of degrading to `any`: the analysis chain is healed by the stub folder.
+            var sumHover = await service.HoverAsync(Element(new
+            {
+                textDocument = new { uri = appUri.AbsoluteUri },
+                position = new { line = 0, character = 20 },
+            }), CancellationToken.None);
+            var sumValue = sumHover!["contents"]!["value"]!.GetValue<string>();
+            Assert.Contains("sum(v: Vector)", sumValue, StringComparison.Ordinal);
+            Assert.Contains(": number", sumValue, StringComparison.Ordinal);
+
+            // The receiver hover keeps the declared table shape instead of `unknown`.
+            var gameHover = await service.HoverAsync(Element(new
+            {
+                textDocument = new { uri = appUri.AbsoluteUri },
+                position = new { line = 0, character = 14 },
+            }), CancellationToken.None);
+            var gameValue = gameHover!["contents"]!["value"]!.GetValue<string>();
+            Assert.Contains("Game: {", gameValue, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(metaRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LocalizedHoverCardsFollowLocale()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var greeterUri = new Uri("file:///src/greeter.lua");
+        workspace.Open(greeterUri, 1,
+            "---@class Greeter\n" +
+            "local Greeter = {}\n" +
+            "function Greeter:hello() end\n" +
+            "return Greeter");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace, new ServerLocalization());
+
+        var hoverOnce = async () => await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = greeterUri.AbsoluteUri },
+            position = new { line = 1, character = 6 },
+        }), CancellationToken.None);
+
+        var english = (await hoverOnce())!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("**Module** [greeter]", english, StringComparison.Ordinal);
+        Assert.Contains("**Members (1)**", english, StringComparison.Ordinal);
+
+        service.Localization.Locale = LunilLocale.SimplifiedChinese;
+        var chinese = (await hoverOnce())!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("**模块** [greeter]", chinese, StringComparison.Ordinal);
+        Assert.Contains("**成员 (1)**", chinese, StringComparison.Ordinal);
+
+        service.Localization.Locale = LunilLocale.English;
+        var restored = (await hoverOnce())!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("**Members (1)**", restored, StringComparison.Ordinal);
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 100 && !condition(); attempt++)
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.True(condition());
+    }
+
+    [Fact]
     public void Utf16PositionsRoundTripUtf8BytesAndIncrementalChanges()
     {
         var document = new LspTextDocument(new Uri("file:///unicode.lua"), 1, "a😀b\r\nç");
@@ -342,7 +468,7 @@ public sealed class LanguageServerTests
             textDocument = new { uri = uri.AbsoluteUri },
             position = new { line = 0, character = 20 },
         }), false, CancellationToken.None);
-        Assert.Equal("lunil-builtin:lua", formatDefinition!["uri"]!.GetValue<string>());
+        Assert.Equal("lunil-builtin:string.lua", formatDefinition!["uri"]!.GetValue<string>());
 
         // Global functions hover with their signature and link.
         var printHover = await service.HoverAsync(Element(new
@@ -432,7 +558,7 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var typeHoverValue = typeHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Vec", typeHoverValue, StringComparison.Ordinal);
-        Assert.Contains("module [vec]", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("**Module** [vec]", typeHoverValue, StringComparison.Ordinal);
         Assert.Contains("[add]", typeHoverValue, StringComparison.Ordinal);
         Assert.Contains("(other", typeHoverValue, StringComparison.Ordinal);
 
@@ -506,14 +632,16 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var declaredValue = declaredHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Tool : Base", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("module [tool]", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("**Module** [tool]", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[size]", declaredValue, StringComparison.Ordinal);
         Assert.Contains(": number", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[use](", declaredValue, StringComparison.Ordinal);
         Assert.Contains("command:lunil._openLocation", declaredValue, StringComparison.Ordinal);
         Assert.Contains("Uses the tool.", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("Inherited \u00b7 Base", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("Inherited from Base", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[extend]", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("**Extends** [Base](", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("\n---\n", declaredValue, StringComparison.Ordinal);
 
         // The alias in the consuming module hovers with the same class view.
         var aliasHover = await service.HoverAsync(Element(new
@@ -868,7 +996,7 @@ public sealed class LanguageServerTests
         });
         var rename = await service.RenameAsync(renameParameters, CancellationToken.None);
 
-        Assert.Contains("Upvalue", hover!.ToJsonString(), StringComparison.Ordinal);
+        Assert.Contains("upvalue", hover!.ToJsonString(), StringComparison.Ordinal);
         Assert.True(references!.AsArray().Count >= 2);
         Assert.Contains("captured", rename!.ToJsonString(), StringComparison.Ordinal);
     }

@@ -833,6 +833,11 @@ internal sealed partial class AnalysisEngine
             SetGlobalType(pair.Key, pair.Value);
         }
 
+        foreach (var pair in _environment.ExternalGlobals)
+        {
+            SetGlobalType(pair.Key, pair.Value);
+        }
+
         foreach (var pair in _hostGlobalTypes)
         {
             SetGlobalType(pair.Key, pair.Value);

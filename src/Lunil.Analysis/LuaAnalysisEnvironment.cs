@@ -41,6 +41,15 @@ public sealed record LuaAnalysisEnvironment
     public ImmutableDictionary<string, LuaType> BuiltinGlobals { get; init; } =
         ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets globals declared by workspace library folders: LuaLS-style <c>---@meta</c>
+    /// stub files describing values a host (C++, C#, a game engine) injects at runtime.
+    /// Analysis seeds them after the builtin globals, so host-injected names keep their
+    /// types, members, and doc comments instead of degrading to <c>any</c>.
+    /// </summary>
+    public ImmutableDictionary<string, LuaType> ExternalGlobals { get; init; } =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

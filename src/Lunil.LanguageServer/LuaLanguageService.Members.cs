@@ -721,10 +721,11 @@ internal sealed partial class LuaLanguageService
         LuaCodeReference member,
         Dictionary<int, string>? requireAliases = null)
     {
-        // Stdlib library tables (`string.format`, `math.floor`) are builtin globals whose
-        // members carry annotated signatures.
-        if (GetReceiverName(analysis, member) is { } builtinReceiver &&
-            Builtin.Value.Globals.TryGetValue(builtinReceiver, out var libraryType))
+        // Stdlib library tables (`string.format`, `math.floor`) and host globals declared
+        // by library stubs (`Game.connect`) are known globals whose members carry
+        // annotated signatures.
+        if (GetReceiverName(analysis, member) is { } globalReceiver &&
+            workspace.TryGetKnownGlobalType(globalReceiver, out var libraryType))
         {
             foreach (var (memberName, memberType) in CollectTypeMembers(libraryType))
             {
@@ -878,10 +879,10 @@ internal sealed partial class LuaLanguageService
 
         var receiver = analysis.Compilation.SemanticModel.Symbols.FirstOrDefault(symbol =>
             symbol.Name == receiverName);
-        if (receiver is null && Builtin.Value.Globals.TryGetValue(receiverName, out var stdlibType))
+        if (receiver is null && workspace.TryGetKnownGlobalType(receiverName, out var stdlibType))
         {
-            // Stdlib library tables (`table.`, `string.`) have no lexical symbol; their
-            // members complete from the embedded definitions.
+            // Stdlib library tables (`table.`, `string.`) and host globals from library
+            // stubs have no lexical symbol; their members complete from declared types.
             foreach (var (name, type) in CollectTypeMembers(stdlibType))
             {
                 AddMemberItem(items, name, type, methodsOnly);
@@ -908,9 +909,10 @@ internal sealed partial class LuaLanguageService
                     }
                 }
             }
-            else if (Builtin.Value.Globals.TryGetValue(receiverName, out var builtinLibraryType))
+            else if (workspace.TryGetKnownGlobalType(receiverName, out var builtinLibraryType))
             {
-                // Stdlib library tables complete from the embedded definitions.
+                // Stdlib library tables and host-injected globals complete from their
+                // declared types (embedded definitions or library stubs).
                 foreach (var (name, type) in CollectTypeMembers(builtinLibraryType))
                 {
                     AddMemberItem(items, name, type, methodsOnly);

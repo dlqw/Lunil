@@ -41,6 +41,11 @@ internal enum FileIndexStatus : byte
 
 internal sealed class LanguageServerWorkspace : IDisposable
 {
+    /// <summary>Library globals for one stub document, cached by its exact text.</summary>
+    private sealed record LibraryGlobalsCacheEntry(
+        string Text,
+        ImmutableDictionary<string, LuaType> Globals);
+
     private static readonly Lazy<bool> CompilerWarmup = new(() =>
     {
         _ = new LuaCompiler().CompileUtf8("return nil", "@lunil/language-server-warmup.lua");
@@ -48,8 +53,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     }, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly string[] ExcludedDirectories =
         [".git", ".svn", "bin", "obj", "node_modules", ".vscode", ".idea"];
-    private static readonly Lazy<BuiltinLibrary> Builtin = new(
-        () => BuiltinLibrary.Load(), LazyThreadSafetyMode.PublicationOnly);
+    private static BuiltinLibrary Builtin => BuiltinLibrary.Value;
     private readonly object _gate = new();
     private readonly LuaFrontEndSession _frontEnd = new(new LuaCompilerOptions
     {
@@ -67,6 +71,18 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private int _uriIndexGeneration = -1;
     private int _documentSetGeneration;
     private ImmutableArray<Uri> _folders = [];
+
+    /// <summary>
+    /// Read-only declaration-stub folders (`lunil.workspace.library`): LuaLS-style
+    /// `---@meta` trees describing host-injected globals and classes.
+    /// </summary>
+    private ImmutableArray<Uri> _libraryFolders = [];
+    private ImmutableArray<string> _libraryPaths = [];
+    private ImmutableDictionary<string, LuaType> _libraryGlobals =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+    private readonly Dictionary<string, LibraryGlobalsCacheEntry> _libraryGlobalsCache =
+        new(StringComparer.Ordinal);
+
     private LuaWorkspace _workspace;
     private LuaHostAnalysisContract? _hostContract;
     private ImmutableHashSet<string> _suppressedDiagnosticCodes =
@@ -467,6 +483,282 @@ internal sealed class LanguageServerWorkspace : IDisposable
         ScheduleIndex();
     }
 
+    /// <summary>
+    /// Configures read-only declaration-stub folders. Relative paths resolve against
+    /// the first workspace folder. Stub globals seed every analysis, and their
+    /// <c>---@class</c> declarations join the workspace declaration map.
+    /// </summary>
+    public void ConfigureLibraryFolders(IEnumerable<string?>? paths)
+    {
+        _libraryPaths = (paths ?? []).Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(static path => path!.Trim())
+            .Where(static path => path.Length > 0)
+            .ToImmutableArray();
+        var roots = new List<Uri>();
+        string? workspaceRoot;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            workspaceRoot = _folders.IsEmpty ? null : ToLocalPath(_folders[0]);
+        }
+
+        foreach (var raw in _libraryPaths)
+        {
+            try
+            {
+                var expanded = raw;
+                if (!Path.IsPathRooted(expanded))
+                {
+                    if (workspaceRoot is null)
+                    {
+                        LogInfo($"Lunil workspace: ignoring relative library folder '{raw}' without a workspace folder");
+                        continue;
+                    }
+
+                    expanded = Path.Combine(workspaceRoot, raw);
+                }
+
+                roots.Add(new Uri(Path.GetFullPath(expanded) + Path.DirectorySeparatorChar));
+            }
+            catch (Exception exception) when (exception is ArgumentException or
+                UriFormatException or NotSupportedException or IOException)
+            {
+                LogInfo($"Lunil workspace: ignoring invalid library folder '{raw}': {exception.Message}");
+            }
+        }
+
+        var normalized = roots.Distinct().ToImmutableArray();
+        lock (_gate)
+        {
+            // Documents that came only from library roots no longer configured must
+            // leave the index; open documents stay until they are closed.
+            foreach (var key in _documents.Where(pair => !pair.Value.IsOpen &&
+                         IsUnderAnyRoot(ToLocalPath(pair.Value.Uri), _libraryFolders) &&
+                         !IsUnderAnyRoot(ToLocalPath(pair.Value.Uri), normalized))
+                         .Select(static pair => pair.Key).ToArray())
+            {
+                _documents.Remove(key);
+                _indexStatus.Remove(key);
+                _indexErrors.Remove(key);
+                RemoveAnalysis(key);
+                DocumentRemoved?.Invoke(new Uri(key, UriKind.Absolute));
+            }
+
+            if (!_libraryFolders.SequenceEqual(normalized))
+            {
+                _libraryGlobalsCache.Clear();
+            }
+
+            _libraryFolders = normalized;
+            _documentSetGeneration++;
+            InvalidateIndexNoLock();
+        }
+
+        ScanAllTypeDeclarations();
+        ScheduleIndex();
+        _ = Task.Run(() => LoadLibraryFolders(normalized));
+    }
+
+    /// <summary>Re-reads the configured library folders from disk (`Lunil: Reindex Workspace`).</summary>
+    public void ReloadLibraryFolders() => ConfigureLibraryFolders(_libraryPaths);
+
+    private void LoadLibraryFolders(ImmutableArray<Uri> folders)
+    {
+        var paths = new List<string>();
+        foreach (var folder in folders)
+        {
+            paths.AddRange(EnumerateLuaFiles(ToLocalPath(folder)));
+        }
+
+        var loaded = new System.Collections.Concurrent.ConcurrentDictionary<string, LspTextDocument>(StringComparer.Ordinal);
+        Parallel.ForEach(
+            paths,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(4, Environment.ProcessorCount) },
+            path =>
+            {
+                try
+                {
+                    var uri = new Uri(Path.GetFullPath(path));
+                    loaded[uri.AbsoluteUri] = new LspTextDocument(uri, 0, File.ReadAllText(path), isOpen: false);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                }
+            });
+
+        LogInfo($"Lunil workspace: loading {folders.Length} library folder(s) -> {paths.Count} .lua files");
+
+        lock (_gate)
+        {
+            if (_disposed || !_libraryFolders.SequenceEqual(folders))
+            {
+                return;
+            }
+
+            foreach (var pair in loaded)
+            {
+                if (!_documents.TryGetValue(pair.Key, out var existing) || !existing.IsOpen)
+                {
+                    _documents[pair.Key] = pair.Value;
+                    _indexStatus.TryAdd(pair.Key, FileIndexStatus.Pending);
+                }
+            }
+
+            _documentSetGeneration++;
+            InvalidateIndexNoLock();
+        }
+
+        ScanAllTypeDeclarations();
+        ScheduleIndex();
+    }
+
+    private static bool IsUnderAnyRoot(string path, ImmutableArray<Uri> roots) =>
+        roots.Any(root => IsUnderRoot(path, ToLocalPath(root)));
+
+    /// <summary>
+    /// The host globals declared by the current library stub documents. Each stub is
+    /// analyzed once per distinct text: its global writes are collected, then a probe
+    /// chunk returning those globals reveals their flow types.
+    /// </summary>
+    private async Task<ImmutableDictionary<string, LuaType>> BuildLibraryGlobalsAsync(
+        CancellationToken cancellationToken)
+    {
+        ImmutableArray<LspTextDocument> libraryDocuments;
+        lock (_gate)
+        {
+            if (_libraryFolders.IsEmpty)
+            {
+                return ImmutableDictionary<string, LuaType>.Empty;
+            }
+
+            libraryDocuments =
+            [
+                .. _documents.Values
+                    .Where(document => document.Uri.IsFile &&
+                        IsUnderAnyRoot(ToLocalPath(document.Uri), _libraryFolders))
+                    .OrderBy(static document => document.Uri.AbsoluteUri, StringComparer.Ordinal),
+            ];
+        }
+
+        return await Task.Run(() =>
+        {
+            var merged = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
+            foreach (var document in libraryDocuments)
+            {
+                LibraryGlobalsCacheEntry entry;
+                lock (_gate)
+                {
+                    if (!_libraryGlobalsCache.TryGetValue(document.Uri.AbsoluteUri, out entry!) ||
+                        entry.Text != document.Text)
+                    {
+                        entry = null!;
+                    }
+                }
+
+                if (entry is null)
+                {
+                    var globals = AnalyzeLibraryGlobals(document);
+                    entry = new LibraryGlobalsCacheEntry(document.Text, globals);
+                    lock (_gate)
+                    {
+                        _libraryGlobalsCache[document.Uri.AbsoluteUri] = entry;
+                    }
+                }
+
+                foreach (var pair in entry.Globals)
+                {
+                    merged[pair.Key] = pair.Value;
+                }
+            }
+
+            return merged.ToImmutable();
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ImmutableDictionary<string, LuaType> AnalyzeLibraryGlobals(LspTextDocument document)
+    {
+        try
+        {
+            var source = LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri);
+            var snapshot = _frontEnd.Process(
+                source, LuaFrontEndStage.Analysis, LuaAnalysisEnvironment.Empty);
+            var names = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var reference in snapshot.SemanticModel!.UnifiedReferences)
+            {
+                if (reference.Name is { Length: > 0 } name &&
+                    reference.LexicalReference is { } lexical &&
+                    lexical.ResolutionKind == LuaNameResolutionKind.Global &&
+                    reference.Access.HasFlag(LuaReferenceAccess.Write) &&
+                    reference.ReceiverSpan is not { Length: > 0 })
+                {
+                    names.Add(name);
+                }
+            }
+
+            if (names.Count == 0)
+            {
+                return ImmutableDictionary<string, LuaType>.Empty;
+            }
+
+            // Appending `return { Game = Game, ... }` to a copy of the stub exposes the
+            // globals' final flow types as the chunk export shape — the same extraction
+            // the builtin library uses. Stub files must not end in a top-level return.
+            var probe = new System.Text.StringBuilder(document.Text.Length + names.Count * 16 + 16);
+            probe.Append(document.Text);
+            if (!document.Text.EndsWith('\n'))
+            {
+                probe.Append('\n');
+            }
+
+            probe.Append("\nreturn {\n");
+            foreach (var name in names)
+            {
+                probe.Append("  ").Append(name).Append(" = ").Append(name).Append(",\n");
+            }
+
+            probe.Append("}\n");
+            var probeSnapshot = _frontEnd.Process(
+                LuaSourceDocument.FromUtf8(probe.ToString(), document.Uri.AbsoluteUri),
+                LuaFrontEndStage.Analysis,
+                LuaAnalysisEnvironment.Empty);
+            var exported = probeSnapshot.Analysis!.Functions
+                .FirstOrDefault(static function => function.FunctionId == 0)
+                ?.InferredReturns.GetElementOrNil(0);
+            if (exported is not LuaStructuralTableType shape)
+            {
+                return ImmutableDictionary<string, LuaType>.Empty;
+            }
+
+            var globals = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
+            foreach (var field in shape.Fields)
+            {
+                if (field.Name is not null && names.Contains(field.Name))
+                {
+                    globals[field.Name] = field.ValueType;
+                }
+            }
+
+            return globals.ToImmutable();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and not AccessViolationException)
+        {
+            LogInfo($"Lunil workspace: library globals for {document.Uri} failed: {exception.Message}");
+            return ImmutableDictionary<string, LuaType>.Empty;
+        }
+    }
+
+    private static string BuildLibraryGlobalsSignature(ImmutableDictionary<string, LuaType> globals)
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (var pair in globals.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            builder.Append(pair.Key).Append(':').Append(pair.Value.DisplayName).Append('\n');
+        }
+
+        return builder.ToString();
+    }
+
     public bool TryGetDocument(Uri uri, out LspTextDocument document)
     {
         lock (_gate)
@@ -510,6 +802,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         LspTextDocument document;
         int environmentGeneration;
+        ImmutableDictionary<string, LuaType> libraryGlobals;
         lock (_gate)
         {
             if (!_documents.TryGetValue(uri.AbsoluteUri, out document!))
@@ -518,6 +811,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
 
             environmentGeneration = _environmentGeneration;
+            libraryGlobals = _libraryGlobals;
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
                 cached.Document.Version == document.Version && cached.Document.Text == document.Text &&
                 cached.EnvironmentGeneration == environmentGeneration)
@@ -555,7 +849,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
             HostContract = hostContract,
             ExternalTypeDeclarations = _externalTypeDeclarations,
             ExternalClassMembers = GetExternalClassMembers(),
-            BuiltinGlobals = Builtin.Value.Globals,
+            BuiltinGlobals = Builtin.Globals,
+            ExternalGlobals = libraryGlobals,
         };
         // The front-end analysis is CPU-bound and synchronous. Run it on the thread pool so a
         // large document (for example a multi-megabyte generated config file) cannot stall the
@@ -618,17 +913,41 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
+    /// <summary>
+    /// The declared type of a global: embedded stdlib definitions first, then globals
+    /// declared by library stub folders (host-injected APIs). Host contract globals
+    /// surface through analysis instead.
+    /// </summary>
+    public bool TryGetKnownGlobalType(string name, out LuaType type)
+    {
+        if (Builtin.Globals.TryGetValue(name, out type!))
+        {
+            return true;
+        }
+
+        lock (_gate)
+        {
+            return _libraryGlobals.TryGetValue(name, out type!);
+        }
+    }
+
     public Uri? GetUri(string moduleName)
     {
         lock (_gate)
         {
             // The module-name reverse index is rebuilt only when the document set or the
             // folder layout changes; reference-heavy requests query it in tight loops.
+            // Virtual documents (builtin pages, host contract) never own module names.
             if (_uriByModuleName is null || _uriIndexGeneration != _documentSetGeneration)
             {
                 var builder = ImmutableDictionary.CreateBuilder<string, Uri>(StringComparer.Ordinal);
                 foreach (var document in _documents.Values)
                 {
+                    if (!document.Uri.IsFile)
+                    {
+                        continue;
+                    }
+
                     var name = GetModuleIdentity(document.Uri).Name;
                     builder.TryAdd(name, document.Uri);
                 }
@@ -643,13 +962,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public LuaModuleIdentity GetModuleIdentity(Uri uri)
     {
-        var path = uri.IsFile ? Path.GetFullPath(ToLocalPath(uri)) : uri.AbsolutePath;
+        // Virtual documents (builtin pages, the host contract) get their URI as the
+        // module name: unique, and never reachable through a `require` string.
+        if (!uri.IsFile)
+        {
+            return new LuaModuleIdentity(uri.AbsoluteUri);
+        }
+
+        var path = Path.GetFullPath(ToLocalPath(uri));
         Uri? owner;
         lock (_gate)
         {
             owner = _folders.Where(folder => IsUnderRoot(path, ToLocalPath(folder)))
                 .OrderByDescending(static folder => ToLocalPath(folder).Length)
-                .FirstOrDefault();
+                .FirstOrDefault() ??
+                _libraryFolders.Where(folder => IsUnderRoot(path, ToLocalPath(folder)))
+                    .OrderByDescending(static folder => ToLocalPath(folder).Length)
+                    .FirstOrDefault();
         }
 
         var relative = owner is null ? Path.GetFileName(path) : Path.GetRelativePath(ToLocalPath(owner), path);
@@ -695,16 +1024,22 @@ internal sealed class LanguageServerWorkspace : IDisposable
             snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
         }
 
+        // Library stub globals participate in the environment-generation signature, so
+        // edits to host-API stubs invalidate analyses exactly like class-member changes.
+        var libraryGlobals = await BuildLibraryGlobalsAsync(cancellationToken).ConfigureAwait(false);
+        var librarySignature = BuildLibraryGlobalsSignature(libraryGlobals);
+
         List<LspTextDocument>? openDocuments = null;
         lock (_gate)
         {
             if (generation == _generation && ReferenceEquals(workspace, _workspace))
             {
                 _snapshot = snapshot;
+                _libraryGlobals = libraryGlobals;
                 // Analyses produced before this snapshot existed were denied workspace
                 // member knowledge; when the exported class-member surface changed, their
                 // cache entries are stale and open documents are re-published with it.
-                var signature = BuildClassMemberSignatureNoLock(snapshot);
+                var signature = BuildClassMemberSignatureNoLock(snapshot) + "\n#libraryGlobals\n" + librarySignature;
                 if (!string.Equals(signature, _externalClassMemberSignature, StringComparison.Ordinal))
                 {
                     _externalClassMemberSignature = signature;
