@@ -361,44 +361,250 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var className = root?.Type is LuaPrototypeType prototype && prototype.Name.Length > 0
             ? prototype.Name
             : symbolName;
-        var markdown = new StringBuilder();
-        markdown.Append("```lua\n").Append(className).Append("\n```\nmodule ").Append(module);
-
+        var documentText = workspace.GetUri(module) is { } hoverUri &&
+            workspace.TryGetDocument(hoverUri, out var moduleDocument)
+                ? moduleDocument.Text
+                : null;
         var declarations = workspace.GetClassDeclarations();
         var bases = CollectBaseClassNames(declarations, className);
+
+        var markdown = new StringBuilder();
+        markdown.Append("```lua\nclass ").Append(className);
         if (bases.Count > 0)
         {
-            markdown.Append("\n\n**Inherits**: ").Append(string.Join(" > ", bases.Prepend(className)));
+            markdown.Append(" : ").Append(bases[0]);
         }
 
-        var first = true;
-        foreach (var chainModule in CollectChainModules(declarations, module))
+        markdown.Append("\n```\nmodule `").Append(module).Append('`');
+        if (bases.Count > 1)
         {
-            var names = snapshot.ExportGraph.Symbols
+            markdown.Append(" · inherits ").Append(string.Join(" > ", bases));
+        }
+
+        if (documentText is not null && TryGetLeadingDocComment(documentText, 0, 200) is { } description)
+        {
+            markdown.Append("\n\n").Append(description);
+        }
+
+        var shownGroups = 0;
+        foreach (var (groupClass, groupModule, inherited) in CollectChainClasses(declarations, className, module))
+        {
+            var members = snapshot.ExportGraph.Symbols
                 .Where(symbol => !symbol.IsExternal &&
-                    string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&
+                    string.Equals(symbol.ModuleName, groupModule, StringComparison.Ordinal) &&
                     symbol.Path.Length > 0 &&
+                    symbol.Path != "*" &&
                     !symbol.Path.Contains('.', StringComparison.Ordinal))
-                .Select(static symbol => symbol.Path)
-                .OrderBy(static name => name, StringComparer.Ordinal)
+                .Select(symbol => (
+                    symbol.Path,
+                    Signature: FormatMemberSignature(symbol.Type),
+                    Doc: documentText is null || inherited
+                        ? null
+                        : TryGetMemberDoc(documentText, symbol.DefinitionSpan)))
+                .OrderBy(member => member.Signature.StartsWith('(') ? 0 : 1)
+                .ThenBy(member => member.Path, StringComparer.Ordinal)
                 .ToList();
-            if (names.Count == 0)
+            if (members.Count == 0)
             {
                 continue;
             }
 
-            var label = first ? "Members" : $"Inherited ({chainModule})";
-            first = false;
-            markdown.Append("\n\n**").Append(label).Append("**: ");
-            const int shown = 12;
-            markdown.Append(string.Join(", ", names.Take(shown)));
-            if (names.Count > shown)
+            markdown.Append("\n\n**");
+            markdown.Append(inherited ? "Inherited \u00b7 " + groupClass : "Members");
+            markdown.Append(" (").Append(members.Count).Append(")**\n");
+            const int shown = 10;
+            foreach (var member in members.Take(shown))
             {
-                markdown.Append(", … +").Append(names.Count - shown);
+                markdown.Append("- `").Append(member.Path).Append(member.Signature).Append('`');
+                if (member.Doc is { } doc)
+                {
+                    markdown.Append(" \u2014 *").Append(doc).Append('*');
+                }
+
+                markdown.Append('\n');
+            }
+
+            if (members.Count > shown)
+            {
+                markdown.Append("- \u2026 +").Append(members.Count - shown).Append(" more\n");
+            }
+
+            shownGroups++;
+            if (shownGroups >= 5)
+            {
+                break;
             }
         }
 
-        return markdown.ToString();
+        return markdown.Length == 0 ? null : markdown.ToString();
+    }
+
+    /// <summary>Formats a member as `(params): returns` for functions or `: type` otherwise.</summary>
+    private static string FormatMemberSignature(LuaType type)
+    {
+        switch (type)
+        {
+            case LuaFunctionType function:
+            {
+                var parameters = function.Parameters;
+                var start = parameters.Length > 0 && parameters[0].Name == "self" ? 1 : 0;
+                var rendered = string.Join(", ", Enumerable
+                    .Range(start, parameters.Length - start)
+                    .Select(index =>
+                    {
+                        var parameter = parameters[index];
+                        var name = parameter.IsVararg ? "..." : parameter.Name ?? "_";
+                        var optional = parameter.IsOptional ? "?" : string.Empty;
+                        return $"{name}{optional}: {parameter.Type.DisplayName}";
+                    }));
+                var returns = function.Returns.Head
+                    .Select(static type => type.DisplayName)
+                    .ToList();
+                var suffix = returns.Count == 0
+                    ? string.Empty
+                    : ": " + string.Join("|", returns);
+                return $"({rendered}){suffix}";
+            }
+
+            case LuaOverloadType overload when overload.Signatures.Length > 0:
+            {
+                var suffix = overload.Signatures.Length > 1 ? $" (+{overload.Signatures.Length - 1})" : string.Empty;
+                return FormatMemberSignature(overload.Signatures[0]) + suffix;
+            }
+
+            default:
+                return ": " + type.DisplayName;
+        }
+    }
+
+    /// <summary>
+    /// The prose lines of the `---` comment block that ends at the line preceding the
+    /// span; annotation directives (`---@`) are skipped.
+    /// </summary>
+    private static string? TryGetMemberDoc(string text, Lunil.Core.Text.TextSpan span)
+    {
+        if (span.Start <= 0 || span.Start > text.Length)
+        {
+            return null;
+        }
+
+        var lineStart = text.LastIndexOf('\n', Math.Min(span.Start, text.Length - 1)) + 1;
+        return TryGetLeadingDocComment(text, 0, 100, lineStart);
+    }
+
+    /// <summary>
+    /// The prose of a contiguous `---` comment block: from <paramref name="from"/> when
+    /// given (the end of a previous line), otherwise from the document start, walking
+    /// upward or downward respectively.
+    /// </summary>
+    private static string? TryGetLeadingDocComment(string text, int from, int cap, int? blockEnd = null)
+    {
+        var prose = new List<string>();
+        if (blockEnd is { } end)
+        {
+            // `end` is a line start; the line above spans up to the newline before it.
+            var cursor = end;
+            while (cursor > from && text[cursor - 1] == '\n')
+            {
+                var lineStart = text.LastIndexOf('\n', Math.Max(0, cursor - 2)) + 1;
+                if (!TryReadCommentLine(text[lineStart..(cursor - 1)], out var content))
+                {
+                    break;
+                }
+
+                if (content is not null)
+                {
+                    prose.Insert(0, content);
+                }
+
+                cursor = lineStart;
+            }
+        }
+        else
+        {
+            var index = from;
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+
+            while (index < text.Length && TryReadCommentLine(
+                       text[index..(text.IndexOf('\n', index) is var next and >= 0 ? next : text.Length)],
+                       out var content))
+            {
+                if (content is not null)
+                {
+                    prose.Add(content);
+                }
+
+                index = text.IndexOf('\n', index);
+                if (index < 0)
+                {
+                    break;
+                }
+
+                index++;
+            }
+        }
+
+        if (prose.Count == 0)
+        {
+            return null;
+        }
+
+        var joined = string.Join(' ', prose);
+        return joined.Length > cap ? joined[..cap] + "…" : joined;
+    }
+
+    private static bool TryReadCommentLine(string line, out string? content)
+    {
+        var trimmed = line.TrimEnd('\r').TrimStart();
+        if (!trimmed.StartsWith("---", StringComparison.Ordinal))
+        {
+            content = null;
+            return false;
+        }
+
+        content = trimmed.StartsWith("---@", StringComparison.Ordinal)
+            ? null
+            : trimmed[3..].Trim();
+        return true;
+    }
+
+    /// <summary>
+    /// The class chain as (class, module, inherited) tuples: the class's own module
+    /// first, then each base class's declaring module, following declared bases.
+    /// </summary>
+    private static IEnumerable<(string ClassName, string Module, bool Inherited)> CollectChainClasses(
+        ImmutableArray<WorkspaceClassDeclaration> declarations,
+        string className,
+        string module)
+    {
+        var declarationsByClass = declarations
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First(),
+                StringComparer.Ordinal);
+        var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
+        var visitedModules = new HashSet<string>(StringComparer.Ordinal);
+        var currentClass = className;
+        var currentModule = module;
+        var inherited = false;
+        while (currentClass is not null &&
+               declarationsByClass.ContainsKey(currentClass) &&
+               visitedClasses.Add(currentClass) &&
+               visitedModules.Add(currentModule))
+        {
+            yield return (currentClass, currentModule, inherited);
+            inherited = true;
+            currentClass = declarationsByClass[currentClass].BaseNames
+                .FirstOrDefault(declarationsByClass.ContainsKey);
+            if (currentClass is { } next)
+            {
+                currentModule = declarationsByClass[next].ModuleName;
+            }
+        }
     }
 
     /// <summary>The declared base class names above a class, outermost last.</summary>

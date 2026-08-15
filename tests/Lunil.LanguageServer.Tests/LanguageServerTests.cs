@@ -330,6 +330,7 @@ public sealed class LanguageServerTests
             "---@class Tool : Base" + "\n" +
             "---@field size number" + "\n" +
             "local Tool = Base:extend(\"Tool\")" + "\n" +
+            "---Uses the tool." + "\n" +
             "function Tool:use() return 1 end" + "\n" +
             "return Tool");
         workspace.Open(appUri, 1,
@@ -355,12 +356,13 @@ public sealed class LanguageServerTests
             position = new { line = 3, character = 6 },
         }), CancellationToken.None);
         var declaredValue = declaredHover!["contents"]!["value"]!.GetValue<string>();
-        Assert.Contains("Tool", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("module tool", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("Inherits", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("Base", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("use", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("extend", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("class Tool : Base", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("module `tool`", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("size: number", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("use()", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("Uses the tool.", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("Inherited \u00b7 Base", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("extend(", declaredValue, StringComparison.Ordinal);
 
         // The alias in the consuming module hovers with the same class view.
         var aliasHover = await service.HoverAsync(Element(new
@@ -369,8 +371,8 @@ public sealed class LanguageServerTests
             position = new { line = 0, character = 7 },
         }), CancellationToken.None);
         var aliasValue = aliasHover!["contents"]!["value"]!.GetValue<string>();
-        Assert.Contains("module tool", aliasValue, StringComparison.Ordinal);
-        Assert.Contains("use", aliasValue, StringComparison.Ordinal);
+        Assert.Contains("class Tool : Base", aliasValue, StringComparison.Ordinal);
+        Assert.Contains("use()", aliasValue, StringComparison.Ordinal);
 
         // F12 on the alias declaration passes through to the class line.
         var aliasDeclaration = await service.DefinitionAsync(Element(new
