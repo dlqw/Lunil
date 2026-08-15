@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0-alpha.11",
+  "version": "0.17.0-alpha.12",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {

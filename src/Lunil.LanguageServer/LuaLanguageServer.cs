@@ -117,6 +117,7 @@ internal sealed class LuaLanguageServer : IDisposable
             "lunil/reindex" => await ReindexAsync(request.Parameters, cancellationToken).ConfigureAwait(false),
             "lunil/clearCache" => ClearCache(),
             "lunil/indexStatus" => _workspace.GetIndexStatus(),
+            "lunil/builtinSource" => BuiltinLibrarySource(),
             "lunil/virtualHostDocument" => VirtualHostDocument(),
             "$/setTrace" or "$/cancelRequest" => null,
             _ when request.IsNotification => null,
@@ -421,6 +422,13 @@ internal sealed class LuaLanguageServer : IDisposable
         _workspace.ClearCache();
         return new JsonObject { ["cleared"] = true };
     }
+
+    private static JsonObject BuiltinLibrarySource() => new()
+    {
+        ["uri"] = "lunil-builtin:lua",
+        ["languageId"] = "lua",
+        ["text"] = BuiltinLibrary.Load().Source,
+    };
 
     private JsonObject VirtualHostDocument()
     {

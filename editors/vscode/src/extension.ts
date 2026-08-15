@@ -78,7 +78,10 @@ const indexProgressThrottleMs = 200;
 class LunilClientController implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Lunil', { log: true });
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
-  private readonly hostDocuments = new HostDocumentProvider();
+  private readonly hostDocuments = new HostDocumentProvider(
+    'lunil-host:/contract.lua',
+    '-- No external host contract symbols are indexed.\n');
+  private readonly builtinDocuments = new HostDocumentProvider('lunil-builtin:lua');
   /** One watcher for the controller lifetime; restarting the server must not stack duplicates. */
   private readonly watcher = vscode.workspace.createFileSystemWatcher('**/*.lua');
   private readonly disposables: vscode.Disposable[] = [];
@@ -103,6 +106,7 @@ class LunilClientController implements vscode.Disposable {
       this.status,
       this.watcher,
       vscode.workspace.registerTextDocumentContentProvider('lunil-host', this.hostDocuments),
+      vscode.workspace.registerTextDocumentContentProvider('lunil-builtin', this.builtinDocuments),
       vscode.commands.registerCommand('lunil.restartServer', () => this.restart()),
       vscode.commands.registerCommand('lunil.clearCache', () => this.clearCache()),
       vscode.commands.registerCommand('lunil.reindexWorkspace', () => this.reindexWorkspace()),
@@ -111,6 +115,8 @@ class LunilClientController implements vscode.Disposable {
       vscode.commands.registerCommand('lunil.showIndexStatus', () => this.showIndexStatus()),
       vscode.commands.registerCommand('lunil.showHostContract', () => this.showHostContract()),
       vscode.commands.registerCommand('lunil._suppressDiagnostic', (code: string) => this.suppressDiagnostic(code)),
+      vscode.commands.registerCommand('lunil._openBuiltinLocation', (args: unknown) => this.openBuiltinLocation(args)),
+      vscode.commands.registerCommand('lunil._openLocation', (args: unknown) => this.openLocation(args)),
       vscode.workspace.onDidChangeConfiguration(event => this.configurationChanged(event)),
       vscode.workspace.onDidGrantWorkspaceTrust(() => this.start())
     );
@@ -376,6 +382,56 @@ class LunilClientController implements vscode.Disposable {
       : vscode.ConfigurationTarget.Global;
     await configuration.update('server.suppressedDiagnosticCodes', [...current, code], target);
     vscode.window.setStatusBarMessage(`Lunil: ${code} suppressed.`, 4_000);
+  }
+
+  /** Opens a location inside the readonly builtin Lua library document. */
+  private async openBuiltinLocation(args: unknown): Promise<void> {
+    const location = args as { line?: number; character?: number } | undefined;
+    const document = await this.openBuiltinDocument();
+    if (document !== undefined && location?.line !== undefined) {
+      const position = new vscode.Position(location.line, location.character ?? 0);
+      await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
+    }
+  }
+
+  /** Opens a workspace location referenced from a hover card link. */
+  private async openLocation(args: unknown): Promise<void> {
+    const location = args as { uri?: string; line?: number; character?: number } | undefined;
+    if (location?.uri === undefined || location.line === undefined) {
+      return;
+    }
+
+    const uri = vscode.Uri.parse(location.uri);
+    if (uri.scheme === 'lunil-builtin') {
+      await this.openBuiltinLocation(location);
+      return;
+    }
+
+    const document = await vscode.workspace.openTextDocument(uri);
+    const position = new vscode.Position(location.line, location.character ?? 0);
+    await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
+  }
+
+  private async openBuiltinDocument(): Promise<vscode.TextDocument | undefined> {
+    if (this.client === undefined || !this.client.isRunning()) {
+      return undefined;
+    }
+
+    try {
+      const source = await this.client.sendRequest('lunil/builtinSource') as
+        { uri?: string; languageId?: string; text?: string } | undefined;
+      if (source?.uri === undefined || source.text === undefined) {
+        return undefined;
+      }
+
+      this.builtinDocuments.update(source.text);
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(source.uri));
+      await vscode.languages.setTextDocumentLanguage(document, source.languageId ?? 'lua');
+      return document;
+    } catch (error) {
+      this.logError('openBuiltinDocument', error);
+      return undefined;
+    }
   }
 
   private async showHostContract(): Promise<void> {
@@ -735,9 +791,15 @@ function statusIcon(kind: ServerState, text: string): string {
 }
 
 class HostDocumentProvider implements vscode.TextDocumentContentProvider {
-  private content = '-- No external host contract symbols are indexed.\n';
+  private readonly documentUri: string;
+  private content: string;
   private readonly changed = new vscode.EventEmitter<vscode.Uri>();
   public readonly onDidChange = this.changed.event;
+
+  public constructor(documentUri: string, initialContent = '') {
+    this.documentUri = documentUri;
+    this.content = initialContent;
+  }
 
   public provideTextDocumentContent(): string {
     return this.content;
@@ -745,7 +807,7 @@ class HostDocumentProvider implements vscode.TextDocumentContentProvider {
 
   public update(content: string): void {
     this.content = content;
-    this.changed.fire(vscode.Uri.parse('lunil-host:/contract.lua'));
+    this.changed.fire(vscode.Uri.parse(this.documentUri));
   }
 }
 

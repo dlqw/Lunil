@@ -48,6 +48,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
     }, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly string[] ExcludedDirectories =
         [".git", ".svn", "bin", "obj", "node_modules", ".vscode", ".idea"];
+    private static readonly Lazy<BuiltinLibrary> Builtin = new(
+        () => BuiltinLibrary.Load(), LazyThreadSafetyMode.PublicationOnly);
     private readonly object _gate = new();
     private readonly LuaFrontEndSession _frontEnd = new(new LuaCompilerOptions
     {
@@ -553,6 +555,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             HostContract = hostContract,
             ExternalTypeDeclarations = _externalTypeDeclarations,
             ExternalClassMembers = GetExternalClassMembers(),
+            BuiltinGlobals = Builtin.Value.Globals,
         };
         // The front-end analysis is CPU-bound and synchronous. Run it on the thread pool so a
         // large document (for example a multi-megabyte generated config file) cannot stall the

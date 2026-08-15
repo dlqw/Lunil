@@ -33,6 +33,14 @@ public sealed record LuaAnalysisEnvironment
         ImmutableDictionary<string, ImmutableDictionary<string, LuaType>>.Empty
             .WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets the types of the Lua standard library globals (library tables such as
+    /// `string` and `math`, plus global functions), extracted from the embedded builtin
+    /// definitions. Analysis seeds them as known globals.
+    /// </summary>
+    public ImmutableDictionary<string, LuaType> BuiltinGlobals { get; init; } =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

@@ -275,7 +275,7 @@ public sealed class LanguageServerTests
             position = new { line = 1, character = 20 },
         }), CancellationToken.None);
         Assert.NotNull(hover);
-        Assert.Contains("fun(", hover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Contains("(name", hover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
 
         // Definition of the inherited member lands in the base module.
         var extendDefinition = await service.DefinitionAsync(Element(new
@@ -307,6 +307,65 @@ public sealed class LanguageServerTests
         Assert.NotNull(aliasDefinition);
         Assert.Equal(animalUri.AbsoluteUri, aliasDefinition!["uri"]!.GetValue<string>());
         Assert.Equal(3, aliasDefinition["range"]!["start"]!["line"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task BuiltinLibraryProvidesTypesDocsAndNavigation()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///scratch.lua");
+        var source = string.Join("\n",
+        [
+            "local name = string.format('%s', 42)",
+            "local floor = math.floor(3.7)",
+            "print(name, floor)",
+        ]);
+        workspace.Open(uri, 1, source);
+        var service = new LuaLanguageService(workspace);
+
+        // Member hover shows the annotated signature, the doc comment, and a link into
+        // the readonly builtin document.
+        var formatHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 20 },
+        }), CancellationToken.None);
+        var formatValue = formatHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("format(s: string", formatValue, StringComparison.Ordinal);
+        Assert.Contains("Formats values under format directives", formatValue, StringComparison.Ordinal);
+        Assert.Contains("command:lunil._openBuiltinLocation", formatValue, StringComparison.Ordinal);
+
+        // Go-to-definition opens the readonly builtin document at the definition.
+        var formatDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 20 },
+        }), false, CancellationToken.None);
+        Assert.Equal("lunil-builtin:lua", formatDefinition!["uri"]!.GetValue<string>());
+
+        // Global functions hover with their signature and link.
+        var printHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 2, character = 2 },
+        }), CancellationToken.None);
+        var printValue = printHover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("print(", printValue, StringComparison.Ordinal);
+        Assert.Contains("Writes the given values", printValue, StringComparison.Ordinal);
+
+        // Member completion on a stdlib table lists annotated members.
+        workspace.Open(uri, 2, "local sorted = table." + "\n" + "return sorted");
+        var completion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 22 },
+        }), CancellationToken.None);
+        var labels = completion!["items"]!.AsArray()
+            .Select(item => item!["label"]!.GetValue<string>()).ToArray();
+        Assert.Contains("insert", labels);
+        Assert.Contains("concat", labels);
+        Assert.Contains("sort", labels);
     }
 
     [Fact]
@@ -373,8 +432,9 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var typeHoverValue = typeHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Vec", typeHoverValue, StringComparison.Ordinal);
-        Assert.Contains("module `vec`", typeHoverValue, StringComparison.Ordinal);
-        Assert.Contains("add(other", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("module [vec]", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("[add]", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("(other", typeHoverValue, StringComparison.Ordinal);
 
         // Hover on the class declaration name in the annotation shows the same card.
         var declarationHover = await service.HoverAsync(Element(new
@@ -446,12 +506,14 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var declaredValue = declaredHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Tool : Base", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("module `tool`", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("size: number", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("use()", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("module [tool]", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("[size]", declaredValue, StringComparison.Ordinal);
+        Assert.Contains(": number", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("[use](", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("command:lunil._openLocation", declaredValue, StringComparison.Ordinal);
         Assert.Contains("Uses the tool.", declaredValue, StringComparison.Ordinal);
         Assert.Contains("Inherited \u00b7 Base", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("extend(", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("[extend]", declaredValue, StringComparison.Ordinal);
 
         // The alias in the consuming module hovers with the same class view.
         var aliasHover = await service.HoverAsync(Element(new
@@ -461,7 +523,7 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var aliasValue = aliasHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Tool : Base", aliasValue, StringComparison.Ordinal);
-        Assert.Contains("use()", aliasValue, StringComparison.Ordinal);
+        Assert.Contains("[use]", aliasValue, StringComparison.Ordinal);
 
         // F12 on the alias declaration passes through to the class line.
         var aliasDeclaration = await service.DefinitionAsync(Element(new

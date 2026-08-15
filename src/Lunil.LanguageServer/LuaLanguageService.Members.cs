@@ -699,12 +699,44 @@ internal sealed partial class LuaLanguageService
              symbol.Path.EndsWith("." + memberName, StringComparison.Ordinal)));
     }
 
+    /// <summary>The identifier a member reference's receiver names, when simple (`string`).</summary>
+    private static string? GetReceiverName(LanguageDocumentAnalysis analysis, LuaCodeReference member)
+    {
+        if (member.ReceiverSpan is not { Length: > 0 } receiver)
+        {
+            return null;
+        }
+
+        var start = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.Start));
+        var end = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.End));
+        var text = analysis.Document.Text[start..Math.Min(end, analysis.Document.Text.Length)];
+        var separator = text.IndexOfAny(['.', ':']);
+        var name = (separator < 0 ? text : text[..separator]).Trim();
+        return name.Length == 0 ? null : name;
+    }
+
     /// <summary>The inferred type of a member, for hover text and completion details.</summary>
     private LuaType? ResolveMemberType(
         LanguageDocumentAnalysis analysis,
         LuaCodeReference member,
         Dictionary<int, string>? requireAliases = null)
     {
+        // Stdlib library tables (`string.format`, `math.floor`) are builtin globals whose
+        // members carry annotated signatures.
+        if (GetReceiverName(analysis, member) is { } builtinReceiver &&
+            Builtin.Value.Globals.TryGetValue(builtinReceiver, out var libraryType))
+        {
+            foreach (var (memberName, memberType) in CollectTypeMembers(libraryType))
+            {
+                if (string.Equals(memberName, member.Name, StringComparison.Ordinal))
+                {
+                    return memberType;
+                }
+            }
+
+            return null;
+        }
+
         foreach (var resolution in ResolveMemberExportChain(analysis, member))
         {
             return resolution.Symbol.Type;
@@ -846,6 +878,20 @@ internal sealed partial class LuaLanguageService
 
         var receiver = analysis.Compilation.SemanticModel.Symbols.FirstOrDefault(symbol =>
             symbol.Name == receiverName);
+        if (receiver is null && Builtin.Value.Globals.TryGetValue(receiverName, out var stdlibType))
+        {
+            // Stdlib library tables (`table.`, `string.`) have no lexical symbol; their
+            // members complete from the embedded definitions.
+            foreach (var (name, type) in CollectTypeMembers(stdlibType))
+            {
+                AddMemberItem(items, name, type, methodsOnly);
+            }
+
+            return new CompletionContext(
+                items.Values.OrderBy(static item => item.SortText, StringComparer.Ordinal).ToImmutableArray(),
+                true);
+        }
+
         if (receiver is not null)
         {
             var aliases = BuildRequireAliases(analysis);
@@ -860,6 +906,14 @@ internal sealed partial class LuaLanguageService
                     {
                         AddMemberItem(items, symbol.Path, symbol.Type, methodsOnly);
                     }
+                }
+            }
+            else if (Builtin.Value.Globals.TryGetValue(receiverName, out var builtinLibraryType))
+            {
+                // Stdlib library tables complete from the embedded definitions.
+                foreach (var (name, type) in CollectTypeMembers(builtinLibraryType))
+                {
+                    AddMemberItem(items, name, type, methodsOnly);
                 }
             }
             else

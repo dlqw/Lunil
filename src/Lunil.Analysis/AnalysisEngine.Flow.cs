@@ -828,6 +828,11 @@ internal sealed partial class AnalysisEngine
 
     private void InstallBuiltIns()
     {
+        foreach (var pair in _environment.BuiltinGlobals)
+        {
+            SetGlobalType(pair.Key, pair.Value);
+        }
+
         foreach (var pair in _hostGlobalTypes)
         {
             SetGlobalType(pair.Key, pair.Value);

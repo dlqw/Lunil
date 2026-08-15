@@ -15,6 +15,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="BuiltinLibrary\lua-builtin.lua" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />
     <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\Lunil.Semantics\Lunil.Semantics.csproj" />

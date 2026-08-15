@@ -106,7 +106,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var reference = FindReference(context.Analysis, context.ByteOffset);
         if (reference is null)
         {
-            // Hover over a member reference shows the inferred member type.
+            // Hover over a member reference shows the inferred member type, plus the
+            // builtin library's documentation when the receiver is a stdlib global.
             var codeReference = FindCodeReference(context.Analysis, context.ByteOffset);
             if (codeReference is not null && IsNamedMember(codeReference))
             {
@@ -116,8 +117,23 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return null;
                 }
 
+                var memberMarkdown = $"```lua\n{codeReference.Name}{FormatMemberSignature(memberType)}\n```";
+                if (TryGetBuiltinMember(context.Analysis, codeReference) is { } builtinMember)
+                {
+                    if (builtinMember.Doc is not null)
+                    {
+                        memberMarkdown += "\n" + builtinMember.Doc;
+                    }
+
+                    memberMarkdown += "\n" + BuiltinLocationLink(builtinMember.Span, "builtin library");
+                }
+                else
+                {
+                    memberMarkdown += "\nmember";
+                }
+
                 return HoverResult(
-                    $"```lua\n{codeReference.Name}: {memberType.DisplayName}\n```\nmember",
+                    memberMarkdown,
                     context.Analysis.Document.ToRange(codeReference.Span));
             }
 
@@ -140,6 +156,23 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
 
             return null;
+        }
+
+        // Builtin globals (print, string, math, ...) hover with their documented
+        // signature and a link into the readonly builtin library.
+        if (reference.Symbol.Kind == LuaSymbolKind.Environment &&
+            Builtin.Value.Globals.TryGetValue(reference.Name, out var builtinGlobalType) &&
+            Builtin.Value.MemberSpans.TryGetValue(reference.Name, out var builtinSpan))
+        {
+            var builtinHover =
+                $"```lua\n{reference.Name}{FormatMemberSignature(builtinGlobalType)}\n```";
+            if (Builtin.Value.Docs.TryGetValue(reference.Name, out var builtinDoc))
+            {
+                builtinHover += "\n" + builtinDoc;
+            }
+
+            builtinHover += "\n" + BuiltinLocationLink(builtinSpan, "builtin library");
+            return HoverResult(builtinHover, context.Analysis.Document.ToRange(reference.Span));
         }
 
         // Class values (require aliases and the defining module's exported class local)
@@ -220,6 +253,22 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
 
             return null;
+        }
+
+        // Builtin stdlib members and globals navigate into the readonly library.
+        var builtinReference = FindReference(context.Analysis, context.ByteOffset);
+        if (builtinReference is not null &&
+            builtinReference.Symbol.Kind == LuaSymbolKind.Environment &&
+            Builtin.Value.MemberSpans.TryGetValue(builtinReference.Name, out var builtinGlobalSpan))
+        {
+            return BuiltinVirtualLocation(builtinGlobalSpan);
+        }
+
+        var builtinMemberReference = FindCodeReference(context.Analysis, context.ByteOffset);
+        if (builtinMemberReference is not null && IsNamedMember(builtinMemberReference) &&
+            TryGetBuiltinMember(context.Analysis, builtinMemberReference) is { } builtinMemberDefinition)
+        {
+            return BuiltinVirtualLocation(builtinMemberDefinition.Span);
         }
 
         // Annotation elements (type names, declared class/alias/enum names) navigate to
@@ -363,6 +412,105 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             : null;
     }
 
+    private static readonly Lazy<BuiltinLibrary> Builtin = new(
+        () => BuiltinLibrary.Load(), LazyThreadSafetyMode.PublicationOnly);
+
+    private static readonly Uri BuiltinDocumentUri = new("lunil-builtin:lua", UriKind.Absolute);
+
+    private sealed record BuiltinMember(string Path, TextSpan Span, string? Doc);
+
+    /// <summary>
+    /// The builtin member under the cursor when its receiver names a stdlib global
+    /// (`string.format`, `math.floor`); spans and docs index the embedded library.
+    /// </summary>
+    private static BuiltinMember? TryGetBuiltinMember(
+        LanguageDocumentAnalysis analysis,
+        LuaCodeReference member)
+    {
+        if (member.ReceiverSpan is not { Length: > 0 } receiver)
+        {
+            return null;
+        }
+
+        var receiverStart = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.Start));
+        var receiverEnd = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.End));
+        var receiverText = analysis.Document.Text[receiverStart..Math.Min(receiverEnd, analysis.Document.Text.Length)];
+        var separator = receiverText.IndexOfAny(['.', ':']);
+        var receiverName = (separator < 0 ? receiverText : receiverText[..separator]).Trim();
+        if (receiverName.Length == 0 || !Builtin.Value.Globals.ContainsKey(receiverName) ||
+            !Builtin.Value.TryGetMemberPath(receiverName, member.Name!, out var path))
+        {
+            return null;
+        }
+
+        var span = Builtin.Value.MemberSpans[path];
+        return new BuiltinMember(path, span, Builtin.Value.Docs.GetValueOrDefault(path));
+    }
+
+    private static JsonObject BuiltinVirtualLocation(TextSpan span)
+    {
+        var (line, character) = Builtin.Value.ToPosition(span);
+        return new JsonObject
+        {
+            ["uri"] = BuiltinDocumentUri.AbsoluteUri,
+            ["range"] = LanguageServerWorkspace.ToJson(new LspRange(
+                new LspPosition(line, character),
+                new LspPosition(line, character + Math.Max(1, span.Length)))),
+        };
+    }
+
+    private string MemberLink(string module, string name, string signature)
+    {
+        var uri = workspace.GetUri(module);
+        var symbol = workspace.GetSnapshot()?.ExportGraph.Symbols.FirstOrDefault(candidate =>
+            !candidate.IsExternal &&
+            string.Equals(candidate.ModuleName, module, StringComparison.Ordinal) &&
+            candidate.Path == name);
+        if (uri is null || !workspace.TryGetDocument(uri, out var document) || symbol is null)
+        {
+            return "`" + name + signature + "`";
+        }
+
+        var position = document.ToPosition(symbol.DefinitionSpan.Start);
+        return LocationLink(uri.AbsoluteUri, position.Line, position.Character, name) + signature;
+    }
+
+    private string ModuleLink(Uri uri, string module)
+    {
+        if (!workspace.TryGetDocument(uri, out var document))
+        {
+            return "`" + module + "`";
+        }
+
+        var root = FindModuleRootExport(module);
+        var position = root is not null && root.DefinitionSpan.Length > 0
+            ? document.ToPosition(root.DefinitionSpan.Start)
+            : new LspPosition(0, 0);
+        return LocationLink(uri.AbsoluteUri, position.Line, position.Character, module);
+    }
+
+    private static string BuiltinLocationLink(TextSpan span, string label)
+    {
+        var (line, character) = Builtin.Value.ToPosition(span);
+        var arguments = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, int>
+        {
+            ["line"] = line,
+            ["character"] = character,
+        });
+        return $"[{label}](command:lunil._openBuiltinLocation?{Uri.EscapeDataString(arguments)})";
+    }
+
+    private static string LocationLink(string uri, int line, int character, string label)
+    {
+        var arguments = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["uri"] = uri,
+            ["line"] = line,
+            ["character"] = character,
+        });
+        return $"[{label}](command:lunil._openLocation?{Uri.EscapeDataString(arguments)})";
+    }
+
     /// <summary>An annotation element hover: class cards for type names, field/param types.</summary>
     private string? TryBuildAnnotationHover(LanguageDocumentAnalysis analysis, AnnotationElement element)
     {
@@ -455,7 +603,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             markdown.Append(" : ").Append(bases[0]);
         }
 
-        markdown.Append("\n```\nmodule `").Append(module).Append('`');
+        markdown.Append("\n```\nmodule ");
+        markdown.Append(workspace.GetUri(module) is { } moduleUri ? ModuleLink(moduleUri, module) : module);
         if (bases.Count > 1)
         {
             markdown.Append(" · inherits ").Append(string.Join(" > ", bases));
@@ -495,7 +644,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             const int shown = 10;
             foreach (var member in members.Take(shown))
             {
-                markdown.Append("- `").Append(member.Path).Append(member.Signature).Append('`');
+                markdown.Append("- ");
+                markdown.Append(MemberLink(groupModule, member.Path, member.Signature));
                 if (member.Doc is { } doc)
                 {
                     markdown.Append(" \u2014 *").Append(doc).Append('*');
