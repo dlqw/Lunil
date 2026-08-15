@@ -24,6 +24,22 @@ internal sealed class LuaLanguageServer : IDisposable
         _workspace.ProgressReported = PublishProgressAsync;
         // Per-document caches follow their documents out of the workspace.
         _workspace.DocumentRemoved += uri => _service.ForgetSemanticTokens(uri);
+        // Informational lifecycle messages go to the client log; stderr would surface
+        // as errors in the editor's output channel.
+        _workspace.InfoLogged = message =>
+        {
+            if (!_initialized)
+            {
+                Console.Error.WriteLine(message);
+                return;
+            }
+
+            _ = _connection.SendNotificationAsync("window/logMessage", new JsonObject
+            {
+                ["type"] = 3,
+                ["message"] = message,
+            });
+        };
     }
 
     public CancellationToken ExitToken => _exit.Token;

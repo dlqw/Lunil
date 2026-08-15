@@ -395,7 +395,16 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
         if (parameters.ValueKind == JsonValueKind.Object && parameters.TryGetProperty("id", out var id) &&
             _requests.TryGetValue(GetIdKey(id), out var source))
         {
-            source.Cancel();
+            try
+            {
+                source.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The request completed and its source was disposed between the lookup
+                // and this cancellation; there is nothing left to cancel. Notifications
+                // have no error channel, so this must never escape to the message loop.
+            }
         }
     }
 

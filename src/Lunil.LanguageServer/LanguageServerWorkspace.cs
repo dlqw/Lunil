@@ -122,6 +122,24 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// <summary>Raised when a document leaves the workspace so per-document caches follow.</summary>
     public event Action<Uri>? DocumentRemoved;
 
+    /// <summary>
+    /// Receives informational lifecycle messages. Without a sink they go to stderr,
+    /// which clients surface as errors in their output channels.
+    /// </summary>
+    public Action<string>? InfoLogged { get; set; }
+
+    private void LogInfo(string message)
+    {
+        if (InfoLogged is { } log)
+        {
+            log(message);
+        }
+        else
+        {
+            Console.Error.WriteLine(message);
+        }
+    }
+
     public ImmutableArray<Uri> Folders
     {
         get
@@ -656,7 +674,24 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri)))];
         }
 
-        var snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+        LuaWorkspaceCompactSnapshot snapshot;
+        try
+        {
+            snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (!_disposed)
+        {
+            // A configuration change swapped (and disposed) the workspace while this
+            // rebuild was in flight; retry once on the live instance. The generation
+            // guard below still discards the result if another change followed.
+            lock (_gate)
+            {
+                workspace = _workspace;
+            }
+
+            snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+        }
+
         List<LspTextDocument>? openDocuments = null;
         lock (_gate)
         {
@@ -1079,7 +1114,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        Console.Error.WriteLine(
+        LogInfo(
             $"Lunil workspace: scanned {documents.Length} documents, {_externalTypeDeclarations.Count} external type declarations");
 
         SignalDeclarationsReady();
@@ -1270,7 +1305,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 }
             });
 
-        Console.Error.WriteLine(
+        LogInfo(
             $"Lunil workspace: loading {folders.Length} folder(s) -> {paths.Count} .lua files");
 
         lock (_gate)
@@ -1287,13 +1322,13 @@ internal sealed class LanguageServerWorkspace : IDisposable
             // completes. The gate lifts when a real scan finishes or the first document is opened.
             if (!_folders.SequenceEqual(folders))
             {
-                Console.Error.WriteLine("Lunil workspace: folders changed during load; deferring to newer load");
+                LogInfo("Lunil workspace: folders changed during load; deferring to newer load");
                 return;
             }
 
             if (loaded.IsEmpty)
             {
-                Console.Error.WriteLine("Lunil workspace: no .lua files under registered folders; declaration gate stays closed until a document opens or a folder is added");
+                LogInfo("Lunil workspace: no .lua files under registered folders; declaration gate stays closed until a document opens or a folder is added");
                 // No documents under the registered folders. The gate stays closed until a document
                 // is opened (its ancestor directory is scanned) or a folder with files is added.
                 return;

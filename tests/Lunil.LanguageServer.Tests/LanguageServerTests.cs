@@ -811,6 +811,54 @@ public sealed class LanguageServerTests
         Assert.True(result["capabilities"]!["semanticTokensProvider"]!["full"]!["delta"]!.GetValue<bool>());
     }
 
+    [Fact]
+    public async Task LateCancellationAfterRequestCompletionDoesNotKillTheConnection()
+    {
+        // A $/cancelRequest racing the response used to Cancel a disposed source and
+        // crash the whole process; the connection must survive it and keep answering.
+        var request = Frame("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"quick\",\"params\":{}}");
+        var lateCancel = Frame("{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":7}}");
+        var followUp = Frame("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"quick\",\"params\":{}}");
+        await using var input = new MemoryStream(request.Concat(lateCancel).Concat(followUp).ToArray());
+        await using var output = new MemoryStream();
+        await using var connection = new JsonRpcConnection(input, output);
+
+        await connection.RunAsync((message, _) => Task.FromResult<JsonNode?>(JsonValue.Create(true)));
+
+        var header = Encoding.ASCII.GetBytes("Content-Length:");
+        var written = output.ToArray();
+        var responses = 0;
+        for (var index = 0; (index = IndexOfBytes(written, header, index)) >= 0; index += header.Length)
+        {
+            responses++;
+        }
+
+        Assert.Equal(2, responses);
+    }
+
+    private static int IndexOfBytes(byte[] haystack, byte[] needle, int start)
+    {
+        for (var index = start; index <= haystack.Length - needle.Length; index++)
+        {
+            var matched = true;
+            for (var offset = 0; offset < needle.Length; offset++)
+            {
+                if (haystack[index + offset] != needle[offset])
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
     private static JsonElement Element(string json)
     {
         using var document = JsonDocument.Parse(json);
