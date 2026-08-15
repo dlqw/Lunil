@@ -251,31 +251,30 @@ internal sealed partial class LuaLanguageService
     private sealed record MemberDefinition(Uri Uri, LspRange Range, string Detail);
 
     /// <summary>
-    /// Resolves a member reference to its definition: module exports first (cross-file),
-    /// then same-file member writes for locally built tables and classes.
+    /// Resolves a member reference to its definition: module exports first (cross-file,
+    /// including base-class modules through the declared inheritance chain), then
+    /// same-file member writes for locally built tables and classes.
     /// </summary>
     private MemberDefinition? ResolveMemberDefinition(
         LanguageDocumentAnalysis analysis,
         LuaCodeReference member)
     {
         var name = member.Name!;
+        foreach (var resolution in ResolveMemberExportChain(analysis, member))
+        {
+            if (workspace.GetUri(resolution.ModuleName) is { } uri &&
+                workspace.TryGetDocument(uri, out var document))
+            {
+                return new MemberDefinition(
+                    uri,
+                    document.ToRange(resolution.Symbol.DefinitionSpan),
+                    $"{resolution.ModuleName}.{name}");
+            }
+        }
+
         var receiver = ResolveReceiverSymbol(analysis, member);
         if (receiver is not null)
         {
-            var aliases = BuildRequireAliases(analysis);
-            if (aliases.TryGetValue(receiver.Id, out var moduleName))
-            {
-                var exported = FindExportSymbol(moduleName, name);
-                if (exported is not null && workspace.GetUri(exported.ModuleName) is { } uri &&
-                    workspace.TryGetDocument(uri, out var document))
-                {
-                    return new MemberDefinition(
-                        uri,
-                        document.ToRange(exported.DefinitionSpan),
-                        $"{exported.ModuleName}.{name}");
-                }
-            }
-
             var firstWrite = analysis.Compilation.SemanticModel.UnifiedReferences
                 .Where(item => string.Equals(item.Name, name, StringComparison.Ordinal) &&
                     item.Access.HasFlag(LuaReferenceAccess.Write))
@@ -290,51 +289,46 @@ internal sealed partial class LuaLanguageService
             }
         }
 
-        // Receiver unresolved (chained or dynamic): jump when exactly one workspace
-        // export matches the member name.
-        var snapshot = workspace.GetSnapshot();
-        var unique = snapshot?.ExportGraph.Symbols.Where(symbol =>
-            !symbol.IsExternal &&
-            (symbol.Path == name || symbol.Path.EndsWith("." + name, StringComparison.Ordinal))).ToArray();
-        if (unique is { Length: 1 })
-        {
-            if (workspace.GetUri(unique[0].ModuleName) is { } uri &&
-                workspace.TryGetDocument(uri, out var document))
-            {
-                return new MemberDefinition(
-                    uri,
-                    document.ToRange(unique[0].DefinitionSpan),
-                    $"{unique[0].ModuleName}.{unique[0].Path}");
-            }
-        }
-
         return null;
     }
 
-    private LuaWorkspaceExportSymbol? FindExportSymbol(string moduleName, string memberName)
-    {
-        var snapshot = workspace.GetSnapshot();
-        return snapshot?.ExportGraph.Symbols.FirstOrDefault(symbol =>
-            !symbol.IsExternal &&
-            string.Equals(symbol.ModuleName, moduleName, StringComparison.Ordinal) &&
-            (symbol.Path == memberName ||
-             symbol.Path.EndsWith("." + memberName, StringComparison.Ordinal)));
-    }
+    private LuaWorkspaceExportSymbol? FindExportSymbol(string moduleName, string memberName) =>
+        workspace.GetSnapshot() is { } snapshot
+            ? FindExportSymbolIn(snapshot, moduleName, memberName)
+            : null;
 
     /// <summary>
     /// Resolves a member reference to the workspace export symbol it belongs to, if any:
     /// a require-alias receiver maps to the required module's exports, a resolved local
     /// receiver maps to the current module's own exports (the definition-site pattern
     /// <c>function M.f</c>), and an unresolved receiver accepts a unique same-named export.
+    /// Member lookup then follows the <c>@class</c> inheritance chain declared on the
+    /// module's class, so inherited members (<c>Base:extend</c> on a subclass) resolve to
+    /// the base module that declares them.
     /// </summary>
     private LuaWorkspaceExportSymbol? TryResolveMemberExport(
         LanguageDocumentAnalysis analysis,
         LuaCodeReference member)
     {
+        foreach (var resolution in ResolveMemberExportChain(analysis, member))
+        {
+            return resolution.Symbol;
+        }
+
+        return null;
+    }
+
+    private sealed record MemberExportResolution(LuaWorkspaceExportSymbol Symbol, string ModuleName);
+
+    private IEnumerable<MemberExportResolution> ResolveMemberExportChain(
+        LanguageDocumentAnalysis analysis,
+        LuaCodeReference member,
+        int maximumHops = 8)
+    {
         var snapshot = workspace.GetSnapshot();
         if (snapshot is null)
         {
-            return null;
+            yield break;
         }
 
         var name = member.Name!;
@@ -345,13 +339,109 @@ internal sealed partial class LuaLanguageService
             var moduleName = aliases.TryGetValue(receiver.Id, out var required)
                 ? required
                 : analysis.Module.Name;
-            return FindExportSymbol(moduleName, name);
+            foreach (var symbol in FindChainExports(
+                         workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops))
+            {
+                yield return symbol;
+            }
+
+            yield break;
         }
 
+        // Receiver unresolved (chained or dynamic): treat like definition's unique-export
+        // fallback.
         var unique = snapshot.ExportGraph.Symbols.Where(symbol =>
             !symbol.IsExternal &&
             (symbol.Path == name || symbol.Path.EndsWith("." + name, StringComparison.Ordinal))).ToArray();
-        return unique.Length == 1 ? unique[0] : null;
+        if (unique is { Length: 1 })
+        {
+            yield return new MemberExportResolution(unique[0], unique[0].ModuleName);
+        }
+    }
+
+    /// <summary>
+    /// Walks a module's export graph and the <c>@class</c> inheritance chain declared in
+    /// the workspace: the module's own exports first, then the modules declaring each
+    /// base class, so inherited members resolve where they are defined.
+    /// </summary>
+    private static IEnumerable<MemberExportResolution> FindChainExports(
+        ImmutableArray<WorkspaceClassDeclaration> classDeclarations,
+        LuaWorkspaceCompactSnapshot snapshot,
+        string moduleName,
+        string memberName,
+        int maximumHops)
+    {
+        var chain = CollectChainModules(classDeclarations, moduleName, maximumHops);
+        foreach (var module in chain)
+        {
+            var exported = FindExportSymbolIn(snapshot, module, memberName);
+            if (exported is not null)
+            {
+                yield return new MemberExportResolution(exported, module);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A module and every module declaring a base class of its classes, nearest first.
+    /// Member completion offers the exports of all of them so inherited members appear.
+    /// </summary>
+    private static IEnumerable<string> CollectChainModules(
+        ImmutableArray<WorkspaceClassDeclaration> classDeclarations,
+        string moduleName,
+        int maximumHops = 8)
+    {
+        var classesByModule = classDeclarations
+            .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.ToArray(),
+                StringComparer.Ordinal);
+        var modulesByClass = classDeclarations
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First().ModuleName,
+                StringComparer.Ordinal);
+        var visitedModules = new HashSet<string>(StringComparer.Ordinal);
+        var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+        pending.Enqueue(moduleName);
+        var processed = 0;
+        while (pending.Count > 0 && processed < maximumHops)
+        {
+            var module = pending.Dequeue();
+            if (!visitedModules.Add(module))
+            {
+                continue;
+            }
+
+            processed++;
+            yield return module;
+            foreach (var @class in classesByModule.GetValueOrDefault(module) ?? [])
+            {
+                foreach (var baseName in @class.BaseNames)
+                {
+                    if (visitedClasses.Add(baseName) &&
+                        modulesByClass.TryGetValue(baseName, out var baseModule))
+                    {
+                        pending.Enqueue(baseModule);
+                    }
+                }
+            }
+        }
+    }
+
+    private static LuaWorkspaceExportSymbol? FindExportSymbolIn(
+        LuaWorkspaceCompactSnapshot snapshot,
+        string moduleName,
+        string memberName)
+    {
+        return snapshot.ExportGraph.Symbols.FirstOrDefault(symbol =>
+            !symbol.IsExternal &&
+            string.Equals(symbol.ModuleName, moduleName, StringComparison.Ordinal) &&
+            (symbol.Path == memberName ||
+             symbol.Path.EndsWith("." + memberName, StringComparison.Ordinal)));
     }
 
     /// <summary>The inferred type of a member, for hover text and completion details.</summary>
@@ -360,20 +450,15 @@ internal sealed partial class LuaLanguageService
         LuaCodeReference member,
         Dictionary<int, string>? requireAliases = null)
     {
+        foreach (var resolution in ResolveMemberExportChain(analysis, member))
+        {
+            return resolution.Symbol.Type;
+        }
+
         var receiver = ResolveReceiverSymbol(analysis, member);
         if (receiver is null)
         {
             return null;
-        }
-
-        requireAliases ??= BuildRequireAliases(analysis);
-        if (requireAliases.TryGetValue(receiver.Id, out var moduleName))
-        {
-            var exported = FindExportSymbol(moduleName, member.Name!);
-            if (exported is not null)
-            {
-                return exported.Type;
-            }
         }
 
         var receiverType = GetType(analysis, receiver);
@@ -511,11 +596,15 @@ internal sealed partial class LuaLanguageService
             var aliases = BuildRequireAliases(analysis);
             if (aliases.TryGetValue(receiver.Id, out var moduleName) && snapshot is not null)
             {
-                foreach (var symbol in snapshot.ExportGraph.Symbols.Where(symbol =>
-                             string.Equals(symbol.ModuleName, moduleName, StringComparison.Ordinal) &&
-                             !symbol.Path.Contains('.', StringComparison.Ordinal)))
+                foreach (var chainModule in CollectChainModules(
+                             workspace.GetClassDeclarations(), moduleName))
                 {
-                    AddMemberItem(items, symbol.Path, symbol.Type, methodsOnly);
+                    foreach (var symbol in snapshot.ExportGraph.Symbols.Where(symbol =>
+                                 string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&
+                                 !symbol.Path.Contains('.', StringComparison.Ordinal)))
+                    {
+                        AddMemberItem(items, symbol.Path, symbol.Type, methodsOnly);
+                    }
                 }
             }
             else

@@ -19,6 +19,12 @@ internal sealed record LanguageDocumentAnalysis(
     internal LuaLanguageService.ServiceCaches ServiceCaches { get; } = new();
 }
 
+/// <summary>An annotation-declared class and its declared base class names.</summary>
+internal sealed record WorkspaceClassDeclaration(
+    string ModuleName,
+    string Name,
+    ImmutableArray<string> BaseNames);
+
 internal enum FileIndexStatus : byte
 {
     Pending,
@@ -65,6 +71,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
         _perDocumentDeclarations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FileIndexStatus> _indexStatus = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indexErrors = new(StringComparer.Ordinal);
+    private ImmutableArray<WorkspaceClassDeclaration>? _classDeclarations;
+    private int _classDeclarationsGeneration = -1;
     private int _generation;
     private int _declarationsGeneration;
     private readonly SemaphoreSlim _analysisConcurrency = new(8, 8);
@@ -727,9 +735,47 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
-    /// <summary>Returns the per-document index status counts for progress display.</summary>
-    public JsonObject GetIndexStatus()
+    /// <summary>
+    /// Every annotation-declared <c>@class</c> with its declaring module and base class
+    /// names, rebuilt when the cross-file declaration map changes. Drives inheritance-
+    /// aware member navigation across modules.
+    /// </summary>
+    public ImmutableArray<WorkspaceClassDeclaration> GetClassDeclarations()
     {
+        lock (_gate)
+        {
+            if (_classDeclarations is null || _classDeclarationsGeneration != _declarationsGeneration)
+            {
+                var builder = new List<WorkspaceClassDeclaration>();
+                foreach (var pair in _perDocumentDeclarations)
+                {
+                    var moduleName = GetModuleIdentity(new Uri(pair.Key, UriKind.Absolute)).Name;
+                    foreach (var declaration in pair.Value.Values)
+                    {
+                        if (declaration.Root is LuaClassAnnotationSyntax classAnnotation)
+                        {
+                            builder.Add(new WorkspaceClassDeclaration(
+                                moduleName,
+                                classAnnotation.Name,
+                                [.. classAnnotation.BaseTypes.Select(static type =>
+                                    type is LuaNamedTypeSyntax named ? named.Name : string.Empty)
+                                    .Where(static name => !string.IsNullOrEmpty(name))]));
+                        }
+                    }
+                }
+
+                _classDeclarations = [.. builder
+                    .OrderBy(static item => item.ModuleName, StringComparer.Ordinal)
+                    .ThenBy(static item => item.Name, StringComparer.Ordinal)];
+                _classDeclarationsGeneration = _declarationsGeneration;
+            }
+
+            return _classDeclarations.Value;
+        }
+    }
+
+    /// <summary>Returns the per-document index status counts for progress display.</summary>
+    public JsonObject GetIndexStatus()    {
         var failedFiles = new List<(string Uri, string? Error)>();
         var pendingFiles = new List<string>();
         int total, succeeded, failed, inProgress, pending;

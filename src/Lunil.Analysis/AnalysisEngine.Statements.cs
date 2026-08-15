@@ -243,7 +243,16 @@ internal sealed partial class AnalysisEngine
         LuaType value,
         TextSpan span)
     {
-        LuaType shape = value;
+        // Unwrap constructor-shaped initializers to the subclass's own shape: nesting the
+        // base's prototype (or a metatable) as the shape hides every later member write
+        // from export collection, which only expands structural shapes. Base members stay
+        // reachable through the declared base types instead.
+        LuaType shape = value switch
+        {
+            LuaPrototypeType prototype => prototype.Shape,
+            LuaMetatableType metatable => metatable.BaseType,
+            _ => value,
+        };
         foreach (var field in declaration.Fields)
         {
             var runtime = _relations.FindField(value, field.Name!);

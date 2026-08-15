@@ -708,11 +708,16 @@ internal sealed partial class AnalysisEngine
             return true;
         }
 
-        // A self-indexed class table becomes a prototype; compare through its shape.
+        // A self-indexed class table becomes a prototype; compare through its shape. The
+        // `X.__index = X` upgrade itself flips UsesSelfIndex on while preserving the
+        // shape, and turning self-index ON must count as growth — unioning the upgrade
+        // with the pre-upgrade snapshot rolls the cell back and swallows every later
+        // member write (the class-library pattern `function Cls.new` broke this way).
+        // Turning it back OFF is a downgrade and still unions.
         if (previous is LuaPrototypeType oldPrototype &&
             next is LuaPrototypeType newPrototype &&
             string.Equals(oldPrototype.Name, newPrototype.Name, StringComparison.Ordinal) &&
-            oldPrototype.UsesSelfIndex == newPrototype.UsesSelfIndex)
+            (newPrototype.UsesSelfIndex || oldPrototype.UsesSelfIndex == newPrototype.UsesSelfIndex))
         {
             return IsShapeGrowth(oldPrototype.Shape, newPrototype.Shape);
         }

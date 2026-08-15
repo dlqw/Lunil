@@ -238,6 +238,110 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task ClassInheritanceMembersResolveAcrossModules()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var baseUri = new Uri("file:///src/base.lua");
+        var animalUri = new Uri("file:///src/animal.lua");
+        var npcUri = new Uri("file:///src/npc.lua");
+        workspace.Open(baseUri, 1,
+            "---@class Base\n" +
+            "---@field tag string\n" +
+            "local Base = {}\n" +
+            "Base.__index = Base\n" +
+            "function Base:extend(name) return Base end\n" +
+            "function Base:describe() return self.tag end\n" +
+            "return Base");
+        workspace.Open(animalUri, 1,
+            "local Base = require(\"base\")\n" +
+            "---@class Animal : Base\n" +
+            "---@field name string\n" +
+            "local Animal = Base:extend(\"Animal\")\n" +
+            "function Animal:init(name) self.name = name end\n" +
+            "return Animal");
+        workspace.Open(npcUri, 1,
+            "local Animal = require(\"animal\")\n" +
+            "local npc = Animal:extend(\"npc\")\n" +
+            "return npc");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // Hover over the inherited `extend` shows its signature from the base module.
+        var hover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = npcUri.AbsoluteUri },
+            position = new { line = 1, character = 20 },
+        }), CancellationToken.None);
+        Assert.NotNull(hover);
+        Assert.Contains("fun(", hover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        // Definition of the inherited member lands in the base module.
+        var extendDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = npcUri.AbsoluteUri },
+            position = new { line = 1, character = 20 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(extendDefinition);
+        Assert.Equal(baseUri.AbsoluteUri, extendDefinition!["uri"]!.GetValue<string>());
+        Assert.Equal(4, extendDefinition["range"]!["start"]!["line"]!.GetValue<int>());
+
+        // References cover the definition and the cross-module call site.
+        var extendReferences = await service.ReferencesAsync(Element(new
+        {
+            textDocument = new { uri = npcUri.AbsoluteUri },
+            position = new { line = 1, character = 20 },
+        }), CancellationToken.None);
+        var referenceUris = extendReferences!.AsArray()
+            .Select(location => location!["uri"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains(baseUri.AbsoluteUri, referenceUris);
+        Assert.Contains(npcUri.AbsoluteUri, referenceUris);
+
+        // The require alias passes through to the exported class value's definition.
+        var aliasDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = npcUri.AbsoluteUri },
+            position = new { line = 1, character = 13 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(aliasDefinition);
+        Assert.Equal(animalUri.AbsoluteUri, aliasDefinition!["uri"]!.GetValue<string>());
+        Assert.Equal(3, aliasDefinition["range"]!["start"]!["line"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task ClassInheritanceMembersAppearInCompletion()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var baseUri = new Uri("file:///src/base.lua");
+        var animalUri = new Uri("file:///src/animal.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(baseUri, 1,
+            "---@class Base\nlocal Base = {}\nBase.__index = Base\n" +
+            "function Base:extend(name) return Base end\nreturn Base");
+        workspace.Open(animalUri, 1,
+            "local Base = require(\"base\")\n---@class Animal : Base\n" +
+            "local Animal = Base:extend(\"Animal\")\nfunction Animal:init() end\nreturn Animal");
+        workspace.Open(appUri, 1,
+            "local Animal = require(\"animal\")\nlocal x = Animal.");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var completion = await service.CompletionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 1, character = 15 },
+        }), CancellationToken.None);
+        var labels = completion!["items"]!.AsArray()
+            .Select(item => item!["label"]!.GetValue<string>()).ToArray();
+
+        Assert.Contains("extend", labels);
+        Assert.Contains("init", labels);
+    }
+
+    [Fact]
     public async Task WorkspaceRejectsStaleVersionsAndKeepsUnsavedOverlay()
     {
         using var workspace = new LanguageServerWorkspace();

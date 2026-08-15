@@ -124,6 +124,22 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
         var type = GetType(context.Analysis, reference.Symbol)?.DisplayName ?? "unknown";
         var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue ? " captured upvalue" : string.Empty;
+        // A require alias shows the exported module value's indexed type instead of the
+        // unresolvable require() call result.
+        if (BuildRequireAliases(context.Analysis).TryGetValue(reference.Symbol.Id, out var requiredModule) &&
+            FindModuleRootExport(requiredModule) is { } root)
+        {
+            return new JsonObject
+            {
+                ["contents"] = new JsonObject
+                {
+                    ["kind"] = "markdown",
+                    ["value"] = $"```lua\n{reference.Name}: {root.Type.DisplayName}\n```\nmodule {root.ModuleName}",
+                },
+                ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(reference.Span)),
+            };
+        }
+
         return new JsonObject
         {
             ["contents"] = new JsonObject
@@ -257,8 +273,45 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 : Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(localWrite.Span));
         }
 
+        // A require alias passes through to the exported module value's definition (for
+        // example the `local Character = GameEntity:extend(...)` class line). The root
+        // export's span covers the trailing return statement; prefer the declaration of
+        // the returned class when its name is known.
+        var aliases = BuildRequireAliases(context.Analysis);
+        if (aliases.TryGetValue(reference.Symbol.Id, out var requiredModule) &&
+            FindModuleRootExport(requiredModule) is { } root &&
+            workspace.GetUri(root.ModuleName) is { } rootUri &&
+            workspace.TryGetDocument(rootUri, out var rootDocument) &&
+            root.DefinitionSpan.Length > 0)
+        {
+            if (root.Type is LuaPrototypeType { Name: { Length: > 0 } className } &&
+                await workspace.GetAnalysisAsync(rootUri, cancellationToken).ConfigureAwait(false) is { } rootAnalysis)
+            {
+                var declared = rootAnalysis.Compilation.SemanticModel.Symbols.FirstOrDefault(symbol =>
+                    string.Equals(symbol.Name, className, StringComparison.Ordinal) &&
+                    symbol.DeclaringSpan.Length > 0);
+                if (declared is not null)
+                {
+                    return Location(rootUri, rootDocument.ToRange(
+                        NormalizeDeclaringSpan(declared, rootDocument)));
+                }
+            }
+
+            return Location(rootUri, rootDocument.ToRange(root.DefinitionSpan));
+        }
+
         var span = NormalizeDeclaringSpan(reference.Symbol, context.Analysis.Document);
         return Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(span));
+    }
+
+    /// <summary>The module's root export symbol (its returned value), if indexed.</summary>
+    private LuaWorkspaceExportSymbol? FindModuleRootExport(string moduleName)
+    {
+        var snapshot = workspace.GetSnapshot();
+        return snapshot?.ExportGraph.Symbols.FirstOrDefault(symbol =>
+            !symbol.IsExternal &&
+            string.Equals(symbol.ModuleName, moduleName, StringComparison.Ordinal) &&
+            symbol.Path.Length == 0);
     }
 
     public async Task<JsonNode?> ReferencesAsync(JsonElement parameters, CancellationToken cancellationToken)
