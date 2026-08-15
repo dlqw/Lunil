@@ -447,6 +447,24 @@ internal sealed partial class AnalysisEngine
         return BlockResult.Next(state);
     }
 
+    /// <summary>
+    /// The span of a loop's leading keyword (`while`, `for`, `repeat`), so convergence
+    /// diagnostics underline the loop head rather than the entire body.
+    /// </summary>
+    private static Lunil.Core.Text.TextSpan LoopKeywordSpan(LuaSyntaxNode statement)
+    {
+        foreach (var token in statement.ChildTokens())
+        {
+            if (token.Kind is LuaTokenKind.WhileKeyword or LuaTokenKind.ForKeyword or
+                LuaTokenKind.RepeatKeyword)
+            {
+                return token.Span;
+            }
+        }
+
+        return statement.Span;
+    }
+
     private BlockResult AnalyzeReturn(LuaSyntaxNode statement, FlowState state)
     {
         var expressionList = statement.ChildNodes().FirstOrDefault(static node =>
@@ -545,7 +563,7 @@ internal sealed partial class AnalysisEngine
                 _currentFunction.WasWidened = true;
                 _context.AddDiagnostic(
                     "LUA6012",
-                    statement.Span,
+                    LoopKeywordSpan(statement),
                     "Loop flow did not converge within the configured iteration budget; values were widened.");
             }
         }
@@ -580,7 +598,7 @@ internal sealed partial class AnalysisEngine
                 _currentFunction.WasWidened = true;
                 _context.AddDiagnostic(
                     "LUA6012",
-                    statement.Span,
+                    LoopKeywordSpan(statement),
                     "Repeat-loop flow did not converge within the configured iteration budget; values were widened.");
             }
         }

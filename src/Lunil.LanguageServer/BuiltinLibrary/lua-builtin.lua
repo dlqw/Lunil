@@ -344,20 +344,23 @@ function math.exp(x) end
 ---@return number
 function math.log(x, base) end
 
----Returns the minimum and maximum of the arguments.
+---Returns the minimum of the arguments.
 ---@param x number
+---@param ... number
 ---@return number
-function math.min(x) end
+function math.min(x, ...) end
 
 ---Returns the maximum of the arguments.
 ---@param x number
+---@param ... number
 ---@return number
-function math.max(x) end
+function math.max(x, ...) end
 
 ---Remainder of the division of x by y, with the sign of x.
 ---@param x number
+---@param y number
 ---@return number
-function math.fmod(x) end
+function math.fmod(x, y) end
 
 ---Returns the integral and fractional parts of x.
 ---@param x number
