@@ -721,7 +721,8 @@ public sealed class LuaTypeRelations
                 // a single member's type and hid the other classes' members.
                 if (index != other &&
                     IsAssignable(result[index], result[other]) &&
-                    !AreDistinctClassInstances(result[index], result[other]))
+                    !AreDistinctClassInstances(result[index], result[other]) &&
+                    !NamedInstanceAbsorbedByAnonymous(result[index], result[other]))
                 {
                     result.RemoveAt(index);
                     break;
@@ -729,6 +730,17 @@ public sealed class LuaTypeRelations
             }
         }
     }
+
+    /// <summary>
+    /// A named class instance must survive union with an anonymous open instance (a
+    /// metatable over an open shape, built from an unannotated `X:extend` class): the
+    /// anonymous form accepts any table, so it would otherwise absorb every named
+    /// sibling and hide their members.
+    /// </summary>
+    private static bool NamedInstanceAbsorbedByAnonymous(LuaType removed, LuaType survivor) =>
+        InstanceClassName(removed) is not null &&
+        InstanceClassName(survivor) is null &&
+        survivor is LuaMetatableType or LuaStructuralTableType;
 
     private static bool AreDistinctClassInstances(LuaType left, LuaType right) =>
         InstanceClassName(left) is { } leftClass &&

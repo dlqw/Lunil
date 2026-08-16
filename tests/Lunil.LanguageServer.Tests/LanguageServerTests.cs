@@ -288,9 +288,11 @@ public sealed class LanguageServerTests
             position = new { line, character },
         }), false, CancellationToken.None));
 
-        // The require alias carries the exported class type through `new`.
+        // The require alias carries the exported class type through `new`; loop
+        // variables over instances hover with their class card.
         var loopVariable = await hoverAt(2, 7);
-        Assert.Contains("system: Sub", loopVariable, StringComparison.Ordinal);
+        Assert.Contains("class Sub", loopVariable, StringComparison.Ordinal);
+        Assert.Contains("[configure]", loopVariable, StringComparison.Ordinal);
 
         // Loop variables over constructed arrays resolve members (hover + definition).
         Assert.Contains("configure()", await hoverAt(2, 45), StringComparison.Ordinal);
@@ -398,6 +400,85 @@ public sealed class LanguageServerTests
         Assert.Equal(
             new Uri("file:///src/system.lua").AbsoluteUri,
             constrainDefinition!["uri"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AnnotatedClassInstancesResolveMembersAcrossModules()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        workspace.Open(new Uri("file:///src/logger.lua"), 1, string.Join("\n",
+        [
+            "---@class Logger",
+            "---@field scope string",
+            "local Logger = {}",
+            "Logger.__index = Logger",
+            "---@param scope string",
+            "---@return Logger",
+            "function Logger.new(scope)",
+            "  return setmetatable({ scope = scope }, Logger)",
+            "end",
+            "---@param message string",
+            "function Logger:info(message) end",
+            "return Logger",
+        ]));
+        var sessionUri = new Uri("file:///src/session.lua");
+        workspace.Open(sessionUri, 1, string.Join("\n",
+        [
+            "local Logger = require(\"logger\")",
+            "---@class Session",
+            "---@field logger Logger",
+            "local Session = {}",
+            "Session.__index = Session",
+            "---@return Session",
+            "function Session.new()",
+            "  return setmetatable({ logger = Logger.new(\"session\") }, Session)",
+            "end",
+            "function Session:connect()",
+            "  self.logger:info(\"x\")",
+            "end",
+            "return Session",
+        ]));
+        var appUri = new Uri("file:///src/main.lua");
+        workspace.Open(appUri, 1, string.Join("\n",
+        [
+            "local Logger = require(\"logger\")",
+            "local logger = Logger.new(\"boot\")",
+            "logger:info(\"hi\")",
+        ]));
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+        var hoverAt = async (Uri uri, int line, int character) => (await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line, character },
+        }), CancellationToken.None))?["contents"]!["value"]!.GetValue<string>();
+        var definitionAt = async (Uri uri, int line, int character) => (await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line, character },
+        }), false, CancellationToken.None));
+
+        // Annotation-typed instances (`---@return Logger`) navigate to the declaring
+        // module's member and hover with its signature.
+        Assert.Contains("info(message: string)", await hoverAt(appUri, 2, 8), StringComparison.Ordinal);
+        Assert.Equal(
+            new Uri("file:///src/logger.lua").AbsoluteUri,
+            (await definitionAt(appUri, 2, 8))!["uri"]!.GetValue<string>());
+
+        // Instance locals hover with their class card rather than a bare type name.
+        var instanceHover = await hoverAt(appUri, 1, 7);
+        Assert.Contains("class Logger", instanceHover, StringComparison.Ordinal);
+        Assert.Contains("[info]", instanceHover, StringComparison.Ordinal);
+        Assert.Contains("(message: string)", instanceHover, StringComparison.Ordinal);
+
+        // Chained receivers (`self.logger:info`) resolve through the engine's recorded
+        // member-chain type, not just the head symbol.
+        Assert.Contains("info(message: string)", await hoverAt(sessionUri, 10, 15), StringComparison.Ordinal);
+        Assert.Equal(
+            new Uri("file:///src/logger.lua").AbsoluteUri,
+            (await definitionAt(sessionUri, 10, 15))!["uri"]!.GetValue<string>());
     }
 
     [Fact]

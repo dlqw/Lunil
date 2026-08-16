@@ -90,6 +90,21 @@ internal sealed class AnnotationTypeEnvironment
         };
     }
 
+    /// <summary>
+    /// The resolved declaration behind a type name — including external declarations on
+    /// their first reference — so consumers can inspect a class's fields and bases, not
+    /// just its reference type.
+    /// </summary>
+    public LuaTypeDeclaration? ResolveDeclarationByName(string name)
+    {
+        if (!_declarations.TryGetValue(name, out var declaration))
+        {
+            declaration = ResolveDeclaration(name);
+        }
+
+        return declaration;
+    }
+
     private LuaType Resolve(
         LuaTypeSyntax syntax,
         IReadOnlyDictionary<string, LuaType>? typeParameters,

@@ -154,6 +154,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return HoverResult(declaredHover, context.Analysis.Document.ToRange(declaredSpan));
                 }
 
+                if (GetInstanceClassCard(GetType(context.Analysis, declared)) is { } declaredClassHover)
+                {
+                    return HoverResult(declaredClassHover, context.Analysis.Document.ToRange(declaredSpan));
+                }
+
                 var declaredType = GetType(context.Analysis, declared);
                 var declaredMarkdown = new StringBuilder(
                     $"```lua\n{declared.Name}: {DisplayType(declaredType)}\n```");
@@ -202,6 +207,13 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             TryBuildClassHover(classModule, reference.Symbol.Name) is { } classHover)
         {
             return HoverResult(classHover, context.Analysis.Document.ToRange(reference.Span));
+        }
+
+        // Class instances (`local logger = Logger.new()`, loop variables over class
+        // arrays) hover with their class's card rather than a bare type name.
+        if (GetInstanceClassCard(GetType(context.Analysis, reference.Symbol)) is { } instanceClassHover)
+        {
+            return HoverResult(instanceClassHover, context.Analysis.Document.ToRange(reference.Span));
         }
 
         var type = reference.Symbol.Kind == LuaSymbolKind.Environment &&

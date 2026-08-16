@@ -814,6 +814,49 @@ public sealed class LuaTypeAnalyzerTests
     }
 
     [Fact]
+    public void InheritedAnnotationFieldsResolveForSubclassInstances()
+    {
+        // A subclass instance's annotated field can be declared on the base class's
+        // annotation in another module; the field's type name resolves through the
+        // external declaration chain.
+        var baseSource = SourceText.FromUtf8(
+            """
+            ---@class EventBus
+            local EventBus = {}
+            function EventBus:emit(kind, payload) end
+            return EventBus
+
+            ---@class System
+            ---@field bus EventBus
+            local System = {}
+            function System:init(bus) self.bus = bus end
+            return System
+            """);
+        var baseLexing = LuaLexer.Lex(baseSource, LuaLexerOptions.Default);
+        var baseAnnotations = LuaAnnotationParser.Parse(baseLexing);
+        var externalDeclarations = LuaExternalTypeDeclarations.Collect(baseAnnotations);
+
+        var result = Analyze(
+            """
+            ---@class QuestSystem : System
+            local QuestSystem = {}
+            function QuestSystem:tick()
+              self.bus:emit("quest", {})
+            end
+            return QuestSystem
+            """,
+            environment: new LuaAnalysisEnvironment
+            {
+                ExternalTypeDeclarations = externalDeclarations,
+            });
+
+        var busMember = result.Expressions.FirstOrDefault(static item =>
+            item.Type is LuaClassType { Name: "EventBus" });
+        Assert.NotNull(busMember);
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6007");
+    }
+
+    [Fact]
     public void ExternalRuntimeMembersAndMetamethodsSatisfyChecks()
     {
         // The workspace knows Vec2's runtime members (`Vec2.new`, `Vec2.__add`) even when

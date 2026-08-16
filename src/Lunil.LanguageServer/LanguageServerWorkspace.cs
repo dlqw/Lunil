@@ -1263,30 +1263,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     static group => group.First().ModuleName,
                     StringComparer.Ordinal);
             // Mixin edges (`Class.mixin(Character, Movable)`) add the source class's
-            // members to the target. Arguments are matched against declared class names,
-            // which is how the idiom is written in practice.
-            var mixinTargets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-            var mixinPattern = new System.Text.RegularExpressions.Regex(
-                @"[.:]mixin\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-            var runtimeBases = BuildRuntimeClassBasesNoLock(declarations);
-            foreach (var document in _documents.Values)
-            {
-                foreach (System.Text.RegularExpressions.Match match in mixinPattern.Matches(document.Text))
-                {
-                    var targetName = match.Groups[1].Value;
-                    var sourceName = match.Groups[2].Value;
-                    if (modulesByClass.ContainsKey(targetName) && modulesByClass.ContainsKey(sourceName))
-                    {
-                        if (!mixinTargets.TryGetValue(targetName, out var sources))
-                        {
-                            mixinTargets[targetName] = sources = [];
-                        }
-
-                        sources.Add(sourceName);
-                    }
-                }
-            }
+            // members to the target.
+            var mixinTargets = GetClassMixins();
+            var runtimeBases = GetRuntimeClassBases();
 
             IEnumerable<string> ClassModules(string className)
             {
@@ -1296,11 +1275,14 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 }
 
                 yield return owningModule;
-                foreach (var mixinSource in mixinTargets.GetValueOrDefault(className) ?? [])
+                if (mixinTargets.TryGetValue(className, out var sources))
                 {
-                    if (modulesByClass.TryGetValue(mixinSource, out var sourceModule))
+                    foreach (var mixinSource in sources)
                     {
-                        yield return sourceModule;
+                        if (modulesByClass.TryGetValue(mixinSource, out var sourceModule))
+                        {
+                            yield return sourceModule;
+                        }
                     }
                 }
             }
@@ -1327,17 +1309,34 @@ internal sealed class LanguageServerWorkspace : IDisposable
                         continue;
                     }
 
+                    var classNamesInModule = classesByModule.GetValueOrDefault(module) is { Length: > 0 } moduleClasses
+                        ? moduleClasses.Select(static item => item.Name).ToHashSet(StringComparer.Ordinal)
+                        : null;
                     foreach (var symbol in snapshot.ExportGraph.Symbols)
                     {
                         if (symbol.IsExternal ||
                             !string.Equals(symbol.ModuleName, module, StringComparison.Ordinal) ||
-                            symbol.Path.Contains('.', StringComparison.Ordinal) ||
                             symbol.Path.Length == 0)
                         {
                             continue;
                         }
 
-                        members.TryAdd(symbol.Path, symbol.Type);
+                        var separator = symbol.Path.IndexOf('.');
+                        if (separator < 0)
+                        {
+                            members.TryAdd(symbol.Path, symbol.Type);
+                            continue;
+                        }
+
+                        // Namespace modules (`return { World = World }`) carry a class's
+                        // members under the class's own name; expose them to the class.
+                        if (classNamesInModule is not null &&
+                            classNamesInModule.Contains(symbol.Path[..separator]))
+                        {
+                            var rest = symbol.Path[(separator + 1)..];
+                            var nested = rest.IndexOf('.');
+                            members.TryAdd(nested < 0 ? rest : rest[..nested], symbol.Type);
+                        }
                     }
 
                     foreach (var @class in classesByModule.GetValueOrDefault(module) ?? [])
@@ -1378,6 +1377,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     }
 
     private ImmutableDictionary<string, string>? _runtimeClassBases;
+    private ImmutableDictionary<string, string>? _runtimeClassModules;
     private int _runtimeClassBasesGeneration = -1;
 
     /// <summary>Root export types per module, rebuilt with each compact snapshot.</summary>
@@ -1388,22 +1388,56 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// Runtime class-library edges `local X = Y:extend(...)` keyed by the defined class
     /// name. Annotation chains may stop short of the library root (`---@class System`
     /// with no declared base while the code builds it from `Class:extend`), which would
-    /// cut inherited members such as `new` off from every subclass.
+    /// cut inherited members such as `new` off from every subclass. Unannotated
+    /// subclasses chain too: their edges are recorded so a module's class table still
+    /// reaches the library root's members.
     /// </summary>
     public ImmutableDictionary<string, string> GetRuntimeClassBases()
     {
-        var declarations = GetClassDeclarations();
+        BuildRuntimeClassEdges();
+        return _runtimeClassBases!;
+    }
+
+    /// <summary>
+    /// The module each runtime-extended class (`local X = Y:extend(...)`) is defined in,
+    /// so module chains can visit classes the annotations never declare.
+    /// </summary>
+    public ImmutableDictionary<string, string> GetRuntimeClassModules()
+    {
+        BuildRuntimeClassEdges();
+        return _runtimeClassModules!;
+    }
+
+    private void BuildRuntimeClassEdges()
+    {
         lock (_gate)
         {
             if (_runtimeClassBases is not null && _runtimeClassBasesGeneration == _documentSetGeneration)
             {
-                return _runtimeClassBases;
+                return;
             }
 
-            var result = BuildRuntimeClassBasesNoLock(declarations);
-            _runtimeClassBases = result;
+            var extendPattern = new System.Text.RegularExpressions.Regex(
+                @"local\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:.]extend\s*\(",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            var bases = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+            var modules = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+            foreach (var document in _documents.Values)
+            {
+                var moduleName = GetModuleIdentity(document.Uri).Name;
+                foreach (System.Text.RegularExpressions.Match match in extendPattern.Matches(document.Text))
+                {
+                    var className = match.Groups[1].Value;
+                    var baseName = match.Groups[2].Value;
+                    // First definition wins, matching annotation declaration behavior.
+                    bases.TryAdd(className, baseName);
+                    modules.TryAdd(className, moduleName);
+                }
+            }
+
+            _runtimeClassBases = bases.ToImmutable();
+            _runtimeClassModules = modules.ToImmutable();
             _runtimeClassBasesGeneration = _documentSetGeneration;
-            return result;
         }
     }
 
@@ -1475,31 +1509,57 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
-    /// <summary>Caller must hold <see cref="_gate"/>.</summary>
-    private ImmutableDictionary<string, string> BuildRuntimeClassBasesNoLock(
-        ImmutableArray<WorkspaceClassDeclaration> declarations)
+    private ImmutableDictionary<string, ImmutableArray<string>>? _classMixins;
+    private int _classMixinsGeneration = -1;
+
+    /// <summary>
+    /// Mixin edges (`Class.mixin(Target, Source)`) keyed by the target class: the source
+    /// classes whose members it exposes. Arguments are matched against declared class
+    /// names, which is how the idiom is written in practice.
+    /// </summary>
+    public ImmutableDictionary<string, ImmutableArray<string>> GetClassMixins()
     {
-        var declaredNames = declarations.Select(static declaration => declaration.Name)
-            .ToHashSet(StringComparer.Ordinal);
-        var extendPattern = new System.Text.RegularExpressions.Regex(
-            @"local\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:.]extend\s*\(",
-            System.Text.RegularExpressions.RegexOptions.Compiled);
-        var builder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-        foreach (var document in _documents.Values)
+        var declarations = GetClassDeclarations();
+        lock (_gate)
         {
-            foreach (System.Text.RegularExpressions.Match match in extendPattern.Matches(document.Text))
+            if (_classMixins is not null && _classMixinsGeneration == _declarationsGeneration)
             {
-                var className = match.Groups[1].Value;
-                var baseName = match.Groups[2].Value;
-                if (declaredNames.Contains(className) && declaredNames.Contains(baseName) &&
-                    !builder.ContainsKey(className))
+                return _classMixins;
+            }
+
+            var modulesByClass = declarations
+                .GroupBy(static item => item.Name, StringComparer.Ordinal)
+                .ToDictionary(
+                    static group => group.Key,
+                    static group => group.First().ModuleName,
+                    StringComparer.Ordinal);
+            var mixinPattern = new System.Text.RegularExpressions.Regex(
+                @"[.:]mixin\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            var targets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (var document in _documents.Values)
+            {
+                foreach (System.Text.RegularExpressions.Match match in mixinPattern.Matches(document.Text))
                 {
-                    builder[className] = baseName;
+                    var targetName = match.Groups[1].Value;
+                    var sourceName = match.Groups[2].Value;
+                    if (modulesByClass.ContainsKey(targetName) && modulesByClass.ContainsKey(sourceName))
+                    {
+                        if (!targets.TryGetValue(targetName, out var sources))
+                        {
+                            targets[targetName] = sources = [];
+                        }
+
+                        sources.Add(sourceName);
+                    }
                 }
             }
-        }
 
-        return builder.ToImmutable();
+            _classMixins = targets.ToImmutableDictionary(
+                static pair => pair.Key, static pair => pair.Value.ToImmutableArray());
+            _classMixinsGeneration = _declarationsGeneration;
+            return _classMixins;
+        }
     }
 
     /// <summary>
@@ -1660,8 +1720,21 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
         }
 
-        _externalTypeDeclarations = builder.ToImmutable();
+        var rebuilt = builder.ToImmutable();
+        // Analyses produced while a declaration was missing (an early pass before its
+        // document registered) resolved those names as unknown; a changed declaration
+        // surface must invalidate the analysis cache just like a changed member surface.
+        var signature = string.Join("\n", rebuilt.Keys.Order(StringComparer.Ordinal));
+        if (!string.Equals(signature, _externalTypeDeclarationsSignature, StringComparison.Ordinal))
+        {
+            _externalTypeDeclarationsSignature = signature;
+            _environmentGeneration++;
+        }
+
+        _externalTypeDeclarations = rebuilt;
     }
+
+    private string? _externalTypeDeclarationsSignature;
 
     private async Task AnalyzeAndPublishAsync(Uri uri, int version, CancellationToken cancellationToken)
     {

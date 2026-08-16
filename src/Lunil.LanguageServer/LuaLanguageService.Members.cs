@@ -613,7 +613,9 @@ internal sealed partial class LuaLanguageService
             {
                 foreach (var symbol in FindChainExports(
                              workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
-                             workspace.GetRuntimeClassBases()))
+                             workspace.GetRuntimeClassBases(),
+                             workspace.GetRuntimeClassModules(),
+                             workspace.GetClassMixins()))
                 {
                     yield return symbol;
                 }
@@ -644,9 +646,12 @@ internal sealed partial class LuaLanguageService
         string moduleName,
         string memberName,
         int maximumHops,
-        ImmutableDictionary<string, string>? runtimeBases = null)
+        ImmutableDictionary<string, string>? runtimeBases = null,
+        ImmutableDictionary<string, string>? runtimeClassModules = null,
+        ImmutableDictionary<string, ImmutableArray<string>>? mixins = null)
     {
-        var chain = CollectChainModules(classDeclarations, moduleName, maximumHops, runtimeBases);
+        var chain = CollectChainModules(
+            classDeclarations, moduleName, maximumHops, runtimeBases, runtimeClassModules, mixins);
         foreach (var module in chain)
         {
             var exported = FindExportSymbolIn(snapshot, module, memberName);
@@ -661,13 +666,15 @@ internal sealed partial class LuaLanguageService
     /// A module and every module declaring a base class of its classes, nearest first.
     /// Member completion offers the exports of all of them so inherited members appear.
     /// Runtime `local X = Y:extend(...)` edges continue chains the annotations leave
-    /// undeclared.
+    /// undeclared, and mixin sources contribute their modules' members to the target.
     /// </summary>
     private static IEnumerable<string> CollectChainModules(
         ImmutableArray<WorkspaceClassDeclaration> classDeclarations,
         string moduleName,
         int maximumHops = 8,
-        ImmutableDictionary<string, string>? runtimeBases = null)
+        ImmutableDictionary<string, string>? runtimeBases = null,
+        ImmutableDictionary<string, string>? runtimeClassModules = null,
+        ImmutableDictionary<string, ImmutableArray<string>>? mixins = null)
     {
         var classesByModule = classDeclarations
             .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
@@ -675,12 +682,43 @@ internal sealed partial class LuaLanguageService
                 static group => group.Key,
                 static group => group.ToArray(),
                 StringComparer.Ordinal);
-        var modulesByClass = classDeclarations
+        // Runtime-extended classes the annotations never declared still own their
+        // module's exports, so a module's chain starts from them too.
+        if (runtimeClassModules is not null)
+        {
+            foreach (var group in runtimeClassModules
+                         .GroupBy(static pair => pair.Value, StringComparer.Ordinal))
+            {
+                if (classesByModule.TryGetValue(group.Key, out var existing))
+                {
+                    var known = existing.Select(static item => item.Name).ToHashSet(StringComparer.Ordinal);
+                    classesByModule[group.Key] =
+                    [
+                        .. existing,
+                        .. group.Where(pair => !known.Contains(pair.Key))
+                            .Select(pair => new WorkspaceClassDeclaration(group.Key, pair.Key, []))
+                    ];
+                }
+                else
+                {
+                    classesByModule[group.Key] =
+                    [
+                        .. group.Select(pair => new WorkspaceClassDeclaration(group.Key, pair.Key, []))
+                    ];
+                }
+            }
+        }
+
+        var modulesByClass = classesByModule.Values
+            .SelectMany(static classes => classes)
             .GroupBy(static item => item.Name, StringComparer.Ordinal)
             .ToDictionary(
                 static group => group.Key,
                 static group => group.First().ModuleName,
                 StringComparer.Ordinal);
+        string? ModuleOf(string className) =>
+            modulesByClass.TryGetValue(className, out var module) ? module : null;
+
         var visitedModules = new HashSet<string>(StringComparer.Ordinal);
         var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Queue<string>();
@@ -700,8 +738,7 @@ internal sealed partial class LuaLanguageService
             {
                 foreach (var baseName in @class.BaseNames)
                 {
-                    if (visitedClasses.Add(baseName) &&
-                        modulesByClass.TryGetValue(baseName, out var baseModule))
+                    if (visitedClasses.Add(baseName) && ModuleOf(baseName) is { } baseModule)
                     {
                         pending.Enqueue(baseModule);
                     }
@@ -710,9 +747,22 @@ internal sealed partial class LuaLanguageService
                 if (runtimeBases is not null &&
                     runtimeBases.TryGetValue(@class.Name, out var runtimeBase) &&
                     visitedClasses.Add(runtimeBase) &&
-                    modulesByClass.TryGetValue(runtimeBase, out var runtimeModule))
+                    ModuleOf(runtimeBase) is { } runtimeModule)
                 {
                     pending.Enqueue(runtimeModule);
+                }
+
+                if (mixins is not null &&
+                    mixins.TryGetValue(@class.Name, out var mixinSources))
+                {
+                    foreach (var mixinSource in mixinSources)
+                    {
+                        if (visitedClasses.Add("mixin:" + mixinSource) &&
+                            ModuleOf(mixinSource) is { } mixinModule)
+                        {
+                            pending.Enqueue(mixinModule);
+                        }
+                    }
                 }
             }
         }
@@ -759,13 +809,32 @@ internal sealed partial class LuaLanguageService
 
     /// <summary>
     /// The type a member reference resolves against: the receiver symbol's type for
-    /// simple names, or the indexed element type for array receivers (`systems[2]:...`).
+    /// simple names, the indexed element type for array receivers (`systems[2]:...`),
+    /// and the engine's recorded expression type for chained receivers (`self.logger:`),
+    /// whose member chain has no single symbol.
     /// </summary>
     private static LuaType? ResolveReceiverType(LanguageDocumentAnalysis analysis, LuaCodeReference member)
     {
         var receiverText = GetReceiverText(analysis, member);
+        if (receiverText is null)
+        {
+            return null;
+        }
+
+        var trimmedText = receiverText.TrimEnd('.', ':');
+        // A receiver beyond a simple name (`self.logger`, `frame.size`) resolves through
+        // the expression types the engine recorded for the member chain; the symbol
+        // lookup would only see the head of the chain.
+        if (!SimpleNameRegex().IsMatch(trimmedText) &&
+            member.ReceiverSpan is { Length: > 1 } receiverSpan &&
+            FindExpressionType(analysis, new TextSpan(receiverSpan.Start, receiverSpan.Length - 1)) is
+                { Kind: not LuaTypeKind.Unknown } chained)
+        {
+            return chained;
+        }
+
         var symbol = ResolveReceiverSymbol(analysis, member);
-        if (receiverText is null || symbol is null)
+        if (symbol is null)
         {
             return null;
         }
@@ -773,7 +842,7 @@ internal sealed partial class LuaLanguageService
         var baseType = GetType(analysis, symbol);
         // Receiver spans include the trailing separator (`systems[2]:`); the index
         // pattern matches the expression without it.
-        var match = IndexReceiverRegex().Match(receiverText.TrimEnd('.', ':'));
+        var match = IndexReceiverRegex().Match(trimmedText);
         if (!match.Success || baseType is null)
         {
             return baseType;
@@ -804,6 +873,34 @@ internal sealed partial class LuaLanguageService
 
     [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*\s*\[\s*(?<index>\d+|""[^""]*""|'[^']*')\s*\]$")]
     private static partial System.Text.RegularExpressions.Regex IndexReceiverRegex();
+
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+    private static partial System.Text.RegularExpressions.Regex SimpleNameRegex();
+
+    /// <summary>
+    /// The engine-recorded type of the expression covering a span: an exact match wins,
+    /// otherwise the smallest enclosing expression (a receiver span should match its
+    /// expression exactly; containment tolerates parenthesized or multi-node forms).
+    /// </summary>
+    private static LuaType? FindExpressionType(LanguageDocumentAnalysis analysis, TextSpan span)
+    {
+        LuaExpressionTypeInfo? smallest = null;
+        foreach (var info in analysis.Compilation.Analysis.Expressions)
+        {
+            if (info.Span == span)
+            {
+                return info.Type;
+            }
+
+            if (info.Span.Start <= span.Start && span.End <= info.Span.End &&
+                (smallest is null || info.Span.Length < smallest.Span.Length))
+            {
+                smallest = info;
+            }
+        }
+
+        return smallest?.Type;
+    }
 
     /// <summary>
     /// The modules declaring the classes a type instantiates: prototypes directly,
@@ -838,6 +935,15 @@ internal sealed partial class LuaLanguageService
                 }
 
                 break;
+            // Annotation-typed instances (`---@return Logger`) arrive as class references
+            // rather than prototypes, and resolve members the same way.
+            case LuaClassType classReference:
+                foreach (var module in ClassModuleNamesFor(classReference.Name))
+                {
+                    yield return module;
+                }
+
+                break;
         }
     }
 
@@ -854,6 +960,36 @@ internal sealed partial class LuaLanguageService
         {
             yield return declaration.ModuleName;
         }
+    }
+
+    /// <summary>
+    /// The class hover card for an instance type — an annotation class reference
+    /// (`---@return Logger`), a prototype, or a metatable instance — when the workspace
+    /// knows the module that declares the class.
+    /// </summary>
+    private string? GetInstanceClassCard(LuaType? type)
+    {
+        var className = type switch
+        {
+            LuaClassType classReference => classReference.Name,
+            LuaPrototypeType prototype => prototype.Name,
+            LuaMetatableType { MetatableType: LuaPrototypeType meta } => meta.Name,
+            _ => null,
+        };
+        if (className is null)
+        {
+            return null;
+        }
+
+        foreach (var module in ClassModuleNamesFor(className))
+        {
+            if (TryBuildClassHover(module, className) is { } card)
+            {
+                return card;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>The inferred type of a member, for hover text and completion details.</summary>
@@ -1050,7 +1186,9 @@ internal sealed partial class LuaLanguageService
             {
                 foreach (var chainModule in CollectChainModules(
                              workspace.GetClassDeclarations(), moduleName,
-                             runtimeBases: workspace.GetRuntimeClassBases()))
+                             runtimeBases: workspace.GetRuntimeClassBases(),
+                             runtimeClassModules: workspace.GetRuntimeClassModules(),
+                             mixins: workspace.GetClassMixins()))
                 {
                     foreach (var symbol in snapshot.ExportGraph.Symbols.Where(symbol =>
                                  string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&
@@ -1071,9 +1209,34 @@ internal sealed partial class LuaLanguageService
             }
             else
             {
-                foreach (var (name, type) in CollectTypeMembers(GetType(analysis, receiver)))
+                // Class-typed receivers (annotation instances, class tables, loop
+                // variables over instance arrays) complete from their class's module
+                // chain; local structural shapes complete from their own fields.
+                var receiverType = GetType(analysis, receiver);
+                foreach (var (name, type) in CollectTypeMembers(receiverType))
                 {
                     AddMemberItem(items, name, type, methodsOnly);
+                }
+
+                if (snapshot is not null)
+                {
+                    foreach (var candidate in ClassModuleNames(receiverType).Distinct(StringComparer.Ordinal))
+                    {
+                        foreach (var chainModule in CollectChainModules(
+                                     workspace.GetClassDeclarations(), candidate,
+                                     runtimeBases: workspace.GetRuntimeClassBases(),
+                                     runtimeClassModules: workspace.GetRuntimeClassModules(),
+                                     mixins: workspace.GetClassMixins()))
+                        {
+                            foreach (var symbol in snapshot.ExportGraph.Symbols.Where(symbol =>
+                                         string.Equals(symbol.ModuleName, chainModule, StringComparison.Ordinal) &&
+                                         !symbol.Path.Contains('.', StringComparison.Ordinal) &&
+                                         symbol.Path.Length > 0))
+                            {
+                                AddMemberItem(items, symbol.Path, symbol.Type, methodsOnly);
+                            }
+                        }
+                    }
                 }
             }
         }

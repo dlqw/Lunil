@@ -356,6 +356,18 @@ internal sealed partial class AnalysisEngine
             return LuaTypes.Never;
         }
 
+        // Annotated class fields and runtime exports are authoritative for class values
+        // and instances before the metatable walk degrades to any/unknown: fields live
+        // in base-class annotations and constructors this document cannot see. A member
+        // that resolves to unknown/any defers to the walk (local runtime shapes may know
+        // more than the workspace snapshot did).
+        if (target is LuaMetatableType or LuaClassType or LuaPrototypeType &&
+            TryGetExternalClassMember(target, name, out var annotated) &&
+            annotated.Kind is not (LuaTypeKind.Unknown or LuaTypeKind.Any))
+        {
+            return annotated;
+        }
+
         if (target is LuaPrototypeType { IsPrecise: false })
         {
             return LuaTypes.Any;
@@ -393,7 +405,12 @@ internal sealed partial class AnalysisEngine
         if (target is LuaMetatableType { IsPrecise: true } classSelf &&
             classSelf.BaseType is LuaStructuralTableType { Fields.IsEmpty: true, ArrayElementType: null, MapKeyType: null })
         {
-            return LuaTypes.Any;
+            // The instance's runtime fields live in constructors this document cannot
+            // see, but annotated class fields (including inherited ones) are still
+            // authoritative for it; everything else stays permissive.
+            return TryGetExternalClassMember(target, name, out var annotatedSelf)
+                ? annotatedSelf
+                : LuaTypes.Any;
         }
 
         if (target is LuaClassType emptyClass && IsEmptyClass(emptyClass))
@@ -458,31 +475,79 @@ internal sealed partial class AnalysisEngine
             return true;
         }
 
+        // An instance's annotated class declares fields the runtime shape has not grown
+        // yet; annotations are authoritative for them, including fields declared on a
+        // base class (`---@field bus EventBus` on the base of a subclass). A field the
+        // pass could not resolve (unknown) defers to the runtime shape below.
+        foreach (var declared in ClassChainDeclarations(className))
+        {
+            if (declared.Fields.FirstOrDefault(field =>
+                    string.Equals(field.Name, name, StringComparison.Ordinal)) is { } declaredField &&
+                declaredField.ValueType.Kind is not (LuaTypeKind.Unknown or LuaTypeKind.Any))
+            {
+                member = declaredField.ValueType;
+                return true;
+            }
+        }
+
         // The local document may know the class's runtime shape even without workspace
-        // knowledge (single-file sessions).
+        // knowledge (single-file sessions). Open shapes fabricate unknown members for
+        // any name; only a real field type wins here.
         if (_latestPrototypes.TryGetValue(className, out var latest))
         {
             var field = _relations.FindField(latest, name);
-            if (field is not null)
+            if (field is not null &&
+                field.ValueType.Kind is not (LuaTypeKind.Unknown or LuaTypeKind.Any))
             {
                 member = field.ValueType;
                 return true;
             }
         }
 
-        // An instance's annotated class declares fields the runtime shape has not grown
-        // yet; annotations are authoritative for them.
-        if (_types.Declarations.OfType<LuaClassDeclaration>().FirstOrDefault(declaration =>
-                string.Equals(declaration.Name, className, StringComparison.Ordinal)) is
-            { } declared &&
-            declared.Fields.FirstOrDefault(field =>
-                string.Equals(field.Name, name, StringComparison.Ordinal)) is { } declaredField)
-        {
-            member = declaredField.ValueType;
-            return true;
-        }
-
         return false;
+    }
+
+    /// <summary>
+    /// The annotated class declarations from a class up through its declared base chain:
+    /// local declarations first, external ones resolved lazily by name, so inherited
+    /// annotation fields and operators resolve for subclass instances.
+    /// </summary>
+    private IEnumerable<LuaClassDeclaration> ClassChainDeclarations(string className)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+        pending.Enqueue(className);
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!visited.Add(current))
+            {
+                continue;
+            }
+
+            var declaration = _types.Declarations.OfType<LuaClassDeclaration>()
+                    .FirstOrDefault(item => string.Equals(item.Name, current, StringComparison.Ordinal)) ??
+                _types.ResolveDeclarationByName(current) as LuaClassDeclaration;
+            if (declaration is null)
+            {
+                continue;
+            }
+
+            yield return declaration;
+            foreach (var baseType in declaration.BaseTypes)
+            {
+                var baseName = baseType switch
+                {
+                    LuaClassType @class => @class.Name,
+                    LuaPrototypeType prototype => prototype.Name,
+                    _ => null,
+                };
+                if (baseName is not null)
+                {
+                    pending.Enqueue(baseName);
+                }
+            }
+        }
     }
 
     private bool IsEmptyClass(LuaClassType type)
