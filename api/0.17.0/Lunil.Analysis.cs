@@ -65,6 +65,7 @@ namespace Lunil.Analysis
         public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaExternalTypeDeclaration> ExternalTypeDeclarations { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableDictionary<string, System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType>> ExternalClassMembers { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> BuiltinGlobals { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> ExternalGlobals { get => throw null; init { } }
         public Lunil.Analysis.LuaHostAnalysisContract? HostContract { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Analysis.LuaAnalysisEnvironment? left, Lunil.Analysis.LuaAnalysisEnvironment? right) => throw null;
