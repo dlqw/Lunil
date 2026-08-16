@@ -715,7 +715,13 @@ public sealed class LuaTypeRelations
         {
             for (var other = 0; other < result.Count; other++)
             {
-                if (index != other && IsAssignable(result[index], result[other]))
+                // Instances of different classes must not subsume each other: their
+                // open empty storage is mutually assignable, which collapsed arrays
+                // of sibling-class instances (`systems = {A:new(), B:new(), ...}`) to
+                // a single member's type and hid the other classes' members.
+                if (index != other &&
+                    IsAssignable(result[index], result[other]) &&
+                    !AreDistinctClassInstances(result[index], result[other]))
                 {
                     result.RemoveAt(index);
                     break;
@@ -723,6 +729,18 @@ public sealed class LuaTypeRelations
             }
         }
     }
+
+    private static bool AreDistinctClassInstances(LuaType left, LuaType right) =>
+        InstanceClassName(left) is { } leftClass &&
+        InstanceClassName(right) is { } rightClass &&
+        !string.Equals(leftClass, rightClass, StringComparison.Ordinal);
+
+    private static string? InstanceClassName(LuaType type) => type switch
+    {
+        LuaMetatableType { MetatableType: LuaPrototypeType prototype } => prototype.Name,
+        LuaPrototypeType direct when direct.Name.Length > 0 => direct.Name,
+        _ => null,
+    };
 
     private static LuaPrimitiveType Widen(IEnumerable<LuaType> types)
     {

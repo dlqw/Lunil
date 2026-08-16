@@ -249,6 +249,158 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task RequiredModuleTypesFlowThroughConstructorsArraysAndLoops()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var classUri = new Uri("file:///src/classlib.lua");
+        var subUri = new Uri("file:///src/sub.lua");
+        var appUri = new Uri("file:///src/app.lua");
+        workspace.Open(classUri, 1,
+            "---@class Class\n" +
+            "local Class = {}\n" +
+            "Class.__index = Class\n" +
+            "function Class:new(...) return setmetatable({}, self) end\n" +
+            "return Class");
+        workspace.Open(subUri, 1,
+            "local Class = require(\"classlib\")\n" +
+            "---@class Sub\n" +
+            "local Sub = Class:extend(\"Sub\", {})\n" +
+            "function Sub:configure() end\n" +
+            "return Sub");
+        workspace.Open(appUri, 1,
+            "local Sub = require(\"sub\")\n" +
+            "local systems = { Sub:new(), Sub:new() }\n" +
+            "for _, system in ipairs(systems) do system:configure() end\n" +
+            "systems[2]:configure()\n" +
+            "return systems");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+        var hoverAt = async (int line, int character) => (await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line, character },
+        }), CancellationToken.None))?["contents"]!["value"]!.GetValue<string>();
+        var definitionAt = async (int line, int character) => (await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line, character },
+        }), false, CancellationToken.None));
+
+        // The require alias carries the exported class type through `new`.
+        var loopVariable = await hoverAt(2, 7);
+        Assert.Contains("system: Sub", loopVariable, StringComparison.Ordinal);
+
+        // Loop variables over constructed arrays resolve members (hover + definition).
+        Assert.Contains("configure()", await hoverAt(2, 45), StringComparison.Ordinal);
+        var loopDefinition = await definitionAt(2, 45);
+        Assert.Equal(subUri.AbsoluteUri, loopDefinition!["uri"]!.GetValue<string>());
+
+        // Indexed elements (`systems[2]`) resolve members the same way.
+        Assert.Contains("configure()", await hoverAt(3, 13), StringComparison.Ordinal);
+        var indexDefinition = await definitionAt(3, 13);
+        Assert.Equal(subUri.AbsoluteUri, indexDefinition!["uri"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task FunctionScopedSystemArraysResolveMembersThroughLoops()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        workspace.Open(new Uri("file:///src/class.lua"), 1, string.Join("\n",
+        [
+            "---@class Class",
+            "local Class = {}",
+            "Class.__index = Class",
+            "---@param name string",
+            "---@param fields table",
+            "---@return Class",
+            "function Class:extend(name, fields)",
+            "  local Sub = setmetatable({}, Class)",
+            "  return Sub",
+            "end",
+            "function Class:new(...)",
+            "  local instance = setmetatable({}, self)",
+            "  if instance.init then instance:init(...) end",
+            "  return instance",
+            "end",
+            "return Class",
+        ]));
+        workspace.Open(new Uri("file:///src/system.lua"), 1, string.Join("\n",
+        [
+            "local Class = require(\"class\")",
+            "---@class System",
+            "local System = Class:extend(\"System\", {})",
+            "function System:configure() end",
+            "function System:constrain() end",
+            "return System",
+        ]));
+        workspace.Open(new Uri("file:///src/spawn.lua"), 1, string.Join("\n",
+        [
+            "local System = require(\"system\")",
+            "---@class SpawnSystem : System",
+            "local SpawnSystem = System:extend(\"SpawnSystem\", {})",
+            "function SpawnSystem:init() end",
+            "return SpawnSystem",
+        ]));
+        var appUri = new Uri("file:///src/main.lua");
+        workspace.Open(appUri, 1, string.Join("\n",
+        [
+            "local SpawnSystem = require(\"spawn\")",
+            "local System = require(\"system\")",
+            "local function bootstrap()",
+            "  local systems = {",
+            "    SpawnSystem:new(),",
+            "    System:new(),",
+            "  }",
+            "  for _, system in ipairs(systems) do",
+            "    system:configure()",
+            "  end",
+            "  systems[2]:constrain()",
+            "end",
+            "return bootstrap()",
+        ]));
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // The generic library constructor's instance resolves over the SUBCLASS the
+        // call is made on, so loop variables and indexed elements keep class members.
+        var configureHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 8, character = 12 },
+        }), CancellationToken.None);
+        Assert.Contains("configure()", configureHover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        var configureDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 8, character = 12 },
+        }), false, CancellationToken.None);
+        Assert.Equal(
+            new Uri("file:///src/system.lua").AbsoluteUri,
+            configureDefinition!["uri"]!.GetValue<string>());
+
+        var constrainHover = await service.HoverAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 10, character = 15 },
+        }), CancellationToken.None);
+        Assert.Contains("constrain()", constrainHover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        var constrainDefinition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 10, character = 15 },
+        }), false, CancellationToken.None);
+        Assert.Equal(
+            new Uri("file:///src/system.lua").AbsoluteUri,
+            constrainDefinition!["uri"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task PositionalArrayTablesSummarizeInHovers()
     {
         using var workspace = new LanguageServerWorkspace();

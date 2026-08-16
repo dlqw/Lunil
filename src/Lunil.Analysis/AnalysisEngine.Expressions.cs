@@ -780,7 +780,10 @@ internal sealed partial class AnalysisEngine
                     memberName,
                     LuaCallResolutionStatus.Dynamic,
                     LuaCallUnresolvedReasons.CalleeSignatureIsDynamic);
-                return new LuaTypePack([], LuaTypes.Any);
+                // A dynamic constructor call (`Unannotated:new(...)` whose `new` member
+                // cannot resolve) still yields an instance of the receiver, so arrays
+                // of mixed annotated/unannotated instances keep their member types.
+                return ApplyConstructorInference(new LuaTypePack([], LuaTypes.Any), memberName, receiverType);
             }
 
             _context.AddDiagnostic(
@@ -863,12 +866,14 @@ internal sealed partial class AnalysisEngine
 
         var head = returns.Head.FirstOrDefault();
         var rebuild = head is null || head.Kind is LuaTypeKind.Any or LuaTypeKind.Unknown ||
-            // A constructor captured in the middle of class declaration returns a
-            // metatable over an early, member-less snapshot of the class table;
-            // rebuild over the receiver so members declared later stay reachable.
+            // A generic library constructor (`Class:new` returning
+            // `setmetatable({}, self)`) reports an empty-storage metatable over the
+            // library's own class table — here `Class`, not the subclass the call is
+            // made on. Rebuild over the receiver so subclass instances keep their
+            // class; only the empty-storage pattern is rewritten, so constructors
+            // returning populated tables keep their precise fields.
             head is LuaMetatableType snapshot &&
             !HasShapeMembers(snapshot.BaseType) &&
-            !HasShapeMembers(snapshot.MetatableType) &&
             HasShapeMembers(receiverType);
         if (!rebuild)
         {

@@ -19,6 +19,7 @@ internal sealed partial class LuaLanguageService
 {
     private const int MaximumMemberDepth = 8;
 
+
     /// <summary>Shortest unified reference whose span contains the offset.</summary>
     private static LuaCodeReference? FindCodeReference(LanguageDocumentAnalysis analysis, int offset) =>
         analysis.Compilation.SemanticModel.UnifiedReferences
@@ -599,14 +600,23 @@ internal sealed partial class LuaLanguageService
         if (receiver is not null)
         {
             var aliases = BuildRequireAliases(analysis);
-            var moduleName = aliases.TryGetValue(receiver.Id, out var required)
-                ? required
-                : analysis.Module.Name;
-            foreach (var symbol in FindChainExports(
-                         workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
-                         workspace.GetRuntimeClassBases()))
+            // A non-alias receiver typed as a class instance or prototype (loop
+            // variables over constructed arrays, indexed elements) chains from the
+            // module declaring that class — one candidate per union member, so an
+            // element of a sibling-class array resolves in its own class's chain.
+            // Other locals fall back to this module's own exports (the
+            // definition-site pattern `function M.f`).
+            IEnumerable<string> moduleNames = aliases.TryGetValue(receiver.Id, out var required)
+                ? [required]
+                : [.. ClassModuleNames(ResolveReceiverType(analysis, member)), analysis.Module.Name];
+            foreach (var moduleName in moduleNames.Distinct(StringComparer.Ordinal))
             {
-                yield return symbol;
+                foreach (var symbol in FindChainExports(
+                             workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
+                             workspace.GetRuntimeClassBases()))
+                {
+                    yield return symbol;
+                }
             }
 
             yield break;
@@ -723,6 +733,20 @@ internal sealed partial class LuaLanguageService
     /// <summary>The identifier a member reference's receiver names, when simple (`string`).</summary>
     private static string? GetReceiverName(LanguageDocumentAnalysis analysis, LuaCodeReference member)
     {
+        var text = GetReceiverText(analysis, member);
+        if (text is null)
+        {
+            return null;
+        }
+
+        var separator = text.IndexOfAny(['.', ':']);
+        var name = (separator < 0 ? text : text[..separator]).Trim();
+        return name.Length == 0 ? null : name;
+    }
+
+    /// <summary>The receiver's source text, including the trailing separator.</summary>
+    private static string? GetReceiverText(LanguageDocumentAnalysis analysis, LuaCodeReference member)
+    {
         if (member.ReceiverSpan is not { Length: > 0 } receiver)
         {
             return null;
@@ -730,10 +754,106 @@ internal sealed partial class LuaLanguageService
 
         var start = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.Start));
         var end = analysis.Document.ToCharOffset(analysis.Document.ToPosition(receiver.End));
-        var text = analysis.Document.Text[start..Math.Min(end, analysis.Document.Text.Length)];
-        var separator = text.IndexOfAny(['.', ':']);
-        var name = (separator < 0 ? text : text[..separator]).Trim();
-        return name.Length == 0 ? null : name;
+        return analysis.Document.Text[start..Math.Min(end, analysis.Document.Text.Length)];
+    }
+
+    /// <summary>
+    /// The type a member reference resolves against: the receiver symbol's type for
+    /// simple names, or the indexed element type for array receivers (`systems[2]:...`).
+    /// </summary>
+    private static LuaType? ResolveReceiverType(LanguageDocumentAnalysis analysis, LuaCodeReference member)
+    {
+        var receiverText = GetReceiverText(analysis, member);
+        var symbol = ResolveReceiverSymbol(analysis, member);
+        if (receiverText is null || symbol is null)
+        {
+            return null;
+        }
+
+        var baseType = GetType(analysis, symbol);
+        // Receiver spans include the trailing separator (`systems[2]:`); the index
+        // pattern matches the expression without it.
+        var match = IndexReceiverRegex().Match(receiverText.TrimEnd('.', ':'));
+        if (!match.Success || baseType is null)
+        {
+            return baseType;
+        }
+
+        // `base[int]` resolves the array element; `base["key"]` the named field.
+        var baseTypeTable = baseType;
+        if (baseTypeTable is LuaMetatableType metatable)
+        {
+            baseTypeTable = metatable.BaseType;
+        }
+
+        if (baseTypeTable is not LuaStructuralTableType table)
+        {
+            return baseType;
+        }
+
+        var index = match.Groups["index"].Value;
+        if (index.StartsWith('"') || index.StartsWith('\''))
+        {
+            var field = table.Fields.LastOrDefault(candidate =>
+                candidate.Name == index.Trim('\'', '"'));
+            return field?.ValueType ?? table.MapValueType;
+        }
+
+        return table.ArrayElementType;
+    }
+
+    [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_]*\s*\[\s*(?<index>\d+|""[^""]*""|'[^']*')\s*\]$")]
+    private static partial System.Text.RegularExpressions.Regex IndexReceiverRegex();
+
+    /// <summary>
+    /// The modules declaring the classes a type instantiates: prototypes directly,
+    /// metatable instances through their class table, unions through every member —
+    /// so an element of a sibling-class array resolves in its own class's module.
+    /// </summary>
+    private IEnumerable<string> ClassModuleNames(LuaType? type)
+    {
+        switch (type)
+        {
+            case LuaUnionType union:
+                foreach (var member in union.Types)
+                {
+                    foreach (var module in ClassModuleNames(member))
+                    {
+                        yield return module;
+                    }
+                }
+
+                break;
+            case LuaPrototypeType direct:
+                foreach (var module in ClassModuleNamesFor(direct.Name))
+                {
+                    yield return module;
+                }
+
+                break;
+            case LuaMetatableType { MetatableType: LuaPrototypeType viaMetatable }:
+                foreach (var module in ClassModuleNamesFor(viaMetatable.Name))
+                {
+                    yield return module;
+                }
+
+                break;
+        }
+    }
+
+    private IEnumerable<string> ClassModuleNamesFor(string? className)
+    {
+        if (className is not { Length: > 0 })
+        {
+            yield break;
+        }
+
+        var declaration = workspace.GetClassDeclarations()
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, className, StringComparison.Ordinal));
+        if (declaration is not null)
+        {
+            yield return declaration.ModuleName;
+        }
     }
 
     /// <summary>The inferred type of a member, for hover text and completion details.</summary>
@@ -764,13 +884,12 @@ internal sealed partial class LuaLanguageService
             return resolution.Symbol.Type;
         }
 
-        var receiver = ResolveReceiverSymbol(analysis, member);
-        if (receiver is null)
+        var receiverType = ResolveReceiverType(analysis, member);
+        if (receiverType is null)
         {
             return null;
         }
 
-        var receiverType = GetType(analysis, receiver);
         foreach (var (memberName, memberType) in CollectTypeMembers(receiverType))
         {
             if (string.Equals(memberName, member.Name, StringComparison.Ordinal))
@@ -823,6 +942,16 @@ internal sealed partial class LuaLanguageService
                 foreach (var member in CollectTypeMembers(prototype.Shape, visited, depth + 1))
                 {
                     yield return member;
+                }
+
+                // Class-library prototypes carry their bases separately; inherited
+                // members (`constrain` on a base system) stay reachable through them.
+                foreach (var baseType in prototype.BaseTypes)
+                {
+                    foreach (var member in CollectTypeMembers(baseType, visited, depth + 1))
+                    {
+                        yield return member;
+                    }
                 }
 
                 break;

@@ -772,6 +772,13 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     /// </summary>
     private static string? DisplayType(LuaType? type)
     {
+        // Class instances (empty storage + the class table as metatable) render as the
+        // class name rather than their empty storage shape.
+        if (type is LuaMetatableType { MetatableType: LuaPrototypeType { Name: { Length: > 0 } instanceClass } })
+        {
+            return instanceClass;
+        }
+
         if (type is not LuaStructuralTableType shape)
         {
             return type?.DisplayName;

@@ -803,6 +803,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         LspTextDocument document;
         int environmentGeneration;
         ImmutableDictionary<string, LuaType> libraryGlobals;
+        ImmutableDictionary<string, LuaType> moduleTypes;
         lock (_gate)
         {
             if (!_documents.TryGetValue(uri.AbsoluteUri, out document!))
@@ -812,6 +813,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
             environmentGeneration = _environmentGeneration;
             libraryGlobals = _libraryGlobals;
+            moduleTypes = GetModuleTypesNoLock();
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
                 cached.Document.Version == document.Version && cached.Document.Text == document.Text &&
                 cached.EnvironmentGeneration == environmentGeneration)
@@ -847,6 +849,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         var environment = new LuaAnalysisEnvironment
         {
             HostContract = hostContract,
+            ModuleTypes = moduleTypes,
             ExternalTypeDeclarations = _externalTypeDeclarations,
             ExternalClassMembers = GetExternalClassMembers(),
             BuiltinGlobals = Builtin.Globals,
@@ -1034,13 +1037,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
             if (generation == _generation && ReferenceEquals(workspace, _workspace))
             {
+                var previousSnapshotWasNull = _snapshot is null;
                 _snapshot = snapshot;
                 _libraryGlobals = libraryGlobals;
                 // Analyses produced before this snapshot existed were denied workspace
-                // member knowledge; when the exported class-member surface changed, their
-                // cache entries are stale and open documents are re-published with it.
-                var signature = BuildClassMemberSignatureNoLock(snapshot) + "\n#libraryGlobals\n" + librarySignature;
-                if (!string.Equals(signature, _externalClassMemberSignature, StringComparison.Ordinal))
+                // member knowledge; when the exported class-member surface or a module's
+                // exported type changed, their cache entries are stale and open documents
+                // are re-published with it. A snapshot replacing a null one always
+                // invalidates: analyses from the null window ran without module types
+                // and class-member knowledge even when the signature repeats.
+                var signature = BuildClassMemberSignatureNoLock(snapshot) +
+                    "\n#libraryGlobals\n" + librarySignature +
+                    "\n#moduleTypes\n" + BuildModuleTypesHash(snapshot).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (!string.Equals(signature, _externalClassMemberSignature, StringComparison.Ordinal) ||
+                    previousSnapshotWasNull)
                 {
                     _externalClassMemberSignature = signature;
                     _environmentGeneration++;
@@ -1370,6 +1380,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private ImmutableDictionary<string, string>? _runtimeClassBases;
     private int _runtimeClassBasesGeneration = -1;
 
+    /// <summary>Root export types per module, rebuilt with each compact snapshot.</summary>
+    private ImmutableDictionary<string, LuaType>? _moduleTypes;
+    private LuaWorkspaceCompactSnapshot? _moduleTypesSnapshot;
+
     /// <summary>
     /// Runtime class-library edges `local X = Y:extend(...)` keyed by the defined class
     /// name. Annotation chains may stop short of the library root (`---@class System`
@@ -1390,6 +1404,74 @@ internal sealed class LanguageServerWorkspace : IDisposable
             _runtimeClassBases = result;
             _runtimeClassBasesGeneration = _documentSetGeneration;
             return result;
+        }
+    }
+
+    /// <summary>
+    /// Root export types per module from the compact snapshot. These seed
+    /// <c>require</c> results in per-document analysis, so cross-module member calls,
+    /// constructor inference, and array element types keep real types instead of
+    /// degrading to <c>any</c>. Caller must hold <see cref="_gate"/>.
+    /// </summary>
+    private ImmutableDictionary<string, LuaType> GetModuleTypesNoLock()
+    {
+        var snapshot = _snapshot;
+        if (snapshot is null)
+        {
+            return ImmutableDictionary<string, LuaType>.Empty;
+        }
+
+        if (_moduleTypes is not null && ReferenceEquals(_moduleTypesSnapshot, snapshot))
+        {
+            return _moduleTypes;
+        }
+
+        var builder = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
+        foreach (var symbol in snapshot.ExportGraph.Symbols)
+        {
+            if (!symbol.IsExternal && symbol.Path.Length == 0)
+            {
+                builder.TryAdd(symbol.ModuleName, symbol.Type);
+            }
+        }
+
+        _moduleTypes = builder.ToImmutable();
+        _moduleTypesSnapshot = snapshot;
+        return _moduleTypes;
+    }
+
+    /// <summary>
+    /// A stable hash of every module's root export type, so analyses are invalidated
+    /// when a required module's exported type changes — not only when class members do.
+    /// Caller must hold <see cref="_gate"/>.
+    /// </summary>
+    private static ulong BuildModuleTypesHash(LuaWorkspaceCompactSnapshot snapshot)
+    {
+        unchecked
+        {
+            var hash = 1469598103934665603UL;
+            foreach (var symbol in snapshot.ExportGraph.Symbols)
+            {
+                if (symbol.IsExternal || symbol.Path.Length != 0)
+                {
+                    continue;
+                }
+
+                foreach (var character in symbol.ModuleName)
+                {
+                    hash = (hash ^ character) * 1099511628211UL;
+                }
+
+                hash = (hash ^ '\n') * 1099511628211UL;
+                foreach (var character in symbol.Type.DisplayName)
+                {
+                    hash = (hash ^ character) * 1099511628211UL;
+                }
+
+                hash = (hash ^ '\n') * 1099511628211UL;
+            }
+
+            return hash;
         }
     }
 
