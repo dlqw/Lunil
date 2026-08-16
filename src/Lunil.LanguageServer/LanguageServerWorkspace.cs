@@ -1587,7 +1587,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
     }
 
     /// <summary>Returns the per-document index status counts for progress display.</summary>
-    public JsonObject GetIndexStatus()    {
+    public JsonObject GetIndexStatus()
+    {
         var failedFiles = new List<(string Uri, string? Error)>();
         var pendingFiles = new List<string>();
         int total, succeeded, failed, inProgress, pending;

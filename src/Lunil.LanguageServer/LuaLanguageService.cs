@@ -563,25 +563,25 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
             case AnnotationElementKind.TypeName:
             case AnnotationElementKind.ClassDeclaration:
-            {
-                var className = element.Name;
-                var declaration = workspace.GetClassDeclarations().FirstOrDefault(declaration =>
-                    string.Equals(declaration.Name, className, StringComparison.Ordinal));
-                if (declaration is null)
                 {
-                    return element.Kind == AnnotationElementKind.ClassDeclaration
-                        ? "```lua\nclass " + className + "\n```"
-                        : null;
-                }
+                    var className = element.Name;
+                    var declaration = workspace.GetClassDeclarations().FirstOrDefault(declaration =>
+                        string.Equals(declaration.Name, className, StringComparison.Ordinal));
+                    if (declaration is null)
+                    {
+                        return element.Kind == AnnotationElementKind.ClassDeclaration
+                            ? "```lua\nclass " + className + "\n```"
+                            : null;
+                    }
 
-                if (declaration.ModuleName == analysis.Module.Name ||
-                    element.Kind == AnnotationElementKind.TypeName)
-                {
+                    if (declaration.ModuleName == analysis.Module.Name ||
+                        element.Kind == AnnotationElementKind.TypeName)
+                    {
+                        return TryBuildClassHover(declaration.ModuleName, className);
+                    }
+
                     return TryBuildClassHover(declaration.ModuleName, className);
                 }
-
-                return TryBuildClassHover(declaration.ModuleName, className);
-            }
 
             case AnnotationElementKind.AliasDeclaration:
                 return "```lua\nalias " + element.Name + "\n```";
@@ -745,32 +745,32 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         switch (type)
         {
             case LuaFunctionType function:
-            {
-                var parameters = function.Parameters;
-                var start = parameters.Length > 0 && parameters[0].Name == "self" ? 1 : 0;
-                var rendered = string.Join(", ", Enumerable
-                    .Range(start, parameters.Length - start)
-                    .Select(index =>
-                    {
-                        var parameter = parameters[index];
-                        var name = parameter.IsVararg ? "..." : parameter.Name ?? "_";
-                        var optional = parameter.IsOptional ? "?" : string.Empty;
-                        return $"{name}{optional}: {parameter.Type.DisplayName}";
-                    }));
-                var returns = function.Returns.Head
-                    .Select(static type => type.DisplayName)
-                    .ToList();
-                var suffix = returns.Count == 0
-                    ? string.Empty
-                    : ": " + string.Join("|", returns);
-                return $"({rendered}){suffix}";
-            }
+                {
+                    var parameters = function.Parameters;
+                    var start = parameters.Length > 0 && parameters[0].Name == "self" ? 1 : 0;
+                    var rendered = string.Join(", ", Enumerable
+                        .Range(start, parameters.Length - start)
+                        .Select(index =>
+                        {
+                            var parameter = parameters[index];
+                            var name = parameter.IsVararg ? "..." : parameter.Name ?? "_";
+                            var optional = parameter.IsOptional ? "?" : string.Empty;
+                            return $"{name}{optional}: {parameter.Type.DisplayName}";
+                        }));
+                    var returns = function.Returns.Head
+                        .Select(static type => type.DisplayName)
+                        .ToList();
+                    var suffix = returns.Count == 0
+                        ? string.Empty
+                        : ": " + string.Join("|", returns);
+                    return $"({rendered}){suffix}";
+                }
 
             case LuaOverloadType overload when overload.Signatures.Length > 0:
-            {
-                var suffix = overload.Signatures.Length > 1 ? $" (+{overload.Signatures.Length - 1})" : string.Empty;
-                return FormatMemberSignature(overload.Signatures[0]) + suffix;
-            }
+                {
+                    var suffix = overload.Signatures.Length > 1 ? $" (+{overload.Signatures.Length - 1})" : string.Empty;
+                    return FormatMemberSignature(overload.Signatures[0]) + suffix;
+                }
 
             default:
                 return ": " + DisplayType(type);
@@ -1860,16 +1860,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                         DeclarationTokenModifier, tokens);
                     Walk(fieldAnnotation.Type);
                     break;
-            case LuaAliasAnnotationSyntax aliasAnnotation:
-                Emit(annotationDocument, analysis.Document, aliasAnnotation.NameSpan, TypeTokenType,
-                    DeclarationTokenModifier, tokens);
-                Walk(aliasAnnotation.Type);
-                break;
-            case LuaEnumAnnotationSyntax enumAnnotation:
-                Emit(annotationDocument, analysis.Document, enumAnnotation.NameSpan, EnumTokenType,
-                    DeclarationTokenModifier, tokens);
-                Walk(enumAnnotation.KeyType);
-                break;
+                case LuaAliasAnnotationSyntax aliasAnnotation:
+                    Emit(annotationDocument, analysis.Document, aliasAnnotation.NameSpan, TypeTokenType,
+                        DeclarationTokenModifier, tokens);
+                    Walk(aliasAnnotation.Type);
+                    break;
+                case LuaEnumAnnotationSyntax enumAnnotation:
+                    Emit(annotationDocument, analysis.Document, enumAnnotation.NameSpan, EnumTokenType,
+                        DeclarationTokenModifier, tokens);
+                    Walk(enumAnnotation.KeyType);
+                    break;
                 case LuaParamAnnotationSyntax paramAnnotation:
                     Emit(annotationDocument, analysis.Document, paramAnnotation.NameSpan, 1,
                         DeclarationTokenModifier, tokens);

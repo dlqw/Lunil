@@ -462,22 +462,22 @@ public sealed class LuaWorkspaceCompactSnapshot
         }
 
         /// <summary>Adds one entry per annotation element naming a type (references and declarations).</summary>
-    private void AddAnnotationReferences(LuaWorkspaceModuleResult module, int moduleIndex)
-    {
-        AnnotationReferenceCollector.Collect(module.Compilation.Annotations, name =>
+        private void AddAnnotationReferences(LuaWorkspaceModuleResult module, int moduleIndex)
         {
-            var annotationIndex = _annotationReferences.Count;
-            _annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
-            GetIndexBuilder(_annotationIndexes, name.Name).Add(annotationIndex);
-        });
-    }
+            AnnotationReferenceCollector.Collect(module.Compilation.Annotations, name =>
+            {
+                var annotationIndex = _annotationReferences.Count;
+                _annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
+                GetIndexBuilder(_annotationIndexes, name.Name).Add(annotationIndex);
+            });
+        }
 
-    private static LuaWorkspaceModuleCallBinding ResolveCall(
-            LuaWorkspaceModuleCallBinding call,
-            Dictionary<(bool IsExternal, string ModuleName, string Path), LuaWorkspaceExportSymbol> lookup,
-            HashSet<string> externalModules,
-            Dictionary<(bool IsExternal, string ModuleName), ImmutableArray<string>> dynamicSymbolsByModule,
-            Dictionary<(bool IsExternal, string ModuleName, string Name), ImmutableArray<string>> symbolsByName)
+        private static LuaWorkspaceModuleCallBinding ResolveCall(
+                LuaWorkspaceModuleCallBinding call,
+                Dictionary<(bool IsExternal, string ModuleName, string Path), LuaWorkspaceExportSymbol> lookup,
+                HashSet<string> externalModules,
+                Dictionary<(bool IsExternal, string ModuleName), ImmutableArray<string>> dynamicSymbolsByModule,
+                Dictionary<(bool IsExternal, string ModuleName, string Name), ImmutableArray<string>> symbolsByName)
         {
             if (call.Status == LuaWorkspaceBindingStatus.Resolved ||
                 call.Reason == "module-alias-reassigned")

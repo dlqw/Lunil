@@ -828,7 +828,7 @@ internal sealed partial class LuaLanguageService
         if (!SimpleNameRegex().IsMatch(trimmedText) &&
             member.ReceiverSpan is { Length: > 1 } receiverSpan &&
             FindExpressionType(analysis, new TextSpan(receiverSpan.Start, receiverSpan.Length - 1)) is
-                { Kind: not LuaTypeKind.Unknown } chained)
+            { Kind: not LuaTypeKind.Unknown } chained)
         {
             return chained;
         }
