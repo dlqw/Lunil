@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Lunil.Core;
+using Lunil.Core.Text;
 using Lunil.Semantics.Binding;
 using Lunil.Syntax.Lexing;
 using Lunil.Syntax.Parsing;
@@ -293,38 +294,85 @@ internal sealed partial class AnalysisEngine
         foreach (var item in expression.ChildNodes().Where(static node =>
                      node.Kind == LuaSyntaxKind.TableField))
         {
-            var tokens = item.ChildTokens().ToArray();
-            var nodes = item.ChildNodes().ToArray();
-            if (tokens.FirstOrDefault()?.Kind == LuaTokenKind.OpenBracket && nodes.Length >= 2)
+            // One pass over the field's children classifies tokens and nodes without
+            // the per-field array materialization the previous form paid; generated
+            // data literals carry tens of thousands of fields.
+            LuaSyntaxToken? firstToken = null;
+            LuaSyntaxToken? secondToken = null;
+            LuaSyntaxNode? firstNode = null;
+            LuaSyntaxNode? lastNode = null;
+            var nodeCount = 0;
+            foreach (var child in item.Children)
             {
-                var key = InferExpression(nodes[0], state);
-                var value = InferExpressionPack(nodes[^1], state).GetElementOrNil(0);
+                if (child.IsToken)
+                {
+                    if (firstToken is null)
+                    {
+                        firstToken = child.Token;
+                    }
+                    else if (secondToken is null)
+                    {
+                        secondToken = child.Token;
+                    }
+                }
+                else if (child.Node is { } childNode)
+                {
+                    firstNode ??= childNode;
+                    lastNode = childNode;
+                    nodeCount++;
+                }
+            }
+
+            if (firstToken?.Kind == LuaTokenKind.OpenBracket && nodeCount >= 2)
+            {
+                var key = InferExpression(firstNode!, state);
+                var value = InferExpressionPack(lastNode!, state).GetElementOrNil(0);
                 var name = key is LuaStringLiteralType text ? DecodeLiteral(text) : null;
-                members.Add(new LuaTableField(name, name is null ? key : null, value, false));
+                if (members.Count < MaximumStructuralTableFieldGrowth)
+                {
+                    members.Add(new LuaTableField(name, name is null ? key : null, value, false));
+                }
+
                 mapKeys.Add(key);
                 mapValues.Add(value);
             }
-            else if (tokens.Length >= 2 && tokens[0].Kind == LuaTokenKind.Identifier &&
-                tokens[1].Kind == LuaTokenKind.Assign)
+            else if (firstToken?.Kind == LuaTokenKind.Identifier &&
+                secondToken?.Kind == LuaTokenKind.Assign &&
+                nodeCount == 1)
             {
-                var name = GetTokenText(tokens[0]);
-                var value = InferExpressionPack(nodes.Single(), state).GetElementOrNil(0);
-                members.Add(new LuaTableField(name, null, value, false));
+                var name = GetTokenText(firstToken);
+                var value = InferExpressionPack(firstNode!, state).GetElementOrNil(0);
+                if (members.Count < MaximumStructuralTableFieldGrowth)
+                {
+                    members.Add(new LuaTableField(name, null, value, false));
+                }
             }
-            else if (nodes.Length != 0)
+            else if (nodeCount == 1)
             {
-                var value = InferExpressionPack(nodes.Single(), state).GetElementOrNil(0);
+                var value = InferExpressionPack(firstNode!, state).GetElementOrNil(0);
                 arrayTypes.Add(value);
-                members.Add(new LuaTableField(null, null, value, false));
+                if (members.Count < MaximumStructuralTableFieldGrowth)
+                {
+                    members.Add(new LuaTableField(null, null, value, false));
+                }
             }
         }
 
         return new LuaStructuralTableType(
             members.ToImmutable(),
-            arrayTypes.Count == 0 ? null : _relations.Union(arrayTypes),
-            mapKeys.Count == 0 ? null : _relations.Union(mapKeys),
-            mapValues.Count == 0 ? null : _relations.Union(mapValues));
+            FoldTypes(arrayTypes),
+            FoldTypes(mapKeys),
+            FoldTypes(mapValues));
     }
+
+    /// <summary>
+    /// Folds collected types through pairwise unions instead of one bulk union:
+    /// the union normalizes to its member cap on every step, so the fold stays
+    /// linear for generated data literals with tens of thousands of entries
+    /// while producing the same normalized result.
+    /// </summary>
+    private LuaType? FoldTypes(List<LuaType> types) =>
+        types.Count == 0 ? null : types.Aggregate((left, right) => _relations.Union(left, right));
 
     private LuaType InferMember(LuaSyntaxNode expression, FlowState state)
     {
@@ -1329,7 +1377,7 @@ internal sealed partial class AnalysisEngine
             }
 
             AssignVariable(key, symbol, next, target.Span, state);
-            PropagateTableMutation(state, baseType, next, key);
+            PropagateTableMutation(state, baseType, next, key, target.Span);
             if (IsGlobalTableReference(baseExpression, out var environmentSymbol))
             {
                 AssignVariable(VariableKey.Global(name), environmentSymbol, value, nameToken.Span, state);
@@ -1393,7 +1441,7 @@ internal sealed partial class AnalysisEngine
         if (TryGetVariableKey(nodes[0], out var key, out var symbol))
         {
             AssignVariable(key, symbol, next, target.Span, state);
-            PropagateTableMutation(state, baseType, next, key);
+            PropagateTableMutation(state, baseType, next, key, target.Span);
             if (indexType is LuaStringLiteralType text &&
                 IsGlobalTableReference(nodes[0], out var environmentSymbol))
             {
@@ -1402,7 +1450,7 @@ internal sealed partial class AnalysisEngine
         }
     }
 
-    private static LuaType AddOrReplaceField(LuaType type, string name, LuaType value)
+    private LuaType AddOrReplaceField(LuaType type, string name, LuaType value)
     {
         if (type is LuaPrototypeType prototype)
         {
@@ -1410,14 +1458,55 @@ internal sealed partial class AnalysisEngine
         }
 
         var table = type as LuaStructuralTableType ?? new LuaStructuralTableType([], IsOpen: true);
-        var items = table.Fields.Where(item => !string.Equals(
-            item.Name,
-            name,
-            StringComparison.Ordinal)).ToImmutableArray();
-        return table with
+        var fields = table.Fields;
+        for (var index = 0; index < fields.Length; index++)
         {
-            Fields = [.. items, new LuaTableField(name, null, value, false)],
-        };
+            if (!string.Equals(fields[index].Name, name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var replaced = new LuaTableField[fields.Length];
+            var target = 0;
+            for (var source = 0; source < fields.Length; source++)
+            {
+                if (source != index)
+                {
+                    replaced[target++] = fields[source];
+                }
+            }
+
+            replaced[^1] = new LuaTableField(name, null, value, false);
+            return table with { Fields = [.. replaced] };
+        }
+
+        if (fields.Length >= MaximumStructuralTableFieldGrowth)
+        {
+            // Beyond the growth cap the shape stops tracking individual members
+            // and absorbs writes into the map key/value unions instead: generated
+            // data files accumulate tens of thousands of members, and keeping
+            // per-member precision there costs a quadratic rebuild per write for
+            // lookups the map types already answer. Named members already stored
+            // keep their precision; only new growth degrades.
+            return table with
+            {
+                MapKeyType = table.MapKeyType is null
+                    ? LuaTypes.String
+                    : _relations.Union(table.MapKeyType, LuaTypes.String),
+                MapValueType = table.MapValueType is null
+                    ? value
+                    : _relations.Union(table.MapValueType, value),
+            };
+        }
+
+        var grown = new LuaTableField[fields.Length + 1];
+        for (var index = 0; index < fields.Length; index++)
+        {
+            grown[index] = fields[index];
+        }
+
+        grown[^1] = new LuaTableField(name, null, value, false);
+        return table with { Fields = [.. grown] };
     }
 
     private bool TryInferUnaryOperator(
@@ -1862,7 +1951,7 @@ internal sealed partial class AnalysisEngine
         if (TryGetVariableKey(arguments[0], out var key, out var symbol))
         {
             AssignVariable(key, symbol, next, arguments[0].Span, state);
-            PropagateTableMutation(state, original, next, key);
+            PropagateTableMutation(state, original, next, key, callSpan);
         }
 
         return new LuaTypePack([next]);
@@ -1923,7 +2012,7 @@ internal sealed partial class AnalysisEngine
         if (TryGetVariableKey(arguments[0], out var key, out var symbol))
         {
             AssignVariable(key, symbol, next, arguments[0].Span, state);
-            PropagateTableMutation(state, original, next, key);
+            PropagateTableMutation(state, original, next, key, arguments[0].Span);
         }
 
         return new LuaTypePack([next]);
@@ -2027,7 +2116,8 @@ internal sealed partial class AnalysisEngine
         FlowState state,
         LuaType previous,
         LuaType next,
-        VariableKey assignedKey)
+        VariableKey assignedKey,
+        TextSpan span)
     {
         if (ReferenceEquals(previous, next))
         {
@@ -2045,101 +2135,285 @@ internal sealed partial class AnalysisEngine
             return;
         }
 
-        var keys = new List<VariableKey>();
-        foreach (var key in state.EnumerateTypeKeys())
+        var replacer = new TypeReferenceReplacer(previous, next, _relations, _context);
+        var overlayKeys = new List<VariableKey>();
+        foreach (var pair in state.OverlayTypes)
         {
-            keys.Add(key);
+            if (pair.Key != assignedKey)
+            {
+                overlayKeys.Add(pair.Key);
+            }
         }
 
-        foreach (var key in keys)
+        foreach (var key in overlayKeys)
         {
-            if (key == assignedKey)
+            ReplaceAliasedType(state, replacer, key);
+            if (replacer.BudgetExceeded)
             {
-                continue;
+                ReportTableMutationBudget(span);
+                return;
             }
+        }
 
-            var current = state.TypeOf(key, LuaTypes.Any);
-            var replaced = ReplaceTypeReference(current, previous, next, depth: 0);
-            if (ReferenceEquals(current, replaced))
-            {
-                continue;
-            }
+        // The global base universe can only embed the mutated table object when
+        // that object is itself reachable from a value published through the
+        // versioned global table. Function-local tables never qualify, so the
+        // expensive base scan is gated on publication instead of running for
+        // every member write.
+        if (!IsGloballyPublishedType(previous))
+        {
+            return;
+        }
 
-            state.SetType(key, replaced);
-            if (!key.IsGlobal)
+        foreach (var key in state.EnumerateGlobalBaseKeys())
+        {
+            ReplaceAliasedType(state, replacer, key);
+            if (replacer.BudgetExceeded)
             {
-                if (_symbolsById.TryGetValue(key.SymbolId, out var symbol))
-                {
-                    RecordSymbolInference(symbol, replaced);
-                }
+                ReportTableMutationBudget(span);
+                return;
             }
         }
     }
 
-    private LuaType ReplaceTypeReference(LuaType current, LuaType previous, LuaType next, int depth)
+    private void ReplaceAliasedType(FlowState state, TypeReferenceReplacer replacer, VariableKey key)
     {
-        if (ReferenceEquals(current, previous))
+        var current = state.TypeOf(key, LuaTypes.Any);
+        var replaced = replacer.Replace(current);
+        if (ReferenceEquals(current, replaced))
         {
-            return next;
+            return;
         }
 
-        if (depth >= MaximumMetatableLookupDepth)
+        state.SetType(key, replaced);
+        if (!key.IsGlobal &&
+            _symbolsById.TryGetValue(key.SymbolId, out var symbol))
         {
-            return current is LuaMetatableType metatable ? metatable with { IsPrecise = false } : current;
+            RecordSymbolInference(symbol, replaced);
+        }
+    }
+
+    private void ReportTableMutationBudget(TextSpan span) =>
+        _context.ReportTableMutationBudget(span);
+
+    /// <summary>
+    /// Replaces every reference to one type object inside composite type graphs and
+    /// returns the original node when the graph does not contain it. Results are
+    /// memoized by node identity so shared sub-graphs are visited once per
+    /// propagation, and unchanged children keep their references so callers can
+    /// detect no-op replacements with reference equality.
+    /// </summary>
+    private sealed class TypeReferenceReplacer(
+        LuaType previous,
+        LuaType next,
+        LuaTypeRelations relations,
+        LuaAnalysisContext context)
+    {
+        private readonly Dictionary<LuaType, LuaType> _results = new(LunilReferenceEqualityComparer.Instance);
+
+        public bool BudgetExceeded { get; private set; }
+
+        public LuaType Replace(LuaType current) => Replace(current, depth: 0, out _);
+
+        // A node is memoizable only when its whole subtree was resolved without
+        // hitting the depth cap or the propagation budget: those truncations are
+        // depth-sensitive, so their results must not be reused at other depths.
+        private LuaType Replace(LuaType current, int depth, out bool complete)
+        {
+            if (ReferenceEquals(current, previous))
+            {
+                complete = true;
+                return next;
+            }
+
+            if (_results.TryGetValue(current, out var cached))
+            {
+                complete = true;
+                return cached;
+            }
+
+            if (!context.TryVisitTableMutationNode())
+            {
+                BudgetExceeded = true;
+                complete = false;
+                return current;
+            }
+
+            if (depth >= MaximumMetatableLookupDepth)
+            {
+                complete = false;
+                return current is LuaMetatableType metatable ? metatable with { IsPrecise = false } : current;
+            }
+
+            var result = ReplaceCore(current, depth, out complete);
+            if (complete)
+            {
+                _results[current] = result;
+            }
+
+            return result;
         }
 
-        return current switch
+        private LuaType ReplaceCore(LuaType current, int depth, out bool complete)
         {
-            LuaMetatableType metatable => metatable with
+            switch (current)
             {
-                BaseType = ReplaceTypeReference(metatable.BaseType, previous, next, depth + 1),
-                MetatableType = ReplaceTypeReference(metatable.MetatableType, previous, next, depth + 1),
-            },
-            LuaPrototypeType prototype => prototype with
-            {
-                Shape = ReplaceTypeReference(prototype.Shape, previous, next, depth + 1),
-                BaseTypes = [.. prototype.BaseTypes.Select(item =>
-                    ReplaceTypeReference(item, previous, next, depth + 1))],
-            },
-            LuaUnionType union => _relations.Union(union.Types.Select(member =>
-                ReplaceTypeReference(member, previous, next, depth + 1))),
-            LuaStructuralTableType table => table with
-            {
-                Fields = [.. table.Fields.Select(field => field with
+                case LuaMetatableType metatable:
                 {
-                    KeyType = field.KeyType is null
-                        ? null
-                        : ReplaceTypeReference(field.KeyType, previous, next, depth + 1),
-                    ValueType = ReplaceTypeReference(field.ValueType, previous, next, depth + 1),
-                })],
-            },
-            LuaFunctionType function => function with
-            {
-                Parameters = [.. function.Parameters.Select(parameter => parameter with
+                    var baseType = Replace(metatable.BaseType, depth + 1, out var baseComplete);
+                    var metaType = Replace(metatable.MetatableType, depth + 1, out var metaComplete);
+                    complete = baseComplete && metaComplete;
+                    return ReferenceEquals(baseType, metatable.BaseType) &&
+                           ReferenceEquals(metaType, metatable.MetatableType)
+                        ? metatable
+                        : metatable with { BaseType = baseType, MetatableType = metaType };
+                }
+
+                case LuaPrototypeType prototype:
                 {
-                    Type = ReplaceTypeReference(parameter.Type, previous, next, depth + 1),
-                })],
-                Returns = (LuaTypePack)ReplaceTypeReference(
-                    function.Returns,
-                    previous,
-                    next,
-                    depth + 1),
-            },
-            LuaTypePack pack => pack with
+                    var shape = Replace(prototype.Shape, depth + 1, out var shapeComplete);
+                    var baseTypes = ReplaceAll(prototype.BaseTypes, depth + 1, out var baseComplete, out var basesChanged);
+                    complete = shapeComplete && baseComplete;
+                    return !basesChanged && ReferenceEquals(shape, prototype.Shape)
+                        ? prototype
+                        : prototype with { Shape = shape, BaseTypes = baseTypes };
+                }
+
+                case LuaUnionType union:
+                {
+                    var members = ReplaceAll(union.Types, depth + 1, out complete, out var changed);
+                    return changed ? relations.Union(members) : union;
+                }
+
+                case LuaStructuralTableType table:
+                {
+                    complete = true;
+                    var changed = false;
+                    var fields = new LuaTableField[table.Fields.Length];
+                    for (var index = 0; index < table.Fields.Length; index++)
+                    {
+                        var field = table.Fields[index];
+                        var keyComplete = true;
+                        var keyType = field.KeyType;
+                        if (keyType is not null)
+                        {
+                            keyType = Replace(keyType, depth + 1, out keyComplete);
+                        }
+
+                        var valueType = Replace(field.ValueType, depth + 1, out var valueComplete);
+                        complete &= keyComplete && valueComplete;
+                        if (ReferenceEquals(keyType, field.KeyType) &&
+                            ReferenceEquals(valueType, field.ValueType))
+                        {
+                            fields[index] = field;
+                            continue;
+                        }
+
+                        changed = true;
+                        fields[index] = field with { KeyType = keyType, ValueType = valueType };
+                    }
+
+                    return changed ? table with { Fields = [.. fields] } : table;
+                }
+
+                case LuaFunctionType function:
+                {
+                    complete = true;
+                    var changed = false;
+                    var parameters = new LuaFunctionParameter[function.Parameters.Length];
+                    for (var index = 0; index < function.Parameters.Length; index++)
+                    {
+                        var parameter = function.Parameters[index];
+                        var type = Replace(parameter.Type, depth + 1, out var typeComplete);
+                        complete &= typeComplete;
+                        if (ReferenceEquals(type, parameter.Type))
+                        {
+                            parameters[index] = parameter;
+                            continue;
+                        }
+
+                        changed = true;
+                        parameters[index] = parameter with { Type = type };
+                    }
+
+                    var returns = (LuaTypePack)Replace(function.Returns, depth + 1, out var returnsComplete);
+                    complete &= returnsComplete;
+                    return !changed && ReferenceEquals(returns, function.Returns)
+                        ? function
+                        : function with { Parameters = [.. parameters], Returns = returns };
+                }
+
+                case LuaTypePack pack:
+                {
+                    var head = ReplaceAll(pack.Head, depth + 1, out complete, out var headChanged);
+                    var variadicComplete = true;
+                    var variadic = pack.VariadicType;
+                    if (variadic is not null)
+                    {
+                        variadic = Replace(variadic, depth + 1, out variadicComplete);
+                        complete &= variadicComplete;
+                    }
+
+                    return !headChanged && ReferenceEquals(variadic, pack.VariadicType)
+                        ? pack
+                        : pack with { Head = head, VariadicType = variadic };
+                }
+
+                case LuaOverloadType overload:
+                {
+                    complete = true;
+                    var changed = false;
+                    var signatures = new LuaFunctionType[overload.Signatures.Length];
+                    for (var index = 0; index < overload.Signatures.Length; index++)
+                    {
+                        var signature = overload.Signatures[index];
+                        var replaced = Replace(signature, depth + 1, out var signatureComplete);
+                        complete &= signatureComplete;
+                        if (ReferenceEquals(replaced, signature))
+                        {
+                            signatures[index] = signature;
+                            continue;
+                        }
+
+                        changed = true;
+                        signatures[index] = (LuaFunctionType)replaced;
+                    }
+
+                    return changed ? overload with { Signatures = [.. signatures] } : overload;
+                }
+
+                default:
+                    complete = true;
+                    return current;
+            }
+        }
+
+        private ImmutableArray<LuaType> ReplaceAll(
+            ImmutableArray<LuaType> items,
+            int depth,
+            out bool complete,
+            out bool changed)
+        {
+            complete = true;
+            changed = false;
+            LuaType[]? rewritten = null;
+            for (var index = 0; index < items.Length; index++)
             {
-                Head = [.. pack.Head.Select(item =>
-                    ReplaceTypeReference(item, previous, next, depth + 1))],
-                VariadicType = pack.VariadicType is null
-                    ? null
-                    : ReplaceTypeReference(pack.VariadicType, previous, next, depth + 1),
-            },
-            LuaOverloadType overload => overload with
-            {
-                Signatures = [.. overload.Signatures.Select(signature =>
-                    (LuaFunctionType)ReplaceTypeReference(signature, previous, next, depth + 1))],
-            },
-            _ => current,
-        };
+                var item = items[index];
+                var replaced = Replace(item, depth, out var itemComplete);
+                complete &= itemComplete;
+                if (ReferenceEquals(replaced, item))
+                {
+                    continue;
+                }
+
+                rewritten ??= [.. items];
+                rewritten[index] = replaced;
+                changed = true;
+            }
+
+            return changed ? [.. rewritten!] : items;
+        }
     }
 
     private void InvalidateEscapedMetatables(IEnumerable<LuaSyntaxNode> arguments, FlowState state)
@@ -2166,7 +2440,7 @@ internal sealed partial class AnalysisEngine
             }
 
             AssignVariable(key, symbol, widened, argument.Span, state);
-            PropagateTableMutation(state, current, widened, key);
+            PropagateTableMutation(state, current, widened, key, argument.Span);
         }
     }
 

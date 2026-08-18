@@ -53,6 +53,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
     }, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly string[] ExcludedDirectories =
         [".git", ".svn", "bin", "obj", "node_modules", ".vscode", ".idea"];
+
+    /// <summary>Corpus-scan progress is reported every N files so parallel workers cannot flood the channel.</summary>
+    private const int CorpusProgressInterval = 64;
     private static BuiltinLibrary Builtin => BuiltinLibrary.Value;
     private readonly object _gate = new();
     private readonly LuaFrontEndSession _frontEnd = new(new LuaCompilerOptions
@@ -64,13 +67,36 @@ internal sealed class LanguageServerWorkspace : IDisposable
     });
     private readonly Dictionary<string, LspTextDocument> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LanguageDocumentAnalysis> _analyses = new(StringComparer.Ordinal);
-    /** Insertion-order keys bounding <see cref="_analyses"/>; oldest entries evict first. */
+    /** Recency order bounding <see cref="_analyses"/>; least-recently-used non-open entries evict first. */
     private readonly LinkedList<string> _analysisOrder = new();
-    private const int MaximumCachedAnalyses = 256;
+    private long _cachedAnalysisBytes;
+
+    /// <summary>Byte budget for cached document analyses; open documents are pinned
+    /// and never evicted for budget reasons.</summary>
+    internal long MaximumCachedAnalysisBytes { get; set; } = 384L * 1024 * 1024;
+
+    /// <summary>
+    /// Byte budget for closed documents' resident sources. Above it, least-recently-used
+    /// closed documents drop their bytes and reload from disk on next use; open documents
+    /// and virtual documents stay resident regardless.
+    /// </summary>
+    internal long MaximumDocumentResidencyBytes { get; set; } = 512L * 1024 * 1024;
+
+    private static readonly TimeSpan StartupDeclarationsTimeout = TimeSpan.FromSeconds(120);
     private ImmutableDictionary<string, Uri>? _uriByModuleName;
     private int _uriIndexGeneration = -1;
     private int _documentSetGeneration;
     private ImmutableArray<Uri> _folders = [];
+
+    /// <summary>
+    /// Files kept out of the analysis corpus (`lunil.analysis.exclude` patterns plus
+    /// auto-detected generated data files), keyed by URI with the exclusion reason.
+    /// They stay unloaded and unanalyzed until opened in the editor.
+    /// </summary>
+    private readonly Dictionary<string, string> _excludedFiles = new(StringComparer.Ordinal);
+    private WorkspaceFileFilter? _fileFilter = WorkspaceFileFilter.Create([], autoDetect: true);
+    private ImmutableArray<string> _excludePatterns = [];
+    private bool _autoDetectDataFiles = true;
 
     /// <summary>
     /// Read-only declaration-stub folders (`lunil.workspace.library`): LuaLS-style
@@ -136,6 +162,18 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public Func<Uri, int?, JsonArray, Task>? DiagnosticsPublished { get; set; }
 
     public Func<LuaWorkspaceProgress, Task>? ProgressReported { get; set; }
+
+    /// <summary>Forwards a parallel corpus-scan count as a progress event; display-only, never awaited.</summary>
+    private void ReportCorpusProgress(LuaWorkspaceProgressPhase phase, int completed, int total)
+    {
+        var report = ProgressReported;
+        if (report is null)
+        {
+            return;
+        }
+
+        _ = report(new LuaWorkspaceProgress(phase, completed, total));
+    }
 
     /// <summary>Raised when a document leaves the workspace so per-document caches follow.</summary>
     public event Action<Uri>? DocumentRemoved;
@@ -222,6 +260,175 @@ internal sealed class LanguageServerWorkspace : IDisposable
         ScheduleIndex();
     }
 
+    /// <summary>
+    /// Applies <c>lunil.analysis.exclude</c> patterns and the data-file auto-detection
+    /// toggle. Closed documents under the workspace folders are dropped so a fresh
+    /// folder load re-reads the corpus against the new rules; open documents keep
+    /// their analyses regardless of exclusion.
+    /// </summary>
+    public void ConfigureAnalysisExclusions(IEnumerable<string?>? patterns, bool? autoDetect)
+    {
+        var normalized = (patterns ?? [])
+            .Where(static pattern => !string.IsNullOrWhiteSpace(pattern))
+            .Select(static pattern => pattern!.Trim())
+            .Where(static pattern => pattern.Length > 0)
+            .ToImmutableArray();
+        var removedAny = false;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            // didChangeConfiguration carries the whole lunil section on every settings
+            // edit; an unchanged exclusion configuration must not trigger a reload.
+            var settingsChanged = !normalized.SequenceEqual(_excludePatterns) ||
+                autoDetect is { } value && value != _autoDetectDataFiles;
+            if (!settingsChanged)
+            {
+                return;
+            }
+
+            _excludePatterns = normalized;
+            if (autoDetect is { } enabled)
+            {
+                _autoDetectDataFiles = enabled;
+            }
+
+            _fileFilter = WorkspaceFileFilter.Create(_excludePatterns, _autoDetectDataFiles);
+            _excludedFiles.Clear();
+            foreach (var key in _documents.Where(pair => !pair.Value.IsOpen &&
+                         _folders.Any(folder => IsUnderRoot(ToLocalPath(pair.Value.Uri), ToLocalPath(folder))))
+                     .Select(static pair => pair.Key).ToArray())
+            {
+                _documents.Remove(key);
+                RemoveAnalysis(key);
+                _indexStatus.Remove(key);
+                _indexErrors.Remove(key);
+                DocumentRemoved?.Invoke(new Uri(key, UriKind.Absolute));
+                removedAny = true;
+            }
+
+            _documentSetGeneration++;
+            InvalidateIndexNoLock();
+        }
+
+        if (!_folders.IsEmpty)
+        {
+            _ = Task.Run(() => LoadFolders(_folders));
+        }
+        else if (removedAny)
+        {
+            ScanAllTypeDeclarations();
+            ScheduleIndex();
+        }
+    }
+
+    /// <summary>
+    /// Classifies already-loaded bytes against the current filter; returns the exclusion
+    /// reason or null when the file stays in the corpus.
+    /// </summary>
+    private static string? ClassifyExclusion(
+        Uri uri,
+        ReadOnlySpan<byte> bytes,
+        WorkspaceFileFilter? filter,
+        ImmutableArray<Uri> folders)
+    {
+        if (filter is null)
+        {
+            return null;
+        }
+
+        var localPath = ToLocalPath(uri);
+        var relativePath = TryGetWorkspaceRelativePath(localPath, folders) ??
+            Path.GetFileName(localPath);
+        if (filter.IsExcludedByPattern(relativePath))
+        {
+            return WorkspaceFileFilter.PatternExclusionReason;
+        }
+
+        return filter.AutoDetectDataFiles && WorkspaceFileFilter.LooksLikeDataFile(bytes)
+            ? WorkspaceFileFilter.DataExclusionReason
+            : null;
+    }
+
+    /// <summary>
+    /// Classifies a file on disk without loading it fully: pattern rules first, then a
+    /// bounded sample read only when the file is large enough to qualify as data.
+    /// </summary>
+    private static string? ClassifyDiskExclusion(
+        Uri uri,
+        WorkspaceFileFilter? filter,
+        ImmutableArray<Uri> folders)
+    {
+        if (filter is null)
+        {
+            return null;
+        }
+
+        var localPath = ToLocalPath(uri);
+        var relativePath = TryGetWorkspaceRelativePath(localPath, folders) ??
+            Path.GetFileName(localPath);
+        if (filter.IsExcludedByPattern(relativePath))
+        {
+            return WorkspaceFileFilter.PatternExclusionReason;
+        }
+
+        if (!filter.AutoDetectDataFiles)
+        {
+            return null;
+        }
+
+        try
+        {
+            var info = new FileInfo(localPath);
+            if (info.Length < WorkspaceFileFilter.DataDetectionMinimumBytes)
+            {
+                return null;
+            }
+
+            // One extra byte proves the sample was truncated by the reader, not by EOF.
+            var sampleLength = (int)Math.Min(
+                info.Length,
+                WorkspaceFileFilter.DataDetectionSampleBytes + 1L);
+            var sample = new byte[sampleLength];
+            using var stream = File.OpenRead(localPath);
+            var read = 0;
+            while (read < sampleLength)
+            {
+                var chunk = stream.Read(sample, read, sampleLength - read);
+                if (chunk <= 0)
+                {
+                    break;
+                }
+
+                read += chunk;
+            }
+
+            return WorkspaceFileFilter.LooksLikeDataFile(sample.AsSpan(0, read))
+                ? WorkspaceFileFilter.DataExclusionReason
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static string? TryGetWorkspaceRelativePath(string path, ImmutableArray<Uri> folders)
+    {
+        var ownerRoot = "";
+        foreach (var folder in folders)
+        {
+            var root = ToLocalPath(folder);
+            if (root.Length > ownerRoot.Length && IsUnderRoot(path, root))
+            {
+                ownerRoot = root;
+            }
+        }
+
+        return ownerRoot.Length == 0
+            ? null
+            : Path.GetRelativePath(ownerRoot, path).Replace('\\', '/');
+    }
+
     public void Open(Uri uri, int version, string text)
     {
         lock (_gate)
@@ -231,6 +438,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
             RemoveAnalysis(uri.AbsoluteUri);
             _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             _indexErrors.Remove(uri.AbsoluteUri);
+            // Opening a file is an explicit request to analyze it, even when it was
+            // excluded from background indexing.
+            _excludedFiles.Remove(uri.AbsoluteUri);
             _documentSetGeneration++;
             InvalidateIndexNoLock();
         }
@@ -258,6 +468,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
         // Best-effort scan; failures on inaccessible roots must never block document analysis.
         try
         {
+            WorkspaceFileFilter? filter;
+            lock (_gate)
+            {
+                filter = _fileFilter;
+            }
+
             var added = new Dictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>(StringComparer.Ordinal);
             var directory = Path.GetDirectoryName(ToLocalPath(uri));
             while (directory is not null)
@@ -279,10 +495,22 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     try
                     {
                         var fileUri = new Uri(Path.GetFullPath(path));
-                        if (!added.ContainsKey(fileUri.AbsoluteUri))
+                        if (added.ContainsKey(fileUri.AbsoluteUri))
                         {
-                            added[fileUri.AbsoluteUri] = ScanTypeDeclarations(File.ReadAllText(path), fileUri.AbsoluteUri);
+                            continue;
                         }
+
+                        var bytes = File.ReadAllBytes(path);
+                        // Generated data tables in ancestor directories carry no
+                        // annotations; skip them so the scan does not lex megabytes
+                        // of data while opening a single file.
+                        if (filter is { AutoDetectDataFiles: true } &&
+                            WorkspaceFileFilter.LooksLikeDataFile(bytes))
+                        {
+                            continue;
+                        }
+
+                        added[fileUri.AbsoluteUri] = ScanTypeDeclarations(bytes, fileUri.AbsoluteUri);
                     }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                     {
@@ -363,18 +591,37 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public void Close(Uri uri)
     {
         LspTextDocument? disk = null;
+        string? exclusion = null;
+        ImmutableArray<Uri> folders;
+        WorkspaceFileFilter? filter;
+        lock (_gate)
+        {
+            folders = _folders;
+            filter = _fileFilter;
+        }
+
         if (uri.IsFile && File.Exists(ToLocalPath(uri)))
         {
-            disk = new LspTextDocument(uri, 0, File.ReadAllText(ToLocalPath(uri)), isOpen: false);
+            exclusion = ClassifyDiskExclusion(uri, filter, folders);
+            if (exclusion is null)
+            {
+                disk = LoadDiskDocument(uri, 0);
+            }
         }
 
         lock (_gate)
         {
+            _excludedFiles.Remove(uri.AbsoluteUri);
             if (disk is null)
             {
                 _documents.Remove(uri.AbsoluteUri);
                 _indexStatus.Remove(uri.AbsoluteUri);
                 _indexErrors.Remove(uri.AbsoluteUri);
+                if (exclusion is not null)
+                {
+                    _excludedFiles[uri.AbsoluteUri] = exclusion;
+                }
+
                 DocumentRemoved?.Invoke(uri);
             }
             else
@@ -412,27 +659,59 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public void WatchedFileChanged(Uri uri, int changeType)
     {
+        ImmutableArray<Uri> folders;
+        WorkspaceFileFilter? filter;
         lock (_gate)
         {
-            if (_documents.TryGetValue(uri.AbsoluteUri, out var existing) && existing.IsOpen)
+            folders = _folders;
+            filter = _fileFilter;
+            if (_documents.TryGetValue(uri.AbsoluteUri, out var open) && open.IsOpen)
             {
                 return;
             }
+        }
 
-            if (changeType == 3 || !uri.IsFile || !File.Exists(ToLocalPath(uri)))
+        string? exclusion = null;
+        var deleted = changeType == 3 || !uri.IsFile || !File.Exists(ToLocalPath(uri));
+        if (!deleted)
+        {
+            exclusion = ClassifyDiskExclusion(uri, filter, folders);
+        }
+
+        lock (_gate)
+        {
+            var wasExcluded = _excludedFiles.TryGetValue(uri.AbsoluteUri, out var previousReason);
+            if (wasExcluded && !deleted && exclusion == previousReason)
+            {
+                // Still excluded with the same reason: no document-set change, no rebuild.
+                return;
+            }
+
+            if (deleted)
             {
                 _documents.Remove(uri.AbsoluteUri);
                 _indexStatus.Remove(uri.AbsoluteUri);
                 _indexErrors.Remove(uri.AbsoluteUri);
+                _excludedFiles.Remove(uri.AbsoluteUri);
                 DocumentRemoved?.Invoke(uri);
+            }
+            else if (exclusion is not null)
+            {
+                // Newly (or still, with a different reason) excluded: drop any resident
+                // document without loading the file's contents.
+                if (_documents.Remove(uri.AbsoluteUri))
+                {
+                    _indexStatus.Remove(uri.AbsoluteUri);
+                    _indexErrors.Remove(uri.AbsoluteUri);
+                    DocumentRemoved?.Invoke(uri);
+                }
+
+                _excludedFiles[uri.AbsoluteUri] = exclusion;
             }
             else
             {
-                _documents[uri.AbsoluteUri] = new LspTextDocument(
-                    uri,
-                    0,
-                    File.ReadAllText(ToLocalPath(uri)),
-                    isOpen: false);
+                _excludedFiles.Remove(uri.AbsoluteUri);
+                _documents[uri.AbsoluteUri] = LoadDiskDocument(uri, 0);
                 _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
                 _indexErrors.Remove(uri.AbsoluteUri);
             }
@@ -579,7 +858,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 try
                 {
                     var uri = new Uri(Path.GetFullPath(path));
-                    loaded[uri.AbsoluteUri] = new LspTextDocument(uri, 0, File.ReadAllText(path), isOpen: false);
+                    var bytes = File.ReadAllBytes(path);
+                    loaded[uri.AbsoluteUri] = bytes is [0xFF, 0xFE, ..] or [0xFE, 0xFF, ..]
+                        ? new LspTextDocument(uri, 0, DecodeText(bytes), isOpen: false)
+                        : new LspTextDocument(uri, 0, bytes, isOpen: false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
@@ -815,12 +1097,17 @@ internal sealed class LanguageServerWorkspace : IDisposable
             libraryGlobals = _libraryGlobals;
             moduleTypes = GetModuleTypesNoLock();
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
-                cached.Document.Version == document.Version && cached.Document.Text == document.Text &&
-                cached.EnvironmentGeneration == environmentGeneration)
+                cached.Document.Version == document.Version &&
+                cached.EnvironmentGeneration == environmentGeneration &&
+                cached.Document.Utf8.Span.SequenceEqual(document.Utf8.Span))
             {
+                TouchAnalysis(uri.AbsoluteUri);
                 return cached;
             }
         }
+
+        // Interactive use pins this document's residency for the next eviction pass.
+        document.Touch();
 
         var module = GetModuleIdentity(document.Uri);
         LuaHostAnalysisContract? hostContract;
@@ -833,6 +1120,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
         // Wait for the initial workspace declaration scan so cross-file @class/@alias/@enum types
         // resolve correctly on the very first analyses (avoids stale LUA6001 races at startup).
+        // A scan that never signals must not hang every analysis forever: after the
+        // timeout the request proceeds with whatever declarations exist, and a later
+        // scan still invalidates these analyses through the environment generation.
         bool declarationsReady;
         lock (_gate)
         {
@@ -841,8 +1131,15 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
         if (!declarationsReady)
         {
-            await _declarationsReady.Task.ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
+            var completed = await Task.WhenAny(
+                _declarationsReady.Task,
+                Task.Delay(StartupDeclarationsTimeout, cancellationToken)).ConfigureAwait(false);
+            if (completed != _declarationsReady.Task)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                LogInfo(
+                    "Lunil workspace: startup declaration scan timed out; analyzing without cross-file declarations");
+            }
         }
 
         var source = LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri);
@@ -883,21 +1180,62 @@ internal sealed class LanguageServerWorkspace : IDisposable
         return null;
     }
 
-    /// <summary>Stores an analysis and keeps the cache bounded by insertion recency.</summary>
+    /// <summary>Stores an analysis and keeps the cache inside its byte budget.</summary>
     private void StoreAnalysis(string key, LanguageDocumentAnalysis analysis)
     {
+        if (_analyses.TryGetValue(key, out var previous))
+        {
+            _cachedAnalysisBytes -= EstimateAnalysisBytes(previous);
+            _analysisOrder.Remove(key);
+        }
+
         _analyses[key] = analysis;
+        _analysisOrder.AddLast(key);
+        _cachedAnalysisBytes += EstimateAnalysisBytes(analysis);
+        EvictAnalysesOverBudget();
+    }
+
+    /// <summary>Marks a cached analysis as most recently used; caller holds <see cref="_gate"/>.</summary>
+    private void TouchAnalysis(string key)
+    {
         _analysisOrder.Remove(key);
         _analysisOrder.AddLast(key);
-        while (_analysisOrder.Count > MaximumCachedAnalyses && _analysisOrder.First is { } oldest)
+    }
+
+    /// <summary>
+    /// Evicts least-recently-used analyses until the byte budget holds. Documents
+    /// currently open in the editor stay pinned — their analyses back interactive
+    /// requests — so a burst of opens cannot evict what the user is looking at; if
+    /// the pinned set alone exceeds the budget the cache simply overshoots.
+    /// </summary>
+    private void EvictAnalysesOverBudget()
+    {
+        var node = _analysisOrder.First;
+        while (_cachedAnalysisBytes > MaximumCachedAnalysisBytes && node is not null)
         {
-            _analysisOrder.RemoveFirst();
-            _analyses.Remove(oldest.Value);
+            var next = node.Next;
+            if (!_documents.TryGetValue(node.Value, out var document) || !document.IsOpen)
+            {
+                if (_analyses.TryGetValue(node.Value, out var evicted))
+                {
+                    _cachedAnalysisBytes -= EstimateAnalysisBytes(evicted);
+                }
+
+                _analysisOrder.Remove(node);
+                _analyses.Remove(node.Value);
+            }
+
+            node = next;
         }
     }
 
     private void RemoveAnalysis(string key)
     {
+        if (_analyses.TryGetValue(key, out var removed))
+        {
+            _cachedAnalysisBytes -= EstimateAnalysisBytes(removed);
+        }
+
         _analyses.Remove(key);
         _analysisOrder.Remove(key);
     }
@@ -906,7 +1244,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         _analyses.Clear();
         _analysisOrder.Clear();
+        _cachedAnalysisBytes = 0;
     }
+
+    /// <summary>
+    /// Mirrors the workspace cache estimator: source-derived retention plus per-symbol
+    /// and per-reference overhead. An order-of-magnitude figure is sufficient — it
+    /// only drives eviction order, never correctness.
+    /// </summary>
+    private static long EstimateAnalysisBytes(LanguageDocumentAnalysis analysis) => checked(
+        2_048L +
+        analysis.Document.ByteLength * 12L +
+        analysis.Compilation.SemanticModel.Symbols.Length * 128L +
+        analysis.Compilation.SemanticModel.UnifiedReferences.Length * 96L +
+        analysis.Compilation.Analysis.Functions.Length * 512L);
 
     public LuaWorkspaceCompactSnapshot? GetSnapshot()
     {
@@ -998,21 +1349,47 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public async Task ReindexNowAsync(CancellationToken cancellationToken)
     {
         int generation;
+        int documentSetGeneration;
         LuaWorkspace workspace;
-        ImmutableArray<LuaWorkspaceDocument> documents;
+        LspTextDocument[] documentSnapshot;
+        string[] excludedSnapshot;
         lock (_gate)
         {
             generation = _generation;
+            documentSetGeneration = _documentSetGeneration;
             workspace = _workspace;
-            documents = [.. _documents.Values.Select(document => new LuaWorkspaceDocument(
-                GetModuleIdentity(document.Uri),
-                LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri)))];
+            documentSnapshot = [.. _documents.Values];
+            excludedSnapshot = [.. _excludedFiles.Keys];
         }
+
+        // Reload trimmed closed documents in parallel so the source pass below does not
+        // serialize on disk reads, and mark the whole corpus as recently used.
+        EnsureDocumentsLoaded(documentSnapshot);
+
+        // Excluded files exist at runtime but sit outside the corpus: requires that name
+        // them resolve untyped instead of reporting an unresolved module.
+        var externallyProvidedModules = excludedSnapshot
+            .Select(static key => new Uri(key, UriKind.Absolute))
+            .Where(static uri => uri.IsFile)
+            .Select(uri => GetModuleIdentity(uri).Name)
+            .ToImmutableHashSet(StringComparer.Ordinal);
+
+        // Building workspace documents copies every source body; doing that under
+        // the gate held the message loop hostage for the whole corpus on large
+        // workspaces. References are read outside; the document-set guard below
+        // discards the result if the corpus changed meanwhile. The canonical byte
+        // arrays are wrapped without copying — a rebuild must not duplicate the
+        // whole corpus on multi-hundred-megabyte workspaces.
+        var documents = documentSnapshot
+            .Select(document => new LuaWorkspaceDocument(
+                GetModuleIdentity(document.Uri),
+                LuaSourceDocument.FromOwnedBytes(document.Utf8Array, document.Uri.AbsoluteUri)))
+            .ToImmutableArray();
 
         LuaWorkspaceCompactSnapshot snapshot;
         try
         {
-            snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+            snapshot = await workspace.AnalyzeCompactAsync(documents, externallyProvidedModules, cancellationToken).ConfigureAwait(false);
         }
         catch (ObjectDisposedException) when (!_disposed)
         {
@@ -1024,7 +1401,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 workspace = _workspace;
             }
 
-            snapshot = await workspace.AnalyzeCompactAsync(documents, cancellationToken).ConfigureAwait(false);
+            snapshot = await workspace.AnalyzeCompactAsync(documents, externallyProvidedModules, cancellationToken).ConfigureAwait(false);
         }
 
         // Library stub globals participate in the environment-generation signature, so
@@ -1035,7 +1412,14 @@ internal sealed class LanguageServerWorkspace : IDisposable
         List<LspTextDocument>? openDocuments = null;
         lock (_gate)
         {
-            if (generation == _generation && ReferenceEquals(workspace, _workspace))
+            // Store unless the document corpus itself changed mid-rebuild. The old
+            // `generation == _generation` equality also rejected results whenever a
+            // declaration scan or another debounced reindex bumped the generation
+            // in flight, which could drop the only rebuild that ever observed the
+            // library globals and leave them empty forever. Corpus mutations all
+            // schedule a follow-up rebuild, so a skipped store is always retried.
+            if (documentSetGeneration == _documentSetGeneration &&
+                ReferenceEquals(workspace, _workspace))
             {
                 var previousSnapshotWasNull = _snapshot is null;
                 _snapshot = snapshot;
@@ -1077,6 +1461,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     }
                 }
             }
+
+            // The rebuild just touched every source; now drop cold closed documents'
+            // bytes back under the residency budget.
+            TrimClosedDocumentsOverBudget();
         }
 
         if (openDocuments is not null)
@@ -1159,11 +1547,26 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public void ClearCache()
     {
+        LuaWorkspace workspace;
         lock (_gate)
         {
-            _workspace.ClearCache();
+            workspace = _workspace;
             ClearAnalyses();
             InvalidateIndexNoLock();
+        }
+
+        // Clearing the shared workspace blocks on its operation gate while a running
+        // analysis reports progress back into this workspace's gate; doing that
+        // inside the lock inverted the acquisition order and could deadlock. The
+        // caches above were already cleared under the gate, so the workspace clear
+        // can safely wait outside it. A config swap may dispose the captured
+        // instance mid-call; its cache dies with it.
+        try
+        {
+            workspace.ClearCache();
+        }
+        catch (ObjectDisposedException)
+        {
         }
 
         ScheduleIndex();
@@ -1395,7 +1798,10 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public ImmutableDictionary<string, string> GetRuntimeClassBases()
     {
         BuildRuntimeClassEdges();
-        return _runtimeClassBases!;
+        lock (_gate)
+        {
+            return _runtimeClassBases!;
+        }
     }
 
     /// <summary>
@@ -1405,11 +1811,16 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public ImmutableDictionary<string, string> GetRuntimeClassModules()
     {
         BuildRuntimeClassEdges();
-        return _runtimeClassModules!;
+        lock (_gate)
+        {
+            return _runtimeClassModules!;
+        }
     }
 
     private void BuildRuntimeClassEdges()
     {
+        int generation;
+        (LspTextDocument Document, string ModuleName)[] entries;
         lock (_gate)
         {
             if (_runtimeClassBases is not null && _runtimeClassBasesGeneration == _documentSetGeneration)
@@ -1417,28 +1828,207 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return;
             }
 
-            var extendPattern = new System.Text.RegularExpressions.Regex(
-                @"local\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:.]extend\s*\(",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-            var bases = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-            var modules = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-            foreach (var document in _documents.Values)
-            {
-                var moduleName = GetModuleIdentity(document.Uri).Name;
-                foreach (System.Text.RegularExpressions.Match match in extendPattern.Matches(document.Text))
-                {
-                    var className = match.Groups[1].Value;
-                    var baseName = match.Groups[2].Value;
-                    // First definition wins, matching annotation declaration behavior.
-                    bases.TryAdd(className, baseName);
-                    modules.TryAdd(className, moduleName);
-                }
-            }
+            generation = _documentSetGeneration;
+            // Full-text scans run outside the gate; only the cheap identity
+            // resolution stays under it, so the message loop never waits behind
+            // a workspace-wide scan.
+            entries = _documents.Values
+                .Select(document => (document, GetModuleIdentity(document.Uri).Name))
+                .ToArray();
+        }
 
+        var bases = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+        var modules = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+        var edges = new List<(string ClassName, string BaseName)>();
+        foreach (var (document, moduleName) in entries)
+        {
+            edges.Clear();
+            ScanRuntimeClassEdges(document.Utf8.Span, edges);
+            foreach (var (className, baseName) in edges)
+            {
+                // First definition wins, matching annotation declaration behavior.
+                bases.TryAdd(className, baseName);
+                modules.TryAdd(className, moduleName);
+            }
+        }
+
+        lock (_gate)
+        {
+            // Store the computed snapshot under the generation it was built from,
+            // even when the document set moved on mid-scan: readers then get a
+            // coherent (slightly stale) view instead of null, and the generation
+            // mismatch makes the next caller rebuild from the newer set.
             _runtimeClassBases = bases.ToImmutable();
             _runtimeClassModules = modules.ToImmutable();
-            _runtimeClassBasesGeneration = _documentSetGeneration;
+            _runtimeClassBasesGeneration = generation;
         }
+    }
+
+    /// <summary>
+    /// Finds <c>local X = Y[:.]extend(</c> edges in raw UTF-8 source. A hand scan keeps
+    /// the byte-canonical document representation usable (no Regex over materialized
+    /// strings), skips recompiling a regex per rebuild, and rejects the keyword when
+    /// it is embedded in a longer identifier — which the old pattern silently accepted.
+    /// </summary>
+    private static void ScanRuntimeClassEdges(
+        ReadOnlySpan<byte> source,
+        List<(string ClassName, string BaseName)> edges)
+    {
+        var index = 0;
+        while (index < source.Length)
+        {
+            var remaining = source[index..];
+            var local = remaining.IndexOf("local"u8);
+            if (local < 0)
+            {
+                return;
+            }
+
+            var cursor = index + local;
+            index = cursor + 1;
+            if (cursor > 0 && IsIdentifierByte(source[cursor - 1]))
+            {
+                continue;
+            }
+
+            cursor += 5;
+            if (!SkipWhitespace(source, ref cursor, minimum: 1))
+            {
+                continue;
+            }
+
+            if (!TryReadIdentifier(source, ref cursor, out var className))
+            {
+                continue;
+            }
+
+            if (!SkipWhitespace(source, ref cursor, minimum: 0) || !At(source, ref cursor, (byte)'='))
+            {
+                continue;
+            }
+
+            if (!SkipWhitespace(source, ref cursor, minimum: 0) ||
+                !TryReadIdentifier(source, ref cursor, out var baseName))
+            {
+                continue;
+            }
+
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (!At(source, ref cursor, (byte)'.') && !At(source, ref cursor, (byte)':'))
+            {
+                continue;
+            }
+
+            if (!source[cursor..].StartsWith("extend"u8))
+            {
+                continue;
+            }
+
+            cursor += 6;
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (At(source, ref cursor, (byte)'('))
+            {
+                edges.Add((className, baseName));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Finds <c>[:.]mixin( X, Y</c> pairs in raw UTF-8 source, matching the previous
+    /// mixin regex without materializing document text.
+    /// </summary>
+    private static void ScanClassMixins(
+        ReadOnlySpan<byte> source,
+        List<(string Target, string Source)> mixins)
+    {
+        var index = 0;
+        while (index < source.Length)
+        {
+            var remaining = source[index..];
+            var mixin = remaining.IndexOf("mixin"u8);
+            if (mixin < 0)
+            {
+                return;
+            }
+
+            var cursor = index + mixin;
+            index = cursor + 1;
+            if (cursor == 0 || source[cursor - 1] is not ((byte)'.') and not ((byte)':'))
+            {
+                continue;
+            }
+
+            cursor += 5;
+            if (!SkipWhitespace(source, ref cursor, minimum: 0) || !At(source, ref cursor, (byte)'('))
+            {
+                continue;
+            }
+
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (!TryReadIdentifier(source, ref cursor, out var target))
+            {
+                continue;
+            }
+
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (!At(source, ref cursor, (byte)','))
+            {
+                continue;
+            }
+
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (TryReadIdentifier(source, ref cursor, out var mixinSource))
+            {
+                mixins.Add((target, mixinSource));
+            }
+        }
+    }
+
+    private static bool IsIdentifierByte(byte value) =>
+        value is >= (byte)'0' and <= (byte)'9' or >= (byte)'A' and <= (byte)'Z' or
+            >= (byte)'a' and <= (byte)'z' or (byte)'_';
+
+    private static bool SkipWhitespace(ReadOnlySpan<byte> source, ref int cursor, int minimum)
+    {
+        var skipped = 0;
+        while (cursor < source.Length && source[cursor] is (byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r')
+        {
+            cursor++;
+            skipped++;
+        }
+
+        return skipped >= minimum && cursor < source.Length;
+    }
+
+    private static bool At(ReadOnlySpan<byte> source, ref int cursor, byte value)
+    {
+        if (cursor >= source.Length || source[cursor] != value)
+        {
+            return false;
+        }
+
+        cursor++;
+        return true;
+    }
+
+    private static bool TryReadIdentifier(ReadOnlySpan<byte> source, ref int cursor, out string identifier)
+    {
+        var start = cursor;
+        if (cursor >= source.Length ||
+            source[cursor] is not ((byte)'_' or >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z'))
+        {
+            identifier = string.Empty;
+            return false;
+        }
+
+        cursor++;
+        while (cursor < source.Length && IsIdentifierByte(source[cursor]))
+        {
+            cursor++;
+        }
+
+        identifier = System.Text.Encoding.UTF8.GetString(source[start..cursor]);
+        return true;
     }
 
     /// <summary>
@@ -1520,6 +2110,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
     public ImmutableDictionary<string, ImmutableArray<string>> GetClassMixins()
     {
         var declarations = GetClassDeclarations();
+        int generation;
+        LspTextDocument[] documents;
         lock (_gate)
         {
             if (_classMixins is not null && _classMixinsGeneration == _declarationsGeneration)
@@ -1527,38 +2119,46 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return _classMixins;
             }
 
-            var modulesByClass = declarations
-                .GroupBy(static item => item.Name, StringComparer.Ordinal)
-                .ToDictionary(
-                    static group => group.Key,
-                    static group => group.First().ModuleName,
-                    StringComparer.Ordinal);
-            var mixinPattern = new System.Text.RegularExpressions.Regex(
-                @"[.:]mixin\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-            var targets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-            foreach (var document in _documents.Values)
-            {
-                foreach (System.Text.RegularExpressions.Match match in mixinPattern.Matches(document.Text))
-                {
-                    var targetName = match.Groups[1].Value;
-                    var sourceName = match.Groups[2].Value;
-                    if (modulesByClass.ContainsKey(targetName) && modulesByClass.ContainsKey(sourceName))
-                    {
-                        if (!targets.TryGetValue(targetName, out var sources))
-                        {
-                            targets[targetName] = sources = [];
-                        }
+            generation = _declarationsGeneration;
+            documents = [.. _documents.Values];
+        }
 
-                        sources.Add(sourceName);
+        var modulesByClass = declarations
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First().ModuleName,
+                StringComparer.Ordinal);
+        var targets = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var mixinPairs = new List<(string Target, string Source)>();
+        foreach (var document in documents)
+        {
+            mixinPairs.Clear();
+            ScanClassMixins(document.Utf8.Span, mixinPairs);
+            foreach (var (targetName, sourceName) in mixinPairs)
+            {
+                if (modulesByClass.ContainsKey(targetName) && modulesByClass.ContainsKey(sourceName))
+                {
+                    if (!targets.TryGetValue(targetName, out var sources))
+                    {
+                        targets[targetName] = sources = [];
                     }
+
+                    sources.Add(sourceName);
                 }
             }
+        }
 
-            _classMixins = targets.ToImmutableDictionary(
-                static pair => pair.Key, static pair => pair.Value.ToImmutableArray());
-            _classMixinsGeneration = _declarationsGeneration;
-            return _classMixins;
+        var mixins = targets.ToImmutableDictionary(
+            static pair => pair.Key, static pair => pair.Value.ToImmutableArray());
+        lock (_gate)
+        {
+            // Store under the generation the scan used, exactly like the runtime
+            // class edges: a concurrent bump leaves a coherent stale snapshot that
+            // the next caller rebuilds from.
+            _classMixins = mixins;
+            _classMixinsGeneration = generation;
+            return mixins;
         }
     }
 
@@ -1591,6 +2191,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         var failedFiles = new List<(string Uri, string? Error)>();
         var pendingFiles = new List<string>();
+        var excludedFiles = new List<(string Uri, string Reason)>();
         int total, succeeded, failed, inProgress, pending;
         lock (_gate)
         {
@@ -1619,6 +2220,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
                         break;
                 }
             }
+
+            foreach (var pair in _excludedFiles)
+            {
+                excludedFiles.Add((pair.Key, pair.Value));
+            }
         }
 
         return new JsonObject
@@ -1629,19 +2235,28 @@ internal sealed class LanguageServerWorkspace : IDisposable
             ["failed"] = failed,
             ["inProgress"] = inProgress,
             ["pending"] = pending,
+            ["excluded"] = excludedFiles.Count,
             ["failedFiles"] = new JsonArray(failedFiles.Take(200).Select(static item => (JsonNode?)new JsonObject
             {
                 ["uri"] = item.Uri,
                 ["error"] = item.Error,
             }).ToArray()),
             ["pendingFiles"] = new JsonArray(pendingFiles.Take(200).Select(static item => (JsonNode?)item).ToArray()),
+            ["excludedFiles"] = new JsonArray(excludedFiles
+                .OrderBy(static item => item.Uri, StringComparer.Ordinal)
+                .Take(200)
+                .Select(static item => (JsonNode?)new JsonObject
+                {
+                    ["uri"] = item.Uri,
+                    ["reason"] = item.Reason,
+                }).ToArray()),
         };
     }
 
     /// <summary>Re-scans the type declarations of one document and refreshes the cross-file index.</summary>
     public void UpdateDocumentTypeDeclarations(string uri, string text)
     {
-        var declarations = ScanTypeDeclarations(text, uri);
+        var declarations = ScanTypeDeclarations(System.Text.Encoding.UTF8.GetBytes(text), uri);
         lock (_gate)
         {
             _perDocumentDeclarations[uri] = declarations;
@@ -1667,10 +2282,21 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
         var results = new System.Collections.Concurrent.ConcurrentDictionary<string, ImmutableDictionary<string, LuaExternalTypeDeclaration>>(
             StringComparer.Ordinal);
+        EnsureDocumentsLoaded(documents.Select(static pair => pair.Value).ToArray());
+        ReportCorpusProgress(LuaWorkspaceProgressPhase.Declarations, 0, documents.Length);
+        var scannedCount = 0;
         Parallel.ForEach(
             documents,
             new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount / 2) },
-            pair => results[pair.Key] = ScanTypeDeclarations(pair.Value.Text, pair.Value.Uri.AbsoluteUri));
+            pair =>
+            {
+                results[pair.Key] = ScanTypeDeclarations(pair.Value.Utf8.Span, pair.Value.Uri.AbsoluteUri);
+                var completed = Interlocked.Increment(ref scannedCount);
+                if (completed % CorpusProgressInterval == 0 || completed == documents.Length)
+                {
+                    ReportCorpusProgress(LuaWorkspaceProgressPhase.Declarations, completed, documents.Length);
+                }
+            });
 
         lock (_gate)
         {
@@ -1683,6 +2309,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             _declarationsGeneration++;
             ClearAnalyses();
             InvalidateIndexNoLock();
+            TrimClosedDocumentsOverBudget();
         }
 
         LogInfo(
@@ -1699,9 +2326,11 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
-    private ImmutableDictionary<string, LuaExternalTypeDeclaration> ScanTypeDeclarations(string text, string sourceName)
+    private ImmutableDictionary<string, LuaExternalTypeDeclaration> ScanTypeDeclarations(
+        ReadOnlySpan<byte> utf8,
+        string sourceName)
     {
-        var source = LuaSourceDocument.FromUtf8(text, sourceName);
+        var source = LuaSourceDocument.FromBytes(utf8, sourceName);
         var lexing = LuaLexer.Lex(source.Text, _frontEnd.Options.Lexer with
         {
             LanguageVersion = _frontEnd.Options.LanguageVersion,
@@ -1869,7 +2498,16 @@ internal sealed class LanguageServerWorkspace : IDisposable
             paths.AddRange(EnumerateLuaFiles(ToLocalPath(folder)));
         }
 
+        WorkspaceFileFilter? filter;
+        lock (_gate)
+        {
+            filter = _fileFilter;
+        }
+
         var loaded = new System.Collections.Concurrent.ConcurrentDictionary<string, LspTextDocument>(StringComparer.Ordinal);
+        var excluded = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        ReportCorpusProgress(LuaWorkspaceProgressPhase.Loading, 0, paths.Count);
+        var readCount = 0;
         Parallel.ForEach(
             paths,
             new ParallelOptions { MaxDegreeOfParallelism = Math.Max(4, Environment.ProcessorCount) },
@@ -1878,19 +2516,38 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 try
                 {
                     var uri = new Uri(Path.GetFullPath(path));
-                    loaded[uri.AbsoluteUri] = new LspTextDocument(
-                        uri,
-                        0,
-                        File.ReadAllText(path),
-                        isOpen: false);
+                    var bytes = File.ReadAllBytes(path);
+                    // Excluded files (user patterns, generated data) never enter the document
+                    // set: their bytes drop here, costing no residency or downstream analysis.
+                    var reason = ClassifyExclusion(uri, bytes, filter, folders);
+                    if (reason is not null)
+                    {
+                        excluded[uri.AbsoluteUri] = reason;
+                        return;
+                    }
+
+                    loaded[uri.AbsoluteUri] = bytes is [0xFF, 0xFE, ..] or [0xFE, 0xFF, ..]
+                        ? new LspTextDocument(uri, 0, DecodeText(bytes), isOpen: false)
+                        : new LspTextDocument(uri, 0, bytes, isOpen: false);
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
                 }
+                finally
+                {
+                    var completed = Interlocked.Increment(ref readCount);
+                    if (completed % CorpusProgressInterval == 0 || completed == paths.Count)
+                    {
+                        ReportCorpusProgress(LuaWorkspaceProgressPhase.Loading, completed, paths.Count);
+                    }
+                }
             });
 
         LogInfo(
-            $"Lunil workspace: loading {folders.Length} folder(s) -> {paths.Count} .lua files");
+            $"Lunil workspace: loading {folders.Length} folder(s) -> {paths.Count} .lua files" +
+            (excluded.IsEmpty
+                ? string.Empty
+                : $", {excluded.Count} excluded from analysis ({excluded.Values.Count(static reason => reason == WorkspaceFileFilter.DataExclusionReason)} auto-detected data, {excluded.Values.Count(static reason => reason == WorkspaceFileFilter.PatternExclusionReason)} by pattern)"));
 
         lock (_gate)
         {
@@ -1910,7 +2567,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return;
             }
 
-            if (loaded.IsEmpty)
+            if (loaded.IsEmpty && excluded.IsEmpty)
             {
                 LogInfo("Lunil workspace: no .lua files under registered folders; declaration gate stays closed until a document opens or a folder is added");
                 // No documents under the registered folders. The gate stays closed until a document
@@ -1926,16 +2583,99 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 }
             }
 
+            // The exclusion map reflects this scan; documents opened mid-load win over exclusion.
+            _excludedFiles.Clear();
+            foreach (var pair in excluded)
+            {
+                if (!_documents.TryGetValue(pair.Key, out var existing) || !existing.IsOpen)
+                {
+                    _excludedFiles[pair.Key] = pair.Value;
+                }
+            }
+
             foreach (var pair in _documents)
             {
                 _indexStatus.TryAdd(pair.Key, FileIndexStatus.Pending);
             }
 
+            // Reject rebuilds that captured the document set before this merge; a
+            // stale (empty or partial) result must never overwrite the snapshot.
+            _documentSetGeneration++;
             InvalidateIndexNoLock();
+            TrimClosedDocumentsOverBudget();
         }
 
         ScanAllTypeDeclarations();
         ScheduleIndex();
+    }
+
+    /// <summary>
+    /// Drops resident sources of least-recently-used closed documents until the
+    /// residency budget holds. Trimmed documents reload transparently from disk.
+    /// Caller holds <see cref="_gate"/>; trimming performs no I/O.
+    /// </summary>
+    private void TrimClosedDocumentsOverBudget()
+    {
+        var total = 0L;
+        foreach (var document in _documents.Values)
+        {
+            total += document.ByteLength;
+        }
+
+        if (total <= MaximumDocumentResidencyBytes)
+        {
+            return;
+        }
+
+        foreach (var document in _documents.Values
+                     .Where(static document => !document.IsOpen && document.Uri.IsFile && !document.IsTrimmed)
+                     .OrderBy(static document => document.LastAccess)
+                     .ToList())
+        {
+            if (total <= MaximumDocumentResidencyBytes)
+            {
+                break;
+            }
+
+            total -= document.ByteLength;
+            document.Trim();
+        }
+    }
+
+    /// <summary>Test hook: applies the residency budget immediately.</summary>
+    internal void TrimClosedDocumentsForTest()
+    {
+        lock (_gate)
+        {
+            TrimClosedDocumentsOverBudget();
+        }
+    }
+
+    /// <summary>
+    /// Reloads trimmed documents in parallel before a full-corpus pass so rebuilds do
+    /// not pay serialized disk reads, and marks everything as recently used.
+    /// </summary>
+    private static void EnsureDocumentsLoaded(LspTextDocument[] documents)
+    {
+        var trimmed = 0;
+        foreach (var document in documents)
+        {
+            document.Touch();
+            if (document.IsTrimmed)
+            {
+                trimmed++;
+            }
+        }
+
+        if (trimmed == 0)
+        {
+            return;
+        }
+
+        Parallel.ForEach(
+            documents.Where(static document => document.IsTrimmed),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(4, Environment.ProcessorCount) },
+            static document => _ = document.Utf8.Span.Length);
     }
 
     private void SignalDeclarationsReady()
@@ -1965,6 +2705,16 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         HostContract = hostContract,
         SuppressedDiagnosticCodes = _suppressedDiagnosticCodes,
+        // Strongly retained, budget-bounded module caches back the incremental fast
+        // paths: cache keys encode each module's content hash and every dependency's
+        // export hash, and reusable snapshot projections mean unchanged modules never
+        // need their full compiler models again — so the budget only has to cover the
+        // changed-module working set between edits, not the whole corpus.
+        RetainFullAnalysisCacheResults = true,
+        MaximumCacheBytes = 128L * 1024 * 1024,
+        // Leave headroom for interactive requests (hover, completion) so a full
+        // background rebuild cannot saturate every core.
+        MaximumParallelism = Math.Max(2, Environment.ProcessorCount - 2),
         DiskCacheDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Lunil",
@@ -2042,6 +2792,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    /// <summary>
+    /// Loads a document from disk as UTF-8 bytes. UTF-16 BOM files transcode through
+    /// the string path (matching the previous <see cref="File.ReadAllText"/> behavior);
+    /// everything else — the overwhelming case for Lua sources — stays byte-only.
+    /// </summary>
+    private static LspTextDocument LoadDiskDocument(Uri uri, int version)
+    {
+        var bytes = File.ReadAllBytes(ToLocalPath(uri));
+        return bytes is [0xFF, 0xFE, ..] or [0xFE, 0xFF, ..]
+            ? new LspTextDocument(uri, version, DecodeText(bytes), isOpen: false)
+            : new LspTextDocument(uri, version, bytes, isOpen: false);
+    }
+
+    private static string DecodeText(byte[] bytes) => bytes[1] == 0xFE
+        ? System.Text.Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2)
+        : System.Text.Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
 
     internal static JsonObject ToJson(LspRange range) => new()
     {

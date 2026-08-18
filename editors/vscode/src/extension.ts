@@ -71,9 +71,25 @@ interface IndexProgressPayload {
   readonly failed?: number;
   readonly inProgress?: number;
   readonly pending?: number;
+  readonly excluded?: number;
 }
 
 const indexProgressThrottleMs = 200;
+
+/** Localized short label for a server progress phase; unknown names pass through. */
+function indexPhaseLabel(phase: string | undefined): string {
+  const strings = t();
+  switch (phase) {
+    case 'Loading': return strings.indexPhaseLoading;
+    case 'Declarations': return strings.indexPhaseDeclarations;
+    case 'Discovery': return strings.indexPhaseDiscovery;
+    case 'Resolution': return strings.indexPhaseResolution;
+    case 'Analysis': return strings.indexPhaseAnalysis;
+    case 'Indexing': return strings.indexPhaseIndexing;
+    case 'CacheMaintenance': return strings.indexPhaseCacheMaintenance;
+    default: return phase ?? strings.indexing;
+  }
+}
 
 class LunilClientController implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Lunil', { log: true });
@@ -587,6 +603,7 @@ class LunilClientController implements vscode.Disposable {
     const progress = value as IndexProgressPayload;
     const total = progress.total ?? 0;
     const completed = progress.completed ?? 0;
+    const phase = progress.phase;
     const detail = [
       `succeeded:${progress.succeeded ?? 0}`,
       `in-progress:${progress.inProgress ?? 0}`,
@@ -595,8 +612,10 @@ class LunilClientController implements vscode.Disposable {
     ].join(' ');
     const summary = `${completed}/${total} (${detail})`;
     this.lastIndexDetail = summary;
-    if (total > 0 && completed >= total) {
-      this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${summary}`);
+    // Only the terminal phase completes indexing: intermediate phases (loading,
+    // declarations, discovery, ...) each reach their own n/total on the way.
+    if (phase === 'Completed') {
+      this.output.appendLine(`[${timestamp()}] indexProgress: phase=${phase ?? '?'} ${summary}`);
       this.indexingFinished();
       return;
     }
@@ -606,11 +625,15 @@ class LunilClientController implements vscode.Disposable {
       return;
     }
     this.lastIndexUpdate = now;
-    this.output.appendLine(`[${timestamp()}] indexProgress: phase=${progress.phase ?? '?'} ${summary}`);
+    this.output.appendLine(`[${timestamp()}] indexProgress: phase=${phase ?? '?'} ${summary}`);
     this.state = 'indexing';
-    this.stateText = progress.phase ?? t().indexing;
-    this.status.text = `$(sync~spin) Lunil ${Math.floor(100 * completed / Math.max(total, 1))}%`;
-    this.status.tooltip = `Lunil: ${this.stateText} ${summary}`;
+    this.stateText = indexPhaseLabel(phase);
+    const percent = total > 0 ? Math.floor(100 * completed / total) : 0;
+    const counts = total > 0 ? `${completed}/${total}` : `${completed}`;
+    this.status.text = `$(sync~spin) Lunil: ${this.stateText} ${counts}`;
+    this.status.tooltip = `Lunil: ${this.stateText} ${counts}` +
+      (total > 0 ? ` (${percent}%)` : '') + ` · ${summary}` +
+      (progress.excluded === undefined || progress.excluded === 0 ? '' : ` · excluded:${progress.excluded}`);
   }
 
   private async showIndexStatus(): Promise<void> {
@@ -732,8 +755,10 @@ interface IndexStatusResponse {
   readonly failed?: number;
   readonly inProgress?: number;
   readonly pending?: number;
+  readonly excluded?: number;
   readonly failedFiles?: (string | { readonly uri?: string; readonly error?: string })[];
   readonly pendingFiles?: string[];
+  readonly excludedFiles?: (string | { readonly uri?: string; readonly reason?: string })[];
 }
 
 interface IndexStatusItem extends vscode.QuickPickItem {
@@ -767,7 +792,8 @@ function indexStatusSummary(status: IndexStatusResponse): string {
     `succeeded:${status.succeeded ?? 0}`,
     `in-progress:${status.inProgress ?? 0}`,
     `failed:${status.failed ?? 0}`,
-    `pending:${status.pending ?? 0}`
+    `pending:${status.pending ?? 0}`,
+    `excluded:${status.excluded ?? 0}`
   ].join('  ');
 }
 
@@ -819,6 +845,28 @@ function indexStatusItems(status: IndexStatusResponse): IndexStatusItem[] {
     }
     if (pending.length > 200) {
       items.push({ label: strings.indexMorePending(pending.length - 200), kind: vscode.QuickPickItemKind.Separator });
+    }
+  }
+  const excluded = status.excludedFiles ?? [];
+  if (excluded.length > 0) {
+    items.push({ label: strings.indexExcluded(excluded.length), kind: vscode.QuickPickItemKind.Separator });
+    for (const entry of excluded.slice(0, 200)) {
+      const uri = typeof entry === 'string' ? entry : entry.uri;
+      if (uri === undefined) {
+        continue;
+      }
+
+      const reason = typeof entry === 'string' ? undefined : entry.reason;
+      items.push({
+        ...fileStatusItem(uri, 'excluded'),
+        detail: reason === 'data' ? strings.indexExcludedData :
+          reason === 'pattern' ? strings.indexExcludedPattern :
+          strings.indexExcludedDetail,
+        buttons: [openFileButton]
+      });
+    }
+    if (excluded.length > 200) {
+      items.push({ label: strings.indexMoreExcluded(excluded.length - 200), kind: vscode.QuickPickItemKind.Separator });
     }
   }
   return items;
@@ -951,6 +999,10 @@ function configurationObject(configuration: vscode.WorkspaceConfiguration): Reco
     workspace: {
       library: configuration.get<string[]>('workspace.library', [])
     },
+    analysis: {
+      exclude: configuration.get<string[]>('analysis.exclude', []),
+      autoDetectDataFiles: configuration.get<boolean>('analysis.autoDetectDataFiles', true)
+    },
     server: {
       trace: configuration.get<string>('server.trace', 'off'),
       suppressedDiagnosticCodes: configuration.get<string[]>('server.suppressedDiagnosticCodes', [])
@@ -1001,6 +1053,18 @@ interface ClientStrings {
   readonly indexAnalysisFailed: string;
   readonly indexMoreFailed: (count: number) => string;
   readonly indexMorePending: (count: number) => string;
+  readonly indexPhaseLoading: string;
+  readonly indexPhaseDeclarations: string;
+  readonly indexPhaseDiscovery: string;
+  readonly indexPhaseResolution: string;
+  readonly indexPhaseAnalysis: string;
+  readonly indexPhaseIndexing: string;
+  readonly indexPhaseCacheMaintenance: string;
+  readonly indexExcluded: (count: number) => string;
+  readonly indexExcludedDetail: string;
+  readonly indexExcludedData: string;
+  readonly indexExcludedPattern: string;
+  readonly indexMoreExcluded: (count: number) => string;
   readonly tooltipRetryFile: string;
   readonly tooltipOpenFile: string;
   readonly tooltipReindexAll: string;
@@ -1044,6 +1108,18 @@ const clientStringsEn: ClientStrings = {
   indexAnalysisFailed: 'Analysis failed for this document',
   indexMoreFailed: count => `... and ${count} more failed files`,
   indexMorePending: count => `... and ${count} more pending files`,
+  indexPhaseLoading: 'reading files',
+  indexPhaseDeclarations: 'scanning declarations',
+  indexPhaseDiscovery: 'discovering modules',
+  indexPhaseResolution: 'resolving modules',
+  indexPhaseAnalysis: 'analyzing',
+  indexPhaseIndexing: 'indexing',
+  indexPhaseCacheMaintenance: 'maintaining caches',
+  indexExcluded: count => `Excluded from analysis (${count})`,
+  indexExcludedDetail: 'Excluded from indexing; open the file to analyze it anyway',
+  indexExcludedData: 'Auto-detected generated data file (huge table literal, no code)',
+  indexExcludedPattern: 'Matches a lunil.analysis.exclude pattern',
+  indexMoreExcluded: count => `... and ${count} more excluded files`,
   tooltipRetryFile: 'Retry analyzing this document',
   tooltipOpenFile: 'Open document',
   tooltipReindexAll: 'Reindex workspace',
@@ -1087,6 +1163,18 @@ const clientStringsZh: ClientStrings = {
   indexAnalysisFailed: '此文档分析失败',
   indexMoreFailed: count => `……另有 ${count} 个失败文件`,
   indexMorePending: count => `……另有 ${count} 个等待文件`,
+  indexPhaseLoading: '读取文件',
+  indexPhaseDeclarations: '扫描声明',
+  indexPhaseDiscovery: '发现模块',
+  indexPhaseResolution: '解析模块',
+  indexPhaseAnalysis: '分析中',
+  indexPhaseIndexing: '索引中',
+  indexPhaseCacheMaintenance: '维护缓存',
+  indexExcluded: count => `已排除 (${count})`,
+  indexExcludedDetail: '已从索引中排除；打开文件仍可单独分析',
+  indexExcludedData: '自动检测为生成数据文件（巨型表字面量、无代码）',
+  indexExcludedPattern: '匹配 lunil.analysis.exclude 排除模式',
+  indexMoreExcluded: count => `……另有 ${count} 个排除文件`,
   tooltipRetryFile: '重试分析此文档',
   tooltipOpenFile: '打开文档',
   tooltipReindexAll: '重建工作区索引',

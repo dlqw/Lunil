@@ -828,19 +828,29 @@ internal sealed partial class AnalysisEngine
 
     private void InstallBuiltIns()
     {
+        // Seed globals are committed directly: their node closures are cached per
+        // dictionary identity (see IsGloballyPublishedType), so walking them here
+        // per document analysis would repeat work the cache already covers.
+        _globalSeedDictionaries =
+        [
+            _environment.BuiltinGlobals,
+            _environment.ExternalGlobals,
+            _hostGlobalTypes,
+        ];
+
         foreach (var pair in _environment.BuiltinGlobals)
         {
-            SetGlobalType(pair.Key, pair.Value);
+            _globalTypes.Set(pair.Key, pair.Value);
         }
 
         foreach (var pair in _environment.ExternalGlobals)
         {
-            SetGlobalType(pair.Key, pair.Value);
+            _globalTypes.Set(pair.Key, pair.Value);
         }
 
         foreach (var pair in _hostGlobalTypes)
         {
-            SetGlobalType(pair.Key, pair.Value);
+            _globalTypes.Set(pair.Key, pair.Value);
         }
 
         SetGlobalType("type", new LuaFunctionType(

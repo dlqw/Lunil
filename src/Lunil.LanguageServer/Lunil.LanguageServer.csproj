@@ -7,9 +7,12 @@
     <RootNamespace>Lunil.LanguageServer</RootNamespace>
     <Description>LSP 3.17 language server for Lunil Lua analysis.</Description>
     <!-- A long-running multi-core analysis host: server GC with DATAS keeps indexing
-         bursts off the message loop while shrinking heaps when the session is idle. -->
+         bursts off the message loop while shrinking heaps when the session is idle.
+         The heap hard limit turns any future unbounded growth into a bounded failure
+         instead of consuming the whole machine. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GCHeapHardLimitPercent>60</GCHeapHardLimitPercent>
     <PublishReadyToRun Condition="'$(LunilReadyToRunPublish)' == 'true'">true</PublishReadyToRun>
     <SelfContained Condition="'$(LunilReadyToRunPublish)' == 'true'">true</SelfContained>
   </PropertyGroup>

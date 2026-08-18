@@ -16,6 +16,7 @@ internal sealed class LuaLanguageServer : IDisposable
     private bool _supportsWorkDoneProgress;
     private volatile bool _progressReady;
     private LuaWorkspaceProgressPhase? _progressPhase;
+    private readonly SemaphoreSlim _progressGate = new(1, 1);
 
     public LuaLanguageServer(JsonRpcConnection connection)
     {
@@ -364,6 +365,21 @@ internal sealed class LuaLanguageServer : IDisposable
                 .Select(static item => item.GetString()));
         }
 
+        if (lunil.TryGetProperty("analysis", out var analysis))
+        {
+            var excludePatterns = analysis.TryGetProperty("exclude", out var excludeElement) &&
+                excludeElement.ValueKind == JsonValueKind.Array
+                ? excludeElement.EnumerateArray()
+                    .Where(static item => item.ValueKind == JsonValueKind.String)
+                    .Select(static item => item.GetString())
+                : null;
+            bool? autoDetect = analysis.TryGetProperty("autoDetectDataFiles", out var autoDetectElement) &&
+                autoDetectElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? autoDetectElement.GetBoolean()
+                : null;
+            _workspace.ConfigureAnalysisExclusions(excludePatterns, autoDetect);
+        }
+
         var json = lunil.TryGetProperty("hostContractJson", out var jsonElement) &&
             jsonElement.ValueKind == JsonValueKind.String ? jsonElement.GetString() : null;
         var path = lunil.TryGetProperty("hostContractPath", out var pathElement) &&
@@ -498,12 +514,19 @@ internal sealed class LuaLanguageServer : IDisposable
             ["diagnostics"] = diagnostics,
         });
 
+    /// <summary>
+    /// Publishes one progress event on both channels: the custom <c>lunil/indexProgress</c>
+    /// notification that drives the editor status bar (always, with real n/total counts),
+    /// and the standard window work-done progress when the client created the token.
+    /// Serialized so concurrent corpus workers cannot interleave events.
+    /// </summary>
     private async Task PublishProgressAsync(LuaWorkspaceProgress progress)
     {
         const string token = "lunil-workspace-index";
-        var status = _workspace.GetIndexStatus();
-        if (!_progressReady)
+        await _progressGate.WaitAsync().ConfigureAwait(false);
+        try
         {
+            var status = _workspace.GetIndexStatus();
             await _connection.SendNotificationAsync("lunil/indexProgress", new JsonObject
             {
                 ["phase"] = progress.Phase.ToString(),
@@ -514,40 +537,50 @@ internal sealed class LuaLanguageServer : IDisposable
                 ["failed"] = status["failed"],
                 ["inProgress"] = status["inProgress"],
                 ["pending"] = status["pending"],
+                ["excluded"] = status["excluded"],
             }).ConfigureAwait(false);
-            return;
-        }
-        if (_progressPhase != progress.Phase)
-        {
-            if (_progressPhase is not null)
+
+            if (!_progressReady)
             {
+                return;
+            }
+
+            if (_progressPhase != progress.Phase)
+            {
+                if (_progressPhase is not null)
+                {
+                    await _connection.SendNotificationAsync("$/progress", new JsonObject
+                    {
+                        ["token"] = token,
+                        ["value"] = new JsonObject { ["kind"] = "end", ["message"] = _progressPhase + " complete" },
+                    }).ConfigureAwait(false);
+                }
+
+                _progressPhase = progress.Phase;
                 await _connection.SendNotificationAsync("$/progress", new JsonObject
                 {
                     ["token"] = token,
-                    ["value"] = new JsonObject { ["kind"] = "end", ["message"] = _progressPhase + " complete" },
+                    ["value"] = new JsonObject { ["kind"] = "begin", ["title"] = "Lunil " + progress.Phase },
                 }).ConfigureAwait(false);
             }
 
-            _progressPhase = progress.Phase;
+            var percentage = progress.TotalWorkItems == 0 ? 100 :
+                (int)Math.Min(100, 100L * progress.CompletedWorkItems / progress.TotalWorkItems);
             await _connection.SendNotificationAsync("$/progress", new JsonObject
             {
                 ["token"] = token,
-                ["value"] = new JsonObject { ["kind"] = "begin", ["title"] = "Lunil " + progress.Phase },
+                ["value"] = new JsonObject
+                {
+                    ["kind"] = "report",
+                    ["percentage"] = percentage,
+                    ["message"] = $"{progress.CompletedWorkItems}/{progress.TotalWorkItems}",
+                },
             }).ConfigureAwait(false);
         }
-
-        var percentage = progress.TotalWorkItems == 0 ? 100 :
-            (int)Math.Min(100, 100L * progress.CompletedWorkItems / progress.TotalWorkItems);
-        await _connection.SendNotificationAsync("$/progress", new JsonObject
+        finally
         {
-            ["token"] = token,
-            ["value"] = new JsonObject
-            {
-                ["kind"] = "report",
-                ["percentage"] = percentage,
-                ["message"] = $"{progress.CompletedWorkItems}/{progress.TotalWorkItems}",
-            },
-        }).ConfigureAwait(false);
+            _progressGate.Release();
+        }
     }
 
     private async Task CreateProgressTokenAsync()

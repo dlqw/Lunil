@@ -17,6 +17,23 @@ public sealed class SourceText
         _lineStarts = BuildLineStarts(_bytes);
     }
 
+    private SourceText(byte[] ownedBytes, bool owns)
+    {
+        _bytes = ownedBytes;
+        _lineStarts = BuildLineStarts(_bytes);
+    }
+
+    /// <summary>
+    /// Wraps an existing UTF-8 buffer without copying it. The caller must guarantee the
+    /// array is never mutated afterward; pipelines that keep one canonical byte array per
+    /// workspace document use this to avoid duplicating the whole corpus per pass.
+    /// </summary>
+    public static SourceText FromOwnedArray(byte[] bytes)
+    {
+        LunilGuard.NotNull(bytes);
+        return new SourceText(bytes, owns: true);
+    }
+
     public int Length => _bytes.Length;
 
     public int LineCount => _lineStarts.Length;

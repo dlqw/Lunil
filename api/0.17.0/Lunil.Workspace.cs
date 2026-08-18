@@ -146,7 +146,9 @@ namespace Lunil.Workspace
         public Lunil.Workspace.LuaWorkspaceOptions Options { get => throw null; }
         public LuaWorkspace(Lunil.Workspace.LuaWorkspaceOptions? options = null, Lunil.Workspace.ILuaModuleResolver? resolver = null) { }
         public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Threading.CancellationToken cancellationToken = null) => throw null;
+        public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Collections.Immutable.ImmutableHashSet<string>? externallyProvidedModules, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceResult> AnalyzeAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Threading.CancellationToken cancellationToken = null) => throw null;
+        public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceResult> AnalyzeAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Collections.Immutable.ImmutableHashSet<string>? externallyProvidedModules, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public void ClearCache() { }
         public void Dispose() { }
     }
@@ -542,12 +544,14 @@ namespace Lunil.Workspace
 
     public enum LuaWorkspaceProgressPhase
     {
-        Discovery = 0,
-        Resolution = 1,
-        Analysis = 2,
-        Indexing = 3,
-        CacheMaintenance = 4,
-        Completed = 5
+        Loading = 0,
+        Declarations = 1,
+        Discovery = 2,
+        Resolution = 3,
+        Analysis = 4,
+        Indexing = 5,
+        CacheMaintenance = 6,
+        Completed = 7
     }
 
     public sealed class LuaWorkspaceReference : System.IEquatable<Lunil.Workspace.LuaWorkspaceReference>

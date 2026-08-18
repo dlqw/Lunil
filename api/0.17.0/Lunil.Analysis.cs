@@ -91,6 +91,7 @@ namespace Lunil.Analysis
         public int MaximumUnionMemberCount { get => throw null; init { } }
         public int MaximumTypeDepth { get => throw null; init { } }
         public int MaximumGenericInstantiationCount { get => throw null; init { } }
+        public int MaximumTableMutationPropagationNodes { get => throw null; init { } }
         public int MaximumReturnPackLength { get => throw null; init { } }
         public int MaximumDiagnosticCount { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableHashSet<string> SuppressedDiagnosticCodes { get => throw null; init { } }

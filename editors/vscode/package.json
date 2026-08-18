@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0-alpha.18",
+  "version": "0.17.0-alpha.24",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -243,6 +243,23 @@
           "order": 7,
           "markdownDescription": "Read-only folders with Lua declaration stubs (`---@meta` files) describing globals and classes injected by a host at runtime (C++, C#, Unity, Godot, game engines). Relative paths resolve against the first workspace folder. Editing stubs takes effect after **Lunil: Reindex Workspace**."
         },
+        "lunil.analysis.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 8,
+          "markdownDescription": "Glob patterns of Lua files excluded from workspace indexing and analysis — for example `data/**`, `**/*.data.lua`, or `assets/{configs,tables}/**`. Patterns match workspace-relative paths (`/`-separated); a pattern without a separator matches the file name in any directory. Excluded files are not read into memory and requires that name them resolve as untyped; open one in the editor to analyze it anyway. Matching is case-insensitive."
+        },
+        "lunil.analysis.autoDetectDataFiles": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "order": 9,
+          "markdownDescription": "Automatically keep generated data files (very large table literals of keys, strings, and numbers with no functions or control flow) out of workspace indexing. Detected files appear under **Lunil: Show Index Status**; use `lunil.analysis.exclude` to exclude more paths or tighten this automatically."
+        },
         "lunil.locale": {
           "type": "string",
           "enum": [
@@ -257,14 +274,14 @@
           ],
           "default": "auto",
           "scope": "window",
-          "order": 8,
+          "order": 10,
           "markdownDescription": "Language for Lunil hover cards, menus, and status messages. `auto` follows the VS Code UI language. Applies without a restart."
         },
         "lunil.statusBar.showModuleCount": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "order": 9,
+          "order": 11,
           "markdownDescription": "Show the indexed module count in the Lunil status item once indexing completes. The workspace folder name is shown alongside it."
         }
       }

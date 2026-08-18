@@ -339,7 +339,7 @@ internal sealed partial class AnalysisEngine
                 var memberPath = nameTokens.Skip(1).Select(GetTokenText).ToArray();
                 var next = AddOrReplacePrototypePath(root, memberPath, type);
                 AssignVariable(key, reference.Symbol, next, identifier.Span, state);
-                PropagateTableMutation(state, root, next, key);
+                PropagateTableMutation(state, root, next, key, identifier.Span);
             }
             else
             {
@@ -375,7 +375,7 @@ internal sealed partial class AnalysisEngine
         return current;
     }
 
-    private static LuaType AddOrReplacePrototypePath(
+    private LuaType AddOrReplacePrototypePath(
         LuaType root,
         string[] members,
         LuaType value)

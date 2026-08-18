@@ -197,6 +197,7 @@ namespace Lunil.Core.Text
         public int Length { get => throw null; }
         public int LineCount { get => throw null; }
         public SourceText(System.ReadOnlySpan<byte> bytes) { }
+        public static Lunil.Core.Text.SourceText FromOwnedArray(byte[] bytes) => throw null;
         public static Lunil.Core.Text.SourceText FromUtf8(string text) => throw null;
         public System.ReadOnlySpan<byte> AsSpan() => throw null;
         public System.ReadOnlySpan<byte> GetSpan(Lunil.Core.Text.TextSpan span) => throw null;

@@ -7,6 +7,10 @@ namespace Lunil.Workspace;
 
 public enum LuaWorkspaceProgressPhase : byte
 {
+    /// <summary>Reading workspace files from disk into the document set.</summary>
+    Loading,
+    /// <summary>Scanning loaded documents for type declarations (lexing only).</summary>
+    Declarations,
     Discovery,
     Resolution,
     Analysis,
@@ -102,6 +106,43 @@ public sealed class LuaWorkspaceCompactSnapshot
     public LuaWorkspaceModuleCallBindings CallBindings { get; }
 
     public long EstimatedResidentBytes { get; }
+
+    /// <summary>
+    /// Per-module projection contributions keyed by module name: everything the snapshot
+    /// derives from one module plus the analysis cache key that produced it. A later
+    /// rebuild whose module key still matches reuses the contribution verbatim instead
+    /// of re-parsing and re-analyzing the module.
+    /// </summary>
+    internal ImmutableDictionary<string, ModuleContribution> Contributions { get; set; } =
+        ImmutableDictionary<string, ModuleContribution>.Empty.WithComparers(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The reusable projection of one module: its compact entry, reference segments with
+    /// the names they interned, symbol-graph output, raw call edges, and compilation
+    /// diagnostics. Re-merging into a fresh snapshot only remaps string indexes and the
+    /// module index.
+    /// </summary>
+    internal sealed record ModuleContribution(
+        string ModuleName,
+        string CacheKey,
+        LuaWorkspaceCompactModule Module,
+        Lunil.Analysis.LuaType ExportedType,
+        ImmutableDictionary<string, string> ExportSummaryHashes,
+        ImmutableDictionary<string, string> FunctionSummaryHashes,
+        string HostSummaryHash,
+        string AnalysisSummaryHash,
+        ImmutableArray<string> Names,
+        ImmutableArray<int> NameIndexes,
+        ImmutableArray<CompactReference> References,
+        ImmutableArray<CompactMemberReference> MemberReferences,
+        ImmutableArray<CompactAnnotationReference> AnnotationReferences,
+        ImmutableArray<string> AnnotationNames,
+        ImmutableArray<LuaWorkspaceExportSymbol> Symbols,
+        ImmutableArray<LuaWorkspaceExportEdge> Edges,
+        ImmutableArray<LuaWorkspaceModuleCallBinding> RawCalls,
+        int CallCount,
+        string? ReExportTarget,
+        ImmutableArray<Lunil.Compiler.LuaCompilationDiagnostic> CompilationDiagnostics);
 
     public LuaWorkspaceCompactModule? GetModule(string name) => Modules.FirstOrDefault(module =>
         string.Equals(module.Identity.Name, name, StringComparison.Ordinal));
@@ -261,6 +302,8 @@ public sealed class LuaWorkspaceCompactSnapshot
         private readonly List<LuaWorkspaceExportSymbol> _symbols = [];
         private readonly List<LuaWorkspaceExportEdge> _edges = [];
         private readonly List<LuaWorkspaceModuleCallBinding> _rawCalls = [];
+        /// <summary>Annotation names parallel to <see cref="_annotationReferences"/>, for contribution reuse.</summary>
+        private readonly List<string> _annotationNames = [];
         private readonly Dictionary<string, string> _reExports = new(StringComparer.Ordinal);
         private int _totalCallCount;
 
@@ -272,9 +315,16 @@ public sealed class LuaWorkspaceCompactSnapshot
 
         public LuaWorkspaceCompactSnapshot? Snapshot { get; private set; }
 
-        public void AddModule(LuaWorkspaceModuleResult module)
+        /// <summary>Pending per-module segments, materialized into contributions at Build.</summary>
+        private readonly List<PendingContribution> _pending = [];
+
+        /// <summary>Contributions merged from the previous snapshot, carried forward at Build.</summary>
+        private readonly List<LuaWorkspaceCompactSnapshot.ModuleContribution> _reused = [];
+
+        public void AddModule(LuaWorkspaceModuleResult module, string cacheKey)
         {
             var moduleIndex = _modules.Count;
+            _strings.BeginCapture();
             _modules.Add(new LuaWorkspaceCompactModule(
                 module.Identity,
                 module.SourceIdentity,
@@ -284,18 +334,152 @@ public sealed class LuaWorkspaceCompactSnapshot
                 module.FunctionSummaryHash,
                 module.DependencySummaryHash,
                 module.ExportedSymbols));
+            var referencesStart = _references.Count;
+            var memberReferencesStart = _memberReferences.Count;
+            var annotationReferencesStart = _annotationReferences.Count;
             AddReferences(module, moduleIndex);
             AddAnnotationReferences(module, moduleIndex);
-            _totalCallCount += module.Compilation.Analysis.CallGraph.Edges.Length;
+            var (nameIndexes, names) = _strings.EndCapture();
+            var callCount = module.Compilation.Analysis.CallGraph.Edges.Length;
+            _totalCallCount += callCount;
+            var symbolsStart = _symbols.Count;
+            var edgesStart = _edges.Count;
+            var callsStart = _rawCalls.Count;
             var projection = WorkspaceSymbolGraphBuilder.Build([module], _hostContract);
             _symbols.AddRange(projection.Exports.Symbols.Where(static symbol => !symbol.IsExternal));
             _edges.AddRange(projection.Exports.Edges.Where(static edge => edge.Kind != "re-export"));
             _rawCalls.AddRange(projection.Calls.Edges);
+            string? reExportTarget = null;
             if (WorkspaceSymbolGraphBuilder.GetDirectReExportTarget(module) is { } target)
             {
+                reExportTarget = target;
                 _reExports[module.Identity.Name] = target;
             }
+
+            _pending.Add(new PendingContribution(
+                module.Identity.Name,
+                cacheKey,
+                moduleIndex,
+                module.ExportedType,
+                module.ExportSummaryHashes,
+                module.FunctionSummaryHashes,
+                module.HostSummaryHash,
+                module.AnalysisSummaryHash,
+                names,
+                nameIndexes,
+                _references.Count - referencesStart,
+                referencesStart,
+                _memberReferences.Count - memberReferencesStart,
+                memberReferencesStart,
+                _annotationReferences.Count - annotationReferencesStart,
+                annotationReferencesStart,
+                symbolsStart,
+                _symbols.Count - symbolsStart,
+                edgesStart,
+                _edges.Count - edgesStart,
+                callsStart,
+                _rawCalls.Count - callsStart,
+                callCount,
+                reExportTarget,
+                [.. module.Compilation.Diagnostics]));
         }
+
+        /// <summary>
+        /// Merges a previously captured contribution without a compiler model: names are
+        /// re-interned into this snapshot's pool, reference structs are re-indexed, and
+        /// the module's symbol-graph output is re-appended for the Build-time fixups
+        /// (re-export marking and call resolution) to redo against the fresh universe.
+        /// </summary>
+        public void ReuseModule(LuaWorkspaceCompactSnapshot.ModuleContribution contribution)
+        {
+            var moduleIndex = _modules.Count;
+            _modules.Add(contribution.Module);
+            _reused.Add(contribution);
+            var remap = new Dictionary<int, int>(contribution.Names.Length);
+            var values = new Dictionary<int, string>(contribution.Names.Length);
+            for (var index = 0; index < contribution.Names.Length; index++)
+            {
+                var oldIndex = contribution.NameIndexes[index];
+                values[oldIndex] = contribution.Names[index];
+                remap[oldIndex] = _strings.GetOrAdd(contribution.Names[index]);
+            }
+
+            foreach (var reference in contribution.References)
+            {
+                var index = _references.Count;
+                _references.Add(reference with
+                {
+                    ModuleIndex = moduleIndex,
+                    ContainingFunctionKeyIndex = remap[reference.ContainingFunctionKeyIndex],
+                    NameIndex = remap[reference.NameIndex],
+                    TargetKeyIndex = reference.TargetKeyIndex < 0 ? -1 : remap[reference.TargetKeyIndex],
+                });
+                if (reference.TargetKeyIndex >= 0)
+                {
+                    GetIndexBuilder(_targetIndexes, values[reference.TargetKeyIndex]).Add(index);
+                }
+
+                if (reference.ResolutionKind == LuaNameResolutionKind.Global)
+                {
+                    GetIndexBuilder(_globals, values[reference.NameIndex]).Add(index);
+                }
+            }
+
+            foreach (var reference in contribution.MemberReferences)
+            {
+                var index = _memberReferences.Count;
+                _memberReferences.Add(reference with
+                {
+                    ModuleIndex = moduleIndex,
+                    NameIndex = remap[reference.NameIndex],
+                });
+                GetIndexBuilder(_memberIndexes, values[reference.NameIndex]).Add(index);
+            }
+
+            for (var index = 0; index < contribution.AnnotationReferences.Length; index++)
+            {
+                var annotationIndex = _annotationReferences.Count;
+                var reference = contribution.AnnotationReferences[index];
+                _annotationReferences.Add(reference with { ModuleIndex = moduleIndex });
+                GetIndexBuilder(_annotationIndexes, contribution.AnnotationNames[index]).Add(annotationIndex);
+            }
+
+            _totalCallCount += contribution.CallCount;
+            _symbols.AddRange(contribution.Symbols);
+            _edges.AddRange(contribution.Edges);
+            _rawCalls.AddRange(contribution.RawCalls);
+            if (contribution.ReExportTarget is { } target)
+            {
+                _reExports[contribution.ModuleName] = target;
+            }
+        }
+
+        private sealed record PendingContribution(
+            string ModuleName,
+            string CacheKey,
+            int ModuleIndex,
+            Lunil.Analysis.LuaType ExportedType,
+            ImmutableDictionary<string, string> ExportSummaryHashes,
+            ImmutableDictionary<string, string> FunctionSummaryHashes,
+            string HostSummaryHash,
+            string AnalysisSummaryHash,
+            ImmutableArray<string> Names,
+            ImmutableArray<int> NameIndexes,
+            int ReferencesCount,
+            int ReferencesStart,
+            int MemberReferencesCount,
+            int MemberReferencesStart,
+            int AnnotationReferencesCount,
+            int AnnotationReferencesStart,
+            int SymbolsStart,
+            int SymbolsCount,
+            int EdgesStart,
+            int EdgesCount,
+            int CallsStart,
+            int CallsCount,
+            int CallCount,
+            string? ReExportTarget,
+            ImmutableArray<Lunil.Compiler.LuaCompilationDiagnostic> CompilationDiagnostics);
 
         public LuaWorkspaceCompactSnapshot Build(
             LuaModuleGraph graph,
@@ -399,7 +583,59 @@ public sealed class LuaWorkspaceCompactSnapshot
                 _strings.ToImmutable(),
                 _totalCallCount,
                 _shardCount);
+            Snapshot!.Contributions = MaterializeContributions();
             return Snapshot;
+        }
+
+        /// <summary>
+        /// Copies each freshly added module's segments into reusable contributions. The
+        /// module entries come from the fixed-up list (ExportedSymbols rewritten from the
+        /// merged symbol universe); symbols stay in their pre-re-export-marking shape so
+        /// reuse re-applies the marking against the next rebuild's universe.
+        /// </summary>
+        private ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution> MaterializeContributions()
+        {
+            if (_pending.Count == 0 && _reused.Count == 0)
+            {
+                return ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
+                    .WithComparers(StringComparer.Ordinal);
+            }
+
+            var builder = ImmutableDictionary.CreateBuilder<string, LuaWorkspaceCompactSnapshot.ModuleContribution>(
+                StringComparer.Ordinal);
+            // Reused contributions carry forward unchanged; a module both reused and
+            // re-added (fixed-point re-analysis) is overwritten by its fresh capture.
+            foreach (var reused in _reused)
+            {
+                builder[reused.ModuleName] = reused;
+            }
+
+            foreach (var pending in _pending)
+            {
+                builder[pending.ModuleName] = new LuaWorkspaceCompactSnapshot.ModuleContribution(
+                    pending.ModuleName,
+                    pending.CacheKey,
+                    _modules[pending.ModuleIndex],
+                    pending.ExportedType,
+                    pending.ExportSummaryHashes,
+                    pending.FunctionSummaryHashes,
+                    pending.HostSummaryHash,
+                    pending.AnalysisSummaryHash,
+                    pending.Names,
+                    pending.NameIndexes,
+                    [.. _references.GetRange(pending.ReferencesStart, pending.ReferencesCount)],
+                    [.. _memberReferences.GetRange(pending.MemberReferencesStart, pending.MemberReferencesCount)],
+                    [.. _annotationReferences.GetRange(pending.AnnotationReferencesStart, pending.AnnotationReferencesCount)],
+                    [.. _annotationNames.GetRange(pending.AnnotationReferencesStart, pending.AnnotationReferencesCount)],
+                    [.. _symbols.GetRange(pending.SymbolsStart, pending.SymbolsCount)],
+                    [.. _edges.GetRange(pending.EdgesStart, pending.EdgesCount)],
+                    [.. _rawCalls.GetRange(pending.CallsStart, pending.CallsCount)],
+                    pending.CallCount,
+                    pending.ReExportTarget,
+                    pending.CompilationDiagnostics);
+            }
+
+            return builder.ToImmutable();
         }
 
         private void AddReferences(LuaWorkspaceModuleResult module, int moduleIndex)
@@ -468,6 +704,7 @@ public sealed class LuaWorkspaceCompactSnapshot
             {
                 var annotationIndex = _annotationReferences.Count;
                 _annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
+                _annotationNames.Add(name.Name);
                 GetIndexBuilder(_annotationIndexes, name.Name).Add(annotationIndex);
             });
         }
@@ -840,7 +1077,7 @@ public sealed class LuaWorkspaceCompactSnapshot
             reference.TargetKeyIndex < 0 ? null : new LuaSymbolKey(_strings[reference.TargetKeyIndex]));
     }
 
-    private readonly record struct CompactReference(
+    internal readonly record struct CompactReference(
         int ModuleIndex,
         TextSpan Span,
         int ContainingFunctionId,
@@ -850,12 +1087,12 @@ public sealed class LuaWorkspaceCompactSnapshot
         LuaNameResolutionKind ResolutionKind,
         int TargetKeyIndex);
 
-    private readonly record struct CompactMemberReference(
+    internal readonly record struct CompactMemberReference(
         int ModuleIndex,
         TextSpan Span,
         int NameIndex);
 
-    private readonly record struct CompactAnnotationReference(
+    internal readonly record struct CompactAnnotationReference(
         int ModuleIndex,
         TextSpan Span);
 
@@ -906,18 +1143,37 @@ public sealed class LuaWorkspaceCompactSnapshot
     {
         private readonly Dictionary<string, int> _indexes = new(StringComparer.Ordinal);
         private readonly List<string> _values = [];
+        private List<(int Index, string Value)>? _capture;
 
         public int GetOrAdd(string value)
         {
-            if (_indexes.TryGetValue(value, out var index))
+            int index;
+            if (_indexes.TryGetValue(value, out var existing))
             {
-                return index;
+                index = existing;
+            }
+            else
+            {
+                index = _values.Count;
+                _values.Add(value);
+                _indexes.Add(value, index);
             }
 
-            index = _values.Count;
-            _values.Add(value);
-            _indexes.Add(value, index);
+            // Captures record every index the current module's structs reference,
+            // including indexes that already existed for shared names.
+            _capture?.Add((index, value));
             return index;
+        }
+
+        public void BeginCapture() => _capture = [];
+
+        public (ImmutableArray<int> Indexes, ImmutableArray<string> Values) EndCapture()
+        {
+            var captured = _capture ?? [];
+            _capture = null;
+            return (
+                [.. captured.Select(static pair => pair.Index)],
+                [.. captured.Select(static pair => pair.Value)]);
         }
 
         public ImmutableArray<string> ToImmutable() => [.. _values];

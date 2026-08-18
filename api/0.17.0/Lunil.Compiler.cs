@@ -158,6 +158,7 @@ namespace Lunil.Compiler
         public LuaSourceDocument(Lunil.Core.Text.SourceText text, string? sourceName = null) { }
         public static Lunil.Compiler.LuaSourceDocument FromUtf8(string text, string? sourceName = null) => throw null;
         public static Lunil.Compiler.LuaSourceDocument FromBytes(System.ReadOnlySpan<byte> bytes, string? sourceName = null) => throw null;
+        public static Lunil.Compiler.LuaSourceDocument FromOwnedBytes(byte[] bytes, string? sourceName = null) => throw null;
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Compiler.LuaSourceDocument? left, Lunil.Compiler.LuaSourceDocument? right) => throw null;
         public static bool operator ==(Lunil.Compiler.LuaSourceDocument? left, Lunil.Compiler.LuaSourceDocument? right) => throw null;
