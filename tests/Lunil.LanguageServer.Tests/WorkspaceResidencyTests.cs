@@ -215,7 +215,10 @@ public sealed class WorkspaceResidencyTests
             await workspace.ReindexNowAsync(CancellationToken.None);
             var first = workspace.GetSnapshot();
             Assert.NotNull(first);
-            Assert.True(first!.Metrics.CacheMissCount >= modules);
+            // On slow runners the debounced load-time rebuild can complete the cold
+            // analysis before this direct call, so either misses or hits cover every
+            // module — but never neither.
+            Assert.True(first!.Metrics.CacheMissCount + first.Metrics.CacheHitCount >= modules);
 
             // The debounced load-time rebuild already populated the retained caches;
             // a second full rebuild of the unchanged corpus analyzes nothing.
