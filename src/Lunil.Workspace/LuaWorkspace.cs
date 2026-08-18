@@ -1686,16 +1686,16 @@ public sealed class LuaWorkspace : IDisposable
         FixedPointIterationCount: 0,
         WasCacheHit: true,
         WasWidened: false)
-    {
-        ExportedSymbols = contribution.Module.ExportedSymbols,
-        ExportSymbolHash = contribution.Module.ExportSymbolHash,
-        FunctionSummaryHash = contribution.Module.FunctionSummaryHash,
-        AnalysisSummaryHash = contribution.AnalysisSummaryHash,
-        DependencySummaryHash = contribution.Module.DependencySummaryHash,
-        ExportSummaryHashes = contribution.ExportSummaryHashes,
-        FunctionSummaryHashes = contribution.FunctionSummaryHashes,
-        HostSummaryHash = contribution.HostSummaryHash,
-    };
+        {
+            ExportedSymbols = contribution.Module.ExportedSymbols,
+            ExportSymbolHash = contribution.Module.ExportSymbolHash,
+            FunctionSummaryHash = contribution.Module.FunctionSummaryHash,
+            AnalysisSummaryHash = contribution.AnalysisSummaryHash,
+            DependencySummaryHash = contribution.Module.DependencySummaryHash,
+            ExportSummaryHashes = contribution.ExportSummaryHashes,
+            FunctionSummaryHashes = contribution.FunctionSummaryHashes,
+            HostSummaryHash = contribution.HostSummaryHash,
+        };
 
     private sealed record ModuleAnalysis(
         LuaWorkspaceModuleResult Result,

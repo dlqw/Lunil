@@ -2259,128 +2259,128 @@ internal sealed partial class AnalysisEngine
             switch (current)
             {
                 case LuaMetatableType metatable:
-                {
-                    var baseType = Replace(metatable.BaseType, depth + 1, out var baseComplete);
-                    var metaType = Replace(metatable.MetatableType, depth + 1, out var metaComplete);
-                    complete = baseComplete && metaComplete;
-                    return ReferenceEquals(baseType, metatable.BaseType) &&
-                           ReferenceEquals(metaType, metatable.MetatableType)
-                        ? metatable
-                        : metatable with { BaseType = baseType, MetatableType = metaType };
-                }
+                    {
+                        var baseType = Replace(metatable.BaseType, depth + 1, out var baseComplete);
+                        var metaType = Replace(metatable.MetatableType, depth + 1, out var metaComplete);
+                        complete = baseComplete && metaComplete;
+                        return ReferenceEquals(baseType, metatable.BaseType) &&
+                               ReferenceEquals(metaType, metatable.MetatableType)
+                            ? metatable
+                            : metatable with { BaseType = baseType, MetatableType = metaType };
+                    }
 
                 case LuaPrototypeType prototype:
-                {
-                    var shape = Replace(prototype.Shape, depth + 1, out var shapeComplete);
-                    var baseTypes = ReplaceAll(prototype.BaseTypes, depth + 1, out var baseComplete, out var basesChanged);
-                    complete = shapeComplete && baseComplete;
-                    return !basesChanged && ReferenceEquals(shape, prototype.Shape)
-                        ? prototype
-                        : prototype with { Shape = shape, BaseTypes = baseTypes };
-                }
+                    {
+                        var shape = Replace(prototype.Shape, depth + 1, out var shapeComplete);
+                        var baseTypes = ReplaceAll(prototype.BaseTypes, depth + 1, out var baseComplete, out var basesChanged);
+                        complete = shapeComplete && baseComplete;
+                        return !basesChanged && ReferenceEquals(shape, prototype.Shape)
+                            ? prototype
+                            : prototype with { Shape = shape, BaseTypes = baseTypes };
+                    }
 
                 case LuaUnionType union:
-                {
-                    var members = ReplaceAll(union.Types, depth + 1, out complete, out var changed);
-                    return changed ? relations.Union(members) : union;
-                }
+                    {
+                        var members = ReplaceAll(union.Types, depth + 1, out complete, out var changed);
+                        return changed ? relations.Union(members) : union;
+                    }
 
                 case LuaStructuralTableType table:
-                {
-                    complete = true;
-                    var changed = false;
-                    var fields = new LuaTableField[table.Fields.Length];
-                    for (var index = 0; index < table.Fields.Length; index++)
                     {
-                        var field = table.Fields[index];
-                        var keyComplete = true;
-                        var keyType = field.KeyType;
-                        if (keyType is not null)
+                        complete = true;
+                        var changed = false;
+                        var fields = new LuaTableField[table.Fields.Length];
+                        for (var index = 0; index < table.Fields.Length; index++)
                         {
-                            keyType = Replace(keyType, depth + 1, out keyComplete);
+                            var field = table.Fields[index];
+                            var keyComplete = true;
+                            var keyType = field.KeyType;
+                            if (keyType is not null)
+                            {
+                                keyType = Replace(keyType, depth + 1, out keyComplete);
+                            }
+
+                            var valueType = Replace(field.ValueType, depth + 1, out var valueComplete);
+                            complete &= keyComplete && valueComplete;
+                            if (ReferenceEquals(keyType, field.KeyType) &&
+                                ReferenceEquals(valueType, field.ValueType))
+                            {
+                                fields[index] = field;
+                                continue;
+                            }
+
+                            changed = true;
+                            fields[index] = field with { KeyType = keyType, ValueType = valueType };
                         }
 
-                        var valueType = Replace(field.ValueType, depth + 1, out var valueComplete);
-                        complete &= keyComplete && valueComplete;
-                        if (ReferenceEquals(keyType, field.KeyType) &&
-                            ReferenceEquals(valueType, field.ValueType))
-                        {
-                            fields[index] = field;
-                            continue;
-                        }
-
-                        changed = true;
-                        fields[index] = field with { KeyType = keyType, ValueType = valueType };
+                        return changed ? table with { Fields = [.. fields] } : table;
                     }
-
-                    return changed ? table with { Fields = [.. fields] } : table;
-                }
 
                 case LuaFunctionType function:
-                {
-                    complete = true;
-                    var changed = false;
-                    var parameters = new LuaFunctionParameter[function.Parameters.Length];
-                    for (var index = 0; index < function.Parameters.Length; index++)
                     {
-                        var parameter = function.Parameters[index];
-                        var type = Replace(parameter.Type, depth + 1, out var typeComplete);
-                        complete &= typeComplete;
-                        if (ReferenceEquals(type, parameter.Type))
+                        complete = true;
+                        var changed = false;
+                        var parameters = new LuaFunctionParameter[function.Parameters.Length];
+                        for (var index = 0; index < function.Parameters.Length; index++)
                         {
-                            parameters[index] = parameter;
-                            continue;
+                            var parameter = function.Parameters[index];
+                            var type = Replace(parameter.Type, depth + 1, out var typeComplete);
+                            complete &= typeComplete;
+                            if (ReferenceEquals(type, parameter.Type))
+                            {
+                                parameters[index] = parameter;
+                                continue;
+                            }
+
+                            changed = true;
+                            parameters[index] = parameter with { Type = type };
                         }
 
-                        changed = true;
-                        parameters[index] = parameter with { Type = type };
+                        var returns = (LuaTypePack)Replace(function.Returns, depth + 1, out var returnsComplete);
+                        complete &= returnsComplete;
+                        return !changed && ReferenceEquals(returns, function.Returns)
+                            ? function
+                            : function with { Parameters = [.. parameters], Returns = returns };
                     }
-
-                    var returns = (LuaTypePack)Replace(function.Returns, depth + 1, out var returnsComplete);
-                    complete &= returnsComplete;
-                    return !changed && ReferenceEquals(returns, function.Returns)
-                        ? function
-                        : function with { Parameters = [.. parameters], Returns = returns };
-                }
 
                 case LuaTypePack pack:
-                {
-                    var head = ReplaceAll(pack.Head, depth + 1, out complete, out var headChanged);
-                    var variadicComplete = true;
-                    var variadic = pack.VariadicType;
-                    if (variadic is not null)
                     {
-                        variadic = Replace(variadic, depth + 1, out variadicComplete);
-                        complete &= variadicComplete;
-                    }
-
-                    return !headChanged && ReferenceEquals(variadic, pack.VariadicType)
-                        ? pack
-                        : pack with { Head = head, VariadicType = variadic };
-                }
-
-                case LuaOverloadType overload:
-                {
-                    complete = true;
-                    var changed = false;
-                    var signatures = new LuaFunctionType[overload.Signatures.Length];
-                    for (var index = 0; index < overload.Signatures.Length; index++)
-                    {
-                        var signature = overload.Signatures[index];
-                        var replaced = Replace(signature, depth + 1, out var signatureComplete);
-                        complete &= signatureComplete;
-                        if (ReferenceEquals(replaced, signature))
+                        var head = ReplaceAll(pack.Head, depth + 1, out complete, out var headChanged);
+                        var variadicComplete = true;
+                        var variadic = pack.VariadicType;
+                        if (variadic is not null)
                         {
-                            signatures[index] = signature;
-                            continue;
+                            variadic = Replace(variadic, depth + 1, out variadicComplete);
+                            complete &= variadicComplete;
                         }
 
-                        changed = true;
-                        signatures[index] = (LuaFunctionType)replaced;
+                        return !headChanged && ReferenceEquals(variadic, pack.VariadicType)
+                            ? pack
+                            : pack with { Head = head, VariadicType = variadic };
                     }
 
-                    return changed ? overload with { Signatures = [.. signatures] } : overload;
-                }
+                case LuaOverloadType overload:
+                    {
+                        complete = true;
+                        var changed = false;
+                        var signatures = new LuaFunctionType[overload.Signatures.Length];
+                        for (var index = 0; index < overload.Signatures.Length; index++)
+                        {
+                            var signature = overload.Signatures[index];
+                            var replaced = Replace(signature, depth + 1, out var signatureComplete);
+                            complete &= signatureComplete;
+                            if (ReferenceEquals(replaced, signature))
+                            {
+                                signatures[index] = signature;
+                                continue;
+                            }
+
+                            changed = true;
+                            signatures[index] = (LuaFunctionType)replaced;
+                        }
+
+                        return changed ? overload with { Signatures = [.. signatures] } : overload;
+                    }
 
                 default:
                     complete = true;

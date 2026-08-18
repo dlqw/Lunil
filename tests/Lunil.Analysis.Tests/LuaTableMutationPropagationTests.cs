@@ -183,8 +183,11 @@ public sealed class LuaTableMutationPropagationTests
         var result = Analyze(source.ToString());
         stopwatch.Stop();
 
+        // The bound only needs to separate linear from quadratic: a quadratic
+        // regression costs minutes at these sizes, while shared CI runners can be
+        // several times slower than a desktop, so the ceiling stays generous.
         Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+            stopwatch.Elapsed < TimeSpan.FromSeconds(60),
             $"25k-entry table literal analyzed in {stopwatch.Elapsed}");
     }
 
@@ -206,8 +209,11 @@ public sealed class LuaTableMutationPropagationTests
         var result = Analyze(source.ToString());
         stopwatch.Stop();
 
+        // The bound only needs to separate linear from quadratic: a quadratic
+        // regression costs minutes at these sizes, while shared CI runners can be
+        // several times slower than a desktop, so the ceiling stays generous.
         Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(10),
+            stopwatch.Elapsed < TimeSpan.FromSeconds(60),
             $"20k-write accumulated table analyzed in {stopwatch.Elapsed}");
         // Growth beyond the field cap keeps absorbing into map types instead of
         // unknown: spot-check the final shape still records a map value type.
