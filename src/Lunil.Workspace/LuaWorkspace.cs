@@ -66,6 +66,13 @@ public sealed class LuaWorkspace : IDisposable
 
     public LuaWorkspaceOptions Options { get; }
 
+    /// <summary>
+    /// Canonical string pool shared by every compact snapshot this workspace builds.
+    /// Rebuilds that re-emit unchanged names and symbol keys reuse the instances the
+    /// previous snapshot already owns instead of retaining a fresh copy per rebuild.
+    /// </summary>
+    public LuaWorkspaceStringInterner StringInterner { get; } = new();
+
     /// <summary>Analyzes sources and returns a queryable snapshot that does not retain compiler models.</summary>
     public Task<LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(
         IEnumerable<LuaWorkspaceDocument> roots,
@@ -86,7 +93,8 @@ public sealed class LuaWorkspace : IDisposable
         var previousBuilder = _compactBuilder.Value;
         var builder = new LuaWorkspaceCompactSnapshot.StreamingBuilder(
             Options.IndexShardCount,
-            Options.HostContract);
+            Options.HostContract,
+            StringInterner);
         _analysisOnly.Value = true;
         _compactBuilder.Value = builder;
         try

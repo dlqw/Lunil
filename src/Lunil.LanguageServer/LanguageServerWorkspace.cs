@@ -72,15 +72,17 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private long _cachedAnalysisBytes;
 
     /// <summary>Byte budget for cached document analyses; open documents are pinned
-    /// and never evicted for budget reasons.</summary>
-    internal long MaximumCachedAnalysisBytes { get; set; } = 384L * 1024 * 1024;
+    /// and never evicted for budget reasons. The default scales with the memory the
+    /// runtime grants this process (see <see cref="LanguageServerMemoryBudget"/>).</summary>
+    internal long MaximumCachedAnalysisBytes { get; set; } = LanguageServerMemoryBudget.AnalysisCacheBytes;
 
     /// <summary>
     /// Byte budget for closed documents' resident sources. Above it, least-recently-used
     /// closed documents drop their bytes and reload from disk on next use; open documents
-    /// and virtual documents stay resident regardless.
+    /// and virtual documents stay resident regardless. The default scales with the memory
+    /// the runtime grants this process (see <see cref="LanguageServerMemoryBudget"/>).
     /// </summary>
-    internal long MaximumDocumentResidencyBytes { get; set; } = 512L * 1024 * 1024;
+    internal long MaximumDocumentResidencyBytes { get; set; } = LanguageServerMemoryBudget.DocumentResidencyBytes;
 
     private static readonly TimeSpan StartupDeclarationsTimeout = TimeSpan.FromSeconds(120);
     private ImmutableDictionary<string, Uri>? _uriByModuleName;
@@ -2711,7 +2713,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         // need their full compiler models again — so the budget only has to cover the
         // changed-module working set between edits, not the whole corpus.
         RetainFullAnalysisCacheResults = true,
-        MaximumCacheBytes = 128L * 1024 * 1024,
+        MaximumCacheBytes = LanguageServerMemoryBudget.WorkspaceCacheBytes,
         // Leave headroom for interactive requests (hover, completion) so a full
         // background rebuild cannot saturate every core.
         MaximumParallelism = Math.Max(2, Environment.ProcessorCount - 2),

@@ -286,7 +286,8 @@ public sealed class LuaWorkspaceCompactSnapshot
     {
         private readonly int _shardCount;
         private readonly LuaHostAnalysisContract? _hostContract;
-        private readonly StringPool _strings = new();
+        private readonly LuaWorkspaceStringInterner? _interner;
+        private readonly StringPool _strings;
         private readonly List<LuaWorkspaceCompactModule> _modules = [];
         private readonly List<CompactReference> _references = [];
         private readonly List<CompactMemberReference> _memberReferences = [];
@@ -307,10 +308,15 @@ public sealed class LuaWorkspaceCompactSnapshot
         private readonly Dictionary<string, string> _reExports = new(StringComparer.Ordinal);
         private int _totalCallCount;
 
-        public StreamingBuilder(int shardCount, LuaHostAnalysisContract? hostContract)
+        public StreamingBuilder(
+            int shardCount,
+            LuaHostAnalysisContract? hostContract,
+            LuaWorkspaceStringInterner? interner = null)
         {
             _shardCount = shardCount;
             _hostContract = hostContract;
+            _interner = interner;
+            _strings = new StringPool(interner);
         }
 
         public LuaWorkspaceCompactSnapshot? Snapshot { get; private set; }
@@ -346,9 +352,16 @@ public sealed class LuaWorkspaceCompactSnapshot
             var edgesStart = _edges.Count;
             var callsStart = _rawCalls.Count;
             var projection = WorkspaceSymbolGraphBuilder.Build([module], _hostContract);
-            _symbols.AddRange(projection.Exports.Symbols.Where(static symbol => !symbol.IsExternal));
-            _edges.AddRange(projection.Exports.Edges.Where(static edge => edge.Kind != "re-export"));
-            _rawCalls.AddRange(projection.Calls.Edges);
+            // Fresh projections emit their own string instances; interning routes them
+            // onto the canonical instances older snapshots and indexes already share,
+            // so a rebuild cannot strand a second copy of the same keys and names.
+            _symbols.AddRange(projection.Exports.Symbols
+                .Where(static symbol => !symbol.IsExternal)
+                .Select(InternSymbol));
+            _edges.AddRange(projection.Exports.Edges
+                .Where(static edge => edge.Kind != "re-export")
+                .Select(InternEdge));
+            _rawCalls.AddRange(projection.Calls.Edges.Select(InternCall));
             string? reExportTarget = null;
             if (WorkspaceSymbolGraphBuilder.GetDirectReExportTarget(module) is { } target)
             {
@@ -487,7 +500,7 @@ public sealed class LuaWorkspaceCompactSnapshot
             LuaWorkspaceMetrics metrics)
         {
             var hostProjection = WorkspaceSymbolGraphBuilder.Build([], _hostContract);
-            _symbols.AddRange(hostProjection.Exports.Symbols);
+            _symbols.AddRange(hostProjection.Exports.Symbols.Select(InternSymbol));
             var lookup = _symbols
                 .GroupBy(static symbol => (symbol.IsExternal, symbol.ModuleName, symbol.Path))
                 .ToDictionary(static group => group.Key, static group => group.First());
@@ -658,23 +671,30 @@ public sealed class LuaWorkspaceCompactSnapshot
                     ? null
                     : model.GetSymbolKey(reference.Symbol, module.Identity).Value;
                 var index = _references.Count;
+                var targetKeyIndex = -1;
+                string targetKey = "";
+                if (target is not null)
+                {
+                    targetKeyIndex = _strings.GetOrAdd(target, out targetKey);
+                }
+
                 _references.Add(new CompactReference(
                     moduleIndex,
                     reference.Span,
                     containingFunctionId,
                     _strings.GetOrAdd(functionKeys[containingFunctionId]),
-                    _strings.GetOrAdd(reference.Name),
+                    _strings.GetOrAdd(reference.Name, out var name),
                     reference.IsWrite,
                     reference.ResolutionKind,
-                    target is null ? -1 : _strings.GetOrAdd(target)));
-                if (target is not null)
+                    targetKeyIndex));
+                if (targetKeyIndex >= 0)
                 {
-                    GetIndexBuilder(_targetIndexes, target).Add(index);
+                    GetIndexBuilder(_targetIndexes, targetKey).Add(index);
                 }
 
                 if (reference.ResolutionKind == LuaNameResolutionKind.Global)
                 {
-                    GetIndexBuilder(_globals, reference.Name).Add(index);
+                    GetIndexBuilder(_globals, name).Add(index);
                 }
             }
 
@@ -692,9 +712,103 @@ public sealed class LuaWorkspaceCompactSnapshot
                 _memberReferences.Add(new CompactMemberReference(
                     moduleIndex,
                     reference.Span,
-                    _strings.GetOrAdd(reference.Name)));
-                GetIndexBuilder(_memberIndexes, reference.Name).Add(memberIndex);
+                    _strings.GetOrAdd(reference.Name, out var memberName)));
+                GetIndexBuilder(_memberIndexes, memberName).Add(memberIndex);
             }
+        }
+
+        private LuaWorkspaceExportSymbol InternSymbol(LuaWorkspaceExportSymbol symbol)
+        {
+            if (_interner is null)
+            {
+                return symbol;
+            }
+
+            var key = _interner.Intern(symbol.Key);
+            var moduleName = _interner.Intern(symbol.ModuleName);
+            var path = _interner.Intern(symbol.Path);
+            var name = _interner.Intern(symbol.Name);
+            var targetKey = symbol.TargetKey is null ? null : _interner.Intern(symbol.TargetKey);
+            var functionKey = symbol.FunctionKey is null ? null : _interner.Intern(symbol.FunctionKey);
+            return ReferenceEquals(key, symbol.Key) &&
+                ReferenceEquals(moduleName, symbol.ModuleName) &&
+                ReferenceEquals(path, symbol.Path) &&
+                ReferenceEquals(name, symbol.Name) &&
+                ReferenceEquals(targetKey, symbol.TargetKey) &&
+                ReferenceEquals(functionKey, symbol.FunctionKey)
+                    ? symbol
+                    : symbol with
+                    {
+                        Key = key,
+                        ModuleName = moduleName,
+                        Path = path,
+                        Name = name,
+                        TargetKey = targetKey,
+                        FunctionKey = functionKey,
+                    };
+        }
+
+        private LuaWorkspaceExportEdge InternEdge(LuaWorkspaceExportEdge edge)
+        {
+            if (_interner is null)
+            {
+                return edge;
+            }
+
+            var sourceKey = _interner.Intern(edge.SourceKey);
+            var targetKey = _interner.Intern(edge.TargetKey);
+            return ReferenceEquals(sourceKey, edge.SourceKey) && ReferenceEquals(targetKey, edge.TargetKey)
+                ? edge
+                : edge with { SourceKey = sourceKey, TargetKey = targetKey };
+        }
+
+        private LuaWorkspaceModuleCallBinding InternCall(LuaWorkspaceModuleCallBinding call)
+        {
+            if (_interner is null)
+            {
+                return call;
+            }
+
+            var sourceModuleName = _interner.Intern(call.SourceModuleName);
+            var requestedModuleName = _interner.Intern(call.RequestedModuleName);
+            var memberPath = _interner.Intern(call.MemberPath);
+            var targetSymbolKey = call.TargetSymbolKey is null ? null : _interner.Intern(call.TargetSymbolKey);
+            var targetFunctionKey = call.TargetFunctionKey is null
+                ? null
+                : _interner.Intern(call.TargetFunctionKey);
+            var candidateKeys = call.CandidateKeys;
+            var candidatesChanged = false;
+            if (!candidateKeys.IsDefault)
+            {
+                var interned = new string[candidateKeys.Length];
+                for (var index = 0; index < candidateKeys.Length; index++)
+                {
+                    interned[index] = _interner.Intern(candidateKeys[index]);
+                    candidatesChanged |= !ReferenceEquals(interned[index], candidateKeys[index]);
+                }
+
+                if (candidatesChanged)
+                {
+                    candidateKeys = interned.ToImmutableArray();
+                }
+            }
+
+            return ReferenceEquals(sourceModuleName, call.SourceModuleName) &&
+                ReferenceEquals(requestedModuleName, call.RequestedModuleName) &&
+                ReferenceEquals(memberPath, call.MemberPath) &&
+                ReferenceEquals(targetSymbolKey, call.TargetSymbolKey) &&
+                ReferenceEquals(targetFunctionKey, call.TargetFunctionKey) &&
+                !candidatesChanged
+                ? call
+                : call with
+                {
+                    SourceModuleName = sourceModuleName,
+                    RequestedModuleName = requestedModuleName,
+                    MemberPath = memberPath,
+                    TargetSymbolKey = targetSymbolKey,
+                    TargetFunctionKey = targetFunctionKey,
+                    CandidateKeys = candidateKeys,
+                };
         }
 
         /// <summary>Adds one entry per annotation element naming a type (references and declarations).</summary>
@@ -704,8 +818,9 @@ public sealed class LuaWorkspaceCompactSnapshot
             {
                 var annotationIndex = _annotationReferences.Count;
                 _annotationReferences.Add(new CompactAnnotationReference(moduleIndex, name.Span));
-                _annotationNames.Add(name.Name);
-                GetIndexBuilder(_annotationIndexes, name.Name).Add(annotationIndex);
+                var annotationName = _strings.Canonicalize(name.Name);
+                _annotationNames.Add(annotationName);
+                GetIndexBuilder(_annotationIndexes, annotationName).Add(annotationIndex);
             });
         }
 
@@ -1141,27 +1256,36 @@ public sealed class LuaWorkspaceCompactSnapshot
 
     private sealed class StringPool
     {
+        private readonly LuaWorkspaceStringInterner? _interner;
         private readonly Dictionary<string, int> _indexes = new(StringComparer.Ordinal);
         private readonly List<string> _values = [];
         private List<(int Index, string Value)>? _capture;
 
-        public int GetOrAdd(string value)
+        public StringPool(LuaWorkspaceStringInterner? interner = null) => _interner = interner;
+
+        /// <summary>Returns the canonical instance for the content without pooling an index for it.</summary>
+        public string Canonicalize(string value) => _interner is null ? value : _interner.Intern(value);
+
+        public int GetOrAdd(string value) => GetOrAdd(value, out _);
+
+        public int GetOrAdd(string value, out string canonical)
         {
+            canonical = _interner is null ? value : _interner.Intern(value);
             int index;
-            if (_indexes.TryGetValue(value, out var existing))
+            if (_indexes.TryGetValue(canonical, out var existing))
             {
                 index = existing;
             }
             else
             {
                 index = _values.Count;
-                _values.Add(value);
-                _indexes.Add(value, index);
+                _values.Add(canonical);
+                _indexes.Add(canonical, index);
             }
 
             // Captures record every index the current module's structs reference,
             // including indexes that already existed for shared names.
-            _capture?.Add((index, value));
+            _capture?.Add((index, canonical));
             return index;
         }
 

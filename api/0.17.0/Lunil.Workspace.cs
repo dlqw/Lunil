@@ -144,6 +144,7 @@ namespace Lunil.Workspace
     public sealed class LuaWorkspace : System.IDisposable
     {
         public Lunil.Workspace.LuaWorkspaceOptions Options { get => throw null; }
+        public Lunil.Workspace.LuaWorkspaceStringInterner StringInterner { get => throw null; }
         public LuaWorkspace(Lunil.Workspace.LuaWorkspaceOptions? options = null, Lunil.Workspace.ILuaModuleResolver? resolver = null) { }
         public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Threading.CancellationToken cancellationToken = null) => throw null;
         public System.Threading.Tasks.Task<Lunil.Workspace.LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(System.Collections.Generic.IEnumerable<Lunil.Workspace.LuaWorkspaceDocument> roots, System.Collections.Immutable.ImmutableHashSet<string>? externallyProvidedModules, System.Threading.CancellationToken cancellationToken = null) => throw null;
@@ -593,5 +594,15 @@ namespace Lunil.Workspace
         public override bool Equals(object? obj) => throw null;
         public bool Equals(Lunil.Workspace.LuaWorkspaceResult? other) => throw null;
         public void Deconstruct(out Lunil.Workspace.LuaModuleGraph Graph, out System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceModuleResult> Modules, out System.Collections.Immutable.ImmutableArray<Lunil.Workspace.LuaWorkspaceDiagnostic> Diagnostics, out Lunil.Workspace.LuaWorkspaceMetrics Metrics) => throw null;
+    }
+
+    public sealed class LuaWorkspaceStringInterner
+    {
+        public long LookupCount { get => throw null; }
+        public long HitCount { get => throw null; }
+        public int LiveEntryCount { get => throw null; }
+        public string Intern(string value) => throw null;
+        public string Intern(System.ReadOnlySpan<char> value) => throw null;
+        public void Clear() { }
     }
 }
