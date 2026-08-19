@@ -6,9 +6,28 @@
     <AssemblyName>lunil-language-server</AssemblyName>
     <RootNamespace>Lunil.LanguageServer</RootNamespace>
     <Description>LSP 3.17 language server for Lunil Lua analysis.</Description>
+    <!-- A long-running multi-core analysis host: server GC with DATAS keeps indexing
+         bursts off the message loop while shrinking heaps when the session is idle.
+         The heap hard limit turns any future unbounded growth into a bounded failure
+         instead of consuming the whole machine. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GCHeapHardLimitPercent>60</GCHeapHardLimitPercent>
     <PublishReadyToRun Condition="'$(LunilReadyToRunPublish)' == 'true'">true</PublishReadyToRun>
     <SelfContained Condition="'$(LunilReadyToRunPublish)' == 'true'">true</SelfContained>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="BuiltinLibrary\builtin-base.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-coroutine.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-debug.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-io.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-math.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-os.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-string.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-table.lua" />
+    <EmbeddedResource Include="BuiltinLibrary\builtin-utf8.lua" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Lunil.Compiler\Lunil.Compiler.csproj" />

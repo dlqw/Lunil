@@ -24,5 +24,57 @@
     ["(", ")"],
     ["\"", "\""],
     ["'", "'"]
+  ],
+  "wordPattern": {
+    "pattern": "(?:[\\w\\u0080-\\uFFFF]|\\.(?=[\\w\\u0080-\\uFFFF]))+(?:[.:](?:[\\w\\u0080-\\uFFFF]|\\.(?=[\\w\\u0080-\\uFFFF]))+)*",
+    "flags": ""
+  },
+  "indentationRules": {
+    "increaseIndentPattern": {
+      "pattern": "^\\s*(?:local\\s+)?(?:function\\b[^;]*|if\\b.*(\\bthen\\s*)|for\\b.*\\bdo\\s*|while\\b.*\\bdo\\s*|repeat\\b|else\\b|elseif\\b.*(\\bthen\\s*)|do\\b|\\{[^}\"']*$|\\([^)\"']*$|\\[[^\\]\"']*$)",
+      "flags": ""
+    },
+    "decreaseIndentPattern": {
+      "pattern": "^\\s*(?:end\\b|else\\b|elseif\\b|until\\b|\\}|\\)|\\])",
+      "flags": ""
+    }
+  },
+  "onEnterRules": [
+    {
+      "beforeText": {
+        "pattern": "^\\s*--.*$",
+        "flags": ""
+      },
+      "action": {
+        "indent": "none",
+        "appendText": "-- "
+      }
+    },
+    {
+      "beforeText": {
+        "pattern": "^\\s*(?:local\\s+)?function\\b[^;]*$",
+        "flags": ""
+      },
+      "afterText": {
+        "pattern": "^\\s*end\\s*$",
+        "flags": ""
+      },
+      "action": {
+        "indent": "indentOutdent"
+      }
+    },
+    {
+      "beforeText": {
+        "pattern": "^\\s*(?:if\\b.*(\\bthen\\s*)|for\\b.*\\bdo\\s*|while\\b.*\\bdo\\s*|repeat\\b|do\\b)\\s*$",
+        "flags": ""
+      },
+      "afterText": {
+        "pattern": "^\\s*(?:end|until)\\s*$",
+        "flags": ""
+      },
+      "action": {
+        "indent": "indentOutdent"
+      }
+    }
   ]
 }

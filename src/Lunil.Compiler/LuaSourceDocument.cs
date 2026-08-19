@@ -32,4 +32,14 @@ public sealed record LuaSourceDocument
         ReadOnlySpan<byte> bytes,
         string? sourceName = null) =>
         new(new SourceText(bytes), sourceName);
+
+    /// <summary>
+    /// Wraps an existing UTF-8 buffer without copying it. The caller must guarantee the
+    /// array is never mutated afterward (for example a workspace document's canonical
+    /// byte representation reused across analysis passes).
+    /// </summary>
+    public static LuaSourceDocument FromOwnedBytes(
+        byte[] bytes,
+        string? sourceName = null) =>
+        new(SourceText.FromOwnedArray(bytes), sourceName);
 }

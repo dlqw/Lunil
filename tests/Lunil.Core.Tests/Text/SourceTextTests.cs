@@ -64,4 +64,18 @@ public sealed class SourceTextTests
         Assert.Equal(new TextSpan(0, 1), source.GetLineSpan(0));
         Assert.Equal(new TextSpan(3, 1), source.GetLineSpan(1));
     }
+
+    [Fact]
+    public void FromOwnedArrayWrapsBufferWithoutCopying()
+    {
+        byte[] owned = [.. "return 1 -- data"u8];
+        var source = SourceText.FromOwnedArray(owned);
+
+        // The wrapper aliases the caller's buffer: mutations are visible (that is the
+        // documented ownership contract), and the line map is still built.
+        Assert.Equal(owned.Length, source.Length);
+        Assert.Equal(1, source.LineCount);
+        Assert.Equal("return 1 -- data"u8.ToArray(), source.ToArray());
+        Assert.Equal(16, source.GetLineSpan(0).Length);
+    }
 }

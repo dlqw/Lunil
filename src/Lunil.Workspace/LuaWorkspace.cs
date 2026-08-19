@@ -29,6 +29,12 @@ public sealed class LuaWorkspace : IDisposable
     private LuaWorkspaceModuleResult? _lastAnalysisResultPin;
     private Dictionary<string, string> _previousModuleKeys = new(StringComparer.Ordinal);
     private Dictionary<string, ModuleSummaryState> _previousSummaries = new(StringComparer.Ordinal);
+    /// <summary>Discovered dependencies per module from the last run, keyed by module name.</summary>
+    private Dictionary<string, DiscoverySummary> _discoverySummaries = new(StringComparer.Ordinal);
+    /// <summary>Reusable snapshot projections from the last compact build, keyed by module name.</summary>
+    private ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution> _lastContributions =
+        ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
+            .WithComparers(StringComparer.Ordinal);
     private int _activeOperations;
     private bool _disposed;
     private bool _resourcesDisposed;
@@ -60,21 +66,44 @@ public sealed class LuaWorkspace : IDisposable
 
     public LuaWorkspaceOptions Options { get; }
 
+    /// <summary>
+    /// Canonical string pool shared by every compact snapshot this workspace builds.
+    /// Rebuilds that re-emit unchanged names and symbol keys reuse the instances the
+    /// previous snapshot already owns instead of retaining a fresh copy per rebuild.
+    /// </summary>
+    public LuaWorkspaceStringInterner StringInterner { get; } = new();
+
     /// <summary>Analyzes sources and returns a queryable snapshot that does not retain compiler models.</summary>
+    public Task<LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(
+        IEnumerable<LuaWorkspaceDocument> roots,
+        CancellationToken cancellationToken = default) =>
+        AnalyzeCompactAsync(roots, externallyProvidedModules: null, cancellationToken);
+
+    /// <summary>
+    /// Compact analysis that treats the named modules as provided outside the corpus:
+    /// requires pointing at them resolve to an untyped value without diagnostics. The
+    /// language server uses this for files excluded from analysis (generated data files).
+    /// </summary>
     public async Task<LuaWorkspaceCompactSnapshot> AnalyzeCompactAsync(
         IEnumerable<LuaWorkspaceDocument> roots,
+        ImmutableHashSet<string>? externallyProvidedModules,
         CancellationToken cancellationToken = default)
     {
         var previous = _analysisOnly.Value;
         var previousBuilder = _compactBuilder.Value;
         var builder = new LuaWorkspaceCompactSnapshot.StreamingBuilder(
             Options.IndexShardCount,
-            Options.HostContract);
+            Options.HostContract,
+            StringInterner);
         _analysisOnly.Value = true;
         _compactBuilder.Value = builder;
         try
         {
-            _ = await AnalyzeAsync(roots, cancellationToken).ConfigureAwait(false);
+            _ = await AnalyzeAsync(roots, externallyProvidedModules, cancellationToken).ConfigureAwait(false);
+            // Reusable projections of this build back the next one's fast path.
+            _lastContributions = builder.Snapshot?.Contributions ??
+                ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
+                    .WithComparers(StringComparer.Ordinal);
             return builder.Snapshot ??
                 throw new InvalidOperationException("Compact workspace construction did not complete.");
         }
@@ -85,8 +114,19 @@ public sealed class LuaWorkspace : IDisposable
         }
     }
 
+    public Task<LuaWorkspaceResult> AnalyzeAsync(
+        IEnumerable<LuaWorkspaceDocument> roots,
+        CancellationToken cancellationToken = default) =>
+        AnalyzeAsync(roots, externallyProvidedModules: null, cancellationToken);
+
+    /// <summary>
+    /// Full analysis with modules that exist at runtime but are not part of the analyzed
+    /// corpus (for example data files excluded from indexing); requiring them yields an
+    /// untyped value instead of an unresolved-module diagnostic.
+    /// </summary>
     public async Task<LuaWorkspaceResult> AnalyzeAsync(
         IEnumerable<LuaWorkspaceDocument> roots,
+        ImmutableHashSet<string>? externallyProvidedModules,
         CancellationToken cancellationToken = default)
     {
         LunilGuard.NotNull(roots);
@@ -239,14 +279,21 @@ public sealed class LuaWorkspace : IDisposable
                                 null,
                                 LuaModuleDependencyKind.Static,
                                 discovered.Span));
-                            AddDiagnostic(
-                                diagnostics,
-                                LuaWorkspaceDiagnosticPhase.Resolution,
-                                discovery.Document.Module,
-                                "LUA7002",
-                                Options.UnresolvedModuleSeverity,
-                                discovered.Span,
-                                $"Module '{discovered.RequestedName}' could not be resolved.");
+                            // Corpus documents always win; a name that is only externally
+                            // provided (for example an excluded generated data file) resolves
+                            // untyped without a resolution diagnostic.
+                            if (externallyProvidedModules?.Contains(discovered.RequestedName) != true)
+                            {
+                                AddDiagnostic(
+                                    diagnostics,
+                                    LuaWorkspaceDiagnosticPhase.Resolution,
+                                    discovery.Document.Module,
+                                    "LUA7002",
+                                    Options.UnresolvedModuleSeverity,
+                                    discovered.Span,
+                                    $"Module '{discovered.RequestedName}' could not be resolved.");
+                            }
+
                             continue;
                         }
 
@@ -324,6 +371,7 @@ public sealed class LuaWorkspace : IDisposable
             var moduleResults = new Dictionary<string, ModuleAnalysis>(StringComparer.Ordinal);
             var currentKeys = new Dictionary<string, string>(StringComparer.Ordinal);
             var currentSummaries = new Dictionary<string, ModuleSummaryState>(StringComparer.Ordinal);
+            var currentDiscoverySummaries = new Dictionary<string, DiscoverySummary>(StringComparer.Ordinal);
             var analyzedComponentCount = 0;
             foreach (var level in dependencyLevels)
             {
@@ -360,26 +408,57 @@ public sealed class LuaWorkspace : IDisposable
                                 result.DependencySummaryHash);
                             currentKeys[result.Identity.Name] = module.CacheKey;
                             currentSummaries[result.Identity.Name] = ToSummaryState(result);
-                            foreach (var diagnostic in result.Compilation.Diagnostics)
+                            var discovery = discoveries.GetValueOrDefault(result.Identity.Name);
+                            if (discovery is not null)
                             {
-                                AddDiagnostic(
-                                    diagnostics,
-                                    LuaWorkspaceDiagnosticPhase.Compilation,
-                                    result.Identity,
-                                    diagnostic.Code,
-                                    diagnostic.Severity,
-                                    diagnostic.Span,
-                                    diagnostic.Message,
-                                    diagnostic.Phase);
+                                currentDiscoverySummaries[result.Identity.Name] = new DiscoverySummary(
+                                    discovery.ContentHash,
+                                    discovery.Dependencies);
                             }
 
-                            if (compactMode)
+                            if (module.ReusedContribution is { } reused)
                             {
-                                compactBuilder!.AddModule(result);
+                                foreach (var diagnostic in reused.CompilationDiagnostics)
+                                {
+                                    AddDiagnostic(
+                                        diagnostics,
+                                        LuaWorkspaceDiagnosticPhase.Compilation,
+                                        result.Identity,
+                                        diagnostic.Code,
+                                        diagnostic.Severity,
+                                        diagnostic.Span,
+                                        diagnostic.Message,
+                                        diagnostic.Phase);
+                                }
+
+                                if (compactMode)
+                                {
+                                    compactBuilder!.ReuseModule(reused);
+                                }
                             }
                             else
                             {
-                                moduleResults[result.Identity.Name] = module;
+                                foreach (var diagnostic in result.Compilation.Diagnostics)
+                                {
+                                    AddDiagnostic(
+                                        diagnostics,
+                                        LuaWorkspaceDiagnosticPhase.Compilation,
+                                        result.Identity,
+                                        diagnostic.Code,
+                                        diagnostic.Severity,
+                                        diagnostic.Span,
+                                        diagnostic.Message,
+                                        diagnostic.Phase);
+                                }
+
+                                if (compactMode)
+                                {
+                                    compactBuilder!.AddModule(result, module.CacheKey);
+                                }
+                                else
+                                {
+                                    moduleResults[result.Identity.Name] = module;
+                                }
                             }
                         }
                     }
@@ -400,6 +479,7 @@ public sealed class LuaWorkspace : IDisposable
                     out operation.DirtyFunctions,
                     out operation.DirtyHostSummaries);
                 _previousModuleKeys = currentKeys;
+                _discoverySummaries = currentDiscoverySummaries;
                 operation.ReclaimedAnalyses += RemoveReclaimedEntries(_analysisCache);
                 var discoveryEntryBudget = Math.Max(1, Options.MaximumCacheEntryCount / 2);
                 var discoveryByteBudget = Math.Max(1, Options.MaximumCacheBytes / 3);
@@ -493,6 +573,9 @@ public sealed class LuaWorkspace : IDisposable
                 _analysisCache.Clear();
                 _previousModuleKeys.Clear();
                 _previousSummaries.Clear();
+                _discoverySummaries.Clear();
+                _lastContributions = ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
+                    .WithComparers(StringComparer.Ordinal);
             }
         }
         finally
@@ -569,6 +652,9 @@ public sealed class LuaWorkspace : IDisposable
             _analysisCache.Clear();
             _previousModuleKeys.Clear();
             _previousSummaries.Clear();
+            _discoverySummaries.Clear();
+            _lastContributions = ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
+                .WithComparers(StringComparer.Ordinal);
         }
 
         _operationGate.Dispose();
@@ -579,6 +665,18 @@ public sealed class LuaWorkspace : IDisposable
         CancellationToken cancellationToken)
     {
         var contentHash = HashBytes(document.Source.Text.AsSpan());
+        lock (_cacheLock)
+        {
+            // A module whose content hash still matches its last run discovers the same
+            // dependencies: skip parse and binding entirely. The compact analysis fast
+            // path needs no binding snapshot either; a miss there re-binds on demand.
+            if (_discoverySummaries.TryGetValue(document.Module.Name, out var summary) &&
+                string.Equals(summary.ContentHash, contentHash, StringComparison.Ordinal))
+            {
+                return new DiscoveryEntry(document, contentHash, null, summary.Dependencies);
+            }
+        }
+
         var key = HashText($"discovery-v1\n{document.Module.Name}\n{document.SourceIdentity}\n{contentHash}");
         lock (_cacheLock)
         {
@@ -798,6 +896,20 @@ public sealed class LuaWorkspace : IDisposable
         }
 
         var cacheKey = HashText(keyBuilder.ToString());
+        if (_compactBuilder.Value is not null &&
+            _lastContributions.TryGetValue(discovery.Document.Module.Name, out var contribution) &&
+            string.Equals(contribution.CacheKey, cacheKey, StringComparison.Ordinal))
+        {
+            // Unchanged module with a still-valid projection from the last compact
+            // build: reuse it verbatim — no parse, no binding, no type analysis, and
+            // no full compiler model that would have to stay resident for reuse.
+            Interlocked.Increment(ref operation.CacheHits);
+            return new ModuleAnalysis(
+                BuildReusedResult(discovery, dependencies, contribution),
+                cacheKey,
+                contribution);
+        }
+
         if (_diskCache?.TryRead(
                 cacheKey,
                 discovery.Document.Module.Name,
@@ -1496,14 +1608,15 @@ public sealed class LuaWorkspace : IDisposable
         LunilCryptography.Sha256Hex(value).ToLowerInvariant();
 
     private static long EstimateDiscoveryBytes(DiscoveryEntry entry) => checked(
-        512L + entry.Document.Source.Text.Length * 8L + entry.Dependencies.Length * 96L);
+        512L + entry.Document.Source.Text.Length * 64L + entry.Dependencies.Length * 96L);
 
     private static long EstimateAnalysisBytes(LuaWorkspaceModuleResult result) => checked(
         2_048L +
-        result.Compilation.Source.Text.Length * 12L +
-        result.Compilation.SemanticModel.Symbols.Length * 128L +
-        result.Compilation.SemanticModel.UnifiedReferences.Length * 96L +
-        result.Compilation.Analysis.Functions.Length * 512L);
+        result.Compilation.Source.Text.Length * 16L +
+        result.Compilation.SemanticModel.Symbols.Length * 512L +
+        result.Compilation.SemanticModel.UnifiedReferences.Length * 384L +
+        result.Compilation.Analysis.Functions.Length * 2_048L +
+        result.Compilation.Analysis.Expressions.Length * 128L);
 
     private static void ValidateOptions(LuaWorkspaceOptions options)
     {
@@ -1557,7 +1670,45 @@ public sealed class LuaWorkspace : IDisposable
         ImmutableDictionary<string, string> Functions,
         string Host);
 
-    private sealed record ModuleAnalysis(LuaWorkspaceModuleResult Result, string CacheKey);
+    /// <summary>Discovered (pre-resolution) dependencies of one module from its last run.</summary>
+    private sealed record DiscoverySummary(
+        string ContentHash,
+        ImmutableArray<DiscoveredDependency> Dependencies);
+
+    /// <summary>
+    /// Rebuilds the lightweight result of a reused module: hashes and exported type come
+    /// from the captured contribution; the compilation is intentionally absent because
+    /// the compact path never touches it for reused modules.
+    /// </summary>
+    private static LuaWorkspaceModuleResult BuildReusedResult(
+        DiscoveryEntry discovery,
+        ImmutableArray<LuaModuleDependency> dependencies,
+        LuaWorkspaceCompactSnapshot.ModuleContribution contribution) => new(
+        discovery.Document.Module,
+        discovery.Document.SourceIdentity,
+        discovery.ContentHash,
+        Compilation: null!,
+        dependencies,
+        contribution.ExportedType,
+        contribution.Module.ExportHash,
+        FixedPointIterationCount: 0,
+        WasCacheHit: true,
+        WasWidened: false)
+        {
+            ExportedSymbols = contribution.Module.ExportedSymbols,
+            ExportSymbolHash = contribution.Module.ExportSymbolHash,
+            FunctionSummaryHash = contribution.Module.FunctionSummaryHash,
+            AnalysisSummaryHash = contribution.AnalysisSummaryHash,
+            DependencySummaryHash = contribution.Module.DependencySummaryHash,
+            ExportSummaryHashes = contribution.ExportSummaryHashes,
+            FunctionSummaryHashes = contribution.FunctionSummaryHashes,
+            HostSummaryHash = contribution.HostSummaryHash,
+        };
+
+    private sealed record ModuleAnalysis(
+        LuaWorkspaceModuleResult Result,
+        string CacheKey,
+        LuaWorkspaceCompactSnapshot.ModuleContribution? ReusedContribution = null);
 
     private sealed record ComponentAnalysis(
         int ComponentId,

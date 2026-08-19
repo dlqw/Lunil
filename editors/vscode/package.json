@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -10,7 +10,8 @@
   },
   "categories": [
     "Programming Languages",
-    "Linters"
+    "Linters",
+    "Debuggers"
   ],
   "keywords": [
     "lua",
@@ -28,7 +29,10 @@
     "workspaceContains:**/*.lua",
     "onCommand:lunil.restartServer",
     "onCommand:lunil.clearCache",
+    "onCommand:lunil.reindexWorkspace",
+    "onCommand:lunil.showMenu",
     "onCommand:lunil.showIndexStatus",
+    "onCommand:lunil.showOutput",
     "onCommand:lunil.showHostContract",
     "onDebugResolve:lunil"
   ],
@@ -44,6 +48,94 @@
           ".lua"
         ],
         "configuration": "./language-configuration.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "lua",
+        "scopes": {
+          "macro": [
+            "keyword.annotation.lua",
+            "keyword.annotation",
+            "keyword"
+          ],
+          "class": [
+            "entity.name.type.class.lua",
+            "entity.name.type.class",
+            "entity.name.class"
+          ],
+          "type": [
+            "entity.name.type.lua",
+            "entity.name.type",
+            "support.type.lua"
+          ],
+          "typeParameter": [
+            "entity.name.type.parameter.lua",
+            "entity.name.type.parameter"
+          ],
+          "enum": [
+            "entity.name.type.enum.lua",
+            "entity.name.type.enum"
+          ]
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "lua",
+        "path": "./snippets/lua.json"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "lunil.getStarted",
+        "title": "Get Started with Lunil Lua",
+        "description": "Index a workspace, edit with rich Lua intelligence, connect a host contract, and debug scripts.",
+        "steps": [
+          {
+            "id": "lunil.welcome",
+            "title": "Welcome to Lunil Lua",
+            "description": "What Lunil provides and where the server state lives.",
+            "media": {
+              "markdown": "walkthroughs/welcome.md"
+            }
+          },
+          {
+            "id": "lunil.indexing",
+            "title": "Index your workspace",
+            "description": "Watch indexing progress and inspect failed or pending documents.",
+            "media": {
+              "markdown": "walkthroughs/indexing.md"
+            },
+            "completionEvents": [
+              "onCommand:lunil.showIndexStatus"
+            ]
+          },
+          {
+            "id": "lunil.editing",
+            "title": "Rich Lua editing",
+            "description": "Completions, hover, rename, semantic tokens, inlay hints, and snippets.",
+            "media": {
+              "markdown": "walkthroughs/editing.md"
+            }
+          },
+          {
+            "id": "lunil.hostContract",
+            "title": "Connect a host contract",
+            "description": "Give Lunil the host API surface of Unity, Godot, or a .NET application.",
+            "media": {
+              "markdown": "walkthroughs/host-contract.md"
+            }
+          },
+          {
+            "id": "lunil.debugging",
+            "title": "Debug Lua scripts",
+            "description": "Launch scripts with the Lunil interpreter or attach to a game-loop host.",
+            "media": {
+              "markdown": "walkthroughs/debugging.md"
+            }
+          }
+        ]
       }
     ],
     "commands": [
@@ -79,7 +171,8 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "description": "Optional absolute path to a compatible lunil-language-server executable. The bundled server is used by default."
+          "order": 0,
+          "markdownDescription": "Optional absolute path to a compatible `lunil-language-server` executable. The bundled server is used by default."
         },
         "lunil.server.trace": {
           "type": "string",
@@ -88,8 +181,14 @@
             "messages",
             "verbose"
           ],
+          "enumDescriptions": [
+            "No protocol tracing.",
+            "Log request and response message heads.",
+            "Log full request and response payloads."
+          ],
           "default": "off",
           "scope": "window",
+          "order": 1,
           "description": "LSP message tracing written to the Lunil output channel."
         },
         "lunil.server.maximumRestartCount": {
@@ -98,6 +197,7 @@
           "minimum": 0,
           "maximum": 20,
           "scope": "window",
+          "order": 2,
           "description": "Maximum automatic restarts after unexpected server termination."
         },
         "lunil.server.gcHeapHardLimitPercent": {
@@ -106,19 +206,8 @@
           "minimum": 20,
           "maximum": 90,
           "scope": "machine-overridable",
+          "order": 3,
           "description": "Managed heap hard-limit percentage passed to the bundled server."
-        },
-        "lunil.hostContractPath": {
-          "type": "string",
-          "default": "",
-          "scope": "resource",
-          "description": "Path to a versioned Lunil host analysis contract exported by a C++, C#, Unity, Godot, or other host."
-        },
-        "lunil.hostContractJson": {
-          "type": "string",
-          "default": "",
-          "scope": "resource",
-          "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
         },
         "lunil.server.suppressedDiagnosticCodes": {
           "type": "array",
@@ -127,7 +216,73 @@
           },
           "default": [],
           "scope": "window",
-          "description": "Diagnostic codes (for example LUA6003) suppressed by the language server analysis."
+          "order": 4,
+          "markdownDescription": "Diagnostic codes (for example `LUA6003`) suppressed by the language server analysis. Suppression applies without restarting."
+        },
+        "lunil.hostContractPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "order": 5,
+          "markdownDescription": "Path to a versioned Lunil host analysis contract exported by a C++, C#, Unity, Godot, or other host. See **Lunil: Show Virtual Host Contract** to inspect the indexed surface."
+        },
+        "lunil.hostContractJson": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "order": 6,
+          "description": "Inline host analysis contract JSON. This takes precedence over hostContractPath."
+        },
+        "lunil.workspace.library": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 7,
+          "markdownDescription": "Read-only folders with Lua declaration stubs (`---@meta` files) describing globals and classes injected by a host at runtime (C++, C#, Unity, Godot, game engines). Relative paths resolve against the first workspace folder. Editing stubs takes effect after **Lunil: Reindex Workspace**."
+        },
+        "lunil.analysis.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 8,
+          "markdownDescription": "Glob patterns of Lua files excluded from workspace indexing and analysis — for example `data/**`, `**/*.data.lua`, or `assets/{configs,tables}/**`. Patterns match workspace-relative paths (`/`-separated); a pattern without a separator matches the file name in any directory. Excluded files are not read into memory and requires that name them resolve as untyped; open one in the editor to analyze it anyway. Matching is case-insensitive."
+        },
+        "lunil.analysis.autoDetectDataFiles": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "order": 9,
+          "markdownDescription": "Automatically keep generated data files (very large table literals of keys, strings, and numbers with no functions or control flow) out of workspace indexing. Detected files appear under **Lunil: Show Index Status**; use `lunil.analysis.exclude` to exclude more paths or tighten this automatically."
+        },
+        "lunil.locale": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "zh-cn"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code UI language.",
+            "English.",
+            "简体中文。"
+          ],
+          "default": "auto",
+          "scope": "window",
+          "order": 10,
+          "markdownDescription": "Language for Lunil hover cards, menus, and status messages. `auto` follows the VS Code UI language. Applies without a restart."
+        },
+        "lunil.statusBar.showModuleCount": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "order": 11,
+          "markdownDescription": "Show the indexed module count in the Lunil status item once indexing completes. The workspace folder name is shown alongside it."
         }
       }
     },

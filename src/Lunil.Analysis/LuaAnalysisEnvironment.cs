@@ -22,6 +22,34 @@ public sealed record LuaAnalysisEnvironment
     public ImmutableDictionary<string, LuaExternalTypeDeclaration> ExternalTypeDeclarations { get; init; } =
         ImmutableDictionary<string, LuaExternalTypeDeclaration>.Empty.WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets the runtime members each annotation-declared class exposes through its declaring
+    /// module's exports (methods, metamethods, and fields written at runtime but not covered by
+    /// annotations). Member checks consult this before reporting missing members, so the
+    /// class-library pattern (<c>Base:extend</c>, <c>Vec2.new</c>, runtime <c>__add</c>) is not
+    /// flagged in documents that cannot see the defining module's code.
+    /// </summary>
+    public ImmutableDictionary<string, ImmutableDictionary<string, LuaType>> ExternalClassMembers { get; init; } =
+        ImmutableDictionary<string, ImmutableDictionary<string, LuaType>>.Empty
+            .WithComparers(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets the types of the Lua standard library globals (library tables such as
+    /// `string` and `math`, plus global functions), extracted from the embedded builtin
+    /// definitions. Analysis seeds them as known globals.
+    /// </summary>
+    public ImmutableDictionary<string, LuaType> BuiltinGlobals { get; init; } =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets globals declared by workspace library folders: LuaLS-style <c>---@meta</c>
+    /// stub files describing values a host (C++, C#, a game engine) injects at runtime.
+    /// Analysis seeds them after the builtin globals, so host-injected names keep their
+    /// types, members, and doc comments instead of degrading to <c>any</c>.
+    /// </summary>
+    public ImmutableDictionary<string, LuaType> ExternalGlobals { get; init; } =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

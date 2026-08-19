@@ -243,7 +243,16 @@ internal sealed partial class AnalysisEngine
         LuaType value,
         TextSpan span)
     {
-        LuaType shape = value;
+        // Unwrap constructor-shaped initializers to the subclass's own shape: nesting the
+        // base's prototype (or a metatable) as the shape hides every later member write
+        // from export collection, which only expands structural shapes. Base members stay
+        // reachable through the declared base types instead.
+        LuaType shape = value switch
+        {
+            LuaPrototypeType prototype => prototype.Shape,
+            LuaMetatableType metatable => metatable.BaseType,
+            _ => value,
+        };
         foreach (var field in declaration.Fields)
         {
             var runtime = _relations.FindField(value, field.Name!);
@@ -330,7 +339,7 @@ internal sealed partial class AnalysisEngine
                 var memberPath = nameTokens.Skip(1).Select(GetTokenText).ToArray();
                 var next = AddOrReplacePrototypePath(root, memberPath, type);
                 AssignVariable(key, reference.Symbol, next, identifier.Span, state);
-                PropagateTableMutation(state, root, next, key);
+                PropagateTableMutation(state, root, next, key, identifier.Span);
             }
             else
             {
@@ -366,7 +375,7 @@ internal sealed partial class AnalysisEngine
         return current;
     }
 
-    private static LuaType AddOrReplacePrototypePath(
+    private LuaType AddOrReplacePrototypePath(
         LuaType root,
         string[] members,
         LuaType value)
@@ -436,6 +445,24 @@ internal sealed partial class AnalysisEngine
         }
 
         return BlockResult.Next(state);
+    }
+
+    /// <summary>
+    /// The span of a loop's leading keyword (`while`, `for`, `repeat`), so convergence
+    /// diagnostics underline the loop head rather than the entire body.
+    /// </summary>
+    private static Lunil.Core.Text.TextSpan LoopKeywordSpan(LuaSyntaxNode statement)
+    {
+        foreach (var token in statement.ChildTokens())
+        {
+            if (token.Kind is LuaTokenKind.WhileKeyword or LuaTokenKind.ForKeyword or
+                LuaTokenKind.RepeatKeyword)
+            {
+                return token.Span;
+            }
+        }
+
+        return statement.Span;
     }
 
     private BlockResult AnalyzeReturn(LuaSyntaxNode statement, FlowState state)
@@ -536,7 +563,7 @@ internal sealed partial class AnalysisEngine
                 _currentFunction.WasWidened = true;
                 _context.AddDiagnostic(
                     "LUA6012",
-                    statement.Span,
+                    LoopKeywordSpan(statement),
                     "Loop flow did not converge within the configured iteration budget; values were widened.");
             }
         }
@@ -571,7 +598,7 @@ internal sealed partial class AnalysisEngine
                 _currentFunction.WasWidened = true;
                 _context.AddDiagnostic(
                     "LUA6012",
-                    statement.Span,
+                    LoopKeywordSpan(statement),
                     "Repeat-loop flow did not converge within the configured iteration budget; values were widened.");
             }
         }

@@ -63,6 +63,9 @@ namespace Lunil.Analysis
         public static Lunil.Analysis.LuaAnalysisEnvironment Empty { get => throw null; }
         public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> ModuleTypes { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaExternalTypeDeclaration> ExternalTypeDeclarations { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableDictionary<string, System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType>> ExternalClassMembers { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> BuiltinGlobals { get => throw null; init { } }
+        public System.Collections.Immutable.ImmutableDictionary<string, Lunil.Analysis.LuaType> ExternalGlobals { get => throw null; init { } }
         public Lunil.Analysis.LuaHostAnalysisContract? HostContract { get => throw null; init { } }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.Analysis.LuaAnalysisEnvironment? left, Lunil.Analysis.LuaAnalysisEnvironment? right) => throw null;
@@ -88,6 +91,7 @@ namespace Lunil.Analysis
         public int MaximumUnionMemberCount { get => throw null; init { } }
         public int MaximumTypeDepth { get => throw null; init { } }
         public int MaximumGenericInstantiationCount { get => throw null; init { } }
+        public int MaximumTableMutationPropagationNodes { get => throw null; init { } }
         public int MaximumReturnPackLength { get => throw null; init { } }
         public int MaximumDiagnosticCount { get => throw null; init { } }
         public System.Collections.Immutable.ImmutableHashSet<string> SuppressedDiagnosticCodes { get => throw null; init { } }

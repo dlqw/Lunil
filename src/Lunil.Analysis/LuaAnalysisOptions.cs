@@ -34,6 +34,10 @@ public sealed record LuaAnalysisOptions
 
     public int MaximumGenericInstantiationCount { get; init; } = 4_096;
 
+    /// <summary>Budget for type-graph nodes visited by table-mutation propagation
+    /// per analysis; alias updates stop once it is exhausted.</summary>
+    public int MaximumTableMutationPropagationNodes { get; init; } = 1_048_576;
+
     public int MaximumReturnPackLength { get; init; } = 64;
 
     public int MaximumDiagnosticCount { get; init; } = 1_000;

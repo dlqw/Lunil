@@ -78,6 +78,7 @@ public static class LuaTypeAnalyzer
         LunilGuard.GreaterThanOrEqual(options.MaximumUnionMemberCount, 2);
         LunilGuard.Positive(options.MaximumTypeDepth);
         LunilGuard.Positive(options.MaximumGenericInstantiationCount);
+        LunilGuard.Positive(options.MaximumTableMutationPropagationNodes);
         LunilGuard.Positive(options.MaximumReturnPackLength);
         LunilGuard.Positive(options.MaximumDiagnosticCount);
         LunilGuard.NotNull(options.SuppressedDiagnosticCodes);

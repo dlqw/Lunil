@@ -19,6 +19,15 @@ public sealed record LuaWorkspaceReference(
     LuaNameResolutionKind ResolutionKind,
     LuaSymbolKey? TargetKey);
 
+/// <summary>
+/// One workspace-qualified member or index reference (<c>.field</c>, <c>:method</c>,
+/// <c>["key"]</c>). Member references have no lexical symbol, so they are matched by name.
+/// </summary>
+public sealed record LuaWorkspaceMemberReference(
+    LuaModuleIdentity Module,
+    TextSpan Span,
+    string Name);
+
 /// <summary>One stable workspace-qualified function node.</summary>
 public sealed record LuaWorkspaceFunction(
     LuaModuleIdentity Module,

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Lunil.Core.Diagnostics;
+using Lunil.Core.Text;
 using Lunil.Syntax.Lexing;
 
 namespace Lunil.EmmyLua;
@@ -51,8 +52,11 @@ internal static class AnnotationDocumentParser
             }
             else if (context.Current.Kind == LuaAnnotationTokenKind.Identifier)
             {
-                var tag = context.Advance().Text;
-                annotation = parseDirective(context, tag);
+                var tagToken = context.Advance();
+                annotation = parseDirective(context, tagToken.Text) with
+                {
+                    TagSpan = GetTagSpan(lexing.Source, line, tagToken.Span),
+                };
             }
             else
             {
@@ -75,5 +79,30 @@ internal static class AnnotationDocumentParser
             diagnostics.ToImmutable(),
             parseErrorCount);
         return applySuppression ? LuaAnnotationDiagnosticFilter.Apply(result, options) : result;
+    }
+
+    /// <summary>
+    /// Computes the span of the <c>@tag</c> keyword. The line extractor skips the <c>@</c> and
+    /// any following whitespace before the payload, so the <c>@</c> is found by scanning back
+    /// from the payload start.
+    /// </summary>
+    private static TextSpan GetTagSpan(
+        SourceText source,
+        AnnotationLine line,
+        TextSpan tagTokenSpan)
+    {
+        var at = line.PayloadSpan.Start;
+        var bytes = source.AsSpan();
+        while (at > line.FullSpan.Start && bytes[at - 1] is (byte)' ' or (byte)'\t')
+        {
+            at--;
+        }
+
+        if (at > line.FullSpan.Start && bytes[at - 1] == (byte)'@')
+        {
+            at--;
+        }
+
+        return TextSpan.FromBounds(at, tagTokenSpan.End);
     }
 }

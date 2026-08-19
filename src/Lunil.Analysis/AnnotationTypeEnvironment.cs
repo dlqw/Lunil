@@ -12,6 +12,8 @@ internal sealed class AnnotationTypeEnvironment
     private readonly LuaAnalysisContext _context;
     private readonly Dictionary<string, RawDeclaration> _rawDeclarations =
         new(StringComparer.Ordinal);
+    /** Names whose raw declarations come from other documents; their spans are not valid locations here. */
+    private readonly HashSet<string> _externalNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LuaTypeDeclaration> _declarations =
         new(StringComparer.Ordinal);
     private readonly HashSet<string> _resolving = new(StringComparer.Ordinal);
@@ -42,6 +44,7 @@ internal sealed class AnnotationTypeEnvironment
             var raw = new RawDeclaration(pair.Value.Name, pair.Value.Root, pair.Value.Root.Span);
             raw.Extras.AddRange(pair.Value.Extras);
             _rawDeclarations[pair.Key] = raw;
+            _externalNames.Add(pair.Key);
         }
 
         // Resolve only the document's own declarations eagerly. External declarations resolve
@@ -85,6 +88,21 @@ internal sealed class AnnotationTypeEnvironment
                 @enum.Members),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// The resolved declaration behind a type name — including external declarations on
+    /// their first reference — so consumers can inspect a class's fields and bases, not
+    /// just its reference type.
+    /// </summary>
+    public LuaTypeDeclaration? ResolveDeclarationByName(string name)
+    {
+        if (!_declarations.TryGetValue(name, out var declaration))
+        {
+            declaration = ResolveDeclaration(name);
+        }
+
+        return declaration;
     }
 
     private LuaType Resolve(
@@ -190,6 +208,23 @@ internal sealed class AnnotationTypeEnvironment
 
         if (!_rawDeclarations.ContainsKey(named.Name))
         {
+            // A class-level generic parameter referenced from a method annotation
+            // (`---@class Pool<T>` with `---@return T` on a method) is legal without a
+            // function-level @generic; treat it as an unbound parameter.
+            var typeParameter = _rawDeclarations.Values
+                .Select(static raw => raw.Root as LuaClassAnnotationSyntax)
+                .Where(static @class => @class is not null)
+                .SelectMany(static @class => @class!.TypeParameters
+                    .Select((parameter, index) => (parameter, index)))
+                .FirstOrDefault(candidate => string.Equals(
+                    candidate.parameter,
+                    named.Name,
+                    StringComparison.Ordinal));
+            if (typeParameter != default)
+            {
+                return new LuaGenericParameterType(typeParameter.parameter, typeParameter.index);
+            }
+
             _context.AddDiagnostic(
                 "LUA6001",
                 named.Span,
@@ -383,10 +418,32 @@ internal sealed class AnnotationTypeEnvironment
 
         if (!_resolving.Add(name))
         {
-            _context.AddDiagnostic(
-                "LUA6012",
-                raw.Span,
-                $"Recursive type declaration '{name}' was widened to unknown.");
+            // Re-entering a class declaration is a plain reference cycle (entities hold
+            // components, components point back at their entity); a class type is just a
+            // name, so the lazy reference is finite and nothing needs widening. Only an
+            // alias or enum expanding into itself is an unbounded structure.
+            if (raw.Root is LuaClassAnnotationSyntax)
+            {
+                return new LuaClassDeclaration(
+                    name,
+                    [],
+                    [],
+                    [],
+                    [],
+                    ImmutableDictionary<string, LuaFunctionType>.Empty,
+                    raw.Span);
+            }
+
+            // An external declaration's span indexes another document, so it cannot be a
+            // diagnostic location here; widen silently and let the owning document report.
+            if (!_externalNames.Contains(name))
+            {
+                _context.AddDiagnostic(
+                    "LUA6012",
+                    raw.Span,
+                    $"Recursive type declaration '{name}' was widened to unknown.");
+            }
+
             return null;
         }
 

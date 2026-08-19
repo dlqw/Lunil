@@ -752,10 +752,263 @@ public sealed class LuaTypeAnalyzerTests
             item.Symbol.Name == "created" && item.InferredType.DisplayName == "Vector");
     }
 
+    [Fact]
+    public void UnannotatedConstructorReturnsMetatableInstance()
+    {
+        var result = Analyze(
+            """
+            local Dog = {}
+            Dog.__index = Dog
+            function Dog.new(name)
+                return setmetatable({}, Dog)
+            end
+            function Dog:fetch()
+                return "ball"
+            end
+            local dog = Dog.new("rex")
+            local ball = dog.fetch()
+            return ball
+            """);
+
+        var dog = result.Symbols.Single(static item => item.Symbol.Name == "dog");
+        var instance = Assert.IsType<LuaMetatableType>(dog.InferredType);
+        // The instance carries the class table as its metatable so members resolve
+        // through the receiver; call-through return refinement on rebuilt instances
+        // remains a later refinement.
+        Assert.Equal(LuaTypeKind.Prototype, instance.MetatableType.Kind);
+    }
+
+    [Fact]
+    public void MutualClassFieldReferencesStayTyped()
+    {
+        // Entities hold component tables; components point back at their entity. The
+        // reference cycle must resolve to a lazy class reference instead of widening.
+        var externalSource = SourceText.FromUtf8(
+            """
+            ---@class Component
+            ---@field entity Entity|nil
+            local Component = {}
+            """);
+        var externalLexing = LuaLexer.Lex(externalSource, LuaLexerOptions.Default);
+        var external = LuaExternalTypeDeclarations.Collect(
+            LuaAnnotationParser.Parse(externalLexing));
+        var environment = new LuaAnalysisEnvironment
+        {
+            ExternalTypeDeclarations = external,
+        };
+
+        var text = SourceText.FromUtf8(
+            """
+            ---@class Entity
+            ---@field components table<string, Component>
+            local Entity = {}
+            return Entity
+            """);
+        var lexing = LuaLexer.Lex(text, LuaLexerOptions.Default);
+        var syntax = LuaParser.Parse(lexing, LuaParserOptions.Default);
+        var annotations = LuaAnnotationParser.Parse(lexing);
+        var semantics = LuaBinder.Bind(syntax, LuaBinderOptions.Default);
+        var result = LuaTypeAnalyzer.Analyze(semantics, annotations, environment);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6012");
+    }
+
+    [Fact]
+    public void InheritedAnnotationFieldsResolveForSubclassInstances()
+    {
+        // A subclass instance's annotated field can be declared on the base class's
+        // annotation in another module; the field's type name resolves through the
+        // external declaration chain.
+        var baseSource = SourceText.FromUtf8(
+            """
+            ---@class EventBus
+            local EventBus = {}
+            function EventBus:emit(kind, payload) end
+            return EventBus
+
+            ---@class System
+            ---@field bus EventBus
+            local System = {}
+            function System:init(bus) self.bus = bus end
+            return System
+            """);
+        var baseLexing = LuaLexer.Lex(baseSource, LuaLexerOptions.Default);
+        var baseAnnotations = LuaAnnotationParser.Parse(baseLexing);
+        var externalDeclarations = LuaExternalTypeDeclarations.Collect(baseAnnotations);
+
+        var result = Analyze(
+            """
+            ---@class QuestSystem : System
+            local QuestSystem = {}
+            function QuestSystem:tick()
+              self.bus:emit("quest", {})
+            end
+            return QuestSystem
+            """,
+            environment: new LuaAnalysisEnvironment
+            {
+                ExternalTypeDeclarations = externalDeclarations,
+            });
+
+        var busMember = result.Expressions.FirstOrDefault(static item =>
+            item.Type is LuaClassType { Name: "EventBus" });
+        Assert.NotNull(busMember);
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6007");
+    }
+
+    [Fact]
+    public void ExternalRuntimeMembersAndMetamethodsSatisfyChecks()
+    {
+        // The workspace knows Vec2's runtime members (`Vec2.new`, `Vec2.__add`) even when
+        // the analyzed document cannot see the defining module's code.
+        var vec2Class = new LuaClassType("Vec2", []);
+        var members = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
+        members["new"] = new LuaFunctionType(
+            ImmutableArray.Create(new LuaFunctionParameter("x", LuaTypes.Number)),
+            new LuaTypePack(ImmutableArray.Create<LuaType>(vec2Class)),
+            ImmutableArray<LuaGenericParameterType>.Empty);
+        members["__add"] = new LuaFunctionType(
+            ImmutableArray<LuaFunctionParameter>.Empty,
+            new LuaTypePack(ImmutableArray.Create<LuaType>(vec2Class)),
+            ImmutableArray<LuaGenericParameterType>.Empty);
+        var classMembers = ImmutableDictionary.CreateBuilder<string, ImmutableDictionary<string, LuaType>>(
+            StringComparer.Ordinal);
+        classMembers["Vec2"] = members.ToImmutable();
+        var environment = new LuaAnalysisEnvironment
+        {
+            ExternalClassMembers = classMembers.ToImmutable(),
+        };
+
+        var result = Analyze(
+            """
+            local Vec2 = {}
+            ---@param a Vec2
+            ---@param b Vec2
+            local function combine(a, b)
+              local sum = a + b
+              local fresh = Vec2.new(1, 2)
+              return fresh
+            end
+            return combine
+            """,
+            environment: environment);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6003" or "LUA6007");
+    }
+
+    [Fact]
+    public void UnknownArithmeticOperandsStayDynamic()
+    {
+        var classMembers = ImmutableDictionary.CreateBuilder<string, ImmutableDictionary<string, LuaType>>(
+            StringComparer.Ordinal);
+        classMembers["Vec2"] = ImmutableDictionary.Create<string, LuaType>(StringComparer.Ordinal);
+        var result = Analyze(
+            """
+            ---@param a any
+            ---@param b Vec2
+            local function combine(a, b)
+              local delta = a - b
+              return delta:normalize()
+            end
+            """,
+            environment: new LuaAnalysisEnvironment
+            {
+                ExternalClassMembers = classMembers.ToImmutable(),
+            });
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6003" or "LUA6007");
+    }
+
+    [Fact]
+    public void TypeTestNarrowingDoesNotLeakPastTheGuard()
+    {
+        var result = Analyze(
+            """
+            ---@param a any
+            ---@param b any
+            local function multiply(a, b)
+              if type(a) == "number" then
+                return a * b
+              end
+              if type(b) == "number" then
+                return a * b
+              end
+              return a.x * b.x
+            end
+            return multiply
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6003" or "LUA6007");
+    }
+
+    [Fact]
+    public void NilGuardReturnsNarrowMemberPaths()
+    {
+        var result = Analyze(
+            """
+            ---@param target {position: number}|nil
+            local function aim(target)
+              if target == nil then
+                return
+              end
+              return target.position
+            end
+            return aim
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6020");
+    }
+
+    [Fact]
+    public void EmptyTableInitializersSatisfyAnnotatedSlots()
+    {
+        var result = Analyze(
+            """
+            ---@type table<string, number>
+            local counters = {}
+            ---@type string[]
+            local names = {}
+            ---@class Slot
+            local slot = {}
+            return counters, names, slot
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6003");
+    }
+
+    [Fact]
+    public void LiteralContractViolationsStillReport()
+    {
+        var result = Analyze(
+            """
+            ---@type number
+            local speed = "fast"
+            local broken = true + 1
+            ---@param a number
+            ---@param b number
+            ---@return number
+            local function add(a, b)
+              return a + b
+            end
+            local sum = add(1)
+            return speed, broken, sum
+            """);
+
+        Assert.Contains(result.Diagnostics, static item =>
+            item.Code == "LUA6003" && item.Message.Contains("'fast'", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static item =>
+            item.Code == "LUA6003" && item.Message.Contains("not 'true'", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6006");
+    }
+
     private static LuaAnalysisResult Analyze(
         string source,
         LuaAnalysisOptions? options = null,
-        LuaLanguageVersion? version = null)
+        LuaLanguageVersion? version = null,
+        LuaAnalysisEnvironment? environment = null)
     {
         var text = SourceText.FromUtf8(source);
         var languageVersion = version ?? LuaLanguageVersions.Default;
@@ -767,6 +1020,8 @@ public sealed class LuaTypeAnalyzerTests
         var semantics = LuaBinder.Bind(
             syntax,
             LuaBinderOptions.Default with { LanguageVersion = languageVersion });
-        return LuaTypeAnalyzer.Analyze(semantics, annotations, options);
+        return environment is null
+            ? LuaTypeAnalyzer.Analyze(semantics, annotations, options)
+            : LuaTypeAnalyzer.Analyze(semantics, annotations, environment, options ?? LuaAnalysisOptions.Default);
     }
 }

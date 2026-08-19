@@ -55,7 +55,11 @@ snapshot; top-level operations are serialized while module work is bounded by
 
 Invalidation compares content, exports, functions, dependencies, and the host-contract summary.
 Private implementation changes therefore avoid invalidating importers when their public summaries
-are unchanged. `RetainFullAnalysisCacheResults = false` lets full models be reclaimed while compact
+are unchanged. A rebuild whose module keys still match reuses the previous snapshot's per-module
+projections — references, symbols, and call edges merge without re-parsing or re-analyzing — and
+names plus symbol keys resolve to shared interned instances through
+`LuaWorkspace.StringInterner`, so successive snapshots cannot strand duplicate copies of unchanged
+strings. `RetainFullAnalysisCacheResults = false` lets full models be reclaimed while compact
 summaries remain queryable. Use strong retention only when the host has a measured latency need and
 an appropriate heap budget.
 

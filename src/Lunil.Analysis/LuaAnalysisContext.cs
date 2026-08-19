@@ -10,6 +10,7 @@ internal sealed class LuaAnalysisContext
         ImmutableArray.CreateBuilder<Diagnostic>();
     private readonly HashSet<(string Code, TextSpan Span, string Message)> _diagnosticKeys = [];
     private bool _reportedBudget;
+    private bool _reportedTableMutationBudget;
 
     public LuaAnalysisContext(
         LuaAnalysisOptions options,
@@ -34,6 +35,8 @@ internal sealed class LuaAnalysisContext
     public int MaximumObservedTypeDepth { get; private set; }
 
     public bool WasBudgetExceeded { get; private set; }
+
+    public int TableMutationPropagationNodeCount { get; private set; }
 
     public bool TryCreateType(TextSpan span, int depth)
     {
@@ -86,6 +89,39 @@ internal sealed class LuaAnalysisContext
 
         GenericInstantiationCount++;
         return true;
+    }
+
+    /// <summary>
+    /// Counts one visited node of a table-mutation propagation pass. Propagation
+    /// rewrites aliasing type graphs after every table write, so the node budget
+    /// bounds the worst-case pass even for adversarial type graphs.
+    /// </summary>
+    public bool TryVisitTableMutationNode()
+    {
+        CancellationToken.ThrowIfCancellationRequested();
+        if (TableMutationPropagationNodeCount >= Options.MaximumTableMutationPropagationNodes)
+        {
+            return false;
+        }
+
+        TableMutationPropagationNodeCount++;
+        return true;
+    }
+
+    public void ReportTableMutationBudget(TextSpan span)
+    {
+        WasBudgetExceeded = true;
+        if (_reportedTableMutationBudget)
+        {
+            return;
+        }
+
+        _reportedTableMutationBudget = true;
+        AddDiagnostic(
+            "LUA6010",
+            span,
+            "Static analysis exceeded the configured table-mutation propagation budget " +
+            "and skipped remaining alias updates.");
     }
 
     public void AddDiagnostic(string code, TextSpan span, string message)

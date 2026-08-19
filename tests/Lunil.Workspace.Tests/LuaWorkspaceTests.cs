@@ -729,6 +729,57 @@ public sealed class LuaWorkspaceTests
     }
 
     [Fact]
+    public async Task SelfIndexedClassLibrariesKeepMethodExportsWithAnnotations()
+    {
+        // The class-library pattern: an annotated class table whose `__index = self`
+        // upgrade used to union the upvalue cell back to the annotation-only snapshot,
+        // swallowing every later method write (extend/new/mixin disappeared).
+        using var workspace = new LuaWorkspace();
+        var full = await workspace.AnalyzeAsync([Document("m",
+            "---@class Cls\n" +
+            "---@field a number\n" +
+            "local Cls = {}\n" +
+            "Cls.__index = Cls\n" +
+            "function Cls:m1() return 1 end\n" +
+            "function Cls.new(...) local i = setmetatable({}, Cls) return i end\n" +
+            "return Cls")]);
+
+        var prototype = Assert.IsType<Lunil.Analysis.LuaPrototypeType>(full.Modules[0].ExportedType);
+        var shape = Assert.IsType<Lunil.Analysis.LuaStructuralTableType>(prototype.Shape);
+        var fieldNames = shape.Fields.Select(static field => field.Name).ToHashSet();
+        Assert.Contains("a", fieldNames);
+        Assert.Contains("m1", fieldNames);
+        Assert.Contains("new", fieldNames);
+        Assert.True(prototype.UsesSelfIndex);
+    }
+
+    [Fact]
+    public async Task CompactSnapshotsIndexMemberReferencesByName()
+    {
+        using var workspace = new LuaWorkspace();
+        LuaWorkspaceDocument[] documents = [
+            Document(
+                "lib",
+                "local M = {}\nfunction M.fetch() return 1 end\nM.count = 2\nreturn M"),
+            Document(
+                "app",
+                "local lib = require('lib')\nlocal n = lib.count\nreturn lib.fetch() + n"),
+        ];
+
+        var compact = await workspace.AnalyzeCompactAsync(documents);
+
+        var fetch = compact.FindMemberReferences("fetch");
+        Assert.Equal(2, fetch.Length);
+        Assert.Contains(fetch, static item => item.Module.Name == "lib");
+        Assert.Contains(fetch, static item => item.Module.Name == "app");
+        Assert.All(fetch, static item => Assert.Equal("fetch", item.Name));
+
+        var count = compact.FindMemberReferences("count");
+        Assert.Equal(2, count.Length);
+        Assert.Empty(compact.FindMemberReferences("missing"));
+    }
+
+    [Fact]
     public async Task CompactSnapshotsKeepQueryableReferencesWithoutCompilerModels()
     {
         using var workspace = new LuaWorkspace();

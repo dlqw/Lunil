@@ -8,6 +8,7 @@ internal sealed class LuaLanguageServer : IDisposable
 {
     private readonly JsonRpcConnection _connection;
     private readonly LanguageServerWorkspace _workspace = new();
+    private readonly ServerLocalization _localization = new();
     private readonly LuaLanguageService _service;
     private readonly CancellationTokenSource _exit = new();
     private bool _initialized;
@@ -15,13 +16,32 @@ internal sealed class LuaLanguageServer : IDisposable
     private bool _supportsWorkDoneProgress;
     private volatile bool _progressReady;
     private LuaWorkspaceProgressPhase? _progressPhase;
+    private readonly SemaphoreSlim _progressGate = new(1, 1);
 
     public LuaLanguageServer(JsonRpcConnection connection)
     {
         _connection = connection;
-        _service = new LuaLanguageService(_workspace);
+        _service = new LuaLanguageService(_workspace, _localization);
         _workspace.DiagnosticsPublished = PublishDiagnosticsAsync;
         _workspace.ProgressReported = PublishProgressAsync;
+        // Per-document caches follow their documents out of the workspace.
+        _workspace.DocumentRemoved += uri => _service.ForgetSemanticTokens(uri);
+        // Informational lifecycle messages go to the client log; stderr would surface
+        // as errors in the editor's output channel.
+        _workspace.InfoLogged = message =>
+        {
+            if (!_initialized)
+            {
+                Console.Error.WriteLine(message);
+                return;
+            }
+
+            _ = _connection.SendNotificationAsync("window/logMessage", new JsonObject
+            {
+                ["type"] = 3,
+                ["message"] = message,
+            });
+        };
     }
 
     public CancellationToken ExitToken => _exit.Token;
@@ -96,9 +116,10 @@ internal sealed class LuaLanguageServer : IDisposable
                 request.Parameters, cancellationToken).ConfigureAwait(false),
             "callHierarchy/incomingCalls" => _service.IncomingCalls(request.Parameters),
             "callHierarchy/outgoingCalls" => _service.OutgoingCalls(request.Parameters),
-            "lunil/reindex" => await ReindexAsync(cancellationToken).ConfigureAwait(false),
+            "lunil/reindex" => await ReindexAsync(request.Parameters, cancellationToken).ConfigureAwait(false),
             "lunil/clearCache" => ClearCache(),
             "lunil/indexStatus" => _workspace.GetIndexStatus(),
+            "lunil/builtinSource" => BuiltinLibrarySource(request.Parameters),
             "lunil/virtualHostDocument" => VirtualHostDocument(),
             "$/setTrace" or "$/cancelRequest" => null,
             _ when request.IsNotification => null,
@@ -142,6 +163,14 @@ internal sealed class LuaLanguageServer : IDisposable
         }
 
         _workspace.Initialize(folders);
+        if (parameters.TryGetProperty("initializationOptions", out var initializationOptions) &&
+            initializationOptions.TryGetProperty("locale", out var localeElement) &&
+            localeElement.ValueKind == JsonValueKind.String &&
+            ServerLocalization.TryParse(localeElement.GetString(), out var locale))
+        {
+            _localization.Locale = locale;
+        }
+
         _initialized = true;
         Console.Error.WriteLine(
             $"Lunil language server {GetVersion()} initialized with {folders.Count} workspace folder(s): " +
@@ -189,8 +218,12 @@ internal sealed class LuaLanguageServer : IDisposable
         {
             ["legend"] = new JsonObject
             {
-                ["tokenTypes"] = new JsonArray("variable", "parameter", "function", "property"),
-                ["tokenModifiers"] = new JsonArray("declaration", "readonly", "modification"),
+                // Indexes are positional: annotation token kinds append after the code
+                // reference kinds and must never be inserted before them.
+                ["tokenTypes"] = new JsonArray(
+                    "variable", "parameter", "function", "property", "method",
+                    "macro", "class", "type", "typeParameter", "enum", "string", "number"),
+                ["tokenModifiers"] = new JsonArray("declaration", "readonly", "modification", "captured"),
             },
             ["range"] = false,
             ["full"] = new JsonObject { ["delta"] = true },
@@ -316,6 +349,37 @@ internal sealed class LuaLanguageServer : IDisposable
     {
         if (!parameters.TryGetProperty("settings", out var settings)) return null;
         var lunil = settings.TryGetProperty("lunil", out var nested) ? nested : settings;
+        if (lunil.TryGetProperty("locale", out var localeElement) &&
+            localeElement.ValueKind == JsonValueKind.String &&
+            ServerLocalization.TryParse(localeElement.GetString(), out var locale))
+        {
+            _localization.Locale = locale;
+        }
+
+        if (lunil.TryGetProperty("workspace", out var workspace) &&
+            workspace.TryGetProperty("library", out var libraryElement) &&
+            libraryElement.ValueKind == JsonValueKind.Array)
+        {
+            _workspace.ConfigureLibraryFolders(libraryElement.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => item.GetString()));
+        }
+
+        if (lunil.TryGetProperty("analysis", out var analysis))
+        {
+            var excludePatterns = analysis.TryGetProperty("exclude", out var excludeElement) &&
+                excludeElement.ValueKind == JsonValueKind.Array
+                ? excludeElement.EnumerateArray()
+                    .Where(static item => item.ValueKind == JsonValueKind.String)
+                    .Select(static item => item.GetString())
+                : null;
+            bool? autoDetect = analysis.TryGetProperty("autoDetectDataFiles", out var autoDetectElement) &&
+                autoDetectElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? autoDetectElement.GetBoolean()
+                : null;
+            _workspace.ConfigureAnalysisExclusions(excludePatterns, autoDetect);
+        }
+
         var json = lunil.TryGetProperty("hostContractJson", out var jsonElement) &&
             jsonElement.ValueKind == JsonValueKind.String ? jsonElement.GetString() : null;
         var path = lunil.TryGetProperty("hostContractPath", out var pathElement) &&
@@ -358,9 +422,38 @@ internal sealed class LuaLanguageServer : IDisposable
         return result;
     }
 
-    private async Task<JsonNode?> ReindexAsync(CancellationToken cancellationToken)
+    private async Task<JsonNode?> ReindexAsync(JsonElement parameters, CancellationToken cancellationToken)
     {
-        await _workspace.ReindexNowAsync(cancellationToken).ConfigureAwait(false);
+        // Optional targeted retries: { "files": [uri, ...] } re-analyzes specific documents
+        // (a failed-file retry), and { "retryFailed": true } re-analyzes everything that failed.
+        var files = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("files", out var filesElement) &&
+            filesElement.ValueKind == JsonValueKind.Array
+            ? filesElement.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => new Uri(item.GetString()!, UriKind.Absolute))
+                .ToArray()
+            : null;
+        var retryFailed = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("retryFailed", out var retryElement) &&
+            retryElement.ValueKind == JsonValueKind.True;
+        if (files is { Length: > 0 })
+        {
+            await _workspace.RetryFilesAsync(files, cancellationToken).ConfigureAwait(false);
+        }
+        else if (retryFailed)
+        {
+            await _workspace.RetryFilesAsync(_workspace.GetFailedDocuments(), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            // An explicit reindex also refreshes library stub folders from disk, so
+            // editing host-API declarations needs no restart.
+            _workspace.ReloadLibraryFolders();
+            await _workspace.ReindexNowAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         return new JsonObject
         {
             ["modules"] = _workspace.GetSnapshot()?.Modules.Length ?? 0,
@@ -372,6 +465,30 @@ internal sealed class LuaLanguageServer : IDisposable
     {
         _workspace.ClearCache();
         return new JsonObject { ["cleared"] = true };
+    }
+
+    /// <summary>
+    /// The readonly source of one builtin library page: `{ "document": "math" }`
+    /// (or `"math.lua"`); without a document name, the base globals page.
+    /// </summary>
+    private static JsonObject BuiltinLibrarySource(JsonElement parameters)
+    {
+        var name = parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("document", out var documentElement) &&
+            documentElement.ValueKind == JsonValueKind.String
+                ? documentElement.GetString()
+                : "base";
+        if (name is null || !BuiltinLibrary.Value.TryGetDocument(name, out var document))
+        {
+            throw new JsonRpcException(-32602, $"Unknown builtin library document: {name}");
+        }
+
+        return new JsonObject
+        {
+            ["uri"] = document.Uri,
+            ["languageId"] = "lua",
+            ["text"] = document.Source,
+        };
     }
 
     private JsonObject VirtualHostDocument()
@@ -397,12 +514,19 @@ internal sealed class LuaLanguageServer : IDisposable
             ["diagnostics"] = diagnostics,
         });
 
+    /// <summary>
+    /// Publishes one progress event on both channels: the custom <c>lunil/indexProgress</c>
+    /// notification that drives the editor status bar (always, with real n/total counts),
+    /// and the standard window work-done progress when the client created the token.
+    /// Serialized so concurrent corpus workers cannot interleave events.
+    /// </summary>
     private async Task PublishProgressAsync(LuaWorkspaceProgress progress)
     {
         const string token = "lunil-workspace-index";
-        var status = _workspace.GetIndexStatus();
-        if (!_progressReady)
+        await _progressGate.WaitAsync().ConfigureAwait(false);
+        try
         {
+            var status = _workspace.GetIndexStatus();
             await _connection.SendNotificationAsync("lunil/indexProgress", new JsonObject
             {
                 ["phase"] = progress.Phase.ToString(),
@@ -413,40 +537,50 @@ internal sealed class LuaLanguageServer : IDisposable
                 ["failed"] = status["failed"],
                 ["inProgress"] = status["inProgress"],
                 ["pending"] = status["pending"],
+                ["excluded"] = status["excluded"],
             }).ConfigureAwait(false);
-            return;
-        }
-        if (_progressPhase != progress.Phase)
-        {
-            if (_progressPhase is not null)
+
+            if (!_progressReady)
             {
+                return;
+            }
+
+            if (_progressPhase != progress.Phase)
+            {
+                if (_progressPhase is not null)
+                {
+                    await _connection.SendNotificationAsync("$/progress", new JsonObject
+                    {
+                        ["token"] = token,
+                        ["value"] = new JsonObject { ["kind"] = "end", ["message"] = _progressPhase + " complete" },
+                    }).ConfigureAwait(false);
+                }
+
+                _progressPhase = progress.Phase;
                 await _connection.SendNotificationAsync("$/progress", new JsonObject
                 {
                     ["token"] = token,
-                    ["value"] = new JsonObject { ["kind"] = "end", ["message"] = _progressPhase + " complete" },
+                    ["value"] = new JsonObject { ["kind"] = "begin", ["title"] = "Lunil " + progress.Phase },
                 }).ConfigureAwait(false);
             }
 
-            _progressPhase = progress.Phase;
+            var percentage = progress.TotalWorkItems == 0 ? 100 :
+                (int)Math.Min(100, 100L * progress.CompletedWorkItems / progress.TotalWorkItems);
             await _connection.SendNotificationAsync("$/progress", new JsonObject
             {
                 ["token"] = token,
-                ["value"] = new JsonObject { ["kind"] = "begin", ["title"] = "Lunil " + progress.Phase },
+                ["value"] = new JsonObject
+                {
+                    ["kind"] = "report",
+                    ["percentage"] = percentage,
+                    ["message"] = $"{progress.CompletedWorkItems}/{progress.TotalWorkItems}",
+                },
             }).ConfigureAwait(false);
         }
-
-        var percentage = progress.TotalWorkItems == 0 ? 100 :
-            (int)Math.Min(100, 100L * progress.CompletedWorkItems / progress.TotalWorkItems);
-        await _connection.SendNotificationAsync("$/progress", new JsonObject
+        finally
         {
-            ["token"] = token,
-            ["value"] = new JsonObject
-            {
-                ["kind"] = "report",
-                ["percentage"] = percentage,
-                ["message"] = $"{progress.CompletedWorkItems}/{progress.TotalWorkItems}",
-            },
-        }).ConfigureAwait(false);
+            _progressGate.Release();
+        }
     }
 
     private async Task CreateProgressTokenAsync()

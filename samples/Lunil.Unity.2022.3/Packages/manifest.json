@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "com.dlqw.lunil": "file:../../UnityPackages/com.dlqw.lunil-0.16.1.tgz"
+    "com.dlqw.lunil": "file:../../UnityPackages/com.dlqw.lunil-0.17.0.tgz"
   }
 }

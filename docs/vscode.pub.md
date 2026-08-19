@@ -16,14 +16,14 @@ no runtime network requests.
 
 ## 1. Install the VSIX
 
-Download the matching `lunil-lua-0.16.1-<target>.vsix` and its `.sha256` file from the 0.16.1
+Download the matching `lunil-lua-0.17.0-<target>.vsix` and its `.sha256` file from the 0.17.0
 release. Targets are `win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `darwin-x64`, and
 `darwin-arm64`.
 
 Install from **Extensions: Install from VSIX...**, or use:
 
 ```bash
-code --install-extension lunil-lua-0.16.1-win32-x64.vsix
+code --install-extension lunil-lua-0.17.0-win32-x64.vsix
 ```
 
 Each VSIX contains exactly one self-contained server for its target. No separate .NET installation
@@ -57,6 +57,7 @@ Use the Command Palette:
 | **Lunil: Restart Language Server** | Restart after an environment or executable change. |
 | **Lunil: Reindex Workspace** | Rebuild the compact module and reference index. |
 | **Lunil: Clear Analysis Cache** | Drop in-memory analysis reuse and the active workspace index. |
+| **Lunil: Show Index Status** | List indexed, failed, pending, and excluded files; failed files have a per-file retry action and excluded files show their exclusion reason. |
 | **Lunil: Show Language Server Output** | Inspect startup, restart, and protocol trace output. |
 | **Lunil: Show Virtual Host Contract** | Open the active external API declaration as a virtual Lua document. |
 
@@ -75,12 +76,21 @@ reporting a server failure.
 | `lunil.server.trace` | `off` | `off`, `messages`, or `verbose` LSP tracing in the Lunil output channel. |
 | `lunil.server.maximumRestartCount` | `5` | Automatic restart limit, from 0 through 20. |
 | `lunil.server.gcHeapHardLimitPercent` | `70` | Managed heap hard-limit percentage, from 20 through 90, for the bundled server. |
+| `lunil.server.suppressedDiagnosticCodes` | `[]` | Diagnostic codes (for example `LUA6022`) suppressed by the language server analysis. |
+| `lunil.locale` | `auto` | `auto`, `en`, or `zh-cn`; localizes hover cards, menus, and status text without a restart. |
 | `lunil.hostContractPath` | empty | Resource-relative or absolute path to a host-analysis contract. |
 | `lunil.hostContractJson` | empty | Inline contract JSON; takes precedence over the path. |
-| `lunil.server.suppressedDiagnosticCodes` | `[]` | Diagnostic codes (for example `LUA6022`) suppressed by the language server analysis. |
+| `lunil.workspace.library` | `[]` | Folders of LuaLS-style `---@meta` stubs describing host-injected globals and classes. |
+| `lunil.analysis.exclude` | `[]` | Glob patterns (workspace-relative, `/`-separated) keeping matching Lua files out of indexing. |
+| `lunil.analysis.autoDetectDataFiles` | `true` | Auto-detect very large generated data files and keep them out of indexing. |
+| `lunil.statusBar.showModuleCount` | `true` | Show the indexed module count in the status item once indexing completes. |
 
 `lunil.server.path` must be absolute. Changing the server path or heap limit restarts the process;
-changing the host contract reloads configuration and reindexes semantic data.
+changing the host contract, library folders, or analysis exclusion (`lunil.analysis.exclude` or
+`lunil.analysis.autoDetectDataFiles`) reloads configuration and reindexes semantic data. Excluded
+files still analyze when opened in the editor. For the settings' behavior (glob semantics,
+auto-detection bounds, adaptive budgets), see [Configuring the language
+server](configuring-the-language-server.pub.md).
 
 ## Debug Lua code
 
@@ -98,6 +108,8 @@ server. See [Debugging Lua](debugging.pub.md) for walkthroughs and the
 ## Expected result
 
 Lua files receive diagnostics, completion, hover, signatures, cross-module and external navigation,
-references, rename, symbols, semantic tokens, inlay hints, call hierarchy, folding, selection
-ranges, and quick fixes. See the [language server reference](language-server.pub.md) for the exact
-protocol and conservative behavior around dynamic Lua operations.
+references, rename, symbols, semantic tokens (including annotation type expressions), inlay hints,
+call hierarchy, folding, selection ranges, and quick fixes. Hovering a class or type name shows a
+class card with inheritance and member signatures; standard-library members document themselves
+and link into readonly builtin pages. See the [language server reference](language-server.pub.md)
+for the exact protocol and conservative behavior around dynamic Lua operations.
