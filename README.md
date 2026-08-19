@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/dlqw/Lunil/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dlqw/Lunil/ci.yml?branch=main&style=flat-square&label=CI"></a>
-  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.16.1-16a34a?style=flat-square"></a>
+  <a href="https://github.com/dlqw/Lunil/releases"><img alt="Stable release" src="https://img.shields.io/badge/stable-0.17.0-16a34a?style=flat-square"></a>
   <img alt=".NET 10 and .NET Standard 2.1" src="https://img.shields.io/badge/.NET-10%20%7C%20Standard%202.1-512BD4?style=flat-square&logo=dotnet">
   <img alt="Lua 5.4" src="https://img.shields.io/badge/Lua-5.4-2C2D72?style=flat-square&logo=lua">
 </p>
@@ -40,8 +40,8 @@ then run through the portable interpreter or the profile-guided .NET 10 JIT.
 | Deployment | .NET 10 and `netstandard2.1` assets, NativeAOT, trimming, single-file, ReadyToRun, IL2CPP, and release bundles for six desktop RIDs. |
 
 > [!TIP]
-> See the [0.16.1 release](https://github.com/dlqw/Lunil/releases/tag/v0.16.1) for the current
-> change list and the [migration guide](docs/migration-0.16.0.pub.md) for compatibility details.
+> See the [0.17.0 release](https://github.com/dlqw/Lunil/releases/tag/v0.17.0) for the current
+> change list and the [migration guide](docs/migration-0.17.0.pub.md) for compatibility details.
 
 ## Platform support
 
@@ -64,7 +64,7 @@ Packages are attached to each [GitHub Release](https://github.com/dlqw/Lunil/rel
 NuGet assets into a local source:
 
 ```bash
-gh release download v0.16.1 --repo dlqw/Lunil --pattern "*.nupkg" --dir .lunil-packages
+gh release download v0.17.0 --repo dlqw/Lunil --pattern "*.nupkg" --dir .lunil-packages
 ```
 
 Add the release directory alongside NuGet.org in `NuGet.Config`:
@@ -81,12 +81,12 @@ Add the release directory alongside NuGet.org in `NuGet.Config`:
 Install the CLI or reference the host:
 
 ```bash
-dotnet tool install --global Lunil.Cli --version 0.16.1
+dotnet tool install --global Lunil.Cli --version 0.17.0
 lunil --version
 ```
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.16.1" />
+<PackageReference Include="Lunil.Hosting" Version="0.17.0" />
 ```
 
 Unity and Godot installation steps are in their dedicated hosting guides. The release also includes
@@ -117,12 +117,12 @@ and AOT assets use the interpreter without loading or probing the JIT assembly.
 
 | Sample | Open or run |
 | --- | --- |
-| [Portable host](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.Portable.Hosting) | `dotnet run --project samples/Lunil.Portable.Hosting` |
-| [Static analysis embedding](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.StaticAnalysis.Embedding) | `dotnet run --project samples/Lunil.StaticAnalysis.Embedding` |
-| [Unity 2022.3](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.Unity.2022.3) | Open directly with Unity 2022.3 LTS |
-| [Unity 6](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.Unity.6) | Open directly with Unity 6 |
-| [Godot 4.4](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.Godot.4.4) | Open directly with Godot 4.4.1 .NET |
-| [Godot 4.6](https://github.com/dlqw/Lunil/tree/v0.16.1/samples/Lunil.Godot.4.6) | Open directly with Godot 4.6.3 .NET |
+| [Portable host](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.Portable.Hosting) | `dotnet run --project samples/Lunil.Portable.Hosting` |
+| [Static analysis embedding](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.StaticAnalysis.Embedding) | `dotnet run --project samples/Lunil.StaticAnalysis.Embedding` |
+| [Unity 2022.3](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.Unity.2022.3) | Open directly with Unity 2022.3 LTS |
+| [Unity 6](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.Unity.6) | Open directly with Unity 6 |
+| [Godot 4.4](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.Godot.4.4) | Open directly with Godot 4.4.1 .NET |
+| [Godot 4.6](https://github.com/dlqw/Lunil/tree/v0.17.0/samples/Lunil.Godot.4.6) | Open directly with Godot 4.6.3 .NET |
 
 The Unity projects are independent: the 2022.3 sample does not require an upgrade through Unity 6.
 
@@ -133,13 +133,13 @@ The Unity projects are independent: the 2022.3 sample does not require an upgrad
 | Compiler and analysis | [Static analysis embedding](docs/static-analysis-embedding.pub.md) · [External host analysis](docs/external-host-analysis.pub.md) · [Large workspaces](docs/large-workspaces.pub.md) | [Analysis facts](docs/analysis-facts.pub.md) · [Type checking](docs/type-checking.pub.md) · [PUC Lua prototype import](docs/puc-prototype-import.pub.md) |
 | Hosting and interoperation | [Portable hosting](docs/portable-hosting.pub.md) · [Game-loop hosting](docs/game-engine-hosting.pub.md) · [CLR interoperation](docs/clr-interop.pub.md) · [AOT bindings](docs/aot-bindings.pub.md) · [Native FFI](docs/ffi.pub.md) | [CLR contracts](docs/clr-interop-reference.pub.md) · [CLR lifecycle](docs/clr-interop-lifecycle.pub.md) · [FFI reference](docs/ffi-reference.pub.md) |
 | Engines and updates | [Unity hosting](docs/unity-hosting.pub.md) · [Godot hosting](docs/godot-hosting.pub.md) · [Signed patch deployment](docs/deploy-signed-patch-bundles.pub.md) | [Unity reference](docs/unity-reference.pub.md) · [Godot reference](docs/godot-reference.pub.md) · [Patch bundle reference](docs/signed-patch-bundles.pub.md) · [Patch publication model](docs/signed-patch-publication.pub.md) |
-| Tools and deployment | [VS Code](docs/vscode.pub.md) · [Debugging Lua](docs/debugging.pub.md) · [NativeAOT and trimming](docs/nativeaot-build-integration.pub.md) | [CLI reference](docs/cli.pub.md) · [Language server](docs/language-server.pub.md) · [Debugging reference](docs/debugging-reference.pub.md) · [0.16 migration](docs/migration-0.16.0.pub.md) |
+| Tools and deployment | [VS Code](docs/vscode.pub.md) · [Configuring the language server](docs/configuring-the-language-server.pub.md) · [Debugging Lua](docs/debugging.pub.md) · [NativeAOT and trimming](docs/nativeaot-build-integration.pub.md) | [CLI reference](docs/cli.pub.md) · [Language server](docs/language-server.pub.md) · [Debugging reference](docs/debugging-reference.pub.md) · [0.17 migration](docs/migration-0.17.0.pub.md) |
 
 ## Compatibility
 
 - Default language contract: Lua 5.4; PUC Lua 5.4.8 is the compatibility baseline. Explicit Lua
   5.1–5.5 contracts remain available.
-- Stable line: `0.16.x`; existing .NET 10 host entry points remain source compatible unless the
+- Stable line: `0.17.x`; existing .NET 10 host entry points remain source compatible unless the
   migration guide states otherwise.
 - Release bundles: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`.
 - CLR interoperation is opt-in and fail-closed. Trusted .NET hosts may explicitly select

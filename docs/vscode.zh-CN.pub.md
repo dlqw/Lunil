@@ -15,13 +15,13 @@ Unity 或 Godot 宿主定义。
 
 ## 1. 安装 VSIX
 
-从 0.16.1 release 下载匹配的 `lunil-lua-0.16.1-<target>.vsix` 与 `.sha256`。Target 包括
+从 0.17.0 release 下载匹配的 `lunil-lua-0.17.0-<target>.vsix` 与 `.sha256`。Target 包括
 `win32-x64`、`win32-arm64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。
 
 使用 **Extensions: Install from VSIX...**，或执行：
 
 ```bash
-code --install-extension lunil-lua-0.16.1-win32-x64.vsix
+code --install-extension lunil-lua-0.17.0-win32-x64.vsix
 ```
 
 每个 VSIX 只包含一个目标平台的 self-contained server，不需要单独安装 .NET。打开包含 Lua 文件的
@@ -51,6 +51,7 @@ lifetime 与 persistence analysis 实际使用的 declaration 视图。
 | **Lunil: Restart Language Server** | 环境或 executable 变化后重启。 |
 | **Lunil: Reindex Workspace** | 重建 compact module/reference index。 |
 | **Lunil: Clear Analysis Cache** | 清除内存 analysis reuse 与当前 workspace index。 |
+| **Lunil: Show Index Status** | 列出已索引、失败、等待与排除的文件；失败文件提供单文件重试，排除文件显示排除原因。 |
 | **Lunil: Show Language Server Output** | 查看启动、重启与 protocol trace 输出。 |
 | **Lunil: Show Virtual Host Contract** | 以虚拟 Lua 文档打开当前外部 API declaration。 |
 
@@ -67,12 +68,20 @@ channel，同时保持 JSON-RPC error response 简洁。报告 server 故障时�
 | `lunil.server.trace` | `off` | 在 Lunil output channel 使用 `off`、`messages` 或 `verbose` LSP trace。 |
 | `lunil.server.maximumRestartCount` | `5` | 自动重启上限，范围 0–20。 |
 | `lunil.server.gcHeapHardLimitPercent` | `70` | 内置 server 的 managed heap hard-limit 百分比，范围 20–90。 |
+| `lunil.server.suppressedDiagnosticCodes` | `[]` | language server 分析抑制的诊断码数组（例如 `LUA6022`）。 |
+| `lunil.locale` | `auto` | `auto`、`en` 或 `zh-cn`；本地化 hover card、菜单与状态文本，无需重启。 |
 | `lunil.hostContractPath` | 空 | Host-analysis contract 的 resource-relative 或绝对路径。 |
 | `lunil.hostContractJson` | 空 | 内联 contract JSON；优先于 path。 |
-| `lunil.server.suppressedDiagnosticCodes` | `[]` | language server 分析抑制的诊断码数组（例如 `LUA6022`）。 |
+| `lunil.workspace.library` | `[]` | LuaLS 风格 `---@meta` stub 目录，描述宿主注入的 global 与 class。 |
+| `lunil.analysis.exclude` | `[]` | Glob 模式（相对 workspace、`/` 分隔），匹配的 Lua 文件不参与索引。 |
+| `lunil.analysis.autoDetectDataFiles` | `true` | 自动检测超大的生成数据文件并排除出索引。 |
+| `lunil.statusBar.showModuleCount` | `true` | 索引完成后在状态项中显示已索引 module 数。 |
 
-`lunil.server.path` 必须为绝对路径。修改 server path 或 heap limit 会重启 process；修改 host contract
-会重载配置并重新索引 semantic data。
+`lunil.server.path` 必须为绝对路径。修改 server path 或 heap limit 会重启 process；修改 host
+contract、library 目录或 analysis 排除规则（`lunil.analysis.exclude` 或
+`lunil.analysis.autoDetectDataFiles`）会重载配置并重新索引 semantic data。被排除的文件在
+编辑器中打开时仍会被分析。设置的详细行为（glob 语义、自动检测边界、自适应预算）见
+[配置 language server](configuring-the-language-server.zh-CN.pub.md)。
 
 ## 调试 Lua 代码
 
@@ -89,5 +98,7 @@ adapter 可执行文件（`lunil-debug-adapter`）与 language server 一样内�
 ## 预期结果
 
 Lua 文件会获得 diagnostic、completion、hover、signature、跨模块与外部 navigation、reference、
-rename、symbol、semantic token、inlay hint、call hierarchy、folding、selection range 与 quick fix。
-准确 protocol 和动态 Lua operation 的保守行为见 [language server reference](language-server.zh-CN.pub.md)。
+rename、symbol、semantic token（含注解类型表达式）、inlay hint、call hierarchy、folding、
+selection range 与 quick fix。悬停 class 或类型名会显示带继承链与成员签名的 class card；标准库
+成员自带文档并链接到只读的 builtin 页面。准确 protocol 和动态 Lua operation 的保守行为见
+[language server reference](language-server.zh-CN.pub.md)。

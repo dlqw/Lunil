@@ -51,9 +51,11 @@ var options = new LuaWorkspaceOptions
 operation 被串行化，module work 则受 `MaximumParallelism` 和 `MaximumPendingWorkItems` 约束。
 
 Invalidation 会比较 content、export、function、dependency 与 host-contract summary。Public summary
-未变化时，private implementation 变化不会使 importer 无谓失效。`RetainFullAnalysisCacheResults =
-false` 允许回收完整 model，同时继续查询 compact summary。只有经过测量的 latency 需求与充分 heap
-预算同时存在时才应开启强 retention。
+未变化时，private implementation 变化不会使 importer 无谓失效。module key 仍匹配的重建会复用上一次
+snapshot 的逐 module projection——reference、symbol 与 call edge 直接重合并，不再重新 parse/analyze；
+名称与 symbol key 通过 `LuaWorkspace.StringInterner` 解析为共享的驻留实例，因此连续 snapshot 不会
+滞留未变化字符串的重复副本。`RetainFullAnalysisCacheResults = false` 允许回收完整 model，同时继续查询
+compact summary。只有经过测量的 latency 需求与充分 heap 预算同时存在时才应开启强 retention。
 
 ## 4. 配置 disk cache
 
