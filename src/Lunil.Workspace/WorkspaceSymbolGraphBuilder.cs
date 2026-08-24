@@ -354,14 +354,18 @@ internal static class WorkspaceSymbolGraphBuilder
                 }
 
                 var external = dependency.Kind == LuaModuleDependencyKind.Host;
+                // Resolve through the search-path-resolved target when present, so the
+                // export lookup keys on the module identity rather than the raw require
+                // string (e.g. `Utils.HttpUtils` -> `scripts.client.Utils.HttpUtils`).
+                var resolvedModuleName = dependency.Target?.Name ?? dependency.RequestedName;
                 var target = blockedReason is null &&
-                    exportLookup.TryGetValue((external, dependency.RequestedName, memberPath), out var found)
+                    exportLookup.TryGetValue((external, resolvedModuleName, memberPath), out var found)
                         ? found
                         : null;
                 var candidates = blockedReason is not null
                     ? []
                     : target is null
-                    ? exportsByModule.GetValueOrDefault((external, dependency.RequestedName), [])
+                    ? exportsByModule.GetValueOrDefault((external, resolvedModuleName), [])
                         .Where(symbol =>
                             (symbol.Name == memberPath.Split('.').LastOrDefault() || symbol.IsDynamic))
                         .Select(static symbol => symbol.Key).OrderBy(static key => key, StringComparer.Ordinal)

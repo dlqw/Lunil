@@ -131,6 +131,9 @@ class LunilClientController implements vscode.Disposable {
       vscode.commands.registerCommand('lunil.showMenu', () => this.showMenu()),
       vscode.commands.registerCommand('lunil.showIndexStatus', () => this.showIndexStatus()),
       vscode.commands.registerCommand('lunil.showHostContract', () => this.showHostContract()),
+      vscode.commands.registerCommand('lunil.searchEverywhere', () => this.searchEverywhere()),
+      vscode.commands.registerCommand('lunil.classHierarchy', () => this.classHierarchy()),
+      vscode.commands.registerCommand('lunil.findUsages', () => this.findUsages()),
       vscode.commands.registerCommand('lunil._suppressDiagnostic', (code: string) => this.suppressDiagnostic(code)),
       vscode.commands.registerCommand('lunil._openBuiltinLocation', (args: unknown) => this.openBuiltinLocation(args)),
       vscode.commands.registerCommand('lunil._openLocation', (args: unknown) => this.openLocation(args)),
@@ -470,6 +473,201 @@ class LunilClientController implements vscode.Disposable {
     const document = await vscode.workspace.openTextDocument(uri);
     const position = new vscode.Position(location.line, location.character ?? 0);
     await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
+  }
+
+  /** A searchable location item for the pickers below. */
+  private static locationItem(prefix: string, label: string, description: string | undefined, uri: string, range: { start: { line: number; character: number } }) {
+    return {
+      label: `${prefix} ${label}`,
+      description,
+      uri,
+      line: range.start.line,
+      character: range.start.character
+    };
+  }
+
+  /**
+   * Rider-style symbol search: a fuzzy QuickPick fed by the server's
+   * workspace-symbol index, debounced while typing.
+   */
+  private async searchEverywhere(): Promise<void> {
+    if (this.client === undefined || !this.client.isRunning()) {
+      void vscode.window.showWarningMessage(t().serverNotRunning);
+      return;
+    }
+
+    interface SymbolHit {
+      name: string;
+      kind: number;
+      containerName?: string;
+      location: { uri: string; range: { start: { line: number; character: number } } };
+    }
+
+    const strings = t();
+    const pick = vscode.window.createQuickPick<ReturnType<typeof LunilClientController.locationItem>>();
+    pick.title = strings.searchTitle;
+    pick.placeholder = strings.searchPlaceholder;
+    pick.matchOnDescription = true;
+    pick.matchOnDetail = true;
+    pick.ignoreFocusOut = false;
+
+    let sequence = 0;
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    pick.onDidChangeValue(value => {
+      if (debounce !== undefined) {
+        clearTimeout(debounce);
+      }
+      const query = value.trim();
+      if (query === '') {
+        sequence++;
+        pick.items = [];
+        return;
+      }
+
+      const current = ++sequence;
+      debounce = setTimeout(async () => {
+        pick.busy = true;
+        try {
+          const hits = await this.client!.sendRequest('workspace/symbol', { query }) as SymbolHit[] | null;
+          if (current !== sequence) {
+            return;
+          }
+
+          pick.items = (hits ?? []).slice(0, 200).map(hit => LunilClientController.locationItem(
+            hit.kind === 12 ? '$(symbol-function)' : '$(symbol-field)',
+            hit.name,
+            hit.containerName,
+            hit.location.uri,
+            hit.location.range));
+          if (pick.items.length === 0) {
+            pick.items = [{ label: strings.searchEmpty, uri: '', line: 0, character: 0, description: undefined }];
+          }
+        } catch (error) {
+          this.logError('searchEverywhere', error);
+        } finally {
+          pick.busy = false;
+        }
+      }, 200);
+    });
+
+    pick.onDidAccept(() => {
+      const item = pick.activeItems[0];
+      if (item !== undefined && item.uri !== '') {
+        void this.openLocation({ uri: item.uri, line: item.line, character: item.character });
+        pick.hide();
+      }
+    });
+    pick.onDidHide(() => pick.dispose());
+    pick.show();
+  }
+
+  /**
+   * The class hierarchy at the cursor: base classes and derived classes through
+   * annotation declarations and runtime/factory edges, each entry navigable.
+   */
+  private async classHierarchy(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || this.client === undefined || !this.client.isRunning()) {
+      void vscode.window.showWarningMessage(t().serverNotRunning);
+      return;
+    }
+
+    interface HierarchyEntry {
+      name: string;
+      moduleName?: string;
+      location?: { uri: string; range: { start: { line: number; character: number } } } | null;
+    }
+
+    const strings = t();
+    try {
+      const position = editor.selection.active;
+      const hierarchy = await this.client.sendRequest('lunil/classHierarchy', {
+        textDocument: { uri: editor.document.uri.toString() },
+        position: { line: position.line, character: position.character }
+      }) as { name: string; bases?: HierarchyEntry[]; derived?: HierarchyEntry[] } | null;
+      if (hierarchy === null) {
+        void vscode.window.showInformationMessage(strings.hierarchyNoClass);
+        return;
+      }
+
+      const entry = (item: HierarchyEntry, prefix: string) => {
+        const location = item.location;
+        return location === undefined || location === null
+          ? { label: `${prefix} ${item.name}`, description: item.moduleName, uri: '', line: 0, character: 0 }
+          : LunilClientController.locationItem(prefix, item.name, item.moduleName, location.uri, location.range);
+      };
+
+      const items: ReturnType<typeof LunilClientController.locationItem>[] = [
+        ...(hierarchy.bases ?? []).map(item => entry(item, '$(arrow-up)')),
+        ...(hierarchy.derived ?? []).map(item => entry(item, '$(arrow-down)'))
+      ].map(item => item);
+      const pick = vscode.window.createQuickPick<ReturnType<typeof LunilClientController.locationItem>>();
+      pick.title = `${strings.hierarchyTitle}: ${hierarchy.name}`;
+      pick.placeholder = strings.hierarchyTitle;
+      pick.matchOnDescription = true;
+      // Section headers separate bases from derived classes.
+      const bases = hierarchy.bases ?? [];
+      pick.items = bases.length > 0 && (hierarchy.derived ?? []).length > 0
+        ? [
+            { label: strings.hierarchyBases, kind: vscode.QuickPickItemKind.Separator } as never,
+            ...bases.map(item => entry(item, '$(arrow-up)')),
+            { label: strings.hierarchyDerived, kind: vscode.QuickPickItemKind.Separator } as never,
+            ...(hierarchy.derived ?? []).map(item => entry(item, '$(arrow-down)'))
+          ]
+        : items;
+      pick.onDidAccept(() => {
+        const item = pick.activeItems[0];
+        if (item !== undefined && item.uri !== '') {
+          void this.openLocation({ uri: item.uri, line: item.line, character: item.character });
+          pick.hide();
+        }
+      });
+      pick.onDidHide(() => pick.dispose());
+      pick.show();
+    } catch (error) {
+      this.logError('classHierarchy', error);
+    }
+  }
+
+  /** All references to the symbol under the cursor, listed in a searchable picker. */
+  private async findUsages(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || this.client === undefined || !this.client.isRunning()) {
+      void vscode.window.showWarningMessage(t().serverNotRunning);
+      return;
+    }
+
+    const strings = t();
+    try {
+      const position = editor.selection.active;
+      const references = await this.client.sendRequest('textDocument/references', {
+        textDocument: { uri: editor.document.uri.toString() },
+        position: { line: position.line, character: position.character },
+        context: { includeDeclaration: true }
+      }) as { uri: string; range: { start: { line: number; character: number } } }[] | null;
+      if (references === null || references.length === 0) {
+        void vscode.window.showInformationMessage(strings.usagesNoReferences);
+        return;
+      }
+
+      const pick = vscode.window.createQuickPick<ReturnType<typeof LunilClientController.locationItem>>();
+      pick.title = `${strings.usagesTitle} (${references.length})`;
+      pick.matchOnDescription = true;
+      pick.items = references.map(reference => LunilClientController.locationItem(
+        '$(references)', vscode.workspace.asRelativePath(vscode.Uri.parse(reference.uri), false),
+        undefined, reference.uri, reference.range));
+      pick.onDidAccept(() => {
+        const item = pick.activeItems[0];
+        if (item !== undefined) {
+          void this.openLocation({ uri: item.uri, line: item.line, character: item.character });
+          pick.hide();
+        }
+      });
+      pick.onDidHide(() => pick.dispose());
+      pick.show();
+    } catch (error) {
+      this.logError('findUsages', error);
+    }
   }
 
   /** Fetches one builtin library page (`base`, `math`, ...) from the server. */
@@ -999,9 +1197,13 @@ function configurationObject(configuration: vscode.WorkspaceConfiguration): Reco
     workspace: {
       library: configuration.get<string[]>('workspace.library', [])
     },
+    require: {
+      searchPaths: configuration.get<string[]>('require.searchPaths', [])
+    },
     analysis: {
       exclude: configuration.get<string[]>('analysis.exclude', []),
-      autoDetectDataFiles: configuration.get<boolean>('analysis.autoDetectDataFiles', true)
+      autoDetectDataFiles: configuration.get<boolean>('analysis.autoDetectDataFiles', true),
+      classFactories: configuration.get<unknown[]>('analysis.classFactories', [])
     },
     server: {
       trace: configuration.get<string>('server.trace', 'off'),
@@ -1069,6 +1271,15 @@ interface ClientStrings {
   readonly tooltipOpenFile: string;
   readonly tooltipReindexAll: string;
   readonly tooltipRefresh: string;
+  readonly searchTitle: string;
+  readonly searchPlaceholder: string;
+  readonly searchEmpty: string;
+  readonly hierarchyTitle: string;
+  readonly hierarchyBases: string;
+  readonly hierarchyDerived: string;
+  readonly hierarchyNoClass: string;
+  readonly usagesTitle: string;
+  readonly usagesNoReferences: string;
 }
 
 const clientStringsEn: ClientStrings = {
@@ -1123,7 +1334,16 @@ const clientStringsEn: ClientStrings = {
   tooltipRetryFile: 'Retry analyzing this document',
   tooltipOpenFile: 'Open document',
   tooltipReindexAll: 'Reindex workspace',
-  tooltipRefresh: 'Refresh index status'
+  tooltipRefresh: 'Refresh index status',
+  searchTitle: 'Search Everywhere',
+  searchPlaceholder: 'Search classes, functions, and fields across the workspace...',
+  searchEmpty: 'No matching symbols',
+  hierarchyTitle: 'Class Hierarchy',
+  hierarchyBases: 'Base classes',
+  hierarchyDerived: 'Derived classes',
+  hierarchyNoClass: 'No class found at the cursor',
+  usagesTitle: 'Usages',
+  usagesNoReferences: 'No references found'
 };
 
 const clientStringsZh: ClientStrings = {
@@ -1178,7 +1398,16 @@ const clientStringsZh: ClientStrings = {
   tooltipRetryFile: '重试分析此文档',
   tooltipOpenFile: '打开文档',
   tooltipReindexAll: '重建工作区索引',
-  tooltipRefresh: '刷新索引状态'
+  tooltipRefresh: '刷新索引状态',
+  searchTitle: '全局搜索',
+  searchPlaceholder: '搜索工作区的类、函数和字段...',
+  searchEmpty: '没有匹配的符号',
+  hierarchyTitle: '类层级',
+  hierarchyBases: '基类',
+  hierarchyDerived: '派生类',
+  hierarchyNoClass: '光标处未找到类',
+  usagesTitle: '引用',
+  usagesNoReferences: '未找到引用'
 };
 
 /** Client strings for the effective locale (`lunil.locale`, or the UI language). */

@@ -1076,6 +1076,65 @@ public sealed class LuaWorkspaceTests
             diagnostic.Code == "LUA6022");
     }
 
+    [Fact]
+    public void RequireNameExpansionNormalizesSeparatorsAndAppendsRootsInOrder()
+    {
+        var expanded = RequireNameExpansion.Expand(
+            "A/B.C",
+            ["Libs/client", "Shared", "", "/root/"]);
+        Assert.True(expanded.SequenceEqual(
+            ["A.B.C", "Libs.client.A.B.C", "Shared.A.B.C", "root.A.B.C"]));
+    }
+
+    [Fact]
+    public async Task RequireSearchPathsResolvePrefixedModuleCandidates()
+    {
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            RequireSearchPaths = ["Libs/client"],
+        });
+        var result = await workspace.AnalyzeAsync([
+            Document("app", "local helper = require('A.B.C')\nreturn helper.value + 1"),
+            Document("Libs.client.A.B.C", "return { value = 42 }"),
+        ]);
+
+        var edge = Assert.Single(result.Graph.Dependencies);
+        Assert.Equal(LuaModuleDependencyKind.Static, edge.Kind);
+        Assert.Equal("Libs.client.A.B.C", edge.Target?.Name);
+        Assert.Equal("integer", result.GetModule("app")!.ExportedType.DisplayName);
+    }
+
+    [Fact]
+    public async Task ClassFactoryCallsCreatePrototypeExportsAndBaseEdges()
+    {
+        using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
+        {
+            ClassFactoryCalls = new Dictionary<string, bool>
+            {
+                ["class"] = true,
+                ["singleton"] = false,
+            }.ToImmutableDictionary(StringComparer.Ordinal),
+        });
+        var result = await workspace.AnalyzeAsync([
+            Document("base", "---@class Base\nlocal Base = {}\nreturn Base"),
+            Document(
+                "tool",
+                "local Base = require('base')\n" +
+                "local Tool = class('Tool', Base)\n" +
+                "return Tool"),
+            Document("single", "local Single = singleton('Single')\nreturn Single"),
+        ]);
+
+        var tool = Assert.IsType<LuaPrototypeType>(result.GetModule("tool")!.ExportedType);
+        Assert.Equal("Tool", tool.Name);
+        var baseType = Assert.Single(tool.BaseTypes);
+        Assert.Equal("Base", baseType.DisplayName);
+
+        var single = Assert.IsType<LuaPrototypeType>(result.GetModule("single")!.ExportedType);
+        Assert.Equal("Single", single.Name);
+        Assert.Empty(single.BaseTypes);
+    }
+
     private static LuaWorkspaceDocument Document(string name, string source) =>
         LuaWorkspaceDocument.FromUtf8(name, source);
 

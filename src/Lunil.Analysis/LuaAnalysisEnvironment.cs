@@ -50,6 +50,18 @@ public sealed record LuaAnalysisEnvironment
     public ImmutableDictionary<string, LuaType> ExternalGlobals { get; init; } =
         ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets the global class-factory functions recognized by the analyzer, mapped to
+    /// whether their arguments after the class name are base classes:
+    /// <c>local X = class("Name", Base, ...)</c> (a "bases" factory) versus
+    /// <c>local X = singleton("Name")</c> (a plain definition). The call infers a
+    /// self-indexed prototype named by the string-literal first argument, so member
+    /// writes define methods, <c>X.new()</c> produces instances, and member lookup
+    /// walks the base chain.
+    /// </summary>
+    public ImmutableDictionary<string, bool> ClassFactoryCalls { get; init; } =
+        ImmutableDictionary<string, bool>.Empty.WithComparers(StringComparer.Ordinal);
+
     /// <summary>Gets the optional versioned contract for globals and modules injected by a host.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 }

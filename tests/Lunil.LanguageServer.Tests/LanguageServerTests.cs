@@ -190,8 +190,9 @@ public sealed class LanguageServerTests
             position = new { line = 4, character = 8 },
         }), CancellationToken.None);
         var configValue = configHover!["contents"]!["value"]!.GetValue<string>();
-        Assert.Contains("config: table", configValue, StringComparison.Ordinal);
-        Assert.DoesNotContain("width: 1", configValue, StringComparison.Ordinal);
+        Assert.Contains("config: {width, height, depth, …}", configValue, StringComparison.Ordinal);
+        Assert.Contains("**Members (6)**", configValue, StringComparison.Ordinal);
+        Assert.Contains("width: 1", configValue, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -245,7 +246,7 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var midValue = midHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("Inherited from Class", midValue, StringComparison.Ordinal);
-        Assert.Contains("**Extends** [Class](", midValue, StringComparison.Ordinal);
+        Assert.Contains("| Extends | [Class](", midValue, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -525,12 +526,12 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
 
         var english = (await hoverOnce())!["contents"]!["value"]!.GetValue<string>();
-        Assert.Contains("**Module** [greeter]", english, StringComparison.Ordinal);
+        Assert.Contains("| Module | [greeter]", english, StringComparison.Ordinal);
         Assert.Contains("**Members (1)**", english, StringComparison.Ordinal);
 
         service.Localization.Locale = LunilLocale.SimplifiedChinese;
         var chinese = (await hoverOnce())!["contents"]!["value"]!.GetValue<string>();
-        Assert.Contains("**模块** [greeter]", chinese, StringComparison.Ordinal);
+        Assert.Contains("| 模块 | [greeter]", chinese, StringComparison.Ordinal);
         Assert.Contains("**成员 (1)**", chinese, StringComparison.Ordinal);
 
         service.Localization.Locale = LunilLocale.English;
@@ -973,7 +974,7 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var typeHoverValue = typeHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Vec", typeHoverValue, StringComparison.Ordinal);
-        Assert.Contains("**Module** [vec]", typeHoverValue, StringComparison.Ordinal);
+        Assert.Contains("| Module | [vec]", typeHoverValue, StringComparison.Ordinal);
         Assert.Contains("[add]", typeHoverValue, StringComparison.Ordinal);
         Assert.Contains("(other", typeHoverValue, StringComparison.Ordinal);
 
@@ -1047,7 +1048,7 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         var declaredValue = declaredHover!["contents"]!["value"]!.GetValue<string>();
         Assert.Contains("class Tool : Base", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("**Module** [tool]", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("| Module | [tool]", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[size]", declaredValue, StringComparison.Ordinal);
         Assert.Contains(": number", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[use](", declaredValue, StringComparison.Ordinal);
@@ -1055,7 +1056,7 @@ public sealed class LanguageServerTests
         Assert.Contains("Uses the tool.", declaredValue, StringComparison.Ordinal);
         Assert.Contains("Inherited from Base", declaredValue, StringComparison.Ordinal);
         Assert.Contains("[extend]", declaredValue, StringComparison.Ordinal);
-        Assert.Contains("**Extends** [Base](", declaredValue, StringComparison.Ordinal);
+        Assert.Contains("| Extends | [Base](", declaredValue, StringComparison.Ordinal);
         Assert.Contains("\n---\n", declaredValue, StringComparison.Ordinal);
 
         // The alias in the consuming module hovers with the same class view.
@@ -1463,6 +1464,84 @@ public sealed class LanguageServerTests
         Assert.NotNull(snapshot);
         Assert.Contains(snapshot.ExportGraph.Symbols, static symbol => symbol.Name == "run");
         Assert.Contains(snapshot.CallBindings.Edges, static edge => edge.MemberPath == "run");
+    }
+
+    [Fact]
+    public async Task WorkspaceSymbolsQueryReturnsCrossModuleExports()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var moduleUri = new Uri("file:///service.lua");
+        workspace.Open(moduleUri, 1,
+            "local M = {}\nfunction M.run() return 1 end\nfunction M.stop() return 0 end\nreturn M");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var symbols = service.WorkspaceSymbols("run");
+        var names = symbols.AsArray()
+            .Select(symbol => symbol!["name"]!.GetValue<string>()).ToArray();
+        Assert.Contains("run", names);
+        Assert.DoesNotContain("stop", names);
+        Assert.NotEmpty(symbols.AsArray());
+    }
+
+    [Fact]
+    public async Task ClassHierarchyListsBasesAndDerivedClasses()
+    {
+        var folder = new Uri("file:///src/");
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([folder]);
+        var baseUri = new Uri("file:///src/base.lua");
+        var midUri = new Uri("file:///src/mid.lua");
+        var derivedUri = new Uri("file:///src/derived.lua");
+        workspace.Open(baseUri, 1, "---@class Base\nlocal Base = {}\nreturn Base");
+        workspace.Open(midUri, 1, "---@class Mid : Base\nlocal Mid = {}\nreturn Mid");
+        workspace.Open(derivedUri, 1, "---@class Derived : Mid\nlocal Derived = {}\nreturn Derived");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        var hierarchy = await service.ClassHierarchyAsync(Element(new
+        {
+            textDocument = new { uri = midUri.AbsoluteUri },
+            position = new { line = 0, character = 11 },
+        }), CancellationToken.None);
+        Assert.NotNull(hierarchy);
+        Assert.Equal("Mid", hierarchy!["name"]!.GetValue<string>());
+        var bases = hierarchy["bases"]!.AsArray()
+            .Select(item => item!["name"]!.GetValue<string>()).ToArray();
+        Assert.Contains("Base", bases);
+        var derived = hierarchy["derived"]!.AsArray()
+            .Select(item => item!["name"]!.GetValue<string>()).ToArray();
+        Assert.Contains("Derived", derived);
+    }
+
+    [Fact]
+    public async Task DottedAnnotationClassMemberNavigatesToClassDeclaration()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var stubsUri = new Uri("file:///stubs.lua");
+        var appUri = new Uri("file:///app.lua");
+        workspace.Open(stubsUri, 1,
+            "---@class host.Engine.Utility.TimeUtil\n" +
+            "local TimeUtil = {}\n" +
+            "function TimeUtil:now() return os.time() end\n" +
+            "return TimeUtil");
+        workspace.Open(appUri, 1,
+            "return host.Engine.Utility.TimeUtil.now()");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+        var service = new LuaLanguageService(workspace);
+
+        // The class segment of the dotted path is addressable as a member of the
+        // namespace prefix; F12 opens the generated stub's annotation declaration.
+        var definition = await service.DefinitionAsync(Element(new
+        {
+            textDocument = new { uri = appUri.AbsoluteUri },
+            position = new { line = 0, character = 28 },
+        }), false, CancellationToken.None);
+        Assert.NotNull(definition);
+        Assert.Equal(stubsUri.AbsoluteUri, definition!["uri"]!.GetValue<string>());
+        Assert.Equal(3, definition["range"]!["start"]!["line"]!.GetValue<int>());
     }
 
     [Fact]

@@ -8,6 +8,9 @@ Lua files that carry EmmyLua-style annotations; files without annotations are no
 `---@type`, `---@param`, `---@return`, `---@class`, `---@alias`, `---@enum`, and `---@cast`
 annotations feed a bounded flow analysis (`LuaTypeAnalyzer`) that reports on the `LUA6000` line;
 the workspace additionally checks cross-module consistency on annotated `require` consumers.
+`---@class` names may be dotted (`---@class host.Engine.Utility.TimeUtil`) when declaring generated
+host-API stubs; the full dotted path is the class name for navigation, hover, references, and
+semantic tokens.
 
 ## Diagnostics
 

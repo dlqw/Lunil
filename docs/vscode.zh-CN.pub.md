@@ -15,13 +15,13 @@ Unity 或 Godot 宿主定义。
 
 ## 1. 安装 VSIX
 
-从 0.17.0 release 下载匹配的 `lunil-lua-0.17.0-<target>.vsix` 与 `.sha256`。Target 包括
+从 0.18.0 release 下载匹配的 `lunil-lua-0.18.0-<target>.vsix` 与 `.sha256`。Target 包括
 `win32-x64`、`win32-arm64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。
 
 使用 **Extensions: Install from VSIX...**，或执行：
 
 ```bash
-code --install-extension lunil-lua-0.17.0-win32-x64.vsix
+code --install-extension lunil-lua-0.18.0-win32-x64.vsix
 ```
 
 每个 VSIX 只包含一个目标平台的 self-contained server，不需要单独安装 .NET。打开包含 Lua 文件的
@@ -54,6 +54,9 @@ lifetime 与 persistence analysis 实际使用的 declaration 视图。
 | **Lunil: Show Index Status** | 列出已索引、失败、等待与排除的文件；失败文件提供单文件重试，排除文件显示排除原因。 |
 | **Lunil: Show Language Server Output** | 查看启动、重启与 protocol trace 输出。 |
 | **Lunil: Show Virtual Host Contract** | 以虚拟 Lua 文档打开当前外部 API declaration。 |
+| **Lunil: Search Everywhere (Symbols)** | 在 quick pick 中按名称搜索 workspace export symbol。 |
+| **Lunil: Show Class Hierarchy** | 显示光标所在 class 的基类与派生类。 |
+| **Lunil: Find Usages** | 在可搜索 picker 中列出光标所在 symbol 的引用。 |
 
 异常退出会按 backoff 进行有次数上限的自动重启。达到限制后，使用 restart command 开始新的尝试序列。
 
@@ -75,13 +78,15 @@ channel，同时保持 JSON-RPC error response 简洁。报告 server 故障时�
 | `lunil.workspace.library` | `[]` | LuaLS 风格 `---@meta` stub 目录，描述宿主注入的 global 与 class。 |
 | `lunil.analysis.exclude` | `[]` | Glob 模式（相对 workspace、`/` 分隔），匹配的 Lua 文件不参与索引。 |
 | `lunil.analysis.autoDetectDataFiles` | `true` | 自动检测超大的生成数据文件并排除出索引。 |
+| `lunil.require.searchPaths` | `[]` | 用于把 `require` 字符串解析为带前缀 module 的目录根（相对第一个 workspace folder）；为空表示精确匹配 module 标识。 |
+| `lunil.analysis.classFactories` | `[]` | 定义 class 的全局函数；接受 factory 名或 `{ "name": "...", "baseArguments": true }` 对象。 |
 | `lunil.statusBar.showModuleCount` | `true` | 索引完成后在状态项中显示已索引 module 数。 |
 
 `lunil.server.path` 必须为绝对路径。修改 server path 或 heap limit 会重启 process；修改 host
-contract、library 目录或 analysis 排除规则（`lunil.analysis.exclude` 或
-`lunil.analysis.autoDetectDataFiles`）会重载配置并重新索引 semantic data。被排除的文件在
-编辑器中打开时仍会被分析。设置的详细行为（glob 语义、自动检测边界、自适应预算）见
-[配置 language server](configuring-the-language-server.zh-CN.pub.md)。
+contract、library 目录、require 搜索路径、class factory 或 analysis 排除规则
+（`lunil.analysis.exclude` 或 `lunil.analysis.autoDetectDataFiles`）会重载配置并重新索引
+semantic data。被排除的文件在编辑器中打开时仍会被分析。设置的详细行为（glob 语义、自动检测
+边界、自适应预算）见[配置 language server](configuring-the-language-server.zh-CN.pub.md)。
 
 ## 调试 Lua 代码
 
@@ -99,6 +104,7 @@ adapter 可执行文件（`lunil-debug-adapter`）与 language server 一样内�
 
 Lua 文件会获得 diagnostic、completion、hover、signature、跨模块与外部 navigation、reference、
 rename、symbol、semantic token（含注解类型表达式）、inlay hint、call hierarchy、folding、
-selection range 与 quick fix。悬停 class 或类型名会显示带继承链与成员签名的 class card；标准库
-成员自带文档并链接到只读的 builtin 页面。准确 protocol 和动态 Lua operation 的保守行为见
-[language server reference](language-server.zh-CN.pub.md)。
+selection range 与 quick fix。workspace-symbol 搜索、class hierarchy 与 find-usages 命令会以
+quick pick 形式使用同一个索引。悬停 class 或类型名会显示带继承链与成员签名的 class card；
+标准库成员自带文档并链接到只读的 builtin 页面。准确 protocol 和动态 Lua operation 的保守行为
+见 [language server reference](language-server.zh-CN.pub.md)。

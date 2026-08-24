@@ -63,7 +63,12 @@ persistence schema 与外部宿主定义。动态 Lua operation 保持保守，�
       "hostContractJson": "",
       "locale": "auto",
       "workspace": { "library": ["/absolute/path/to/meta-stubs"] },
-      "analysis": { "exclude": ["data/**"], "autoDetectDataFiles": true }
+      "require": { "searchPaths": ["scripts/client"] },
+      "analysis": {
+        "exclude": ["data/**"],
+        "autoDetectDataFiles": true,
+        "classFactories": ["defineView", { "name": "class", "baseArguments": true }]
+      }
     }
   }
 }
@@ -76,13 +81,17 @@ persistence schema 与外部宿主定义。动态 Lua operation 保持保守，�
 | `workspace.library` | `[]` | 只读的 LuaLS 风格 `---@meta` stub 目录，描述宿主注入的 global 与 class。 |
 | `analysis.exclude` | `[]` | 使匹配的 Lua 文件不参与索引的 glob 模式。模式匹配相对 workspace 的 `/` 分隔路径；不含分隔符的模式匹配任意目录下的文件名；匹配不区分大小写。 |
 | `analysis.autoDetectDataFiles` | `true` | 自动检测超大的生成数据文件（无函数、require 或控制流的纯 table 字面量数据）并排除出索引。 |
+| `require.searchPaths` | `[]` | 用于把 `require` 字符串解析为带前缀 module 的目录根（相对 workspace）；原始名称最先尝试。 |
+| `analysis.classFactories` | `[]` | 定义 class 的全局函数；接受 factory 名或 `{ "name": "...", "baseArguments": true }` 对象。 |
 | `server.suppressedDiagnosticCodes` | `[]` | 分析中抑制的 diagnostic code（例如 `LUA6022`）。 |
 
 表中是原始 `settings.lunil` 载荷的属性名。VS Code 插件把它们暴露为扁平设置
-（`lunil.workspace.library`、`lunil.analysis.exclude`、`lunil.locale`、……）；只有编辑器配置接受
-点分扁平名。修改 `analysis.exclude`、`analysis.autoDetectDataFiles` 或 `workspace.library` 会无重启地
-重新扫描 workspace。被排除的文件在 analyzed code require 时解析为 untyped value；在编辑器中打开时仍会
-被分析。设置的详细行为与自适应驻留预算见[配置 language server](configuring-the-language-server.zh-CN.pub.md)。
+（`lunil.workspace.library`、`lunil.analysis.exclude`、`lunil.require.searchPaths`、
+`lunil.analysis.classFactories`、`lunil.locale`、……）；只有编辑器配置接受点分扁平名。修改
+`analysis.exclude`、`analysis.autoDetectDataFiles`、`workspace.library`、`require.searchPaths` 或
+`analysis.classFactories` 会无重启地重新扫描 workspace。被排除的文件在 analyzed code require 时解析为
+untyped value；在编辑器中打开时仍会被分析。设置的详细行为与自适应驻留预算见
+[配置 language server](configuring-the-language-server.zh-CN.pub.md)。
 
 ## Lunil protocol extension
 
@@ -91,6 +100,7 @@ persistence schema 与外部宿主定义。动态 Lua operation 保持保守，�
 | `lunil/reindex` | Request | 重建当前 workspace index。 |
 | `lunil/clearCache` | Request | 清除内存与 workspace index cache。 |
 | `lunil/virtualHostDocument` | Request | 返回当前 host contract 的 Lua declaration 视图。 |
+| `lunil/classHierarchy` | Request | 返回光标所在 class 的层级：class 名、位置、传递基类与派生类。 |
 | `lunil/indexProgress` | Notification | 报告 phase、已完成/总 work item 与可选 module。 |
 
 Client 声明支持时，server 也使用标准 work-done progress。Reference request 可通过标准

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Lunil.Analysis;
@@ -450,7 +451,7 @@ internal sealed partial class LuaLanguageService
         var aliases = BuildRequireAliases(analysis);
         if (aliases.TryGetValue(symbol.Id, out var required))
         {
-            module = required;
+            module = workspace.ResolveRequireName(required) ?? required;
             return true;
         }
 
@@ -524,8 +525,25 @@ internal sealed partial class LuaLanguageService
         LuaCodeReference member)
     {
         var name = member.Name!;
+        var receiverText = GetReceiverText(analysis, member)?.TrimEnd('.', ':');
+
+        // An exact member-path write anywhere in the workspace (an assignment or a
+        // function statement) is the strongest definition signal — stronger than the
+        // name-based unique-export fallback inside the chain, which can pick an
+        // unrelated module's same-named export when the true definition lives in a
+        // non-exporting stub (`function host.Engine.Utility.TimeUtil:isReviewBuild()`
+        // in a generated API doc).
+        if (receiverText is { Length: > 0 } &&
+            workspace.GetSnapshot() is { } writeSnapshot &&
+            TryFindMemberPathWrite(writeSnapshot, name, receiverText, out var exactWrite))
+        {
+            return exactWrite;
+        }
+
+        var exportResolved = false;
         foreach (var resolution in ResolveMemberExportChain(analysis, member))
         {
+            exportResolved = true;
             if (workspace.GetUri(resolution.ModuleName) is { } uri &&
                 workspace.TryGetDocument(uri, out var document))
             {
@@ -539,11 +557,25 @@ internal sealed partial class LuaLanguageService
         var receiver = ResolveReceiverSymbol(analysis, member);
         if (receiver is not null)
         {
+            // The same-file write must define the SAME member path: a receiver-aware
+            // check keeps a same-named wrapper (`function M.isReviewBuild`)
+            // from shadowing the real target of `host.Engine...isReviewBuild()`.
+            var documentText = analysis.Document.Text;
             var firstWrite = analysis.Compilation.SemanticModel.UnifiedReferences
                 .Where(item => string.Equals(item.Name, name, StringComparison.Ordinal) &&
                     item.Access.HasFlag(LuaReferenceAccess.Write))
                 .OrderBy(static item => item.Span.Start)
-                .FirstOrDefault();
+                .FirstOrDefault(item =>
+                {
+                    if (receiverText is not { Length: > 0 })
+                    {
+                        return true;
+                    }
+
+                    var start = analysis.Document.ToCharOffset(analysis.Document.ToPosition(item.Span.Start));
+                    var end = analysis.Document.ToCharOffset(analysis.Document.ToPosition(item.Span.End));
+                    return IsMemberPathWrite(documentText, new TextSpan(start, end - start), receiverText);
+                });
             if (firstWrite is not null)
             {
                 return new MemberDefinition(
@@ -553,7 +585,160 @@ internal sealed partial class LuaLanguageService
             }
         }
 
+        // Global-field model: when no export anywhere claims the member and the receiver
+        // carries no class information (engine-injected globals such as `game.player`),
+        // the workspace-wide member-path write scan at the top has already missed.
+        // Engine-injected entity members (`game.player.Entity`, `X.server`, `X.client`) have no
+        // Lua write anywhere; their entity definition file (<Name>.def) is the
+        // ground-truth declaration.
+        if (!exportResolved && receiverText is { Length: > 0 })
+        {
+            // Dynamic module loaders (metatables whose __index requires modules by name)
+            // map a member to the same-named module's root export:
+            // `Views.CommonView` -> the module `...CommonView` and its
+            // `return CommonView` table. The dot anchor keeps `SInventoryComponent`
+            // from matching the name `InventoryComponent`.
+            if (workspace.GetSnapshot() is { } moduleSnapshot)
+            {
+                var suffix = "." + name;
+                var matches = moduleSnapshot.Modules
+                    .Where(module => module.Identity.Name.EndsWith(suffix, StringComparison.Ordinal))
+                    .ToArray();
+                if (matches is { Length: 1 } &&
+                    workspace.GetUri(matches[0].Identity.Name) is { } moduleUri &&
+                    workspace.TryGetDocument(moduleUri, out var moduleDocument))
+                {
+                    var root = FindModuleRootExport(matches[0].Identity.Name);
+                    return new MemberDefinition(
+                        moduleUri,
+                        root is not null
+                            ? moduleDocument.ToRange(root.DefinitionSpan)
+                            : new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)),
+                        matches[0].Identity.Name);
+                }
+            }
+
+            // Declaration-file fallback (generic, no project-specific conventions): a
+            // member with no Lua definition anywhere may be declared by a same-named
+            // non-Lua file in the workspace (entity/component definition files, config
+            // manifests, host-API docs). When the member itself has no such file, a
+            // file named after the receiver's terminal identifier declares the
+            // receiver's type (`x.InventoryComponent.server` -> InventoryComponent.def).
+            if (workspace.TryGetDeclarationFile(name, out var declarationUri))
+            {
+                return new MemberDefinition(
+                    declarationUri,
+                    new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)),
+                    $"{name} declaration");
+            }
+
+            var terminal = receiverText[(receiverText.LastIndexOf('.') + 1)..];
+            if (!string.Equals(terminal, name, StringComparison.Ordinal) &&
+                workspace.TryGetDeclarationFile(terminal, out var terminalUri))
+            {
+                return new MemberDefinition(
+                    terminalUri,
+                    new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)),
+                    $"{terminal} declaration");
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Finds the first workspace-wide write of <c>receiver.member</c> (an assignment or
+    /// a function statement) across every indexed member reference with that name.
+    /// </summary>
+    private bool TryFindMemberPathWrite(
+        LuaWorkspaceCompactSnapshot snapshot,
+        string name,
+        string receiverText,
+        [NotNullWhen(true)] out MemberDefinition? definition)
+    {
+        foreach (var candidate in snapshot.FindMemberReferences(name))
+        {
+            if (workspace.GetUri(candidate.Module.Name) is not { } writeUri ||
+                !workspace.TryGetDocument(writeUri, out var writeDocument))
+            {
+                continue;
+            }
+
+            // Snapshot spans are byte offsets; text indexing needs char offsets.
+            var start = writeDocument.ToCharOffset(writeDocument.ToPosition(candidate.Span.Start));
+            var end = writeDocument.ToCharOffset(writeDocument.ToPosition(candidate.Span.End));
+            if (IsMemberPathWrite(writeDocument.Text, new TextSpan(start, end - start), receiverText))
+            {
+                definition = new MemberDefinition(
+                    writeUri,
+                    writeDocument.ToRange(candidate.Span),
+                    $"{receiverText}.{name}");
+                return true;
+            }
+        }
+
+        definition = null;
+        return false;
+    }
+
+    /// <summary>
+    /// True when the member reference at <paramref name="span"/> defines
+    /// <c>receiver.member</c>: either an '=' (not '==') assignment
+    /// (<c>game.player = ...</c>) or a function statement
+    /// (<c>function M.send(...)</c>) with the receiver expression
+    /// immediately preceding the member name.
+    /// </summary>
+    private static bool IsMemberPathWrite(string text, TextSpan span, string receiverText)
+    {
+        var prefixLength = receiverText.Length + 1;
+        if (span.Start < prefixLength)
+        {
+            return false;
+        }
+
+        var start = span.Start - prefixLength;
+        var separator = text[start + receiverText.Length];
+        if ((separator != '.' && separator != ':') ||
+            !text.AsSpan(start, receiverText.Length).SequenceEqual(receiverText.AsSpan()))
+        {
+            return false;
+        }
+
+        // `xgame.player` must not match the receiver `bd`.
+        if (start > 0 && (char.IsLetterOrDigit(text[start - 1]) || text[start - 1] == '_'))
+        {
+            return false;
+        }
+
+        // `function Receiver.name(` — a definition-site write.
+        var before = start - 1;
+        while (before >= 0 && char.IsWhiteSpace(text[before]))
+        {
+            before--;
+        }
+
+        if (before >= 7 &&
+            text.AsSpan(before - 7, 8).SequenceEqual("function".AsSpan()) &&
+            (before - 8 < 0 || (!char.IsLetterOrDigit(text[before - 8]) && text[before - 8] != '_')))
+        {
+            var after = span.End;
+            while (after < text.Length && char.IsWhiteSpace(text[after]))
+            {
+                after++;
+            }
+
+            return after < text.Length && text[after] == '(';
+        }
+
+        // `Receiver.name = ...` — an assignment write (not a comparison).
+        var index = span.End;
+        while (index < text.Length && char.IsWhiteSpace(text[index]))
+        {
+            index++;
+        }
+
+        return index < text.Length && text[index] == '=' &&
+            (index + 1 >= text.Length || text[index + 1] != '=');
     }
 
     private LuaWorkspaceExportSymbol? FindExportSymbol(string moduleName, string memberName) =>
@@ -600,28 +785,77 @@ internal sealed partial class LuaLanguageService
         if (receiver is not null)
         {
             var aliases = BuildRequireAliases(analysis);
-            // A non-alias receiver typed as a class instance or prototype (loop
-            // variables over constructed arrays, indexed elements) chains from the
-            // module declaring that class — one candidate per union member, so an
-            // element of a sibling-class array resolves in its own class's chain.
-            // Other locals fall back to this module's own exports (the
-            // definition-site pattern `function M.f`).
-            IEnumerable<string> moduleNames = aliases.TryGetValue(receiver.Id, out var required)
-                ? [required]
-                : [.. ClassModuleNames(ResolveReceiverType(analysis, member)), analysis.Module.Name];
-            foreach (var moduleName in moduleNames.Distinct(StringComparer.Ordinal))
+            if (aliases.TryGetValue(receiver.Id, out var required))
             {
-                foreach (var symbol in FindChainExports(
-                             workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
-                             workspace.GetRuntimeClassBases(),
-                             workspace.GetRuntimeClassModules(),
-                             workspace.GetClassMixins()))
+                // An alias whose require string names no known module (dangling require, or a
+                // search path that is not configured) contributes no chain exports; treat the
+                // receiver as unresolved so the unique-export fallback below still applies.
+                // Aliases that do resolve keep their exact-chain semantics: a miss inside a
+                // real module's chain does not fall back.
+                if (workspace.ModuleExists(required))
                 {
-                    yield return symbol;
+                    foreach (var moduleName in workspace.ExpandRequireName(required)
+                                 .Distinct(StringComparer.Ordinal))
+                    {
+                        foreach (var symbol in FindChainExports(
+                                     workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
+                                     workspace.GetRuntimeClassBases(),
+                                     workspace.GetRuntimeClassModules(),
+                                     workspace.GetClassMixins()))
+                        {
+                            yield return symbol;
+                        }
+                    }
+
+                    yield break;
                 }
             }
+            else
+            {
+                // A non-alias receiver typed as a class instance or prototype (loop
+                // variables over constructed arrays, indexed elements) chains from the
+                // module declaring that class — one candidate per union member, so an
+                // element of a sibling-class array resolves in its own class's chain.
+                // The own-module fallback serves the definition-site pattern
+                // (`function M.f` with a LOCAL receiver M); a global receiver
+                // (`host.Engine.Utility...`) has no relation to this module's
+                // exports and must not shadow the member's real definition.
+                var receiverIsGlobal = receiver.Kind is LuaSymbolKind.Environment or
+                    LuaSymbolKind.Global;
+                var classModuleNames = ClassModuleNames(ResolveReceiverType(analysis, member))
+                    .ToArray();
+                IEnumerable<string> chainModules = classModuleNames;
+                if (!receiverIsGlobal)
+                {
+                    chainModules = chainModules.Append(analysis.Module.Name);
+                }
 
-            yield break;
+                var matched = false;
+                foreach (var moduleName in chainModules.Distinct(StringComparer.Ordinal))
+                {
+                    foreach (var symbol in FindChainExports(
+                                 workspace.GetClassDeclarations(), snapshot, moduleName, name, maximumHops,
+                                 workspace.GetRuntimeClassBases(),
+                                 workspace.GetRuntimeClassModules(),
+                                 workspace.GetClassMixins()))
+                    {
+                        matched = true;
+                        yield return symbol;
+                    }
+                }
+
+                // A receiver with class information keeps exact-chain semantics: a miss
+                // inside a known class chain does not fall back (a typo must not jump to
+                // an unrelated module). A receiver without any class information —
+                // any-typed chains over engine-injected objects such as
+                // `game.player.Component.server` — falls through to the unique-export
+                // fallback so RPC-style calls still navigate to the sole workspace
+                // definition.
+                if (matched || classModuleNames.Length > 0)
+                {
+                    yield break;
+                }
+            }
         }
 
         // Receiver unresolved (chained or dynamic): treat like definition's unique-export
@@ -960,6 +1194,13 @@ internal sealed partial class LuaLanguageService
         {
             yield return declaration.ModuleName;
         }
+        else if (workspace.GetRuntimeClassModules().TryGetValue(className, out var runtimeModule))
+        {
+            // Classes defined by runtime patterns — factory calls like
+            // `local X = class("X", Base)` or `X = Y:extend` — register their module
+            // through the runtime class scan rather than annotations.
+            yield return runtimeModule;
+        }
     }
 
     /// <summary>
@@ -1182,10 +1423,13 @@ internal sealed partial class LuaLanguageService
         if (receiver is not null)
         {
             var aliases = BuildRequireAliases(analysis);
-            if (aliases.TryGetValue(receiver.Id, out var moduleName) && snapshot is not null)
+            var resolvedModule = aliases.TryGetValue(receiver.Id, out var requestedModule)
+                ? workspace.ResolveRequireName(requestedModule)
+                : null;
+            if (resolvedModule is not null && snapshot is not null)
             {
                 foreach (var chainModule in CollectChainModules(
-                             workspace.GetClassDeclarations(), moduleName,
+                             workspace.GetClassDeclarations(), resolvedModule,
                              runtimeBases: workspace.GetRuntimeClassBases(),
                              runtimeClassModules: workspace.GetRuntimeClassModules(),
                              mixins: workspace.GetClassMixins()))
