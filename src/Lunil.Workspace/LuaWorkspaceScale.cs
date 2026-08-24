@@ -1152,61 +1152,61 @@ public sealed class LuaWorkspaceCompactSnapshot
             var tag = reader.ReadByte();
             nodes[index] = tag switch
             {
-(byte)LuaTypeKind.Any => LuaTypes.Any,
-(byte)LuaTypeKind.Unknown => LuaTypes.Unknown,
-(byte)LuaTypeKind.Never => LuaTypes.Never,
-(byte)LuaTypeKind.Nil => LuaTypes.Nil,
-(byte)LuaTypeKind.Boolean => LuaTypes.Boolean,
-(byte)LuaTypeKind.Integer => LuaTypes.Integer,
-(byte)LuaTypeKind.Float => LuaTypes.Float,
-(byte)LuaTypeKind.Number => LuaTypes.Number,
-(byte)LuaTypeKind.String => LuaTypes.String,
-(byte)LuaTypeKind.Table => LuaTypes.Table,
-(byte)LuaTypeKind.Function => LuaTypes.Function,
-(byte)LuaTypeKind.Thread => LuaTypes.Thread,
-(byte)LuaTypeKind.Userdata => LuaTypes.Userdata,
-(byte)LuaTypeKind.Literal => ReadLiteral(reader),
-(byte)LuaTypeKind.Union => new LuaUnionType(ReadTypeArray(reader, Resolve)),
-(byte)LuaTypeKind.Intersection => new LuaIntersectionType(ReadTypeArray(reader, Resolve)),
-(byte)LuaTypeKind.Array => new LuaArrayType(Resolve(reader.ReadInt32())),
-(byte)LuaTypeKind.Map => new LuaMapType(
-                    Resolve(reader.ReadInt32()), Resolve(reader.ReadInt32())),
-(byte)LuaTypeKind.StructuralTable => ReadStructuralTable(reader, Resolve),
-(byte)LuaTypeKind.Metatable => new LuaMetatableType(
-                    Resolve(reader.ReadInt32()),
-                    Resolve(reader.ReadInt32()),
-                    reader.ReadBoolean()),
-(byte)LuaTypeKind.Prototype => new LuaPrototypeType(
-                    reader.ReadString(),
-                    Resolve(reader.ReadInt32()),
-                    ReadTypeArray(reader, Resolve),
-                    reader.ReadBoolean(),
-                    reader.ReadBoolean()),
-(byte)LuaTypeKind.Tuple => new LuaTupleType(ReadTypeArray(reader, Resolve)),
-(byte)LuaTypeKind.TypePack => ReadTypePack(reader, Resolve),
-(byte)LuaTypeKind.GenericParameter => new LuaGenericParameterType(
-                    reader.ReadString(),
-                    reader.ReadInt32(),
-                    ResolveOrNull(reader, Resolve)),
-(byte)LuaTypeKind.GenericInstance => new LuaGenericInstanceType(
-                    Resolve(reader.ReadInt32()),
-                    ReadTypeArray(reader, Resolve)),
+                (byte)LuaTypeKind.Any => LuaTypes.Any,
+                (byte)LuaTypeKind.Unknown => LuaTypes.Unknown,
+                (byte)LuaTypeKind.Never => LuaTypes.Never,
+                (byte)LuaTypeKind.Nil => LuaTypes.Nil,
+                (byte)LuaTypeKind.Boolean => LuaTypes.Boolean,
+                (byte)LuaTypeKind.Integer => LuaTypes.Integer,
+                (byte)LuaTypeKind.Float => LuaTypes.Float,
+                (byte)LuaTypeKind.Number => LuaTypes.Number,
+                (byte)LuaTypeKind.String => LuaTypes.String,
+                (byte)LuaTypeKind.Table => LuaTypes.Table,
+                (byte)LuaTypeKind.Function => LuaTypes.Function,
+                (byte)LuaTypeKind.Thread => LuaTypes.Thread,
+                (byte)LuaTypeKind.Userdata => LuaTypes.Userdata,
+                (byte)LuaTypeKind.Literal => ReadLiteral(reader),
+                (byte)LuaTypeKind.Union => new LuaUnionType(ReadTypeArray(reader, Resolve)),
+                (byte)LuaTypeKind.Intersection => new LuaIntersectionType(ReadTypeArray(reader, Resolve)),
+                (byte)LuaTypeKind.Array => new LuaArrayType(Resolve(reader.ReadInt32())),
+                (byte)LuaTypeKind.Map => new LuaMapType(
+                                    Resolve(reader.ReadInt32()), Resolve(reader.ReadInt32())),
+                (byte)LuaTypeKind.StructuralTable => ReadStructuralTable(reader, Resolve),
+                (byte)LuaTypeKind.Metatable => new LuaMetatableType(
+                                    Resolve(reader.ReadInt32()),
+                                    Resolve(reader.ReadInt32()),
+                                    reader.ReadBoolean()),
+                (byte)LuaTypeKind.Prototype => new LuaPrototypeType(
+                                    reader.ReadString(),
+                                    Resolve(reader.ReadInt32()),
+                                    ReadTypeArray(reader, Resolve),
+                                    reader.ReadBoolean(),
+                                    reader.ReadBoolean()),
+                (byte)LuaTypeKind.Tuple => new LuaTupleType(ReadTypeArray(reader, Resolve)),
+                (byte)LuaTypeKind.TypePack => ReadTypePack(reader, Resolve),
+                (byte)LuaTypeKind.GenericParameter => new LuaGenericParameterType(
+                                    reader.ReadString(),
+                                    reader.ReadInt32(),
+                                    ResolveOrNull(reader, Resolve)),
+                (byte)LuaTypeKind.GenericInstance => new LuaGenericInstanceType(
+                                    Resolve(reader.ReadInt32()),
+                                    ReadTypeArray(reader, Resolve)),
                 FunctionTypeTag => ReadFunctionType(reader, Resolve),
-(byte)LuaTypeKind.Overload => new LuaOverloadType(
-                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaFunctionType)type)]),
-(byte)LuaTypeKind.Callable => new LuaCallableType(
-                    Resolve(reader.ReadInt32()),
-                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaFunctionType)type)]),
-(byte)LuaTypeKind.Class => new LuaClassType(
-                    reader.ReadString(),
-                    ReadTypeArray(reader, Resolve)),
-(byte)LuaTypeKind.Alias => new LuaAliasType(
-                    reader.ReadString(),
-                    Resolve(reader.ReadInt32())),
-(byte)LuaTypeKind.Enum => new LuaEnumType(
-                    reader.ReadString(),
-                    Resolve(reader.ReadInt32()),
-                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaLiteralType)type)]),
+                (byte)LuaTypeKind.Overload => new LuaOverloadType(
+                                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaFunctionType)type)]),
+                (byte)LuaTypeKind.Callable => new LuaCallableType(
+                                    Resolve(reader.ReadInt32()),
+                                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaFunctionType)type)]),
+                (byte)LuaTypeKind.Class => new LuaClassType(
+                                    reader.ReadString(),
+                                    ReadTypeArray(reader, Resolve)),
+                (byte)LuaTypeKind.Alias => new LuaAliasType(
+                                    reader.ReadString(),
+                                    Resolve(reader.ReadInt32())),
+                (byte)LuaTypeKind.Enum => new LuaEnumType(
+                                    reader.ReadString(),
+                                    Resolve(reader.ReadInt32()),
+                                    [.. ReadTypeArray(reader, Resolve).Select(static type => (LuaLiteralType)type)]),
                 _ => throw new FormatException($"Unknown type tag {tag}."),
             };
         }

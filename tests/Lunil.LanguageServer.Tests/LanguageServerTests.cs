@@ -198,9 +198,8 @@ public sealed class LanguageServerTests
     [Fact]
     public async Task RuntimeExtendEdgesCarryInheritedMembers()
     {
-        var folder = new Uri("file:///src/");
         using var workspace = new LanguageServerWorkspace();
-        workspace.Initialize([folder]);
+        workspace.Initialize([]);
         var classUri = new Uri("file:///src/classlib.lua");
         var midUri = new Uri("file:///src/mid.lua");
         var appUri = new Uri("file:///src/app.lua");
@@ -1488,9 +1487,8 @@ public sealed class LanguageServerTests
     [Fact]
     public async Task ClassHierarchyListsBasesAndDerivedClasses()
     {
-        var folder = new Uri("file:///src/");
         using var workspace = new LanguageServerWorkspace();
-        workspace.Initialize([folder]);
+        workspace.Initialize([]);
         var baseUri = new Uri("file:///src/base.lua");
         var midUri = new Uri("file:///src/mid.lua");
         var derivedUri = new Uri("file:///src/derived.lua");

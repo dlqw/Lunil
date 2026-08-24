@@ -2145,43 +2145,43 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     type = 1;
                 }
                 else if (lexical.Symbol.Kind is LuaSymbolKind.Global or LuaSymbolKind.Environment)
+                {
+                    // Global reads fold into the implicit _ENV symbol (Environment
+                    // kind); module-scope table globals keep the Global kind.
+                    if (reference.Name is { Length: > 0 } globalName &&
+                        Builtin.Globals.TryGetValue(globalName, out var builtinType))
                     {
-                        // Global reads fold into the implicit _ENV symbol (Environment
-                        // kind); module-scope table globals keep the Global kind.
-                        if (reference.Name is { Length: > 0 } globalName &&
-                            Builtin.Globals.TryGetValue(globalName, out var builtinType))
-                        {
-                            modifiers |= DefaultLibraryTokenModifier;
-                            type = builtinType is LuaFunctionType ? 2 : 3;
-                        }
-                        else
-                        {
-                            type = 0;
-                        }
+                        modifiers |= DefaultLibraryTokenModifier;
+                        type = builtinType is LuaFunctionType ? 2 : 3;
                     }
                     else
                     {
-                        var symbolType = GetType(analysis, lexical.Symbol);
-                        type = symbolType is LuaFunctionType or LuaOverloadType ? 2
-                            : symbolType is LuaPrototypeType or LuaClassType ? 6
-                            : 0;
+                        type = 0;
                     }
                 }
                 else
                 {
-                    type = reference.Access switch
-                    {
-                        var access when access.HasFlag(LuaReferenceAccess.MethodCall) => 4,
-                        var access when access.HasFlag(LuaReferenceAccess.Call) => 2,
-                        _ => 3,
-                    };
+                    var symbolType = GetType(analysis, lexical.Symbol);
+                    type = symbolType is LuaFunctionType or LuaOverloadType ? 2
+                        : symbolType is LuaPrototypeType or LuaClassType ? 6
+                        : 0;
                 }
-
-                tokenPairs.Add((
-                    (range.Start.Line, range.Start.Character,
-                        Math.Max(1, range.End.Character - range.Start.Character), type, modifiers),
-                    reference));
             }
+            else
+            {
+                type = reference.Access switch
+                {
+                    var access when access.HasFlag(LuaReferenceAccess.MethodCall) => 4,
+                    var access when access.HasFlag(LuaReferenceAccess.Call) => 2,
+                    _ => 3,
+                };
+            }
+
+            tokenPairs.Add((
+                (range.Start.Line, range.Start.Character,
+                    Math.Max(1, range.End.Character - range.Start.Character), type, modifiers),
+                reference));
+        }
 
         // Declarations are not references (the binder records uses only), so local
         // declarations, parameters, and function names would otherwise render
