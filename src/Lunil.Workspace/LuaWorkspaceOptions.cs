@@ -19,6 +19,14 @@ public sealed record LuaWorkspaceOptions
     /// <summary>Optional C++, C#, or generated host values visible to every module.</summary>
     public LuaHostAnalysisContract? HostContract { get; init; }
 
+    /// <summary>
+    /// Optional directory roots (relative to the workspace folder) consulted when a
+    /// <c>require</c> string does not exactly match a module identity. Each root is tried in
+    /// order: <c>require("A.B.C")</c> expands to <c>&lt;root&gt;.A.B.C</c> for the first root whose
+    /// module exists. Empty means require strings must match module identities exactly.
+    /// </summary>
+    public ImmutableArray<string> RequireSearchPaths { get; init; } = [];
+
     public int MaximumModuleCount { get; init; } = 65_536;
 
     public int MaximumDependencyCount { get; init; } = 1_048_576;
@@ -57,4 +65,13 @@ public sealed record LuaWorkspaceOptions
 
     public ImmutableHashSet<string> SuppressedDiagnosticCodes { get; init; } =
         ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Global class-factory function names recognized during module analysis, mapped to
+    /// whether arguments after the class name are base classes
+    /// (<c>local X = class("Name", Base, ...)</c> versus <c>local X = singleton("Name")</c>).
+    /// See <see cref="LuaAnalysisEnvironment.ClassFactoryCalls"/>.
+    /// </summary>
+    public ImmutableDictionary<string, bool> ClassFactoryCalls { get; init; } =
+        ImmutableDictionary<string, bool>.Empty.WithComparers(StringComparer.Ordinal);
 }

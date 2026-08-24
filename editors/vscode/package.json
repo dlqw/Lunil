@@ -2,7 +2,7 @@
   "name": "lunil-lua",
   "displayName": "Lunil Lua",
   "description": "Lua language intelligence powered by Lunil's parser, semantic analysis, workspace index, and host contracts.",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "publisher": "dlqw",
   "license": "MIT",
   "engines": {
@@ -162,8 +162,56 @@
       {
         "command": "lunil.showHostContract",
         "title": "Lunil: Show Virtual Host Contract"
+      },
+      {
+        "command": "lunil.searchEverywhere",
+        "title": "Lunil: Search Everywhere (Symbols)",
+        "icon": "$(search)"
+      },
+      {
+        "command": "lunil.classHierarchy",
+        "title": "Lunil: Show Class Hierarchy",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "lunil.findUsages",
+        "title": "Lunil: Find Usages",
+        "icon": "$(references)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "lunil.searchEverywhere",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "lunil.classHierarchy",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "lunil.findUsages",
+        "key": "ctrl+alt+f7",
+        "mac": "cmd+alt+f7",
+        "when": "editorTextFocus"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "lunil.classHierarchy",
+          "when": "editorLangId == lua",
+          "group": "navigation@1.35"
+        },
+        {
+          "command": "lunil.findUsages",
+          "when": "editorLangId == lua",
+          "group": "navigation@1.36"
+        }
+      ]
+    },
     "configuration": {
       "title": "Lunil",
       "properties": {
@@ -243,6 +291,16 @@
           "order": 7,
           "markdownDescription": "Read-only folders with Lua declaration stubs (`---@meta` files) describing globals and classes injected by a host at runtime (C++, C#, Unity, Godot, game engines). Relative paths resolve against the first workspace folder. Editing stubs takes effect after **Lunil: Reindex Workspace**."
         },
+        "lunil.require.searchPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 8,
+          "markdownDescription": "Directory roots (relative to the first workspace folder) used to resolve `require` strings to modules. A require like `Utils.HttpUtils` resolves to `<root>/Utils/HttpUtils.lua` under the first root that contains it — for example `scripts/client`. Leave empty to require exact module identities. Applies after re-indexing."
+        },
         "lunil.analysis.exclude": {
           "type": "array",
           "items": {
@@ -259,6 +317,37 @@
           "scope": "resource",
           "order": 9,
           "markdownDescription": "Automatically keep generated data files (very large table literals of keys, strings, and numbers with no functions or control flow) out of workspace indexing. Detected files appear under **Lunil: Show Index Status**; use `lunil.analysis.exclude` to exclude more paths or tighten this automatically."
+        },
+        "lunil.analysis.classFactories": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The global function name."
+                  },
+                  "baseArguments": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Arguments after the class name are base classes (inheritance factories like `class`)."
+                  }
+                }
+              }
+            ]
+          },
+          "default": [],
+          "scope": "resource",
+          "order": 10,
+          "markdownDescription": "Global functions that define classes: `local X = factory(\"Name\", Base, ...)`. The string-literal first argument names the class, so hover shows the class, member writes (`function X:Method()`) define methods, `X.new()` produces instances, and member lookup walks base classes (subclass overrides win). Set `baseArguments: true` for inheritance factories such as `class` — its arguments after the name are base classes; plain factories like `singleton(\"Name\")` or `defineView(\"Name\")` omit it. Applies after re-indexing."
         },
         "lunil.locale": {
           "type": "string",

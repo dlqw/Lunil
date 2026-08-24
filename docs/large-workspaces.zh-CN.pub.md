@@ -67,6 +67,11 @@ content、忽略损坏 entry，并按 `MaximumDiskCacheBytes` prune。
 - 把它视为可丢弃的加速数据，而不是权威 analysis output；
 - `ClearCache()` 只清除内存 reuse；宿主明确需要丢弃 disk summary 时应删除配置目录。
 
+Compact snapshot 还可以用 `SaveNavigationSnapshot(path, fingerprint)` 保存，并在后续运行中用
+`TryLoadNavigationSnapshot(path, fingerprint)` 恢复。恢复出的 contribution 可通过
+`AdoptRestoredContributions(snapshot)` 合并进现有 workspace，因此大型编辑器可以在完整文件夹扫描
+完成前就回答 navigation 与 symbol 查询。
+
 ## 5. 查询 compact index
 
 代码 navigation 使用 `FindReferences`、`FindGlobalReferences` 与 `FindCallsToExport`。Host-aware

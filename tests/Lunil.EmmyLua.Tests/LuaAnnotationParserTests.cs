@@ -258,6 +258,20 @@ public sealed class LuaAnnotationParserTests
     }
 
     [Fact]
+    public void ClassDirectiveAcceptsDottedNames()
+    {
+        var document = Parse(
+            """
+            ---@class host.Engine.Utility.TimeUtil
+            return 1
+            """);
+
+        var @class = Assert.IsType<LuaClassAnnotationSyntax>(document.Annotations[0]);
+        Assert.Equal("host.Engine.Utility.TimeUtil", @class.Name);
+        Assert.Equal("host.Engine.Utility.TimeUtil", TextOf(document, @class.NameSpan));
+    }
+
+    [Fact]
     public void TypeExpressionsExposeLabelSpansForHighlighting()
     {
         var document = Parse(

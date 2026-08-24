@@ -146,6 +146,13 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
+`LuaWorkspaceOptions.RequireSearchPaths` adds dotted prefixes for require resolution:
+`require("A.B.C")` tries `A.B.C` first, then `<root>.A.B.C` for each root. For codebases that use
+class factories such as `local X = class("Name", Base)`, set
+`LuaWorkspaceOptions.ClassFactoryCalls` to a dictionary of factory names and whether their
+arguments after the class name are base classes; analysis then exposes the resulting prototypes,
+inheritance, and instance behavior.
+
 When APIs are injected by C++, C#, Unity, Godot, or another host, attach a validated
 `LuaHostAnalysisContract`. Follow [external host analysis](external-host-analysis.pub.md) to build,
 serialize, and apply that contract.

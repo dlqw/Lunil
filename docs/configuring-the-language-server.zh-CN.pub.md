@@ -2,8 +2,8 @@
 
 [English](configuring-the-language-server.pub.md)
 
-本指南面向真实项目配置 language server：界面语言、宿主注入的 library stub、将生成数据文件排除出索引以及
-内存预算。前提是插件已安装且 workspace 已索引；安装见
+本指南面向真实项目配置 language server：界面语言、宿主注入的 library stub、将生成数据文件排除出索引、
+require 搜索根、class factory 以及内存预算。前提是插件已安装且 workspace 已索引；安装见
 [VS Code](vscode.zh-CN.pub.md)，嵌入库的预算见
 [面向大型仓库的 LuaWorkspace](large-workspaces.zh-CN.pub.md)。
 
@@ -57,7 +57,40 @@ Workspace** 无需重启即可生效。这是手写、社区格式的路径；�
 unresolved-module 诊断；已索引的 module 优先于排除列表。在编辑器中打开被排除的文件仍会分析，关闭后回到
 排除集合。**Lunil: Show Index Status** 会列出被排除的文件及其原因（模式匹配或自动检测）。
 
-## 4. 理解内存预算
+## 4. 通过搜索根解析 require
+
+`lunil.require.searchPaths` 为 module 解析增加可选目录根。require 字符串会先按原样尝试，再依次把每个
+根作为点号前缀尝试：
+
+```json
+{
+  "lunil.require.searchPaths": ["scripts/client", "scripts/shared"]
+}
+```
+
+以上面为例，`require("Utils.HttpUtils")` 可以解析名为 `scripts.client.Utils.HttpUtils` 或
+`scripts.shared.Utils.HttpUtils` 的 module（按存在顺序取第一个）。根中的 `/` 或 `\` 会规范化为点号，
+因此 `scripts/client` 与 `scripts.shared` 等价。修改该设置会无重启地重新扫描 workspace。
+
+## 5. 识别 class factory
+
+`lunil.analysis.classFactories` 告诉分析器哪些全局函数定义 class。factory 调用的第一个字符串字面量
+参数是 class 名；当其余裸标识符参数是基类时，设置 `baseArguments: true`：
+
+```json
+{
+  "lunil.analysis.classFactories": [
+    "defineView",
+    { "name": "class", "baseArguments": true }
+  ]
+}
+```
+
+被识别的 factory 会让 `local X = class("Name", Base)` 表现得像带注解的 class 值：hover 显示 class
+card，`function X:method()` 写入定义方法，`X.new()` 产生实例，基类成员可解析，class hierarchy 也包含
+该 class。修改该设置会无重启地重新扫描 workspace。
+
+## 6. 理解内存预算
 
 Server 的驻留预算按运行时授予本进程的内存（受 managed-heap hard limit 封顶的物理内存）自适应：保留的
 module 分析、已关闭 document 的源码与缓存的 document analysis 各占总量一个带夹紧的比例（下限 64–96
@@ -71,6 +104,7 @@ MiB、上限 512 MiB–1 GiB；合计不超过可用内存四分之一）。未�
 
 ## 预期结果
 
-Server 使用所选语言、了解宿主注入的 API 面、索引时忽略生成数据，并按机器内存保持驻留成比例——每项设置的
-查阅事实在 [language server reference](language-server.zh-CN.pub.md)，迁移说明在
-[0.17 指南](migration-0.17.0.zh-CN.pub.md)。
+Server 使用所选语言、了解宿主注入的 API 面、解析配置的 require 前缀、识别 class factory、索引时忽略
+生成数据，并按机器内存保持驻留成比例——每项设置的查阅事实在
+[language server reference](language-server.zh-CN.pub.md)，迁移说明在
+[0.18 指南](migration-0.18.0.zh-CN.pub.md)。

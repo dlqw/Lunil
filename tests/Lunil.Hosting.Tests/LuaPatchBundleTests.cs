@@ -22,7 +22,10 @@ public sealed class LuaPatchBundleTests
         Assert.Equal(first, second);
 
         using var stream = new MemoryStream(first);
-        var restored = LuaPatchBundle.Read(stream, trust);
+        var restored = LuaPatchBundle.Read(
+            stream,
+            trust,
+            new LuaPatchBundleReadOptions { UtcNow = bundle.Manifest.CreatedAt });
 
         Assert.Equal("hotfix-42", restored.Manifest.PatchId);
         Assert.Equal(2, restored.Entries.Length);

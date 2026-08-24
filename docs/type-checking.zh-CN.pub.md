@@ -6,7 +6,9 @@ Lunil 注解驱动类型检查的参考：产生的诊断、抑制面与检查�
 注解的 Lua 文件**默认启用**；无注解文件不受影响。`---@type`、`---@param`、`---@return`、
 `---@class`、`---@alias`、`---@enum` 与 `---@cast` 注解输入一个有界流分析
 （`LuaTypeAnalyzer`），在 `LUA6000` 线报告诊断；workspace 还会对带注解的 `require` 消费方
-额外检查跨模块一致性。
+额外检查跨模块一致性。`---@class` 名称可以带点号（例如 `---@class host.Engine.Utility.TimeUtil`），
+用于生成的宿主 API stub；完整点号路径就是 class 名，参与 navigation、hover、reference 与
+semantic token。
 
 ## 诊断
 

@@ -163,7 +163,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 var declaredMarkdown = new StringBuilder(
                     $"```lua\n{declared.Name}: {DisplayType(declaredType)}\n```");
                 AppendTypeNameLinks(declaredMarkdown, declaredType?.DisplayName ?? string.Empty);
-                declaredMarkdown.Append('\n').Append(Localization.DeclarationLabel);
+                AppendStructuralMemberSummary(declaredMarkdown, declaredType, context.Analysis);
+                declaredMarkdown.Append("\n\n*").Append(Localization.DeclarationLabel).Append('*');
                 return HoverResult(
                     declaredMarkdown.ToString(),
                     context.Analysis.Document.ToRange(declaredSpan));
@@ -184,7 +185,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             if (builtinGlobalType is LuaStructuralTableType libraryShape)
             {
                 var memberCount = libraryShape.Fields.Count(static field => field.Name is not null);
-                builtinHover = $"```lua\n{reference.Name}\n```\n{Localization.LibraryMembers(memberCount)}";
+                builtinHover = $"```lua\n{reference.Name}\n```\n*{Localization.LibraryMembers(memberCount)}*";
             }
             else
             {
@@ -223,10 +224,23 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var capture = reference.ResolutionKind == LuaNameResolutionKind.Upvalue
             ? Localization.CapturedUpvalueSuffix
             : string.Empty;
+        // Compact card: code fence for the type, then the resolution as a subtle
+        // metadata line (not a full separate block).
         var fallbackMarkdown = new StringBuilder(
             $"```lua\n{reference.Name}: {DisplayType(type)}\n```");
         AppendTypeNameLinks(fallbackMarkdown, type?.DisplayName ?? string.Empty);
-        fallbackMarkdown.Append('\n').Append(Localization.ResolutionKindLabel(reference.ResolutionKind)).Append(capture);
+        AppendStructuralMemberSummary(fallbackMarkdown, type, context.Analysis);
+        // If the type is an annotated class shape, render the class card instead of
+        // the compact member summary; the class card already contains module and
+        // inheritance metadata plus the same members.
+        if (TryBuildClassHoverForType(reference.Name, type) is { } classFallbackHover)
+        {
+            return HoverResult(classFallbackHover, context.Analysis.Document.ToRange(reference.Span));
+        }
+        fallbackMarkdown.Append("\n\n*")
+            .Append(Localization.ResolutionKindLabel(reference.ResolutionKind))
+            .Append(capture)
+            .Append('*');
         return HoverResult(
             fallbackMarkdown.ToString(),
             context.Analysis.Document.ToRange(reference.Span));
@@ -289,9 +303,12 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         // Cursor inside a require("...") string opens the required module.
         if (FindRequireAt(context.Analysis, context.ByteOffset) is { } required)
         {
-            if (workspace.GetUri(required.ModuleName) is { } moduleUri)
+            foreach (var candidate in workspace.ExpandRequireName(required.ModuleName))
             {
-                return Location(moduleUri, new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)));
+                if (workspace.GetUri(candidate) is { } moduleUri)
+                {
+                    return Location(moduleUri, new LspRange(new LspPosition(0, 0), new LspPosition(0, 0)));
+                }
             }
 
             return null;
@@ -351,9 +368,33 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         if (codeReference is not null && IsNamedMember(codeReference))
         {
             var memberDefinition = ResolveMemberDefinition(context.Analysis, codeReference);
-            return memberDefinition is null
-                ? null
-                : Location(memberDefinition.Uri, memberDefinition.Range);
+            if (memberDefinition is not null)
+            {
+                return Location(memberDefinition.Uri, memberDefinition.Range);
+            }
+
+            // Dotted annotation-class path: members of host-injected namespaces
+            // (host.Engine.Utility.TimeUtil) are declared by generated
+            // `---@class A.B.C` stubs. The member's full dotted path addresses the
+            // class; a path that only prefixes known class names addresses the
+            // namespace's first declaration.
+            if (GetReceiverText(context.Analysis, codeReference)?.TrimEnd('.', ':') is { Length: > 0 } receiverPath)
+            {
+                var dottedPath = receiverPath + "." + codeReference.Name;
+                var declaration = workspace.GetClassDeclarations()
+                    .Where(item => string.Equals(item.Name, dottedPath, StringComparison.Ordinal) ||
+                        item.Name.StartsWith(dottedPath + ".", StringComparison.Ordinal))
+                    .OrderBy(static item => item.Name, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (declaration is not null &&
+                    await TryGetAnnotationDeclarationLocationAsync(declaration.Name, cancellationToken)
+                        .ConfigureAwait(false) is { } classLocation)
+                {
+                    return classLocation;
+                }
+            }
+
+            return null;
         }
 
         var reference = FindReference(context.Analysis, context.ByteOffset);
@@ -373,6 +414,26 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 {
                     return Location(uri, document.ToRange(write.Span));
                 }
+
+                // `_G.X = ...` publishes a global through an index expression the binder
+                // records as a member write on _G rather than a global write; treat it
+                // as the definition when no direct global write exists.
+                foreach (var memberWrite in globalSnapshot.FindMemberReferences(reference.Name))
+                {
+                    if (workspace.GetUri(memberWrite.Module.Name) is not { } memberUri ||
+                        !workspace.TryGetDocument(memberUri, out var memberDocument))
+                    {
+                        continue;
+                    }
+
+                    var start = memberDocument.ToCharOffset(memberDocument.ToPosition(memberWrite.Span.Start));
+                    var end = memberDocument.ToCharOffset(memberDocument.ToPosition(memberWrite.Span.End));
+                    if (IsMemberPathWrite(memberDocument.Text,
+                            new Lunil.Core.Text.TextSpan(start, end - start), "_G"))
+                    {
+                        return Location(memberUri, memberDocument.ToRange(memberWrite.Span));
+                    }
+                }
             }
 
             var localWrite = context.Analysis.Compilation.SemanticModel.References
@@ -389,11 +450,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         // example the `local Character = GameEntity:extend(...)` class line).
         var aliases = BuildRequireAliases(context.Analysis);
         if (reference is not null &&
-            aliases.TryGetValue(reference.Symbol.Id, out var aliasModule) &&
-            await TryGetClassDeclarationLocationAsync(aliasModule, cancellationToken)
-                .ConfigureAwait(false) is { } aliasLocation)
+            aliases.TryGetValue(reference.Symbol.Id, out var aliasModule))
         {
-            return aliasLocation;
+            foreach (var candidate in workspace.ExpandRequireName(aliasModule))
+            {
+                if (await TryGetClassDeclarationLocationAsync(candidate, cancellationToken)
+                        .ConfigureAwait(false) is { } aliasLocation)
+                {
+                    return aliasLocation;
+                }
+            }
         }
 
         // The cursor may sit on the declaration itself (`local Movable = {}`), which the
@@ -406,11 +472,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 return null;
             }
 
-            if (aliases.TryGetValue(declared.Id, out var declaredAliasModule) &&
-                await TryGetClassDeclarationLocationAsync(declaredAliasModule, cancellationToken)
-                    .ConfigureAwait(false) is { } declaredAliasLocation)
+            if (aliases.TryGetValue(declared.Id, out var declaredAliasModule))
             {
-                return declaredAliasLocation;
+                foreach (var candidate in workspace.ExpandRequireName(declaredAliasModule))
+                {
+                    if (await TryGetClassDeclarationLocationAsync(candidate, cancellationToken)
+                            .ConfigureAwait(false) is { } declaredAliasLocation)
+                    {
+                        return declaredAliasLocation;
+                    }
+                }
             }
 
             return Location(context.Analysis.Document.Uri, context.Analysis.Document.ToRange(
@@ -644,6 +715,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var bases = CollectBaseClassNames(declarations, className, runtimeBases);
 
         var markdown = new StringBuilder();
+        // Header: class signature with inheritance
         markdown.Append("```lua\nclass ").Append(className);
         if (bases.Count > 0)
         {
@@ -651,12 +723,18 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         }
 
         markdown.Append("\n```");
-        markdown.Append("\n**").Append(Localization.ModuleLabel).Append("** ");
-        markdown.Append(workspace.GetUri(module) is { } moduleUri ? ModuleLink(moduleUri, module) : module);
+
+        // Metadata block: module and extends chain, separated by consistent spacing
+        markdown.Append("\n\n");
+        markdown.Append("| | |\n|---|---|\n");
+        markdown.Append("| ").Append(Localization.ModuleLabel).Append(" | ")
+            .Append(workspace.GetUri(module) is { } moduleUri ? ModuleLink(moduleUri, module) : module)
+            .Append(" |\n");
         if (bases.Count > 0)
         {
-            markdown.Append("  \n**").Append(Localization.ExtendsLabel).Append("** ")
-                .Append(string.Join(" → ", bases.Select(ClassLink)));
+            markdown.Append("| ").Append(Localization.ExtendsLabel).Append(" | ")
+                .Append(string.Join(" → ", bases.Select(ClassLink)))
+                .Append(" |\n");
         }
 
         if (documentText is not null && TryGetLeadingDocComment(documentText, 0, 200) is { } description)
@@ -677,10 +755,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 .Select(symbol => (
                     symbol.Path,
                     Signature: FormatMemberSignature(symbol.Type),
+                    IsFunction: symbol.Type is LuaFunctionType or LuaOverloadType,
                     Doc: documentText is null || inherited
                         ? null
                         : TryGetMemberDoc(documentText, symbol.DefinitionSpan)))
-                .OrderBy(member => member.Signature.StartsWith('(') ? 0 : 1)
+                .OrderByDescending(member => member.IsFunction)
                 .ThenBy(member => member.Path, StringComparer.Ordinal)
                 .ToList();
             if (members.Count == 0)
@@ -693,7 +772,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                 shownSignatures.Append(member.Signature).Append(' ');
             }
 
-            markdown.Append(inherited || shownGroups == 0 ? "\n\n---\n" : "\n\n");
+            // Consistent divider between member groups
+            markdown.Append("\n\n---\n");
             markdown.Append("**");
             markdown.Append(inherited ? Localization.InheritedFrom(groupClass) : Localization.MembersLabel);
             markdown.Append(" (").Append(members.Count).Append(")**\n");
@@ -724,6 +804,30 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
         AppendTypeNameLinks(markdown, shownSignatures.ToString());
         return markdown.Length == 0 ? null : markdown.ToString();
+    }
+
+    /// <summary>
+    /// Builds the class hover card for a fallback reference whose inferred type is a
+    /// workspace-annotated class value, even when the symbol is not linked to the
+    /// module's root export through the usual class-value resolution path.
+    /// </summary>
+    private string? TryBuildClassHoverForType(string symbolName, LuaType? type)
+    {
+        var className = ClassNameOfType(type);
+        if (className is null)
+        {
+            return null;
+        }
+
+        foreach (var module in ClassModuleNamesFor(className))
+        {
+            if (TryBuildClassHover(module, className) is { } card)
+            {
+                return card;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>A class name linked to its declaration site, or plain code when unknown.</summary>
@@ -772,15 +876,18 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                     return FormatMemberSignature(overload.Signatures[0]) + suffix;
                 }
 
+            case LuaMetatableType { MetatableType: LuaPrototypeType { Name: { Length: > 0 } className } }:
+                return $": {className}";
+
             default:
                 return ": " + DisplayType(type);
         }
     }
 
     /// <summary>
-    /// A compact type display for hover cards: structural tables collapse to `table`
-    /// when they have more than a handful of fields or more than one unnamed positional
-    /// entry (`{[unknown]: any, ...}` arrays), since the full dump is unreadable.
+    /// A compact type display for hover cards: small structural tables show their
+    /// fields (capped at 3, then an ellipsis), large ones collapse to `table<k, v>`;
+    /// metatables wrapping a prototype render as the class name.
     /// </summary>
     private static string? DisplayType(LuaType? type)
     {
@@ -796,7 +903,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return type?.DisplayName;
         }
 
-        var named = 0;
+        var named = new List<string>();
         var unnamed = 0;
         foreach (var field in shape.Fields)
         {
@@ -806,12 +913,43 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             }
             else
             {
-                named++;
+                named.Add(field.Name);
             }
         }
 
-        return named + unnamed > 4 || unnamed >= 2 ? "table" : type.DisplayName;
+        // Small named-only tables show a compact field preview.
+        if (unnamed == 0 && named.Count is > 0 and <= 6)
+        {
+            var preview = string.Join(", ", named.Take(3));
+            if (named.Count > 3)
+            {
+                preview += ", …";
+            }
+
+            return $"{{{preview}}}";
+        }
+
+        // Map-shaped or large tables collapse to `table<k, v>`.
+        if (shape.MapValueType is not null)
+        {
+            return $"table<{shape.MapKeyType?.DisplayName ?? "any"}, {shape.MapValueType.DisplayName}>";
+        }
+
+        return named.Count + unnamed > 4 || unnamed >= 2 ? "table" : type.DisplayName;
     }
+
+    /// <summary>
+    /// Names that denote Lua (or common engine-scalar) primitives rather than workspace
+    /// classes. Generated type stubs sometimes annotate them as <c>---@class any</c>;
+    /// linking them on every hover card is pure noise (`类型 any` under every function).
+    /// </summary>
+    private static readonly HashSet<string> PrimitiveTypeNames = new(StringComparer.Ordinal)
+    {
+        "any", "nil", "boolean", "number", "integer", "string", "table", "function",
+        "thread", "userdata", "lightuserdata", "varargs", "self", "void",
+        "double", "float", "int", "int8", "int16", "int32", "int64",
+        "uint", "uint8", "uint16", "uint32", "uint64",
+    };
 
     /// <summary>
     /// Appends a `**Types**` line linking every workspace class name that occurs in
@@ -826,7 +964,9 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             return;
         }
 
-        var declaredNames = declarations.Select(static declaration => declaration.Name).ToHashSet();
+        var declaredNames = declarations.Select(static declaration => declaration.Name)
+            .Where(static name => !PrimitiveTypeNames.Contains(name))
+            .ToHashSet();
         var seen = new List<string>();
         foreach (var match in TypeNameRegex().Matches(signatureText))
         {
@@ -835,6 +975,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             {
                 seen.Add(name);
             }
+        }
+
+        // When the signature itself is a class's display name (for example a
+        // class-typed local hover), link that exact name even if the regex scan
+        // above already would; the class card uses the same helper.
+        if (seen.Count == 0 &&
+            signatureText.Length > 0 &&
+            declaredNames.Contains(signatureText))
+        {
+            seen.Add(signatureText);
         }
 
         if (seen.Count == 0)
@@ -848,6 +998,68 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
 
     [GeneratedRegex("[A-Za-z_][A-Za-z0-9_]*")]
     private static partial Regex TypeNameRegex();
+
+    /// <summary>
+    /// A compact member summary for a locally built table — the `local M = Factory(...)`
+    /// plus `function M.f` pattern — mirroring the class card's member section so the
+    /// hover answers "what does this table hold" instead of a bare `table`. Members link
+    /// to their same-file write positions. Instance types (metatable instances) keep
+    /// their existing concise display.
+    /// </summary>
+    private void AppendStructuralMemberSummary(
+        StringBuilder markdown,
+        LuaType? type,
+        LanguageDocumentAnalysis analysis)
+    {
+        if (type is not (LuaStructuralTableType or LuaPrototypeType))
+        {
+            return;
+        }
+
+        var members = CollectTypeMembers(type)
+            .Where(static member => member.Name is { Length: > 0 })
+            .Select(static member => (
+                member.Name,
+                Signature: FormatMemberSignature(member.Type),
+                IsFunction: member.Type is LuaFunctionType or LuaOverloadType))
+            .OrderByDescending(static member => member.IsFunction)
+            .ThenBy(static member => member.Name, StringComparer.Ordinal)
+            .ToList();
+        if (members.Count == 0)
+        {
+            return;
+        }
+
+        markdown.Append("\n\n---\n**");
+        markdown.Append(Localization.MembersLabel);
+        markdown.Append(" (").Append(members.Count).Append(")**\n");
+        const int shown = 10;
+        foreach (var member in members.Take(shown))
+        {
+            var write = analysis.Compilation.SemanticModel.UnifiedReferences
+                .Where(item => string.Equals(item.Name, member.Name, StringComparison.Ordinal) &&
+                    item.Access.HasFlag(LuaReferenceAccess.Write))
+                .OrderBy(static item => item.Span.Start)
+                .FirstOrDefault();
+            if (write is not null)
+            {
+                var position = analysis.Document.ToPosition(write.Span.Start);
+                markdown.Append("- ")
+                    .Append(LocationLink(analysis.Document.Uri.AbsoluteUri, position.Line, position.Character, member.Name))
+                    .Append(member.Signature)
+                    .Append('\n');
+            }
+            else
+            {
+                markdown.Append("- ").Append(member.Name).Append(member.Signature).Append('\n');
+            }
+        }
+
+        if (members.Count > shown)
+        {
+            markdown.Append("- ").Append(Localization.MoreMembers(members.Count - shown)).Append('\n');
+        }
+    }
 
     /// <summary>
     /// The prose lines of the `---` comment block that ends at the line preceding the
@@ -1361,22 +1573,212 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
                      symbol.Name.Contains(query, StringComparison.OrdinalIgnoreCase) && !symbol.IsExternal))
         {
             var uri = workspace.GetUri(symbol.ModuleName);
-            if (uri is null || !workspace.TryGetDocument(uri, out var document))
+            if (uri is null)
             {
                 continue;
             }
 
+            // A snapshot restored from disk can answer before the folder scan has the
+            // document loaded; a zero range still opens the right file.
+            var range = workspace.TryGetDocument(uri, out var document)
+                ? document.ToRange(symbol.DefinitionSpan)
+                : new LspRange(new LspPosition(0, 0), new LspPosition(0, 0));
             result.Add(new JsonObject
             {
                 ["name"] = symbol.Name,
                 ["kind"] = symbol.Kind == LuaWorkspaceExportKind.Function ? 12 : 13,
-                ["location"] = Location(uri, document.ToRange(symbol.DefinitionSpan)),
+                ["location"] = Location(uri, range),
                 ["containerName"] = symbol.ModuleName,
             });
         }
 
         return result;
     }
+
+    /// <summary>
+    /// The class hierarchy at a cursor: the class named there (an annotation type name,
+    /// a prototype-typed local or receiver), its base classes transitively (annotation
+    /// declarations plus runtime/factory edges), and every class that derives from it.
+    /// </summary>
+    public async Task<JsonNode?> ClassHierarchyAsync(
+        JsonElement parameters,
+        CancellationToken cancellationToken)
+    {
+        var context = await GetContextAsync(parameters, cancellationToken).ConfigureAwait(false);
+        if (context is null)
+        {
+            return null;
+        }
+
+        var className = ResolveClassNameAt(context.Analysis, context.ByteOffset);
+        if (className is null)
+        {
+            return null;
+        }
+
+        var runtimeBases = workspace.GetRuntimeClassBases();
+        var runtimeModules = workspace.GetRuntimeClassModules();
+        var declarations = workspace.GetClassDeclarations()
+            .GroupBy(static declaration => declaration.Name, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.Ordinal);
+
+        string? ModuleOf(string name) =>
+            runtimeModules.TryGetValue(name, out var runtimeModule)
+                ? runtimeModule
+                : declarations.TryGetValue(name, out var declaration)
+                    ? declaration.ModuleName
+                    : null;
+
+        IEnumerable<string> BasesOf(string name)
+        {
+            if (runtimeBases.TryGetValue(name, out var runtimeBase))
+            {
+                yield return runtimeBase;
+            }
+
+            if (declarations.TryGetValue(name, out var declaration))
+            {
+                foreach (var baseName in declaration.BaseNames)
+                {
+                    yield return baseName;
+                }
+            }
+        }
+
+        var derivedIndex = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        void AddDerived(string baseName, string derivedName)
+        {
+            if (!derivedIndex.TryGetValue(baseName, out var list))
+            {
+                derivedIndex[baseName] = list = [];
+            }
+
+            if (!list.Contains(derivedName))
+            {
+                list.Add(derivedName);
+            }
+        }
+
+        foreach (var pair in runtimeBases)
+        {
+            AddDerived(pair.Value, pair.Key);
+        }
+
+        foreach (var declaration in declarations.Values)
+        {
+            foreach (var baseName in declaration.BaseNames)
+            {
+                AddDerived(baseName, declaration.Name);
+            }
+        }
+
+        // Transitive closure, nearest first, cycle-safe.
+        List<string> Closure(string start, Func<string, IEnumerable<string>> next)
+        {
+            var result = new List<string>();
+            var visited = new HashSet<string>(StringComparer.Ordinal) { start };
+            var queue = new Queue<string>();
+            queue.Enqueue(start);
+            while (queue.Count > 0)
+            {
+                foreach (var candidate in next(queue.Dequeue()))
+                {
+                    if (visited.Add(candidate))
+                    {
+                        result.Add(candidate);
+                        queue.Enqueue(candidate);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        JsonObject Entry(string name)
+        {
+            var module = ModuleOf(name);
+            return new JsonObject
+            {
+                ["name"] = name,
+                ["moduleName"] = module,
+                ["location"] = ClassLocation(module),
+            };
+        }
+
+        return new JsonObject
+        {
+            ["name"] = className,
+            ["moduleName"] = ModuleOf(className),
+            ["location"] = ClassLocation(ModuleOf(className)),
+            ["bases"] = new JsonArray(
+                Closure(className, BasesOf).Select(name => (JsonNode?)Entry(name)).ToArray()),
+            ["derived"] = new JsonArray(
+                Closure(className, name => derivedIndex.GetValueOrDefault(name) ?? [])
+                    .Select(name => (JsonNode?)Entry(name)).ToArray()),
+        };
+    }
+
+    /// <summary>The definition location of a class's declaring module's root export.</summary>
+    private JsonObject? ClassLocation(string? moduleName)
+    {
+        if (moduleName is null || workspace.GetSnapshot() is not { } snapshot)
+        {
+            return null;
+        }
+
+        var uri = workspace.GetUri(moduleName);
+        if (uri is null || !workspace.TryGetDocument(uri, out var document))
+        {
+            return null;
+        }
+
+        var root = snapshot.ExportGraph.Symbols.FirstOrDefault(symbol =>
+            !symbol.IsExternal && symbol.ModuleName == moduleName && symbol.Path.Length == 0);
+        return Location(uri, document.ToRange(root?.DefinitionSpan ?? default));
+    }
+
+    /// <summary>
+    /// The class a cursor names: an annotation type reference directly, a member access
+    /// through its receiver's prototype/instance type, or a plain reference to a
+    /// class-typed symbol.
+    /// </summary>
+    private static string? ResolveClassNameAt(LanguageDocumentAnalysis analysis, int offset)
+    {
+        if (FindAnnotationElementAt(analysis, offset) is { Name: { Length: > 0 } } annotation)
+        {
+            return annotation.Name;
+        }
+
+        if (FindCodeReference(analysis, offset) is { } member &&
+            ClassNameOfType(ResolveReceiverType(analysis, member)) is { } viaReceiver)
+        {
+            return viaReceiver;
+        }
+
+        if (FindReference(analysis, offset) is { } reference &&
+            ClassNameOfType(GetType(analysis, reference.Symbol)) is { } viaSymbol)
+        {
+            return viaSymbol;
+        }
+
+        // The cursor may sit on the declaration itself (`local M = class("M")`), where
+        // the reference list only carries usages — resolve the declared symbol.
+        if (FindDeclaredSymbolAt(analysis, offset) is { } declared &&
+            ClassNameOfType(GetType(analysis, declared)) is { } viaDeclaration)
+        {
+            return viaDeclaration;
+        }
+
+        return null;
+    }
+
+    private static string? ClassNameOfType(LuaType? type) => type switch
+    {
+        LuaPrototypeType prototype => prototype.Name,
+        LuaMetatableType { MetatableType: LuaPrototypeType metatable } => metatable.Name,
+        LuaClassType classReference => classReference.Name,
+        _ => null,
+    };
 
     public async Task<JsonNode?> SemanticTokensAsync(
         JsonElement parameters,
@@ -1676,53 +2078,172 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     private const int EnumTokenType = 9;
     private const int StringTokenType = 10;
     private const int NumberTokenType = 11;
+    private const int NamespaceTokenType = 12;
+    private const int EnumMemberTokenType = 13;
     private const int DeclarationTokenModifier = 1;
+    private const int DefaultLibraryTokenModifier = 16;
 
-    private static ImmutableArray<int> BuildSemanticTokens(LanguageDocumentAnalysis analysis)
+    private ImmutableArray<int> BuildSemanticTokens(LanguageDocumentAnalysis analysis)
     {
         // Name references and member/index references are both highlighted; member
         // tokens distinguish method calls, plain calls, and plain field accesses.
         // Parsed annotations contribute their own tokens — @tag keywords, declared
         // names, and type expressions — so LuaLS/EmmyLua directives get the same
         // structural highlighting as the code they document.
-        var tokens = analysis.Compilation.SemanticModel.UnifiedReferences
-            .Select(reference =>
+        //
+        // Beyond the access-based kinds, references carry semantic role: require
+        // aliases render as namespaces, prototype/class-typed locals as classes,
+        // builtin globals carry the defaultLibrary modifier, declarations get the
+        // declaration modifier, and dotted chains (host.Engine.Utility.TimeUtil)
+        // resolve each segment against workspace class-declaration prefixes so the
+        // namespace and class segments stand apart from plain properties.
+        var requireAliases = BuildRequireAliases(analysis);
+        var declaringStarts = new HashSet<int>();
+        foreach (var symbol in analysis.Compilation.SemanticModel.Symbols)
+        {
+            declaringStarts.Add(symbol.DeclaringSpan.Start);
+        }
+
+        var classNames = new HashSet<string>(StringComparer.Ordinal);
+        var namespacePrefixes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var declaration in workspace.GetClassDeclarations())
+        {
+            classNames.Add(declaration.Name);
+            for (var dot = declaration.Name.IndexOf('.');
+                dot > 0;
+                dot = declaration.Name.IndexOf('.', dot + 1))
             {
-                var range = analysis.Document.ToRange(reference.Span);
-                int type;
-                int modifiers = (reference.Access.HasFlag(LuaReferenceAccess.Write) ? 4 : 0) |
-                    (reference.LexicalReference?.Symbol.IsReadOnly == true ? 2 : 0) |
-                    (reference.LexicalReference?.Symbol.IsCaptured == true ? 8 : 0);
-                if (reference.LexicalReference is { } lexical)
+                namespacePrefixes.Add(declaration.Name[..dot]);
+            }
+        }
+
+        var tokenPairs = new List<((int Line, int Character, int Length, int Type, int Modifiers) Token, LuaCodeReference? Reference)>();
+        foreach (var reference in analysis.Compilation.SemanticModel.UnifiedReferences)
+        {
+            var range = analysis.Document.ToRange(reference.Span);
+            int type;
+            int modifiers = (reference.Access.HasFlag(LuaReferenceAccess.Write) ? 4 : 0) |
+                (reference.LexicalReference?.Symbol.IsReadOnly == true &&
+                    reference.LexicalReference.Symbol.Kind is not (LuaSymbolKind.Environment or
+                        LuaSymbolKind.Global) ? 2 : 0) |
+                (reference.LexicalReference?.Symbol.IsCaptured == true &&
+                    reference.LexicalReference.Symbol.Kind is not (LuaSymbolKind.Environment or
+                        LuaSymbolKind.Global) ? 8 : 0);
+            if (reference.LexicalReference is { } lexical)
+            {
+                if (declaringStarts.Contains(reference.Span.Start))
                 {
-                    type = lexical.Symbol.Kind switch
+                    modifiers |= DeclarationTokenModifier;
+                }
+
+                if (requireAliases.ContainsKey(lexical.Symbol.Id))
+                {
+                    type = NamespaceTokenType;
+                }
+                else if (lexical.Symbol.Kind == LuaSymbolKind.Parameter)
+                {
+                    type = 1;
+                }
+                else if (lexical.Symbol.Kind is LuaSymbolKind.Global or LuaSymbolKind.Environment)
+                {
+                    // Global reads fold into the implicit _ENV symbol (Environment
+                    // kind); module-scope table globals keep the Global kind.
+                    if (reference.Name is { Length: > 0 } globalName &&
+                        Builtin.Globals.TryGetValue(globalName, out var builtinType))
                     {
-                        LuaSymbolKind.Parameter => 1,
-                        LuaSymbolKind.Global => 3,
-                        _ => GetType(analysis, lexical.Symbol) is LuaFunctionType ? 2 : 0,
-                    };
+                        modifiers |= DefaultLibraryTokenModifier;
+                        type = builtinType is LuaFunctionType ? 2 : 3;
+                    }
+                    else
+                    {
+                        type = 0;
+                    }
                 }
                 else
                 {
-                    type = reference.Access switch
-                    {
-                        var access when access.HasFlag(LuaReferenceAccess.MethodCall) => 4,
-                        var access when access.HasFlag(LuaReferenceAccess.Call) => 2,
-                        _ => 3,
-                    };
+                    var symbolType = GetType(analysis, lexical.Symbol);
+                    type = symbolType is LuaFunctionType or LuaOverloadType ? 2
+                        : symbolType is LuaPrototypeType or LuaClassType ? 6
+                        : 0;
                 }
+            }
+            else
+            {
+                type = reference.Access switch
+                {
+                    var access when access.HasFlag(LuaReferenceAccess.MethodCall) => 4,
+                    var access when access.HasFlag(LuaReferenceAccess.Call) => 2,
+                    _ => 3,
+                };
+            }
 
-                return (Line: range.Start.Line, Character: range.Start.Character,
-                    Length: Math.Max(1, range.End.Character - range.Start.Character), Type: type,
-                    Modifiers: modifiers);
-            })
-            .Concat(BuildAnnotationTokens(analysis))
-            .OrderBy(static token => token.Line).ThenBy(static token => token.Character).ToArray();
+            tokenPairs.Add((
+                (range.Start.Line, range.Start.Character,
+                    Math.Max(1, range.End.Character - range.Start.Character), type, modifiers),
+                reference));
+        }
+
+        // Declarations are not references (the binder records uses only), so local
+        // declarations, parameters, and function names would otherwise render
+        // uncolored. Each symbol contributes a declaration token at its declaring
+        // span with the declaration modifier.
+        foreach (var symbol in analysis.Compilation.SemanticModel.Symbols)
+        {
+            if (symbol.DeclaringSpan.Length == 0)
+            {
+                continue;
+            }
+
+            var declarationSpan = symbol.Kind is LuaSymbolKind.Environment or LuaSymbolKind.Global ||
+                symbol.Name is not { Length: > 0 }
+                    ? symbol.DeclaringSpan
+                    : NormalizeDeclaringSpan(symbol, analysis.Document);
+            var declarationRange = analysis.Document.ToRange(declarationSpan);
+            var symbolType = GetType(analysis, symbol);
+            var declarationType = symbol.Kind switch
+            {
+                LuaSymbolKind.Parameter => 1,
+                LuaSymbolKind.NumericForVariable or LuaSymbolKind.GenericForVariable => 0,
+                _ => symbolType is LuaFunctionType or LuaOverloadType ? 2
+                    : symbolType is LuaPrototypeType or LuaClassType ? 6
+                    : 0,
+            };
+
+            tokenPairs.Add((
+                (declarationRange.Start.Line, declarationRange.Start.Character,
+                    Math.Max(1, declarationRange.End.Character - declarationRange.Start.Character),
+                    declarationType, DeclarationTokenModifier),
+                null));
+        }
+
+        foreach (var annotationToken in BuildAnnotationTokens(analysis))
+        {
+            tokenPairs.Add((annotationToken, null));
+        }
+
+        var ordered = tokenPairs
+            .OrderBy(static pair => pair.Token.Line)
+            .ThenBy(static pair => pair.Token.Character)
+            .ThenBy(static pair => pair.Reference is null ? 0 : 1)
+            .ToArray();
+        var tokens = ordered.Select(static pair => pair.Token).ToArray();
+        var references = ordered.Select(static pair => pair.Reference).ToArray();
+
+        ClassifyDottedPaths(tokens, analysis.Document.Text, classNames, namespacePrefixes);
+        ClassifyMemberTypes(tokens, references, analysis);
+
         var builder = ImmutableArray.CreateBuilder<int>(tokens.Length * 5);
         var previousLine = 0;
         var previousCharacter = 0;
         foreach (var token in tokens)
         {
+            // Duplicate positions (a declaration token and a same-span reference)
+            // would produce overlapping highlights; the declaration wins.
+            if (token.Line == previousLine && token.Character == previousCharacter)
+            {
+                continue;
+            }
+
             var lineDelta = token.Line - previousLine;
             var characterDelta = lineDelta == 0 ? token.Character - previousCharacter : token.Character;
             builder.Add(lineDelta);
@@ -1734,7 +2255,251 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             previousCharacter = token.Character;
         }
 
-        return builder.MoveToImmutable();
+        // Deduplicated tokens may leave the builder below its capacity; ToImmutable
+        // (unlike MoveToImmutable) does not require Count == Capacity.
+        return builder.ToImmutable();
+    }
+
+    /// <summary>
+    /// Flows the receiver's type through dotted runs: for `X.member` (and longer
+    /// chains), the head symbol's recorded type tells what each member IS — a function
+    /// field renders as method/function (so non-call references like callbacks and
+    /// function-statement definitions get the function color), and a literal field
+    /// renders as an enum member (generated constant tables such as
+    /// `Settings.FeatureFlag.X`). When the recorded types run out (the head is an
+    /// untyped global), a member naming a unique same-named module rescues the flow
+    /// with that module's root export type — the config-docs pattern, where every
+    /// constant table is its own module. Only member tokens without a lexical symbol
+    /// are reclassified; access-based call coloring already covers calls.
+    /// </summary>
+    private void ClassifyMemberTypes(
+        (int Line, int Character, int Length, int Type, int Modifiers)[] tokens,
+        LuaCodeReference?[] references,
+        LanguageDocumentAnalysis analysis)
+    {
+        var lines = analysis.Document.Text.Split('\n');
+        var snapshot = workspace.GetSnapshot();
+        Dictionary<string, LuaWorkspaceCompactModule>? moduleBySegment = null;
+        HashSet<string>? ambiguousSegments = null;
+
+        for (var index = 0; index < tokens.Length; index++)
+        {
+            var headReference = references[index];
+            var currentType = headReference?.LexicalReference is { Symbol: { } headSymbol }
+                ? GetType(analysis, headSymbol)
+                : null;
+
+            // Extend through member tokens joined by exactly one separator, carrying
+            // the resolved field type forward for deeper chains.
+            var current = index;
+            while (current + 1 < tokens.Length)
+            {
+                var segment = tokens[current];
+                var next = tokens[current + 1];
+                var segmentLine = segment.Line < lines.Length ? lines[segment.Line] : string.Empty;
+                var nextLine = next.Line < lines.Length ? lines[next.Line] : string.Empty;
+                // Nothing but a member name can follow a '.', so no lexical-symbol check
+                // is needed here; member WRITE references may still carry one.
+                if (next.Line != segment.Line ||
+                    next.Character != segment.Character + segment.Length + 1 ||
+                    segment.Character + segment.Length >= segmentLine.Length ||
+                    next.Character + next.Length > nextLine.Length)
+                {
+                    break;
+                }
+
+                var separator = segmentLine[segment.Character + segment.Length];
+                if (separator is not ('.' or ':'))
+                {
+                    break;
+                }
+
+                var name = nextLine.Substring(next.Character, next.Length);
+                var fieldType = CollectTypeMembers(currentType)
+                    .FirstOrDefault(member => string.Equals(member.Name, name, StringComparison.Ordinal))
+                    .Type;
+                if (fieldType is null && snapshot is not null)
+                {
+                    // Rescue: a member naming a unique same-named module adopts that
+                    // module's root export type (config-docs constant tables).
+                    moduleBySegment ??= BuildModuleSegmentIndex(snapshot, out ambiguousSegments!);
+                    if (moduleBySegment.TryGetValue(name, out var module))
+                    {
+                        fieldType = FindModuleRootExport(module.Identity.Name)?.Type;
+                    }
+                }
+
+                if (fieldType is null)
+                {
+                    break;
+                }
+
+                // Tuples are value types: write through the array, not the local copy.
+                if (fieldType is LuaFunctionType or LuaOverloadType)
+                {
+                    tokens[current + 1].Type = separator == ':' ? 4 : 2;
+                }
+                else if (IsLiteralType(fieldType) && IsConstantTable(currentType))
+                {
+                    // Literal members of constant tables (generated enums) render as
+                    // enum members; a plain literal-valued field stays a property.
+                    tokens[current + 1].Type = EnumMemberTokenType;
+                }
+
+                currentType = fieldType;
+                current++;
+            }
+
+            index = Math.Max(index, current - 1);
+        }
+    }
+
+    /// <summary>Modules keyed by their name's final segment; ambiguous names are dropped.</summary>
+    private static Dictionary<string, LuaWorkspaceCompactModule> BuildModuleSegmentIndex(
+        LuaWorkspaceCompactSnapshot snapshot,
+        out HashSet<string> ambiguous)
+    {
+        var index = new Dictionary<string, LuaWorkspaceCompactModule>(StringComparer.Ordinal);
+        ambiguous = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var module in snapshot.Modules)
+        {
+            var name = module.Identity.Name;
+            var dot = name.LastIndexOf('.');
+            var lastSegment = dot >= 0 ? name[(dot + 1)..] : name;
+            if (ambiguous.Contains(lastSegment) ||
+                index.TryGetValue(lastSegment, out var existing) &&
+                !ReferenceEquals(existing, module))
+            {
+                ambiguous.Add(lastSegment);
+                index.Remove(lastSegment);
+                continue;
+            }
+
+            index.TryAdd(lastSegment, module);
+        }
+
+        return index;
+    }
+
+    private static bool IsLiteralType(LuaType type) =>
+        type.Kind is LuaTypeKind.String or LuaTypeKind.Boolean or
+            LuaTypeKind.Number or LuaTypeKind.Integer ||
+        type is LuaStringLiteralType or LuaBooleanLiteralType or LuaIntegerLiteralType;
+
+    /// <summary>
+    /// A constant table — the generated-enum shape: at least three named fields and at
+    /// least 80% of them literal-typed. Ordinary tables with one or two literal fields
+    /// (a status flag, a cached name) do not qualify.
+    /// </summary>
+    private static bool IsConstantTable(LuaType? type)
+    {
+        var shape = type switch
+        {
+            LuaMetatableType metatable => metatable.BaseType,
+            LuaPrototypeType prototype => prototype.Shape,
+            _ => type,
+        };
+        if (shape is not LuaStructuralTableType table)
+        {
+            return false;
+        }
+
+        var named = 0;
+        var literals = 0;
+        foreach (var field in table.Fields)
+        {
+            if (field.Name is null)
+            {
+                continue;
+            }
+
+            named++;
+            if (field.ValueType is { } value && IsLiteralType(value))
+            {
+                literals++;
+            }
+        }
+
+        return named >= 3 && literals * 10 >= named * 8;
+    }
+
+    /// <summary>
+    /// Reclassifies dotted name chains (<c>host.Engine.Utility.TimeUtil.isReviewBuild</c>):
+    /// a segment whose accumulated path names a workspace class declaration becomes a
+    /// class token, and segments whose path only prefixes declarations become namespaces —
+    /// so host-injected API chains read like the type names they address instead of a
+    /// row of indistinguishable properties. Token characters are line-relative, so all
+    /// text access goes through the owning line's slice.
+    /// </summary>
+    private static void ClassifyDottedPaths(
+        (int Line, int Character, int Length, int Type, int Modifiers)[] tokens,
+        string text,
+        HashSet<string> classNames,
+        HashSet<string> namespacePrefixes)
+    {
+        if (namespacePrefixes.Count == 0)
+        {
+            return;
+        }
+
+        var lines = text.Split('\n');
+        for (var index = 0; index < tokens.Length; index++)
+        {
+            var head = tokens[index];
+            if (head.Line >= lines.Length)
+            {
+                continue;
+            }
+
+            var headLine = lines[head.Line];
+            if (head.Character + head.Length > headLine.Length)
+            {
+                continue;
+            }
+
+            var path = headLine.Substring(head.Character, head.Length);
+            if (!namespacePrefixes.Contains(path) && !classNames.Contains(path))
+            {
+                continue;
+            }
+
+            // Extend the run while the next token follows through exactly one '.'.
+            var current = index;
+            while (current + 1 < tokens.Length)
+            {
+                var segment = tokens[current];
+                var next = tokens[current + 1];
+                var segmentLine = segment.Line < lines.Length ? lines[segment.Line] : string.Empty;
+                var nextLine = next.Line < lines.Length ? lines[next.Line] : string.Empty;
+                if (next.Line != segment.Line ||
+                    next.Character != segment.Character + segment.Length + 1 ||
+                    segment.Character + segment.Length >= segmentLine.Length ||
+                    next.Character + next.Length > nextLine.Length ||
+                    segmentLine[segment.Character + segment.Length] != '.')
+                {
+                    break;
+                }
+
+                current++;
+                path = string.Concat(path, ".", nextLine.AsSpan(next.Character, next.Length));
+                if (classNames.Contains(path))
+                {
+                    tokens[current].Type = ClassTokenType;
+                }
+                else if (namespacePrefixes.Contains(path))
+                {
+                    tokens[current].Type = NamespaceTokenType;
+                }
+                else
+                {
+                    // Past the last declared prefix the chain reaches instance members;
+                    // keep their access-based kinds and stop extending.
+                    break;
+                }
+            }
+
+            index = current;
+        }
     }
 
     /// <summary>
@@ -2005,7 +2770,8 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     private static Uri GetUri(JsonElement parameters)
     {
         var document = parameters.TryGetProperty("textDocument", out var value) ? value : parameters;
-        return new Uri(document.GetProperty("uri").GetString()!, UriKind.Absolute);
+        return LanguageServerWorkspace.CanonicalUri(
+            new Uri(document.GetProperty("uri").GetString()!, UriKind.Absolute));
     }
 
     private static LspPosition GetPosition(JsonElement element) => new(

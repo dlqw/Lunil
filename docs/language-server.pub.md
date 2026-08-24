@@ -70,7 +70,12 @@ object:
       "hostContractJson": "",
       "locale": "auto",
       "workspace": { "library": ["/absolute/path/to/meta-stubs"] },
-      "analysis": { "exclude": ["data/**"], "autoDetectDataFiles": true }
+      "require": { "searchPaths": ["scripts/client"] },
+      "analysis": {
+        "exclude": ["data/**"],
+        "autoDetectDataFiles": true,
+        "classFactories": ["defineView", { "name": "class", "baseArguments": true }]
+      }
     }
   }
 }
@@ -83,15 +88,19 @@ object:
 | `workspace.library` | `[]` | Read-only folders of LuaLS-style `---@meta` stubs describing host-injected globals and classes. |
 | `analysis.exclude` | `[]` | Glob patterns keeping matching Lua files out of indexing. Patterns match workspace-relative `/`-separated paths; a pattern without a separator matches the file name in any directory; matching is case-insensitive. |
 | `analysis.autoDetectDataFiles` | `true` | Auto-detect very large generated data files (pure table-literal data without functions, requires, or control flow) and keep them out of indexing. |
+| `require.searchPaths` | `[]` | Directory roots (relative to the workspace) used to resolve `require` strings as dotted prefixes; the raw name is tried first. |
+| `analysis.classFactories` | `[]` | Global functions that define classes; accepts factory names or `{ "name": "...", "baseArguments": true }` objects. |
 | `server.suppressedDiagnosticCodes` | `[]` | Diagnostic codes (for example `LUA6022`) suppressed by the analysis. |
 
 The table names the raw `settings.lunil` payload properties. The VS Code extension surfaces them
-as flat settings (`lunil.workspace.library`, `lunil.analysis.exclude`, `lunil.locale`, ...); only
-the editor configuration accepts the flat dotted names. Changing `analysis.exclude`,
-`analysis.autoDetectDataFiles`, or `workspace.library` re-scans the workspace without a restart.
-Excluded files resolve as untyped values when required by analyzed code, and opening one in the
-editor analyzes it anyway. See [Configuring the language server](configuring-the-language-server.pub.md)
-for the settings' detailed behavior and adaptive residency budgets.
+as flat settings (`lunil.workspace.library`, `lunil.analysis.exclude`, `lunil.require.searchPaths`,
+`lunil.analysis.classFactories`, `lunil.locale`, ...); only the editor configuration accepts the
+flat dotted names. Changing `analysis.exclude`, `analysis.autoDetectDataFiles`,
+`workspace.library`, `require.searchPaths`, or `analysis.classFactories` re-scans the workspace
+without a restart. Excluded files resolve as untyped values when required by analyzed code, and
+opening one in the editor analyzes it anyway. See [Configuring the language
+server](configuring-the-language-server.pub.md) for the settings' detailed behavior and adaptive
+residency budgets.
 
 ## Lunil protocol extensions
 
@@ -100,6 +109,7 @@ for the settings' detailed behavior and adaptive residency budgets.
 | `lunil/reindex` | Request | Rebuilds the current workspace index. |
 | `lunil/clearCache` | Request | Clears memory and workspace index caches. |
 | `lunil/virtualHostDocument` | Request | Returns a Lua declaration view of the active host contract. |
+| `lunil/classHierarchy` | Request | Returns the class hierarchy at a cursor: the class name, its location, transitive bases, and derived classes. |
 | `lunil/indexProgress` | Notification | Reports phase, completed work items, total work items, and optional module. |
 
 The server also uses standard work-done progress when the client advertises support. Reference

@@ -291,6 +291,26 @@ internal sealed partial class AnalysisEngine
         var arrayTypes = new List<LuaType>();
         var mapKeys = new List<LuaType>();
         var mapValues = new List<LuaType>();
+
+        void AddOrReplaceNamedMember(string name, LuaType value)
+        {
+            for (var index = 0; index < members.Count; index++)
+            {
+                if (!string.Equals(members[index].Name, name, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                members[index] = new LuaTableField(name, null, value, false);
+                return;
+            }
+
+            if (members.Count < MaximumStructuralTableFieldGrowth)
+            {
+                members.Add(new LuaTableField(name, null, value, false));
+            }
+        }
+
         foreach (var item in expression.ChildNodes().Where(static node =>
                      node.Kind == LuaSyntaxKind.TableField))
         {
@@ -327,10 +347,13 @@ internal sealed partial class AnalysisEngine
             {
                 var key = InferExpression(firstNode!, state);
                 var value = InferExpressionPack(lastNode!, state).GetElementOrNil(0);
-                var name = key is LuaStringLiteralType text ? DecodeLiteral(text) : null;
-                if (members.Count < MaximumStructuralTableFieldGrowth)
+                if (key is LuaStringLiteralType text)
                 {
-                    members.Add(new LuaTableField(name, name is null ? key : null, value, false));
+                    AddOrReplaceNamedMember(DecodeLiteral(text), value);
+                }
+                else if (members.Count < MaximumStructuralTableFieldGrowth)
+                {
+                    members.Add(new LuaTableField(null, key, value, false));
                 }
 
                 mapKeys.Add(key);
@@ -342,10 +365,7 @@ internal sealed partial class AnalysisEngine
             {
                 var name = GetTokenText(firstToken);
                 var value = InferExpressionPack(firstNode!, state).GetElementOrNil(0);
-                if (members.Count < MaximumStructuralTableFieldGrowth)
-                {
-                    members.Add(new LuaTableField(name, null, value, false));
-                }
+                AddOrReplaceNamedMember(name, value);
             }
             else if (nodeCount == 1)
             {
@@ -1102,8 +1122,67 @@ internal sealed partial class AnalysisEngine
 
                 return new LuaTypePack([], LuaTypes.Any);
             default:
-                return null;
+                return TryInferClassFactoryCall(calledName, arguments, state);
         }
+    }
+
+    /// <summary>
+    /// Infers a workspace-configured class-factory call: <c>local X = class("Name", Base, ...)</c>
+    /// (a "bases" factory, whose arguments after the name are base classes) or
+    /// <c>local X = singleton("Name")</c> (a plain definition). The string-literal first
+    /// argument names the class; the result is a self-indexed prototype (the framework's
+    /// <c>cls.__index = cls</c> protocol), so later member writes define methods,
+    /// <c>X.new()</c> produces instances, and member lookup walks the base chain —
+    /// subclass members win over base members, giving virtual-function semantics.
+    /// </summary>
+    private LuaTypePack? TryInferClassFactoryCall(
+        string calledName,
+        LuaSyntaxNode[] arguments,
+        FlowState state)
+    {
+        if (!_environment.ClassFactoryCalls.TryGetValue(calledName, out var takesBases))
+        {
+            return null;
+        }
+
+        // A dynamic name (or no arguments) is a regular call, not a class definition.
+        if (arguments.Length == 0 ||
+            InferExpression(arguments[0], state) is not LuaStringLiteralType nameLiteral)
+        {
+            return null;
+        }
+
+        var className = DecodeLiteral(nameLiteral);
+        var bases = ImmutableArray.CreateBuilder<LuaType>();
+        if (takesBases)
+        {
+            foreach (var argument in arguments.Skip(1))
+            {
+                var baseType = InferExpression(argument, state);
+                // Only class-shaped values act as bases; flags and option tables that
+                // some factories accept must not pollute the inheritance chain.
+                if (baseType.Kind is LuaTypeKind.StructuralTable or LuaTypeKind.Prototype or
+                    LuaTypeKind.Metatable)
+                {
+                    bases.Add(baseType);
+                }
+            }
+        }
+        else
+        {
+            foreach (var argument in arguments.Skip(1))
+            {
+                _ = InferExpression(argument, state);
+            }
+        }
+
+        return new LuaTypePack([
+            new LuaPrototypeType(
+                className,
+                new LuaStructuralTableType([], IsOpen: true),
+                [.. bases],
+                UsesSelfIndex: true),
+        ]);
     }
 
     private ImmutableArray<LuaFunctionType> GetCallSignatures(LuaType type)
@@ -1487,16 +1566,21 @@ internal sealed partial class AnalysisEngine
             // data files accumulate tens of thousands of members, and keeping
             // per-member precision there costs a quadratic rebuild per write for
             // lookups the map types already answer. Named members already stored
-            // keep their precision; only new growth degrades.
-            return table with
-            {
-                MapKeyType = table.MapKeyType is null
-                    ? LuaTypes.String
-                    : _relations.Union(table.MapKeyType, LuaTypes.String),
-                MapValueType = table.MapValueType is null
-                    ? value
-                    : _relations.Union(table.MapValueType, value),
-            };
+            // keep their precision; only new growth degrades. Once a map union
+            // has widened past a small bound it collapses to any: every further
+            // member widens it by reference anyway, and re-walking a growing
+            // union per write is itself quadratic.
+            var mapValue = table.MapValueType is null
+                ? value
+                : table.MapValueType is LuaUnionType { Types.Length: >= 8 }
+                    ? LuaTypes.Any
+                    : _relations.Union(table.MapValueType, value);
+            var mapKey = table.MapKeyType is null
+                ? LuaTypes.String
+                : table.MapKeyType is LuaUnionType { Types.Length: >= 8 }
+                    ? LuaTypes.Any
+                    : _relations.Union(table.MapKeyType, LuaTypes.String);
+            return table with { MapKeyType = mapKey, MapValueType = mapValue };
         }
 
         var grown = new LuaTableField[fields.Length + 1];

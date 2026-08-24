@@ -287,7 +287,7 @@ internal sealed class LspTextDocument
 
     private int[] LineIndex => _lineStarts ??= BuildLineStarts(Text);
 
-    private LspTextDocument WithVersion(int version) => Version == version
+    internal LspTextDocument WithVersion(int version) => Version == version
         ? this
         : new LspTextDocument(Uri, version, _text, _utf8, _lineStarts, IsOpen, _recordedByteLength, _trimmed);
 

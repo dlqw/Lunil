@@ -74,6 +74,11 @@ its format and content, ignores corrupt entries, and prunes to `MaximumDiskCache
 - `ClearCache()` clears in-memory reuse; delete the configured directory when the host explicitly
   needs to discard disk summaries.
 
+A compact snapshot can additionally be saved with `SaveNavigationSnapshot(path, fingerprint)` and
+restored on a later run with `TryLoadNavigationSnapshot(path, fingerprint)`. Restored contributions
+can be adopted into an existing workspace with `AdoptRestoredContributions(snapshot)`, so a large
+editor can answer navigation and symbol queries before the full folder scan completes.
+
 ## 5. Query compact indexes
 
 Use `FindReferences`, `FindGlobalReferences`, and `FindCallsToExport` for code navigation. Host-aware

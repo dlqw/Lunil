@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Nodes;
 using Lunil.Analysis;
 using Lunil.Compiler;
@@ -87,8 +88,94 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private static readonly TimeSpan StartupDeclarationsTimeout = TimeSpan.FromSeconds(120);
     private ImmutableDictionary<string, Uri>? _uriByModuleName;
     private int _uriIndexGeneration = -1;
+    private ImmutableDictionary<string, Uri>? _uriBySnapshotModule;
+    private LuaWorkspaceCompactSnapshot? _uriBySnapshotModuleSource;
     private int _documentSetGeneration;
     private ImmutableArray<Uri> _folders = [];
+
+    /// <summary>
+    /// Completes when the first folder scan has merged its documents (immediately for
+    /// folder-less sessions). Rounds await it: didChangeConfiguration arrives while the
+    /// scan is still reading the corpus, and a round that wins that race analyzes an
+    /// empty working set, completes against a corpus-sized ledger, and stores a garbage
+    /// snapshot (kilobytes instead of hundreds of megabytes).
+    /// </summary>
+    private readonly TaskCompletionSource _initialScanCompletion =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Declaration files found under the registered folders — any non-<c>.lua</c> file
+    /// whose base name is a valid Lua identifier (entity/component definition files,
+    /// config manifests, host-API docs). Members that resolve to no Lua definition
+    /// anywhere may be declared by such a file, so it is the ground-truth jump target
+    /// for engine-injected chains like <c>game.player.Entity.server</c>. The scan runs lazily
+    /// on first lookup and is cached until the folder set changes.
+    /// </summary>
+    private readonly object _declarationFileGate = new();
+    private ImmutableArray<Uri>? _declarationFileFolderStamp;
+    private ImmutableDictionary<string, Uri> _declarationFiles =
+        ImmutableDictionary<string, Uri>.Empty;
+
+    /// <summary>
+    /// Finds the declaration file whose base name (without extension) equals
+    /// <paramref name="name"/> under the registered folders, if any.
+    /// </summary>
+    public bool TryGetDeclarationFile(string name, [NotNullWhen(true)] out Uri? uri)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        ImmutableArray<Uri> folders;
+        lock (_gate)
+        {
+            folders = _folders;
+        }
+
+        lock (_declarationFileGate)
+        {
+            if (_declarationFileFolderStamp is null ||
+                !_declarationFileFolderStamp.Value.SequenceEqual(folders))
+            {
+                _declarationFiles = ScanDeclarationFiles(folders);
+                _declarationFileFolderStamp = folders;
+            }
+
+            return _declarationFiles.TryGetValue(name, out uri!);
+        }
+    }
+
+    private static ImmutableDictionary<string, Uri> ScanDeclarationFiles(ImmutableArray<Uri> folders)
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, Uri>(StringComparer.Ordinal);
+        foreach (var folder in folders)
+        {
+            try
+            {
+                foreach (var group in Directory.EnumerateFiles(
+                             ToLocalPath(folder), "*", SearchOption.AllDirectories)
+                             .Where(static path =>
+                                 !path.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) &&
+                                 IsIdentifierStem(Path.GetFileNameWithoutExtension(path)))
+                             .OrderBy(static path => path, StringComparer.Ordinal)
+                             .GroupBy(static path => Path.GetFileNameWithoutExtension(path), StringComparer.Ordinal))
+                {
+                    // Deterministic winner on same-stem collisions: the first path in
+                    // ordinal order.
+                    builder.TryAdd(group.Key, new Uri(Path.GetFullPath(group.First())));
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Unreadable roots contribute no declarations; lookup simply misses.
+            }
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static bool IsIdentifierStem(string stem) =>
+        stem.Length > 0 &&
+        (char.IsLetter(stem[0]) || stem[0] == '_') &&
+        stem.All(static character => char.IsLetterOrDigit(character) || character == '_');
 
     /// <summary>
     /// Files kept out of the analysis corpus (`lunil.analysis.exclude` patterns plus
@@ -113,9 +200,30 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     private LuaWorkspace _workspace;
     private LuaHostAnalysisContract? _hostContract;
+    private ImmutableArray<string> _requireSearchPaths = [];
+    private ImmutableDictionary<string, bool> _classFactoryCalls =
+        ImmutableDictionary<string, bool>.Empty.WithComparers(StringComparer.Ordinal);
     private ImmutableHashSet<string> _suppressedDiagnosticCodes =
         ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal);
     private LuaWorkspaceCompactSnapshot? _snapshot;
+
+    /// <summary>
+    /// True while <see cref="_snapshot"/> came from disk rather than a completed round:
+    /// corpus-level invalidations (folder merges, opens of not-yet-loaded documents)
+    /// keep serving it — the fingerprint matched this exact corpus — until the first
+    /// fresh round replaces it.
+    /// </summary>
+    private bool _snapshotRestored;
+
+    /// <summary>The fingerprint of the last disk-restore attempt (retry on change).</summary>
+    private string? _lastSnapshotLoadFingerprintAttempt;
+
+    /// <summary>
+    /// Test isolation: unit tests share fake folder URIs (file:///src/), so their
+    /// fingerprints collide and snapshots would leak between test cases. The test
+    /// assembly disables persistence entirely through this switch.
+    /// </summary>
+    internal static bool SnapshotPersistenceDisabled;
     private CancellationTokenSource? _indexCancellation;
     private ImmutableDictionary<string, LuaExternalTypeDeclaration> _externalTypeDeclarations =
         ImmutableDictionary<string, LuaExternalTypeDeclaration>.Empty.WithComparers(StringComparer.Ordinal);
@@ -153,6 +261,32 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         return path;
+    }
+
+    /// <summary>
+    /// Canonicalizes a client-supplied URI into the key form the folder scan
+    /// produces. VS Code percent-encodes the Windows drive colon
+    /// (<c>file:///c%3A/...</c>) while scanning local paths yields
+    /// <c>file:///c:/...</c>; without this normalization every didOpen lookup
+    /// misses the corpus document and schedules a full workspace rebuild.
+    /// </summary>
+    internal static Uri CanonicalUri(Uri uri)
+    {
+        if (!uri.IsFile)
+        {
+            return uri;
+        }
+
+        try
+        {
+            return new Uri(ToLocalPath(uri));
+        }
+        catch (UriFormatException)
+        {
+            // Rootless paths (for example test fixtures like file:///src/a.lua)
+            // have no absolute local-path form; keep the URI as given.
+            return uri;
+        }
     }
 
     public LanguageServerWorkspace()
@@ -232,8 +366,33 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScheduleIndex();
-        _ = Task.Run(() => LoadFolders(normalized));
+        PrefetchNavigationSnapshot();
+        // The first round is scheduled by the folder-scan merge (LoadFolders), never
+        // here: scheduling at initialize lets an empty-corpus round run before the scan
+        // has loaded any documents, and its stored snapshot would be garbage. Folder-less
+        // sessions (single-file) still get a round so configuration changes apply.
+        if (normalized.IsEmpty)
+        {
+            _initialScanCompletion.TrySetResult();
+            ScheduleIndex("initialize (no folders)");
+        }
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                LoadFolders(normalized, "initialize");
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                LogInfo($"Lunil workspace: folder scan failed: {exception.Message}");
+            }
+            finally
+            {
+                _initialScanCompletion.TrySetResult();
+            }
+        });
     }
 
     public void AddFolder(Uri folder)
@@ -259,7 +418,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScheduleIndex();
+        ScheduleIndex("remove-folder");
     }
 
     /// <summary>
@@ -314,12 +473,22 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
         if (!_folders.IsEmpty)
         {
-            _ = Task.Run(() => LoadFolders(_folders));
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    LoadFolders(_folders, "configure-analysis-exclusions");
+                }
+                finally
+                {
+                    _initialScanCompletion.TrySetResult();
+                }
+            });
         }
         else if (removedAny)
         {
             ScanAllTypeDeclarations();
-            ScheduleIndex();
+            ScheduleIndex("configure-analysis-exclusions");
         }
     }
 
@@ -433,20 +602,52 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public void Open(Uri uri, int version, string text)
     {
+        var contentUnchanged = false;
         lock (_gate)
         {
             ThrowIfDisposed();
-            _documents[uri.AbsoluteUri] = new LspTextDocument(uri, version, text);
-            RemoveAnalysis(uri.AbsoluteUri);
-            _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
-            _indexErrors.Remove(uri.AbsoluteUri);
-            // Opening a file is an explicit request to analyze it, even when it was
-            // excluded from background indexing.
-            _excludedFiles.Remove(uri.AbsoluteUri);
-            _documentSetGeneration++;
-            InvalidateIndexNoLock();
+            // Opening a corpus document whose content matches what the editor sends
+            // (the preview-tab case after a navigation) changes nothing the index
+            // depends on: keep the snapshot, declarations, and per-document analyses
+            // instead of scheduling a full workspace rebuild for every file the
+            // editor merely displays.
+            if (_documents.TryGetValue(uri.AbsoluteUri, out var existing) &&
+                !_excludedFiles.ContainsKey(uri.AbsoluteUri) &&
+                string.Equals(existing.Text, text, StringComparison.Ordinal))
+            {
+                _documents[uri.AbsoluteUri] = new LspTextDocument(uri, version, text);
+                contentUnchanged = true;
+            }
+            else
+            {
+                // A document already in the analysis corpus keeps serving the previous
+                // snapshot while the rebuild runs (only its content changed); a new or
+                // previously excluded document changes the corpus itself and drops it.
+                var wasCorpusDocument = existing is not null &&
+                    !_excludedFiles.ContainsKey(uri.AbsoluteUri);
+                _documents[uri.AbsoluteUri] = new LspTextDocument(uri, version, text);
+                RemoveAnalysis(uri.AbsoluteUri);
+                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                _indexErrors.Remove(uri.AbsoluteUri);
+                // Opening a file is an explicit request to analyze it, even when it was
+                // excluded from background indexing.
+                _excludedFiles.Remove(uri.AbsoluteUri);
+                _documentSetGeneration++;
+                // A restored snapshot survives opens of documents the folder scan has
+                // not loaded yet (startup editor reopen) — the first round replaces it.
+                InvalidateIndexNoLock(keepStaleSnapshot: wasCorpusDocument || _snapshotRestored);
+            }
         }
 
+        if (contentUnchanged)
+        {
+            // Diagnostics for the now-open tab come from the retained caches.
+            LogInfo($"didOpen (fast path, no rebuild): {uri}");
+            _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
+            return;
+        }
+
+        LogInfo($"didOpen (slow path, scheduling rebuild): {uri}");
         UpdateDocumentTypeDeclarations(uri.AbsoluteUri, text);
         // An opened document is itself a declarations source. Registered folders that are
         // empty or missing on disk would otherwise leave the declaration gate closed
@@ -461,7 +662,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
-        ScheduleIndex();
+        ScheduleIndex("didOpen slow path");
     }
 
     /// <summary>Collects type declarations from a document's directory and each ancestor directory.</summary>
@@ -570,11 +771,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 return false;
             }
 
+            // An empty change list is a version bump (some clients send these on
+            // focus changes); it changes nothing the index depends on.
+            if (changes.Count == 0)
+            {
+                _documents[uri.AbsoluteUri] = document.WithVersion(version);
+                return true;
+            }
+
             _documents[uri.AbsoluteUri] = document.Apply(version, changes);
             RemoveAnalysis(uri.AbsoluteUri);
             _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
             _indexErrors.Remove(uri.AbsoluteUri);
-            InvalidateIndexNoLock();
+            // An edit changes one document's content, not the corpus: the previous
+            // snapshot keeps serving cross-file navigation until the replacement
+            // round stores (slightly stale beats a null window measured in tens of
+            // seconds on large workspaces).
+            InvalidateIndexNoLock(keepStaleSnapshot: true);
         }
 
         var changedText = _documents.TryGetValue(uri.AbsoluteUri, out var changedDocument)
@@ -586,7 +799,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
-        ScheduleIndex();
+        ScheduleIndex("didChange");
         return true;
     }
 
@@ -594,6 +807,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         LspTextDocument? disk = null;
         string? exclusion = null;
+        var contentUnchanged = false;
         ImmutableArray<Uri> folders;
         WorkspaceFileFilter? filter;
         lock (_gate)
@@ -628,6 +842,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
             else
             {
+                // Closing a tab that matches its disk version is a pure view
+                // operation: the corpus content is identical, so the snapshot,
+                // declarations, and analyses all stay valid — no rebuild needed.
+                contentUnchanged = _documents.TryGetValue(uri.AbsoluteUri, out var existing) &&
+                    existing is not null &&
+                    string.Equals(existing.Text, disk.Text, StringComparison.Ordinal);
                 _documents[uri.AbsoluteUri] = disk;
                 _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
                 _indexErrors.Remove(uri.AbsoluteUri);
@@ -635,7 +855,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
             RemoveAnalysis(uri.AbsoluteUri);
             _documentSetGeneration++;
-            InvalidateIndexNoLock();
+            // Closing back to the on-disk version is a content change (stale-keep);
+            // a document that vanished from disk leaves the corpus (drop).
+            InvalidateIndexNoLock(keepStaleSnapshot: disk is not null || contentUnchanged);
+        }
+
+        if (contentUnchanged)
+        {
+            // Pure tab close with no edits: nothing changed, no rebuild.
+            if (DiagnosticsPublished is { } publish)
+            {
+                _ = publish(uri, null, []);
+            }
+
+            return;
         }
 
         if (disk is not null)
@@ -651,12 +884,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
         }
 
-        if (DiagnosticsPublished is { } publish)
+        if (DiagnosticsPublished is { } publish2)
         {
-            _ = publish(uri, null, []);
+            _ = publish2(uri, null, []);
         }
 
-        ScheduleIndex();
+        ScheduleIndex("didClose content changed");
     }
 
     public void WatchedFileChanged(Uri uri, int changeType)
@@ -680,6 +913,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             exclusion = ClassifyDiskExclusion(uri, filter, folders);
         }
 
+        var contentUnchanged = false;
         lock (_gate)
         {
             var wasExcluded = _excludedFiles.TryGetValue(uri.AbsoluteUri, out var previousReason);
@@ -713,14 +947,38 @@ internal sealed class LanguageServerWorkspace : IDisposable
             else
             {
                 _excludedFiles.Remove(uri.AbsoluteUri);
-                _documents[uri.AbsoluteUri] = LoadDiskDocument(uri, 0);
-                _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
-                _indexErrors.Remove(uri.AbsoluteUri);
+                var disk = LoadDiskDocument(uri, 0);
+                if (_documents.TryGetValue(uri.AbsoluteUri, out var current) &&
+                    string.Equals(current.Text, disk.Text, StringComparison.Ordinal))
+                {
+                    // A watcher event with unchanged content (an mtime touch, an SVN
+                    // status pass, a formatter no-op) is not a real change: keep the
+                    // snapshot, declarations, and analyses instead of scheduling a
+                    // full workspace rebuild.
+                    contentUnchanged = true;
+                    LogInfo($"watched file unchanged, no rebuild ({changeType}): {uri}");
+                }
+                else
+                {
+                    _documents[uri.AbsoluteUri] = disk;
+                    _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                    _indexErrors.Remove(uri.AbsoluteUri);
+                }
             }
 
-            RemoveAnalysis(uri.AbsoluteUri);
-            _documentSetGeneration++;
-            InvalidateIndexNoLock();
+            if (!contentUnchanged)
+            {
+                RemoveAnalysis(uri.AbsoluteUri);
+                _documentSetGeneration++;
+                // A disk change of an existing, non-excluded document only changes its
+                // content; deletions and exclusion transitions change the corpus itself.
+                InvalidateIndexNoLock(keepStaleSnapshot: !deleted && exclusion is null);
+            }
+        }
+
+        if (contentUnchanged)
+        {
+            return;
         }
 
         if (_documents.TryGetValue(uri.AbsoluteUri, out var watched))
@@ -736,7 +994,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
         }
 
-        ScheduleIndex();
+        ScheduleIndex($"watched-file (type {changeType})");
     }
 
     public void ConfigureHostContract(string? json, string? path)
@@ -761,8 +1019,108 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScheduleIndex();
+        ScheduleIndex("configure-host-contract");
     }
+
+    /// <summary>
+    /// Configures require search-path roots (<c>lunil.require.searchPaths</c>). Each root is a
+    /// directory relative to the first workspace folder; a require string that is not itself a
+    /// module identity resolves through these roots in order.
+    /// </summary>
+    public void ConfigureRequireSearchPaths(IEnumerable<string?>? paths)
+    {
+        var normalized = (paths ?? []).Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(static path => path!.Trim())
+            .Where(static path => path.Length > 0)
+            .ToImmutableArray();
+
+        lock (_gate)
+        {
+            _requireSearchPaths = normalized;
+            var previous = _workspace;
+            _workspace = CreateWorkspace(_hostContract);
+            previous.Dispose();
+            ClearAnalyses();
+            InvalidateIndexNoLock();
+        }
+
+        PrefetchNavigationSnapshot();
+        ScheduleIndex("configure-require-search-paths");
+    }
+
+    /// <summary>
+    /// Configures the global class-factory functions recognized by the analyzer
+    /// (<c>lunil.analysis.classFactories</c>): <c>local X = class("Name", Base, ...)</c>
+    /// style calls infer a self-indexed prototype — hover shows the class, member writes
+    /// define methods, and lookup walks the inheritance chain. Each entry maps the
+    /// function name to whether its arguments after the class name are base classes.
+    /// </summary>
+    public void ConfigureClassFactoryCalls(IReadOnlyDictionary<string, bool> factories)
+    {
+        var normalized = factories
+            .Where(static pair => !string.IsNullOrWhiteSpace(pair.Key))
+            .ToImmutableDictionary(
+                static pair => pair.Key.Trim(),
+                static pair => pair.Value,
+                StringComparer.Ordinal);
+        lock (_gate)
+        {
+            if (normalized.Count == _classFactoryCalls.Count &&
+                normalized.All(pair =>
+                    _classFactoryCalls.TryGetValue(pair.Key, out var takesBases) &&
+                    takesBases == pair.Value))
+            {
+                return;
+            }
+
+            _classFactoryCalls = normalized;
+            var previous = _workspace;
+            _workspace = CreateWorkspace(_hostContract);
+            previous.Dispose();
+            ClearAnalyses();
+            InvalidateIndexNoLock();
+            // Runtime class edges derive from these names too.
+            _runtimeClassBases = null;
+            _runtimeEdgeScans = new(StringComparer.Ordinal);
+        }
+
+        PrefetchNavigationSnapshot();
+        ScheduleIndex("configure-class-factories");
+    }
+
+    /// <summary>
+    /// Expands a require string into candidate module identities using the configured search
+    /// paths, with the raw name first. Member resolution and require-string navigation probe
+    /// these candidates in order against the workspace export graph.
+    /// </summary>
+    public ImmutableArray<string> ExpandRequireName(string requestedName) =>
+        RequireNameExpansion.Expand(requestedName, _requireSearchPaths);
+
+    /// <summary>
+    /// Resolves a require string to the first candidate identity that names a known module,
+    /// or null when none of the search paths (nor the raw name) match.
+    /// </summary>
+    public string? ResolveRequireName(string requestedName)
+    {
+        foreach (var candidate in ExpandRequireName(requestedName))
+        {
+            if (GetUri(candidate) is not null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether a require string names anything analyzable: a workspace document (through
+    /// the search paths) or a host-contract module (matched by the raw name, mirroring
+    /// dependency resolution). Dangling requires return false.
+    /// </summary>
+    public bool ModuleExists(string requireName) =>
+        ResolveRequireName(requireName) is not null ||
+        (_hostContract is not null && _hostContract.Modules.ContainsKey(requireName));
 
     /// <summary>
     /// Configures read-only declaration-stub folders. Relative paths resolve against
@@ -771,10 +1129,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// </summary>
     public void ConfigureLibraryFolders(IEnumerable<string?>? paths)
     {
-        _libraryPaths = (paths ?? []).Where(static path => !string.IsNullOrWhiteSpace(path))
+        var normalizedPaths = (paths ?? []).Where(static path => !string.IsNullOrWhiteSpace(path))
             .Select(static path => path!.Trim())
             .Where(static path => path.Length > 0)
             .ToImmutableArray();
+
+        // didChangeConfiguration carries the whole lunil section on every settings
+        // edit; an unchanged library configuration must not drop the snapshot or
+        // trigger a reload (ConfigureAnalysisExclusions applies the same guard).
+        if (normalizedPaths.SequenceEqual(_libraryPaths))
+        {
+            return;
+        }
+
+        _libraryPaths = normalizedPaths;
         var roots = new List<Uri>();
         string? workspaceRoot;
         lock (_gate)
@@ -836,7 +1204,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         ScanAllTypeDeclarations();
-        ScheduleIndex();
+        ScheduleIndex("configure-library-folders");
         _ = Task.Run(() => LoadLibraryFolders(normalized));
     }
 
@@ -893,7 +1261,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         ScanAllTypeDeclarations();
-        ScheduleIndex();
+        ScheduleIndex("load-library-folders");
     }
 
     private static bool IsUnderAnyRoot(string path, ImmutableArray<Uri> roots) =>
@@ -1145,6 +1513,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         var source = LuaSourceDocument.FromBytes(document.Utf8.Span, document.Uri.AbsoluteUri);
+        // Merge workspace globals (game, settings, logger, ... — collected from every
+        // module's analysis) with library stub globals: a global defined in any Lua
+        // file resolves with its real type in every other file, no configuration.
+        ImmutableDictionary<string, LuaType> workspaceGlobals;
+        lock (_gate)
+        {
+            workspaceGlobals = _snapshot?.Globals ??
+                ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
+        }
+
+        var effectiveGlobals = libraryGlobals.Count == 0
+            ? workspaceGlobals
+            : workspaceGlobals.Count == 0
+                ? libraryGlobals
+                : libraryGlobals.AddRange(
+                    workspaceGlobals.Where(pair =>
+                        !libraryGlobals.ContainsKey(pair.Key)));
         var environment = new LuaAnalysisEnvironment
         {
             HostContract = hostContract,
@@ -1152,7 +1537,8 @@ internal sealed class LanguageServerWorkspace : IDisposable
             ExternalTypeDeclarations = _externalTypeDeclarations,
             ExternalClassMembers = GetExternalClassMembers(),
             BuiltinGlobals = Builtin.Globals,
-            ExternalGlobals = libraryGlobals,
+            ExternalGlobals = effectiveGlobals,
+            ClassFactoryCalls = _classFactoryCalls,
         };
         // The front-end analysis is CPU-bound and synchronous. Run it on the thread pool so a
         // large document (for example a multi-megabyte generated config file) cannot stall the
@@ -1265,6 +1651,19 @@ internal sealed class LanguageServerWorkspace : IDisposable
     {
         lock (_gate)
         {
+            // Lazy restore: configuration (require search paths, class factories)
+            // arrives after initialize and changes the fingerprint, so the restore
+            // retries whenever the fingerprint moves and no round has stored yet.
+            if (_snapshot is null && !SnapshotPersistenceDisabled)
+            {
+                var fingerprint = SnapshotFingerprint();
+                if (!string.Equals(fingerprint, _lastSnapshotLoadFingerprintAttempt, StringComparison.Ordinal))
+                {
+                    _lastSnapshotLoadFingerprintAttempt = fingerprint;
+                    TryLoadNavigationSnapshotNoLock();
+                }
+            }
+
             return _snapshot;
         }
     }
@@ -1312,7 +1711,35 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 _uriIndexGeneration = _documentSetGeneration;
             }
 
-            return _uriByModuleName.TryGetValue(moduleName, out var uri) ? uri : null;
+            if (_uriByModuleName.TryGetValue(moduleName, out var uri))
+            {
+                return uri;
+            }
+
+            // A restored navigation snapshot knows its modules before the folder scan
+            // finishes loading documents; its source identities are the file URIs.
+            // Built once per snapshot — GetUri sits in tight reference loops.
+            if (_snapshot is not null)
+            {
+                if (_uriBySnapshotModule is null || !ReferenceEquals(_uriBySnapshotModuleSource, _snapshot))
+                {
+                    var snapshotBuilder = ImmutableDictionary.CreateBuilder<string, Uri>(StringComparer.Ordinal);
+                    foreach (var module in _snapshot.Modules)
+                    {
+                        if (Uri.TryCreate(module.SourceIdentity, UriKind.Absolute, out var restoredUri))
+                        {
+                            snapshotBuilder.TryAdd(module.Identity.Name, restoredUri);
+                        }
+                    }
+
+                    _uriBySnapshotModule = snapshotBuilder.ToImmutable();
+                    _uriBySnapshotModuleSource = _snapshot;
+                }
+
+                return _uriBySnapshotModule.TryGetValue(moduleName, out var restored) ? restored : null;
+            }
+
+            return null;
         }
     }
 
@@ -1350,6 +1777,24 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public async Task ReindexNowAsync(CancellationToken cancellationToken)
     {
+        // A round must not run before the first folder scan has merged its documents:
+        // a configuration-triggered round that wins the race against the scan analyzes
+        // an empty working set and stores a garbage snapshot.
+        Task initialScan;
+        lock (_gate)
+        {
+            initialScan = _initialScanCompletion.Task;
+        }
+
+        try
+        {
+            await initialScan.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // superseded by a newer round
+        }
+
         int generation;
         int documentSetGeneration;
         LuaWorkspace workspace;
@@ -1388,6 +1833,26 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 LuaSourceDocument.FromOwnedBytes(document.Utf8Array, document.Uri.AbsoluteUri)))
             .ToImmutableArray();
 
+        // Wait for the startup snapshot prefetch (bounded): its restored contributions
+        // make an unchanged corpus's first round fully incremental, and waiting here —
+        // on the round's task, off the message loop — costs nothing the prefetch was
+        // not already doing in the background.
+        Task prefetch;
+        lock (_gate)
+        {
+            prefetch = _prefetchTask;
+        }
+
+        try
+        {
+            await prefetch.WaitAsync(TimeSpan.FromSeconds(120), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // The load is too slow to gate the round; proceed with whatever state is
+            // adopted — later rounds pick up anything the prefetch adds mid-flight.
+        }
+
         LuaWorkspaceCompactSnapshot snapshot;
         try
         {
@@ -1411,7 +1876,31 @@ internal sealed class LanguageServerWorkspace : IDisposable
         var libraryGlobals = await BuildLibraryGlobalsAsync(cancellationToken).ConfigureAwait(false);
         var librarySignature = BuildLibraryGlobalsSignature(libraryGlobals);
 
+        // The runtime class-edge scan is keyed to the document set; running it here —
+        // while the round still has every source resident, before the store's trim —
+        // keeps the first navigation request after the store from paying the
+        // whole-corpus scan (seconds on large corpora) itself.
+        GetRuntimeClassBases();
+
+        // Environment signature, computed OUTSIDE _gate: the snapshot and every input
+        // are immutable and the symbol-universe scan takes seconds on large corpora —
+        // computing it inside the store's critical section froze every navigation
+        // request for the scan's duration. Only the swap and the generation decision
+        // stay under the lock.
+        var signatureWatch = System.Diagnostics.Stopwatch.StartNew();
+        var signature = BuildClassMemberSignature(snapshot) +
+            "\n#libraryGlobals\n" + librarySignature +
+            "\n#moduleTypes\n" + BuildModuleTypesHash(snapshot).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        signatureWatch.Stop();
+        if (signatureWatch.ElapsedMilliseconds > 500)
+        {
+            LogInfo($"Lunil workspace: environment signature took {signatureWatch.ElapsedMilliseconds}ms");
+        }
+
         List<LspTextDocument>? openDocuments = null;
+        string? snapshotSavePath = null;
+        string? snapshotSaveFingerprint = null;
+        var storeWatch = System.Diagnostics.Stopwatch.StartNew();
         lock (_gate)
         {
             // Store unless the document corpus itself changed mid-rebuild. The old
@@ -1425,6 +1914,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             {
                 var previousSnapshotWasNull = _snapshot is null;
                 _snapshot = snapshot;
+                _snapshotRestored = false;
                 _libraryGlobals = libraryGlobals;
                 // Analyses produced before this snapshot existed were denied workspace
                 // member knowledge; when the exported class-member surface or a module's
@@ -1432,9 +1922,6 @@ internal sealed class LanguageServerWorkspace : IDisposable
                 // are re-published with it. A snapshot replacing a null one always
                 // invalidates: analyses from the null window ran without module types
                 // and class-member knowledge even when the signature repeats.
-                var signature = BuildClassMemberSignatureNoLock(snapshot) +
-                    "\n#libraryGlobals\n" + librarySignature +
-                    "\n#moduleTypes\n" + BuildModuleTypesHash(snapshot).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 if (!string.Equals(signature, _externalClassMemberSignature, StringComparison.Ordinal) ||
                     previousSnapshotWasNull)
                 {
@@ -1462,11 +1949,59 @@ internal sealed class LanguageServerWorkspace : IDisposable
                         _indexErrors.Remove(key);
                     }
                 }
+
+                // Persist the navigation surface so the next server start serves search
+                // and navigation before its first rebuild.
+                snapshotSaveFingerprint = SnapshotFingerprint();
+                snapshotSavePath = SnapshotCachePath(snapshotSaveFingerprint);
             }
 
             // The rebuild just touched every source; now drop cold closed documents'
             // bytes back under the residency budget.
             TrimClosedDocumentsOverBudget();
+        }
+
+        storeWatch.Stop();
+        if (storeWatch.ElapsedMilliseconds > 500)
+        {
+            LogInfo($"Lunil workspace: round store took {storeWatch.ElapsedMilliseconds}ms");
+        }
+
+        if (snapshotSavePath is not null && snapshotSaveFingerprint is not null &&
+            !SnapshotPersistenceDisabled)
+        {
+            var snapshotToSave = snapshot;
+            var savePath = snapshotSavePath;
+            var saveFingerprint = snapshotSaveFingerprint;
+            // The snapshot is immutable; serializing on a worker keeps the round's
+            // completion off the message loop (large corpora write hundreds of MB).
+            _ = Task.Run(() =>
+            {
+                var saveWatch = System.Diagnostics.Stopwatch.StartNew();
+                snapshotToSave.SaveNavigationSnapshot(savePath, saveFingerprint);
+                ImmutableArray<Uri> saveFolders;
+                lock (_gate)
+                {
+                    saveFolders = _folders;
+                }
+
+                var manifest = ComputeCorpusManifestHash(saveFolders);
+                if (manifest is not null)
+                {
+                    try
+                    {
+                        File.WriteAllText(SnapshotManifestPath(savePath), manifest);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                        // A snapshot without a manifest is not trusted on restore, so a
+                        // failed manifest write makes the next start rebuild — safe.
+                    }
+                }
+
+                saveWatch.Stop();
+                LogInfo($"Lunil workspace: navigation snapshot saved in {saveWatch.ElapsedMilliseconds}ms");
+            }, CancellationToken.None);
         }
 
         if (openDocuments is not null)
@@ -1483,20 +2018,38 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// names, and module ownership. Type drift alone does not invalidate analyses; a member
     /// appearing or disappearing does.
     /// </summary>
-    private string BuildClassMemberSignatureNoLock(LuaWorkspaceCompactSnapshot snapshot)
+    private string BuildClassMemberSignature(LuaWorkspaceCompactSnapshot snapshot)
     {
+        // Index the plain (non-nested) export names by module once: iterating the
+        // whole symbol universe per class declaration was O(declarations × symbols)
+        // — 16 seconds on a 24k-file corpus, computed under _gate during the round
+        // store and freezing every concurrent navigation request.
+        var plainNamesByModule = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var symbol in snapshot.ExportGraph.Symbols)
+        {
+            if (symbol.IsExternal || symbol.Path.Length == 0 ||
+                symbol.Path.Contains('.', StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!plainNamesByModule.TryGetValue(symbol.ModuleName, out var names))
+            {
+                plainNamesByModule[symbol.ModuleName] = names = [];
+            }
+
+            names.Add(symbol.Path);
+        }
+
         var builder = new System.Text.StringBuilder();
         foreach (var declaration in GetClassDeclarations())
         {
             builder.Append(declaration.ModuleName).Append(':').Append(declaration.Name).Append('=');
-            foreach (var symbol in snapshot.ExportGraph.Symbols)
+            if (plainNamesByModule.TryGetValue(declaration.ModuleName, out var moduleNames))
             {
-                if (!symbol.IsExternal &&
-                    string.Equals(symbol.ModuleName, declaration.ModuleName, StringComparison.Ordinal) &&
-                    symbol.Path.Length > 0 &&
-                    !symbol.Path.Contains('.', StringComparison.Ordinal))
+                foreach (var name in moduleNames)
                 {
-                    builder.Append(symbol.Path).Append(',');
+                    builder.Append(name).Append(',');
                 }
             }
 
@@ -1543,7 +2096,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
-        ScheduleIndex();
+        ScheduleIndex("retry-files");
         return tasks.Count;
     }
 
@@ -1571,7 +2124,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
         }
 
-        ScheduleIndex();
+        ScheduleIndex("clear-cache");
     }
 
     public void Dispose()
@@ -1637,153 +2190,201 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// </summary>
     private ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>> GetExternalClassMembers()
     {
+        LuaWorkspaceCompactSnapshot? snapshot;
+        int declarationsGeneration;
         lock (_gate)
         {
-            var snapshot = _snapshot;
+            snapshot = _snapshot;
             if (snapshot is null)
             {
                 return ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>.Empty;
             }
 
+            declarationsGeneration = _declarationsGeneration;
             if (_externalClassMembers is not null &&
                 ReferenceEquals(_externalClassMembersSnapshot, snapshot) &&
-                _externalClassMembersGeneration == _declarationsGeneration)
+                _externalClassMembersGeneration == declarationsGeneration)
             {
                 return _externalClassMembers;
             }
+        }
 
-            var builder = ImmutableDictionary.CreateBuilder<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>(
-                StringComparer.Ordinal);
-            var declarations = GetClassDeclarations();
-            var classesByModule = declarations
-                .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
-                .ToDictionary(
-                    static group => group.Key,
-                    static group => group.ToArray(),
-                    StringComparer.Ordinal);
-            var modulesByClass = declarations
-                .GroupBy(static item => item.Name, StringComparer.Ordinal)
-                .ToDictionary(
-                    static group => group.Key,
-                    static group => group.First().ModuleName,
-                    StringComparer.Ordinal);
-            // Mixin edges (`Class.mixin(Character, Movable)`) add the source class's
-            // members to the target.
-            var mixinTargets = GetClassMixins();
-            var runtimeBases = GetRuntimeClassBases();
+        // Built outside _gate: every input is an immutable snapshot, and the build
+        // walks the whole export-graph universe — holding the gate through it froze
+        // every concurrent navigation request for the build's duration.
+        var computed = BuildExternalClassMembers(snapshot);
 
-            IEnumerable<string> ClassModules(string className)
+        lock (_gate)
+        {
+            // Publish only when the inputs did not move during the build; a racing
+            // newer snapshot or declaration scan makes the entry stale on arrival
+            // and the next caller rebuilds.
+            if (ReferenceEquals(_snapshot, snapshot) && _declarationsGeneration == declarationsGeneration)
             {
-                if (!modulesByClass.TryGetValue(className, out var owningModule))
-                {
-                    yield break;
-                }
+                _externalClassMembers = computed;
+                _externalClassMembersSnapshot = snapshot;
+                _externalClassMembersGeneration = declarationsGeneration;
+            }
 
-                yield return owningModule;
-                if (mixinTargets.TryGetValue(className, out var sources))
+            return computed;
+        }
+    }
+
+    private ImmutableDictionary<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>> BuildExternalClassMembers(
+        LuaWorkspaceCompactSnapshot snapshot)
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, ImmutableDictionary<string, Lunil.Analysis.LuaType>>(
+            StringComparer.Ordinal);
+        var declarations = GetClassDeclarations();
+        var classesByModule = declarations
+            .GroupBy(static item => item.ModuleName, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.ToArray(),
+                StringComparer.Ordinal);
+        var modulesByClass = declarations
+            .GroupBy(static item => item.Name, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.First().ModuleName,
+                StringComparer.Ordinal);
+        // Mixin edges (`Class.mixin(Character, Movable)`) add the source class's
+        // members to the target.
+        var mixinTargets = GetClassMixins();
+        var runtimeBases = GetRuntimeClassBases();
+
+        // Index the export symbols by module once: the per-class walk below used to
+        // rescan the entire symbol universe for every visited module
+        // (O(declarations × modules × symbols) — seconds on real corpora).
+        var symbolsByModule = new Dictionary<string, List<LuaWorkspaceExportSymbol>>(StringComparer.Ordinal);
+        foreach (var symbol in snapshot.ExportGraph.Symbols)
+        {
+            if (symbol.IsExternal || symbol.Path.Length == 0)
+            {
+                continue;
+            }
+
+            if (!symbolsByModule.TryGetValue(symbol.ModuleName, out var moduleSymbols))
+            {
+                symbolsByModule[symbol.ModuleName] = moduleSymbols = [];
+            }
+
+            moduleSymbols.Add(symbol);
+        }
+
+        IEnumerable<string> ClassModules(string className)
+        {
+            if (!modulesByClass.TryGetValue(className, out var owningModule))
+            {
+                yield break;
+            }
+
+            yield return owningModule;
+            if (mixinTargets.TryGetValue(className, out var sources))
+            {
+                foreach (var mixinSource in sources)
                 {
-                    foreach (var mixinSource in sources)
+                    if (modulesByClass.TryGetValue(mixinSource, out var sourceModule))
                     {
-                        if (modulesByClass.TryGetValue(mixinSource, out var sourceModule))
-                        {
-                            yield return sourceModule;
-                        }
+                        yield return sourceModule;
                     }
                 }
             }
+        }
 
-            foreach (var declaration in declarations)
+        foreach (var declaration in declarations)
+        {
+            var members = ImmutableDictionary.CreateBuilder<string, Lunil.Analysis.LuaType>(StringComparer.Ordinal);
+            // The class's own module first, then its base-class and mixin modules, so
+            // inherited runtime members (extend/new on a Class base) resolve too.
+            // Nearest wins.
+            var visitedModules = new HashSet<string>(StringComparer.Ordinal);
+            var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Queue<string>();
+            foreach (var module in ClassModules(declaration.Name))
             {
-                var members = ImmutableDictionary.CreateBuilder<string, Lunil.Analysis.LuaType>(StringComparer.Ordinal);
-                // The class's own module first, then its base-class and mixin modules, so
-                // inherited runtime members (extend/new on a Class base) resolve too.
-                // Nearest wins.
-                var visitedModules = new HashSet<string>(StringComparer.Ordinal);
-                var visitedClasses = new HashSet<string>(StringComparer.Ordinal);
-                var pending = new Queue<string>();
-                foreach (var module in ClassModules(declaration.Name))
+                pending.Enqueue(module);
+            }
+
+            while (pending.Count > 0)
+            {
+                var module = pending.Dequeue();
+                if (!visitedModules.Add(module))
                 {
-                    pending.Enqueue(module);
+                    continue;
                 }
 
-                while (pending.Count > 0)
+                var classNamesInModule = classesByModule.GetValueOrDefault(module) is { Length: > 0 } moduleClasses
+                    ? moduleClasses.Select(static item => item.Name).ToHashSet(StringComparer.Ordinal)
+                    : null;
+                foreach (var symbol in symbolsByModule.GetValueOrDefault(module) ?? [])
                 {
-                    var module = pending.Dequeue();
-                    if (!visitedModules.Add(module))
+                    var separator = symbol.Path.IndexOf('.');
+                    if (separator < 0)
                     {
+                        members.TryAdd(symbol.Path, symbol.Type);
                         continue;
                     }
 
-                    var classNamesInModule = classesByModule.GetValueOrDefault(module) is { Length: > 0 } moduleClasses
-                        ? moduleClasses.Select(static item => item.Name).ToHashSet(StringComparer.Ordinal)
-                        : null;
-                    foreach (var symbol in snapshot.ExportGraph.Symbols)
+                    // Namespace modules (`return { World = World }`) carry a class's
+                    // members under the class's own name; expose them to the class.
+                    if (classNamesInModule is not null &&
+                        classNamesInModule.Contains(symbol.Path[..separator]))
                     {
-                        if (symbol.IsExternal ||
-                            !string.Equals(symbol.ModuleName, module, StringComparison.Ordinal) ||
-                            symbol.Path.Length == 0)
-                        {
-                            continue;
-                        }
-
-                        var separator = symbol.Path.IndexOf('.');
-                        if (separator < 0)
-                        {
-                            members.TryAdd(symbol.Path, symbol.Type);
-                            continue;
-                        }
-
-                        // Namespace modules (`return { World = World }`) carry a class's
-                        // members under the class's own name; expose them to the class.
-                        if (classNamesInModule is not null &&
-                            classNamesInModule.Contains(symbol.Path[..separator]))
-                        {
-                            var rest = symbol.Path[(separator + 1)..];
-                            var nested = rest.IndexOf('.');
-                            members.TryAdd(nested < 0 ? rest : rest[..nested], symbol.Type);
-                        }
+                        var rest = symbol.Path[(separator + 1)..];
+                        var nested = rest.IndexOf('.');
+                        members.TryAdd(nested < 0 ? rest : rest[..nested], symbol.Type);
                     }
+                }
 
-                    foreach (var @class in classesByModule.GetValueOrDefault(module) ?? [])
+                foreach (var @class in classesByModule.GetValueOrDefault(module) ?? [])
+                {
+                    foreach (var baseName in @class.BaseNames)
                     {
-                        foreach (var baseName in @class.BaseNames)
+                        if (visitedClasses.Add(baseName))
                         {
-                            if (visitedClasses.Add(baseName))
-                            {
-                                foreach (var baseOwnerModule in ClassModules(baseName))
-                                {
-                                    pending.Enqueue(baseOwnerModule);
-                                }
-                            }
-                        }
-
-                        // The runtime `local X = Y:extend(...)` edge continues chains the
-                        // annotations leave undeclared (`---@class System` built from
-                        // `Class:extend`), so `new` and friends resolve for subclasses.
-                        if (runtimeBases.TryGetValue(@class.Name, out var runtimeBase) &&
-                            visitedClasses.Add(runtimeBase))
-                        {
-                            foreach (var baseOwnerModule in ClassModules(runtimeBase))
+                            foreach (var baseOwnerModule in ClassModules(baseName))
                             {
                                 pending.Enqueue(baseOwnerModule);
                             }
                         }
                     }
-                }
 
-                builder[declaration.Name] = members.ToImmutable();
+                    // The runtime `local X = Y:extend(...)` edge continues chains the
+                    // annotations leave undeclared (`---@class System` built from
+                    // `Class:extend`), so `new` and friends resolve for subclasses.
+                    if (runtimeBases.TryGetValue(@class.Name, out var runtimeBase) &&
+                        visitedClasses.Add(runtimeBase))
+                    {
+                        foreach (var baseOwnerModule in ClassModules(runtimeBase))
+                        {
+                            pending.Enqueue(baseOwnerModule);
+                        }
+                    }
+                }
             }
 
-            _externalClassMembers = builder.ToImmutable();
-            _externalClassMembersSnapshot = snapshot;
-            _externalClassMembersGeneration = _declarationsGeneration;
-            return _externalClassMembers;
+            builder[declaration.Name] = members.ToImmutable();
         }
+
+        return builder.ToImmutable();
     }
 
     private ImmutableDictionary<string, string>? _runtimeClassBases;
     private ImmutableDictionary<string, string>? _runtimeClassModules;
     private int _runtimeClassBasesGeneration = -1;
+
+    /// <summary>Serializes runtime-edge rebuilds so concurrent callers reuse one scan.</summary>
+    private readonly object _runtimeEdgeBuildLock = new();
+
+    /// <summary>
+    /// Per-document edge scans, reused while a document's instance (and therefore its
+    /// content) is unchanged. Entries pin the document instance only, which _documents
+    /// already pins; trimming mutates an instance's buffers without changing identity,
+    /// so trimmed documents never reload from disk for a scan.
+    /// </summary>
+    private Dictionary<string, (LspTextDocument Document, (string ClassName, string? BaseName)[] Edges)> _runtimeEdgeScans =
+        new(StringComparer.Ordinal);
 
     /// <summary>Root export types per module, rebuilt with each compact snapshot.</summary>
     private ImmutableDictionary<string, LuaType>? _moduleTypes;
@@ -1821,60 +2422,92 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     private void BuildRuntimeClassEdges()
     {
-        int generation;
-        (LspTextDocument Document, string ModuleName)[] entries;
-        lock (_gate)
+        lock (_runtimeEdgeBuildLock)
         {
-            if (_runtimeClassBases is not null && _runtimeClassBasesGeneration == _documentSetGeneration)
+            int generation;
+            (LspTextDocument Document, string ModuleName)[] entries;
+            lock (_gate)
             {
-                return;
+                if (_runtimeClassBases is not null && _runtimeClassBasesGeneration == _documentSetGeneration)
+                {
+                    return;
+                }
+
+                generation = _documentSetGeneration;
+                // Full-text scans run outside the gate; only the cheap identity
+                // resolution stays under it, so the message loop never waits behind
+                // a workspace-wide scan.
+                entries = _documents.Values
+                    .Select(document => (document, GetModuleIdentity(document.Uri).Name))
+                    .ToArray();
             }
 
-            generation = _documentSetGeneration;
-            // Full-text scans run outside the gate; only the cheap identity
-            // resolution stays under it, so the message loop never waits behind
-            // a workspace-wide scan.
-            entries = _documents.Values
-                .Select(document => (document, GetModuleIdentity(document.Uri).Name))
-                .ToArray();
-        }
-
-        var bases = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-        var modules = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
-        var edges = new List<(string ClassName, string BaseName)>();
-        foreach (var (document, moduleName) in entries)
-        {
-            edges.Clear();
-            ScanRuntimeClassEdges(document.Utf8.Span, edges);
-            foreach (var (className, baseName) in edges)
+            var previousScans = _runtimeEdgeScans;
+            var scans = new Dictionary<string, (LspTextDocument Document, (string ClassName, string? BaseName)[] Edges)>(
+                StringComparer.Ordinal);
+            var bases = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+            var modules = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
+            var edges = new List<(string ClassName, string? BaseName)>();
+            ImmutableDictionary<string, bool> factoryCalls;
+            lock (_gate)
             {
-                // First definition wins, matching annotation declaration behavior.
-                bases.TryAdd(className, baseName);
-                modules.TryAdd(className, moduleName);
+                factoryCalls = _classFactoryCalls;
             }
-        }
 
-        lock (_gate)
-        {
-            // Store the computed snapshot under the generation it was built from,
-            // even when the document set moved on mid-scan: readers then get a
-            // coherent (slightly stale) view instead of null, and the generation
-            // mismatch makes the next caller rebuild from the newer set.
-            _runtimeClassBases = bases.ToImmutable();
-            _runtimeClassModules = modules.ToImmutable();
-            _runtimeClassBasesGeneration = generation;
+            foreach (var (document, moduleName) in entries)
+            {
+                // A document whose instance is unchanged produced the same edges last
+                // time — only new/edited documents (new instances) rescan. Rescanning
+                // the whole corpus on every open/close used to put a multi-second
+                // stall on the first navigation request after it.
+                if (!previousScans.TryGetValue(document.Uri.AbsoluteUri, out var scan) ||
+                    !ReferenceEquals(scan.Document, document))
+                {
+                    edges.Clear();
+                    ScanRuntimeClassEdges(document.Utf8.Span, factoryCalls, edges);
+                    scan = (document, [.. edges]);
+                }
+
+                scans[document.Uri.AbsoluteUri] = scan;
+                foreach (var (className, baseName) in scan.Edges)
+                {
+                    // First definition wins, matching annotation declaration behavior.
+                    // Factory definitions carry a null base: they register the class's
+                    // module without an inheritance edge.
+                    if (baseName is not null)
+                    {
+                        bases.TryAdd(className, baseName);
+                    }
+
+                    modules.TryAdd(className, moduleName);
+                }
+            }
+
+            lock (_gate)
+            {
+                // Store the computed snapshot under the generation it was built from,
+                // even when the document set moved on mid-scan: readers then get a
+                // coherent (slightly stale) view instead of null, and the generation
+                // mismatch makes the next caller rebuild from the newer set.
+                _runtimeEdgeScans = scans;
+                _runtimeClassBases = bases.ToImmutable();
+                _runtimeClassModules = modules.ToImmutable();
+                _runtimeClassBasesGeneration = generation;
+            }
         }
     }
 
     /// <summary>
-    /// Finds <c>local X = Y[:.]extend(</c> edges in raw UTF-8 source. A hand scan keeps
+    /// Finds <c>local X = Y[:.]extend(</c> edges and configured class-factory definitions
+    /// (<c>local X = class("Name", Base, ...)</c>) in raw UTF-8 source. A hand scan keeps
     /// the byte-canonical document representation usable (no Regex over materialized
     /// strings), skips recompiling a regex per rebuild, and rejects the keyword when
     /// it is embedded in a longer identifier — which the old pattern silently accepted.
     /// </summary>
     private static void ScanRuntimeClassEdges(
         ReadOnlySpan<byte> source,
-        List<(string ClassName, string BaseName)> edges)
+        ImmutableDictionary<string, bool> factoryCalls,
+        List<(string ClassName, string? BaseName)> edges)
     {
         var index = 0;
         while (index < source.Length)
@@ -1910,29 +2543,131 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
 
             if (!SkipWhitespace(source, ref cursor, minimum: 0) ||
-                !TryReadIdentifier(source, ref cursor, out var baseName))
+                !TryReadIdentifier(source, ref cursor, out var rhs))
             {
                 continue;
             }
 
             SkipWhitespace(source, ref cursor, minimum: 0);
-            if (!At(source, ref cursor, (byte)'.') && !At(source, ref cursor, (byte)':'))
+            if (At(source, ref cursor, (byte)'(') && factoryCalls.TryGetValue(rhs, out var takesBases))
             {
-                continue;
-            }
+                // A factory definition registers the class so cross-file chains can
+                // resolve the module that declares it — under the local name (the shape
+                // base arguments and extend edges reference) AND the declared string
+                // name (the analyzer's prototypes are named by that string; the two
+                // differ for dotted names like "AI.AbstractMoveAIAction").
+                // "bases" factories also record each bare-identifier argument after the
+                // name string as an inheritance edge under both names.
+                if (ScanFactoryNameArgument(source, ref cursor, out var declaredName))
+                {
+                    var hasDeclared = declaredName.Length > 0 &&
+                        !string.Equals(declaredName, className, StringComparison.Ordinal);
+                    edges.Add((className, null));
+                    if (hasDeclared)
+                    {
+                        edges.Add((declaredName, null));
+                    }
 
-            if (!source[cursor..].StartsWith("extend"u8))
-            {
-                continue;
+                    if (takesBases)
+                    {
+                        foreach (var baseName in ScanFactoryBaseArguments(source, ref cursor))
+                        {
+                            edges.Add((className, baseName));
+                            if (hasDeclared)
+                            {
+                                edges.Add((declaredName, baseName));
+                            }
+                        }
+                    }
+                }
             }
-
-            cursor += 6;
-            SkipWhitespace(source, ref cursor, minimum: 0);
-            if (At(source, ref cursor, (byte)'('))
+            else
             {
-                edges.Add((className, baseName));
+                if (!At(source, ref cursor, (byte)'.') && !At(source, ref cursor, (byte)':'))
+                {
+                    continue;
+                }
+
+                if (!source[cursor..].StartsWith("extend"u8))
+                {
+                    continue;
+                }
+
+                cursor += 6;
+                SkipWhitespace(source, ref cursor, minimum: 0);
+                if (At(source, ref cursor, (byte)'('))
+                {
+                    edges.Add((className, rhs));
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Consumes a factory call's first argument — a double-quoted string literal — and
+    /// returns its value. The cursor sits on the first argument (the opening
+    /// parenthesis was already consumed by <see cref="At"/>) and is advanced past the
+    /// closing quote.
+    /// </summary>
+    private static bool ScanFactoryNameArgument(ReadOnlySpan<byte> source, ref int cursor, out string name)
+    {
+        name = string.Empty;
+        if (!SkipWhitespace(source, ref cursor, minimum: 0) || !At(source, ref cursor, (byte)'"'))
+        {
+            return false;
+        }
+
+        var closing = source[cursor..].IndexOf((byte)'"');
+        if (closing < 0)
+        {
+            return false;
+        }
+
+        name = System.Text.Encoding.UTF8.GetString(source.Slice(cursor, closing));
+        cursor += closing + 1;
+        return true;
+    }
+
+    /// <summary>
+    /// Collects the bare-identifier base arguments of a "bases" factory call. Stops at
+    /// the first compound or non-identifier argument — bases collected before it are
+    /// kept. <see cref="At"/> consumes the separators it matches, so the loop
+    /// deliberately leaves the cursor ON a separator for the next iteration.
+    /// </summary>
+    private static List<string> ScanFactoryBaseArguments(ReadOnlySpan<byte> source, ref int cursor)
+    {
+        var bases = new List<string>();
+        while (cursor < source.Length)
+        {
+            SkipWhitespace(source, ref cursor, minimum: 0);
+            if (At(source, ref cursor, (byte)')'))
+            {
+                return bases;
+            }
+
+            if (At(source, ref cursor, (byte)','))
+            {
+                continue;
+            }
+
+            if (TryReadIdentifier(source, ref cursor, out var baseName))
+            {
+                var after = cursor;
+                SkipWhitespace(source, ref after, minimum: 0);
+                if (after < source.Length &&
+                    (source[after] == (byte)',' || source[after] == (byte)')'))
+                {
+                    bases.Add(baseName);
+                    // Sit on the separator so the loop top consumes it.
+                    cursor = after;
+                    continue;
+                }
+            }
+
+            return bases;
+        }
+
+        return bases;
     }
 
     /// <summary>
@@ -2069,7 +2804,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
     /// <summary>
     /// A stable hash of every module's root export type, so analyses are invalidated
     /// when a required module's exported type changes — not only when class members do.
-    /// Caller must hold <see cref="_gate"/>.
+    /// Reads only the immutable snapshot; safe with or without <see cref="_gate"/>.
     /// </summary>
     private static ulong BuildModuleTypesHash(LuaWorkspaceCompactSnapshot snapshot)
     {
@@ -2454,7 +3189,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
     }
 
-    private void ScheduleIndex()
+    private void ScheduleIndex(string? reason = null)
     {
         CancellationToken token;
         lock (_gate)
@@ -2470,6 +3205,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             token = _indexCancellation.Token;
         }
 
+        LogInfo($"reindex scheduled ({reason ?? "unknown"}): generation {_documentSetGeneration}");
         _ = Task.Run(async () =>
         {
             try
@@ -2485,12 +3221,13 @@ internal sealed class LanguageServerWorkspace : IDisposable
             {
                 // A debounced background rebuild must never surface as an unobserved
                 // task exception; the next edit reschedules a fresh attempt anyway.
-                Console.Error.WriteLine($"Lunil workspace: reindex failed: {exception.Message}");
+                Console.Error.WriteLine(
+                    $"Lunil workspace: reindex failed: {exception}");
             }
         }, token);
     }
 
-    private void LoadFolders(ImmutableArray<Uri> folders)
+    private void LoadFolders(ImmutableArray<Uri> folders, string reason = "")
     {
         // Reading every .lua file serially is slow on large workspaces; parallelize the I/O so the
         // startup declaration gate lifts sooner and the first diagnostics appear faster.
@@ -2546,7 +3283,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
             });
 
         LogInfo(
-            $"Lunil workspace: loading {folders.Length} folder(s) -> {paths.Count} .lua files" +
+            $"Lunil workspace: loading {folders.Length} folder(s){(reason.Length == 0 ? string.Empty : $" ({reason})")} -> {paths.Count} .lua files" +
             (excluded.IsEmpty
                 ? string.Empty
                 : $", {excluded.Count} excluded from analysis ({excluded.Values.Count(static reason => reason == WorkspaceFileFilter.DataExclusionReason)} auto-detected data, {excluded.Values.Count(static reason => reason == WorkspaceFileFilter.PatternExclusionReason)} by pattern)"));
@@ -2603,12 +3340,14 @@ internal sealed class LanguageServerWorkspace : IDisposable
             // Reject rebuilds that captured the document set before this merge; a
             // stale (empty or partial) result must never overwrite the snapshot.
             _documentSetGeneration++;
-            InvalidateIndexNoLock();
+            // A snapshot restored from disk describes exactly this corpus (the
+            // fingerprint matched), so the merge keeps it until a fresh round stores.
+            InvalidateIndexNoLock(keepStaleSnapshot: _snapshotRestored);
             TrimClosedDocumentsOverBudget();
         }
 
         ScanAllTypeDeclarations();
-        ScheduleIndex();
+        ScheduleIndex("folder-scan-merge");
     }
 
     /// <summary>
@@ -2700,12 +3439,14 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScheduleIndex();
+        ScheduleIndex("configure-suppressed-codes");
     }
 
     private LuaWorkspace CreateWorkspace(LuaHostAnalysisContract? hostContract) => new(new LuaWorkspaceOptions
     {
         HostContract = hostContract,
+        RequireSearchPaths = _requireSearchPaths,
+        ClassFactoryCalls = _classFactoryCalls,
         SuppressedDiagnosticCodes = _suppressedDiagnosticCodes,
         // Strongly retained, budget-bounded module caches back the incremental fast
         // paths: cache keys encode each module's content hash and every dependency's
@@ -2717,12 +3458,299 @@ internal sealed class LanguageServerWorkspace : IDisposable
         // Leave headroom for interactive requests (hover, completion) so a full
         // background rebuild cannot saturate every core.
         MaximumParallelism = Math.Max(2, Environment.ProcessorCount - 2),
-        DiskCacheDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Lunil",
-            "language-server-cache"),
+        DiskCacheDirectory = _snapshotCacheDirectory,
         Progress = new InlineProgress(progress => _ = ProgressReported?.Invoke(progress)),
     });
+
+    /// <summary>
+    /// The directory holding the persisted navigation snapshots. One file per workspace
+    /// fingerprint (folders + require search paths + class factories + diagnostics
+    /// policy): a matching snapshot loads at startup so search and navigation work
+    /// before the first rebuild; anything else is pruned. Tests redirect this to a
+    /// scratch directory.
+    /// </summary>
+    private string _snapshotCacheDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Lunil",
+        "language-server-cache");
+
+    /// <summary>Redirects the snapshot cache directory (test isolation).</summary>
+    internal void UseSnapshotCacheDirectory(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        lock (_gate)
+        {
+            _snapshotCacheDirectory = directory;
+        }
+    }
+
+    /// <summary>
+    /// The analysis-engine identity that produced persisted snapshots. Module
+    /// contributions are cached by source content alone, so a snapshot written by an
+    /// older engine would be reused verbatim forever (stale export types, missing
+    /// symbols) — every analysis-relevant assembly's MVID makes each rebuild a
+    /// different consumer.
+    /// </summary>
+    private static readonly string AnalyzerStamp =
+        string.Join("|",
+            typeof(LuaWorkspace).Module.ModuleVersionId,
+            typeof(Lunil.Analysis.LuaType).Module.ModuleVersionId,
+            typeof(Lunil.EmmyLua.LuaAnnotationSyntax).Module.ModuleVersionId,
+            typeof(Lunil.Compiler.LuaCompilationDiagnostic).Module.ModuleVersionId,
+            typeof(Lunil.Semantics.Binding.LuaSymbolKind).Module.ModuleVersionId,
+            typeof(Lunil.Syntax.Lexing.LuaTokenKind).Module.ModuleVersionId,
+            typeof(LanguageServerWorkspace).Module.ModuleVersionId);
+
+    private string SnapshotFingerprint()
+    {
+        // Caller holds _gate.
+        unchecked
+        {
+            var hash = 1_469_598_103UL;
+            void Mix(string value)
+            {
+                foreach (var character in value)
+                {
+                    hash = (hash ^ character) * 1_099_511_628_211UL;
+                }
+
+                hash = (hash ^ '\0') * 1_099_511_628_211UL;
+            }
+
+            Mix(AnalyzerStamp);
+            foreach (var folder in _folders.OrderBy(static item => item.AbsoluteUri, StringComparer.Ordinal))
+            {
+                Mix(folder.AbsoluteUri);
+            }
+
+            foreach (var path in _requireSearchPaths)
+            {
+                Mix(path);
+            }
+
+            foreach (var pair in _classFactoryCalls.OrderBy(static item => item.Key, StringComparer.Ordinal))
+            {
+                Mix(pair.Key);
+                Mix(pair.Value ? "bases" : "plain");
+            }
+
+            foreach (var code in _suppressedDiagnosticCodes.OrderBy(static item => item, StringComparer.Ordinal))
+            {
+                Mix(code);
+            }
+
+            Mix(_hostContract?.ContractId ?? string.Empty);
+            return hash.ToString("X16", System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    private string SnapshotCachePath(string fingerprint) =>
+        Path.Combine(_snapshotCacheDirectory, $"snapshot-{fingerprint}.bin");
+
+    private static string SnapshotManifestPath(string snapshotPath) => snapshotPath + ".manifest";
+
+    /// <summary>
+    /// Hashes every .lua file's relative path and size under the workspace folders. The
+    /// snapshot fingerprint only covers configuration, so a snapshot saved while a
+    /// version-control sync was rewriting the corpus (partially analyzed modules) could
+    /// otherwise be restored indefinitely on a loaded machine whose rounds never
+    /// complete; any content churn must invalidate the snapshot on restore.
+    /// </summary>
+    private static string? ComputeCorpusManifestHash(ImmutableArray<Uri> folders)
+    {
+        try
+        {
+            var entries = new List<string>();
+            for (var index = 0; index < folders.Length; index++)
+            {
+                var root = ToLocalPath(folders[index]);
+                foreach (var path in Directory.EnumerateFiles(root, "*.lua", SearchOption.AllDirectories))
+                {
+                    entries.Add(
+                        $"{index}/{Path.GetRelativePath(root, path).Replace('\\', '/')}|{new FileInfo(path).Length}");
+                }
+            }
+
+            entries.Sort(StringComparer.Ordinal);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", entries));
+            return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether the snapshot's saved corpus manifest still matches the files on disk.
+    /// When the folders cannot be enumerated (test fixtures, detached workspaces) the
+    /// manifest could never have been written, so the snapshot is trusted; otherwise a
+    /// missing or differing manifest (from before validation, mid-sync saves, or
+    /// content churn) invalidates the snapshot.
+    /// </summary>
+    private static bool SnapshotManifestMatches(string snapshotPath, ImmutableArray<Uri> folders)
+    {
+        var current = ComputeCorpusManifestHash(folders);
+        if (current is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            var manifestPath = SnapshotManifestPath(snapshotPath);
+            return File.Exists(manifestPath) && string.Equals(
+                File.ReadAllText(manifestPath).Trim(),
+                current,
+                StringComparison.Ordinal);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static void DeleteSnapshotFilesNoLock(string snapshotPath)
+    {
+        // Caller holds _gate or runs on a worker; failures just leave the files for a
+        // later prune.
+        try
+        {
+            File.Delete(snapshotPath);
+            File.Delete(SnapshotManifestPath(snapshotPath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Loads the persisted navigation snapshot for the current workspace fingerprint, if
+    /// one exists, and prunes snapshots saved for other fingerprints. Search, definition,
+    /// references, and hierarchy work immediately; the first rebuild replaces it.
+    /// </summary>
+    private void TryLoadNavigationSnapshotNoLock()
+    {
+        // Caller holds _gate.
+        if (SnapshotPersistenceDisabled || _snapshot is not null)
+        {
+            return;
+        }
+
+        var folders = _folders;
+        var fingerprint = SnapshotFingerprint();
+        var path = SnapshotCachePath(fingerprint);
+        // Validate the corpus manifest BEFORE spending minutes loading hundreds of MB
+        // that a content change has already invalidated.
+        if (File.Exists(path) && !SnapshotManifestMatches(path, folders))
+        {
+            LogInfo("Lunil workspace: cached snapshot failed the corpus manifest check; rebuilding from scratch");
+            DeleteSnapshotFilesNoLock(path);
+            return;
+        }
+
+        var loaded = LuaWorkspaceCompactSnapshot.TryLoadNavigationSnapshot(path, fingerprint);
+        if (loaded is not null)
+        {
+            _snapshot = loaded;
+            _snapshotRestored = true;
+            // Only a successful load proves this fingerprint is wanted; pruning on a
+            // failed attempt would delete snapshots saved for other configurations
+            // (configuration arrives after initialize, so early attempts fail).
+            PruneOtherSnapshotFilesNoLock(path);
+        }
+    }
+
+    private void PruneOtherSnapshotFilesNoLock(string keepPath)
+    {
+        // Caller holds _gate.
+        try
+        {
+            if (Directory.Exists(_snapshotCacheDirectory))
+            {
+                var keepName = Path.GetFileName(keepPath);
+                foreach (var other in Directory.GetFiles(_snapshotCacheDirectory, "snapshot-*"))
+                {
+                    var name = Path.GetFileName(other);
+                    if (!string.Equals(name, keepName, StringComparison.Ordinal) &&
+                        !string.Equals(name, Path.GetFileName(SnapshotManifestPath(keepPath)), StringComparison.Ordinal))
+                    {
+                        File.Delete(other);
+                    }
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Starts a background restore of the navigation snapshot: the file is hundreds of
+    /// MB (or GB with type payloads and contributions) on large corpora, so it loads off
+    /// the gate and swaps in atomically when the fingerprint still matches. Called when
+    /// configuration settles (require paths, class factories) so the load overlaps editor
+    /// startup. The rebuild round awaits <see cref="_prefetchTask"/> so the restored
+    /// contributions cover the whole first round instead of racing it.
+    /// </summary>
+    private Task _prefetchTask = Task.CompletedTask;
+
+    private void PrefetchNavigationSnapshot()
+    {
+        string fingerprint;
+        string path;
+        ImmutableArray<Uri> folders;
+        lock (_gate)
+        {
+            if (SnapshotPersistenceDisabled || _snapshot is not null)
+            {
+                return;
+            }
+
+            fingerprint = SnapshotFingerprint();
+            path = SnapshotCachePath(fingerprint);
+            folders = _folders;
+            // Suppress the synchronous lazy load for this fingerprint: an in-flight
+            // request would otherwise block the gate for the whole read.
+            _lastSnapshotLoadFingerprintAttempt = fingerprint;
+        }
+
+        _prefetchTask = Task.Run(() =>
+        {
+            // Validate the corpus manifest before the expensive read: content churn
+            // since the save (version-control sync, partial writes) invalidates the
+            // snapshot without loading it.
+            if (File.Exists(path) && !SnapshotManifestMatches(path, folders))
+            {
+                LogInfo("Lunil workspace: cached snapshot failed the corpus manifest check; rebuilding from scratch");
+                DeleteSnapshotFilesNoLock(path);
+                return;
+            }
+
+            var loaded = LuaWorkspaceCompactSnapshot.TryLoadNavigationSnapshot(path, fingerprint);
+            if (loaded is null)
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (_snapshot is null &&
+                    string.Equals(fingerprint, SnapshotFingerprint(), StringComparison.Ordinal))
+                {
+                    _snapshot = loaded;
+                    _snapshotRestored = true;
+                    PruneOtherSnapshotFilesNoLock(path);
+                    // Restored contributions make the first round fully incremental:
+                    // an unchanged corpus reuses every module projection verbatim.
+                    if (!loaded.Contributions.IsEmpty)
+                    {
+                        _workspace.AdoptRestoredContributions(loaded);
+                    }
+                }
+            }
+        }, CancellationToken.None);
+    }
 
     private static LuaCompilationResult CreateAnalysisCompilationResult(LuaFrontEndSnapshot snapshot) =>
         new(
@@ -2738,10 +3766,24 @@ internal sealed class LanguageServerWorkspace : IDisposable
             IsAnalysisOnly = true,
         };
 
-    private void InvalidateIndexNoLock()
+    private void InvalidateIndexNoLock() => InvalidateIndexNoLock(keepStaleSnapshot: false);
+
+    /// <summary>
+    /// Bumps the index generation. Content-level invalidations (edits, a document's
+    /// on-disk content changing) keep serving the previous snapshot until the
+    /// replacement round stores — navigation during the rebuild window sees slightly
+    /// stale data instead of losing all cross-file knowledge (the window is tens of
+    /// seconds on large workspaces). Corpus- and config-level changes drop the
+    /// snapshot: its module universe no longer matches the live corpus.
+    /// </summary>
+    private void InvalidateIndexNoLock(bool keepStaleSnapshot)
     {
         _generation++;
-        _snapshot = null;
+        if (!keepStaleSnapshot)
+        {
+            _snapshot = null;
+            _snapshotRestored = false;
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

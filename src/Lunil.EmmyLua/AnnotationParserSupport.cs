@@ -555,6 +555,27 @@ internal static class AnnotationDirectiveParser
     public static LuaAnnotationSyntax ParseClass(AnnotationParseContext context)
     {
         var (name, nameSpan) = context.ReadIdentifierWithSpan("Expected a class name.");
+        // Class names may be dotted (`---@class host.Engine.Utility.TimeUtil`):
+        // generated host-API stubs address classes by their full namespace path, and
+        // navigation/highlighting needs the whole path, not just its first segment.
+        if (name is not null)
+        {
+            var dotted = new StringBuilder(name);
+            while (context.Match(LuaAnnotationTokenKind.Dot))
+            {
+                if (context.Current.Kind != LuaAnnotationTokenKind.Identifier)
+                {
+                    break;
+                }
+
+                var segment = context.Advance();
+                dotted.Append('.').Append(segment.Text);
+                nameSpan = TextSpan.FromBounds(nameSpan.Start, segment.Span.End);
+            }
+
+            name = dotted.ToString();
+        }
+
         var typeParameters = ImmutableArray.CreateBuilder<string>();
         if (context.Match(LuaAnnotationTokenKind.LessThan))
         {

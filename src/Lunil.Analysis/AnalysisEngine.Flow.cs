@@ -728,6 +728,47 @@ internal sealed partial class AnalysisEngine
             return false;
         }
 
+        if (oldTable.Fields.Length > 16)
+        {
+            var oldFields = oldTable.Fields;
+            var newFields = newTable.Fields;
+            if (newFields.Length > 0 &&
+                ReferenceEquals(oldFields[0].Name, newFields[0].Name) &&
+                ReferenceEquals(oldFields[^1].Name, newFields[^1].Name) &&
+                ReferenceEquals(oldFields[^1].ValueType, newFields[^1].ValueType))
+            {
+                return true;
+            }
+
+            var candidates = new Dictionary<string, LuaTableField?>(StringComparer.Ordinal);
+            foreach (var candidate in newTable.Fields)
+            {
+                if (candidate.Name is not null)
+                {
+                    candidates.TryAdd(candidate.Name, candidate);
+                }
+            }
+
+            foreach (var field in oldTable.Fields)
+            {
+                if (field.Name is null)
+                {
+                    continue;
+                }
+
+                if (!candidates.TryGetValue(field.Name, out var replacement) ||
+                    replacement is null ||
+                    !ReferenceEquals(replacement.ValueType, field.ValueType) &&
+                    !string.Equals(replacement.ValueType.DisplayName, field.ValueType.DisplayName,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         foreach (var field in oldTable.Fields)
         {
             if (field.Name is null)
@@ -758,12 +799,15 @@ internal sealed partial class AnalysisEngine
                 cell = new UpvalueCellState(symbol, type);
                 _upvalueCells.Add(symbol.Id, cell);
             }
-            else if (IsShapeGrowth(cell.Type, type))
+            else if (IsShapeGrowth(cell.Type, type) ||
+                (IsAnyLike(cell.Type) && type is LuaStructuralTableType))
             {
                 // Captured module/class tables grow member by member. Unioning two
                 // growth stages of one table widens member lookups to unions (or the
                 // empty placeholder) and hides every declared member; a pure growth
-                // step replaces the previous snapshot losslessly.
+                // step replaces the previous snapshot losslessly. An any-like capture
+                // (factory initializer) likewise yields to the structural shape the
+                // member writes establish.
                 cell.Type = type;
             }
             else
@@ -784,10 +828,37 @@ internal sealed partial class AnalysisEngine
             return;
         }
 
-        _symbolInferences[symbol.Id] = _symbolInferences.TryGetValue(symbol.Id, out var previous)
-            ? _relations.Union(previous, type)
-            : type;
+        if (!_symbolInferences.TryGetValue(symbol.Id, out var previous))
+        {
+            _symbolInferences[symbol.Id] = type;
+        }
+        else if (IsShapeGrowth(previous, type) ||
+            (IsAnyLike(previous) && type is LuaStructuralTableType))
+        {
+            // Two ways a later inference should REPLACE the recorded one instead of
+            // unioning: a growth stage of the same table (unioning two stages lets
+            // width-subtyping subsumption collapse to the narrowest stage, dropping
+            // the added members — same rationale as the upvalue cells above), and a
+            // structural shape established after an any-like initializer
+            // (`local M = defineView(...)` then `function M.f`), where the union
+            // would absorb the table back into any and hover would report any forever.
+            _symbolInferences[symbol.Id] = type;
+        }
+        else
+        {
+            _symbolInferences[symbol.Id] = _relations.Union(previous, type);
+        }
     }
+
+    /// <summary>
+    /// A type that carries no usable structure: plain any, or a union containing any.
+    /// Any absorbs a union semantically — `boolean · any · table` (the inferred return
+    /// of an unresolved factory call) is effectively any, so a structural shape
+    /// established later by member writes replaces it.
+    /// </summary>
+    private static bool IsAnyLike(LuaType type) =>
+        type.Kind == LuaTypeKind.Any ||
+        type is LuaUnionType union && union.Types.Any(static member => member.Kind == LuaTypeKind.Any);
 
     private void RecordExpressionInference(Lunil.Core.Text.TextSpan span, LuaType type)
     {

@@ -475,10 +475,13 @@ internal sealed class AnnotationTypeEnvironment
     {
         var parameters = syntax.TypeParameters.Select((name, index) =>
             new LuaGenericParameterType(name, index)).ToImmutableArray();
-        var parameterMap = parameters.ToDictionary(
-            static parameter => parameter.Name,
-            static parameter => (LuaType)parameter,
-            StringComparer.Ordinal);
+        // Duplicate type-parameter names are an annotation authoring error; first
+        // wins instead of crashing the whole analysis round.
+        var parameterMap = new Dictionary<string, LuaType>(StringComparer.Ordinal);
+        foreach (var parameter in parameters)
+        {
+            parameterMap.TryAdd(parameter.Name, parameter);
+        }
         var bases = syntax.BaseTypes.Select(type => Resolve(
             type,
             parameterMap,
@@ -498,16 +501,21 @@ internal sealed class AnnotationTypeEnvironment
                 depth: 1))
             .ToImmutableArray();
         var operators = extras.OfType<LuaOperatorAnnotationSyntax>()
+            .GroupBy(static item => item.Operator, StringComparer.Ordinal)
             .ToImmutableDictionary(
-                static item => item.Operator,
-                item => new LuaFunctionType(
-                    item.OperandType is null
-                        ? []
-                        : [new LuaFunctionParameter(
-                            "other",
-                            Resolve(item.OperandType, parameterMap, syntax.Name, depth: 1))],
-                    new LuaTypePack([Resolve(item.ResultType, parameterMap, syntax.Name, depth: 1)]),
-                    parameters),
+                static group => group.Key,
+                item =>
+                {
+                    var first = item.First();
+                    return new LuaFunctionType(
+                        first.OperandType is null
+                            ? []
+                            : [new LuaFunctionParameter(
+                                "other",
+                                Resolve(first.OperandType, parameterMap, syntax.Name, depth: 1))],
+                        new LuaTypePack([Resolve(first.ResultType, parameterMap, syntax.Name, depth: 1)]),
+                        parameters);
+                },
                 StringComparer.Ordinal);
         return new LuaClassDeclaration(
             syntax.Name,

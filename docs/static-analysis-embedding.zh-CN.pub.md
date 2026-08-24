@@ -142,6 +142,11 @@ using var workspace = new LuaWorkspace(new LuaWorkspaceOptions
 LuaWorkspaceResult snapshot = await workspace.AnalyzeAsync(documents, cancellationToken);
 ```
 
+`LuaWorkspaceOptions.RequireSearchPaths` 为 require 解析增加点号前缀：`require("A.B.C")` 先尝试
+`A.B.C`，再按顺序尝试 `<root>.A.B.C`。对于使用 `local X = class("Name", Base)` 之类 class factory
+的代码库，设置 `LuaWorkspaceOptions.ClassFactoryCalls` 为 factory 名到“类名后参数是否为基类”的字典，
+分析器即可暴露相应的 prototype、继承与实例行为。
+
 C++、C#、Unity、Godot 或其他宿主注入 API 时，附加经过验证的
 `LuaHostAnalysisContract`。构建、序列化和应用方式见
 [外部宿主分析](external-host-analysis.zh-CN.pub.md)。

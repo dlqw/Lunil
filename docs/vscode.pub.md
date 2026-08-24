@@ -16,14 +16,14 @@ no runtime network requests.
 
 ## 1. Install the VSIX
 
-Download the matching `lunil-lua-0.17.0-<target>.vsix` and its `.sha256` file from the 0.17.0
+Download the matching `lunil-lua-0.18.0-<target>.vsix` and its `.sha256` file from the 0.18.0
 release. Targets are `win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `darwin-x64`, and
 `darwin-arm64`.
 
 Install from **Extensions: Install from VSIX...**, or use:
 
 ```bash
-code --install-extension lunil-lua-0.17.0-win32-x64.vsix
+code --install-extension lunil-lua-0.18.0-win32-x64.vsix
 ```
 
 Each VSIX contains exactly one self-contained server for its target. No separate .NET installation
@@ -60,6 +60,9 @@ Use the Command Palette:
 | **Lunil: Show Index Status** | List indexed, failed, pending, and excluded files; failed files have a per-file retry action and excluded files show their exclusion reason. |
 | **Lunil: Show Language Server Output** | Inspect startup, restart, and protocol trace output. |
 | **Lunil: Show Virtual Host Contract** | Open the active external API declaration as a virtual Lua document. |
+| **Lunil: Search Everywhere (Symbols)** | Search workspace export symbols by name in a quick-pick list. |
+| **Lunil: Show Class Hierarchy** | Show the class under the cursor with its bases and derived classes. |
+| **Lunil: Find Usages** | List references to the symbol under the cursor in a searchable picker. |
 
 Unexpected termination uses bounded automatic restart with backoff. After the configured limit is
 reached, use the restart command to begin a new attempt sequence.
@@ -83,14 +86,16 @@ reporting a server failure.
 | `lunil.workspace.library` | `[]` | Folders of LuaLS-style `---@meta` stubs describing host-injected globals and classes. |
 | `lunil.analysis.exclude` | `[]` | Glob patterns (workspace-relative, `/`-separated) keeping matching Lua files out of indexing. |
 | `lunil.analysis.autoDetectDataFiles` | `true` | Auto-detect very large generated data files and keep them out of indexing. |
+| `lunil.require.searchPaths` | `[]` | Directory roots (relative to the first workspace folder) used to resolve `require` strings as dotted prefixes; empty means exact module identities. |
+| `lunil.analysis.classFactories` | `[]` | Global functions that define classes; accepts factory names or `{ "name": "...", "baseArguments": true }` objects. |
 | `lunil.statusBar.showModuleCount` | `true` | Show the indexed module count in the status item once indexing completes. |
 
 `lunil.server.path` must be absolute. Changing the server path or heap limit restarts the process;
-changing the host contract, library folders, or analysis exclusion (`lunil.analysis.exclude` or
-`lunil.analysis.autoDetectDataFiles`) reloads configuration and reindexes semantic data. Excluded
-files still analyze when opened in the editor. For the settings' behavior (glob semantics,
-auto-detection bounds, adaptive budgets), see [Configuring the language
-server](configuring-the-language-server.pub.md).
+changing the host contract, library folders, require search paths, class factories, or analysis
+exclusion (`lunil.analysis.exclude` or `lunil.analysis.autoDetectDataFiles`) reloads configuration
+and reindexes semantic data. Excluded files still analyze when opened in the editor. For the
+settings' behavior (glob semantics, auto-detection bounds, adaptive budgets), see [Configuring the
+language server](configuring-the-language-server.pub.md).
 
 ## Debug Lua code
 
@@ -109,7 +114,9 @@ server. See [Debugging Lua](debugging.pub.md) for walkthroughs and the
 
 Lua files receive diagnostics, completion, hover, signatures, cross-module and external navigation,
 references, rename, symbols, semantic tokens (including annotation type expressions), inlay hints,
-call hierarchy, folding, selection ranges, and quick fixes. Hovering a class or type name shows a
-class card with inheritance and member signatures; standard-library members document themselves
-and link into readonly builtin pages. See the [language server reference](language-server.pub.md)
-for the exact protocol and conservative behavior around dynamic Lua operations.
+call hierarchy, folding, selection ranges, and quick fixes. Workspace-symbol search, class
+hierarchy, and find-usages commands surface the same index in quick picks. Hovering a class or type
+name shows a class card with inheritance and member signatures; standard-library members document
+themselves and link into readonly builtin pages. See the [language server
+reference](language-server.pub.md) for the exact protocol and conservative behavior around dynamic
+Lua operations.

@@ -35,6 +35,9 @@ public sealed class LuaWorkspace : IDisposable
     private ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution> _lastContributions =
         ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
             .WithComparers(StringComparer.Ordinal);
+    /// <summary>Workspace-wide globals from the last completed round (bd, Config, ...).</summary>
+    private ImmutableDictionary<string, LuaType> _lastWorkspaceGlobals =
+        ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
     private int _activeOperations;
     private bool _disposed;
     private bool _resourcesDisposed;
@@ -118,6 +121,20 @@ public sealed class LuaWorkspace : IDisposable
         IEnumerable<LuaWorkspaceDocument> roots,
         CancellationToken cancellationToken = default) =>
         AnalyzeAsync(roots, externallyProvidedModules: null, cancellationToken);
+
+    /// <summary>
+    /// Adopts contributions restored from a persisted navigation snapshot: a rebuild of
+    /// an unchanged corpus reuses every module's projection verbatim (no parsing, no
+    /// binding, no type analysis) instead of paying the full cold round.
+    /// </summary>
+    public void AdoptRestoredContributions(LuaWorkspaceCompactSnapshot snapshot)
+    {
+        LunilGuard.NotNull(snapshot);
+        lock (_cacheLock)
+        {
+            _lastContributions = snapshot.Contributions;
+        }
+    }
 
     /// <summary>
     /// Full analysis with modules that exist at runtime but are not part of the analyzed
@@ -372,6 +389,11 @@ public sealed class LuaWorkspace : IDisposable
             var currentKeys = new Dictionary<string, string>(StringComparer.Ordinal);
             var currentSummaries = new Dictionary<string, ModuleSummaryState>(StringComparer.Ordinal);
             var currentDiscoverySummaries = new Dictionary<string, DiscoverySummary>(StringComparer.Ordinal);
+            // Globals assigned across the corpus (game, settings, logger, ...): seeded
+            // from the previous round and extended with this round's fresh analyses,
+            // so even reused modules contribute their globals.
+            var workspaceGlobals = new Dictionary<string, LuaType>(
+                _lastWorkspaceGlobals, StringComparer.Ordinal);
             var analyzedComponentCount = 0;
             foreach (var level in dependencyLevels)
             {
@@ -390,7 +412,8 @@ public sealed class LuaWorkspace : IDisposable
                             componentDependencies[componentId],
                             exportSnapshot,
                             operation,
-                            cancellationToken),
+                            cancellationToken,
+                            workspaceGlobals.ToImmutableDictionary(StringComparer.Ordinal)),
                         operation,
                         cancellationToken).ConfigureAwait(false);
                     foreach (var componentResult in chunkResults.OrderBy(static result => result.ComponentId))
@@ -408,6 +431,28 @@ public sealed class LuaWorkspace : IDisposable
                                 result.DependencySummaryHash);
                             currentKeys[result.Identity.Name] = module.CacheKey;
                             currentSummaries[result.Identity.Name] = ToSummaryState(result);
+                            // Collect this module's global assignments into the
+                            // workspace-wide map; first definition wins (deterministic
+                            // given the module processing order). Reused modules have
+                            // no compilation — their globals come from the previous
+                            // round's snapshot.
+                            if (module.ReusedContribution is null)
+                            {
+                                foreach (var info in result.Compilation.Analysis.Symbols)
+                                {
+                                    if (info.Symbol.Kind == LuaSymbolKind.Global &&
+                                        !string.IsNullOrEmpty(info.Symbol.Name) &&
+                                        !workspaceGlobals.ContainsKey(info.Symbol.Name))
+                                    {
+                                        workspaceGlobals[info.Symbol.Name] = info.InferredType;
+                                    }
+                                }
+
+                                if (compactMode)
+                                {
+                                    compactBuilder!.CollectGlobals(result);
+                                }
+                            }
                             var discovery = discoveries.GetValueOrDefault(result.Identity.Name);
                             if (discovery is not null)
                             {
@@ -471,6 +516,7 @@ public sealed class LuaWorkspace : IDisposable
             }
 
             operation.InvalidatedModules = CountInvalidatedModules(currentKeys);
+            _lastWorkspaceGlobals = workspaceGlobals.ToImmutableDictionary(StringComparer.Ordinal);
             lock (_cacheLock)
             {
                 CountDirtySummaries(
@@ -520,8 +566,12 @@ public sealed class LuaWorkspace : IDisposable
             };
             if (compactMode)
             {
-                ReportProgress(LuaWorkspaceProgressPhase.Indexing, 0, currentKeys.Count);
-                compactBuilder!.Build(graph, filteredDiagnostics, metrics);
+                compactBuilder!.Build(
+                    graph,
+                    filteredDiagnostics,
+                    metrics,
+                    (completed, total) => ReportProgress(
+                        LuaWorkspaceProgressPhase.Indexing, completed, total));
                 ReportProgress(LuaWorkspaceProgressPhase.Completed, currentKeys.Count, currentKeys.Count);
                 return new LuaWorkspaceResult(graph, [], filteredDiagnostics, metrics);
             }
@@ -706,7 +756,12 @@ public sealed class LuaWorkspace : IDisposable
                 cached = new CacheEntry<DiscoveryEntry>(
                     entry,
                     EstimateDiscoveryBytes(entry),
-                    Options.RetainFullAnalysisCacheResults);
+                    // Compact rounds never read the cached binding snapshot back (the
+                    // round-local dictionary strips it, unchanged modules reuse their
+                    // compact contribution, and changed modules re-bind on demand), so
+                    // strongly retaining 24k parse/binding trees across the whole round
+                    // is pure residency. Keep strong retention for full (CLI) rounds.
+                    Options.RetainFullAnalysisCacheResults && _compactBuilder.Value is null);
                 _discoveryCache[key] = cached;
                 return entry;
             }
@@ -725,6 +780,19 @@ public sealed class LuaWorkspace : IDisposable
         if (documents.TryGetValue(dependency.RequestedName, out var existing))
         {
             return existing;
+        }
+
+        // A require string that is not itself a module identity may resolve through the
+        // configured search paths (for example `require("Utils.HttpUtils")` naming
+        // `scripts.client.Utils.HttpUtils`). Probe the candidates in order.
+        foreach (var candidate in RequireNameExpansion.Expand(
+                     dependency.RequestedName,
+                     Options.RequireSearchPaths))
+        {
+            if (documents.TryGetValue(candidate, out var viaSearchPath))
+            {
+                return viaSearchPath;
+            }
         }
 
         if (_resolver is null)
@@ -751,7 +819,8 @@ public sealed class LuaWorkspace : IDisposable
         ImmutableArray<LuaModuleDependency> dependencies,
         ImmutableDictionary<string, ExportValue> externalExports,
         OperationMetrics operation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ImmutableDictionary<string, LuaType>? workspaceGlobals = null)
     {
         var componentDiscoveries = await RunBoundedAsync(
             component.Modules,
@@ -792,7 +861,8 @@ public sealed class LuaWorkspace : IDisposable
                     externalExports,
                     iteration,
                     operation,
-                    cancellationToken),
+                    cancellationToken,
+                    workspaceGlobals),
                 operation,
                 cancellationToken).ConfigureAwait(false);
             final = analyzed.OrderBy(static module => module.Result.Identity.Name, StringComparer.Ordinal)
@@ -856,7 +926,8 @@ public sealed class LuaWorkspace : IDisposable
         ImmutableDictionary<string, ExportValue> externalExports,
         int iteration,
         OperationMetrics operation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ImmutableDictionary<string, LuaType>? workspaceGlobals = null)
     {
         var moduleTypes = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
         var keyBuilder = new StringBuilder()
@@ -947,12 +1018,20 @@ public sealed class LuaWorkspace : IDisposable
 
         Interlocked.Increment(ref operation.CacheMisses);
         var moduleTypeSnapshot = moduleTypes.ToImmutable();
-        var analysisEnvironment = moduleTypeSnapshot.Count == 0 && Options.HostContract is null
+        var effectiveGlobals = workspaceGlobals ?? ImmutableDictionary<string, LuaType>.Empty;
+        var analysisEnvironment = moduleTypeSnapshot.Count == 0 &&
+            Options.HostContract is null &&
+            Options.ClassFactoryCalls.IsEmpty &&
+            effectiveGlobals.IsEmpty
             ? LuaAnalysisEnvironment.Empty
             : new LuaAnalysisEnvironment
             {
                 ModuleTypes = moduleTypeSnapshot,
                 HostContract = Options.HostContract,
+                ClassFactoryCalls = Options.ClassFactoryCalls,
+                // Globals from other workspace files (game, settings, logger, ...):
+                // seeded alongside builtin globals so cross-file references resolve.
+                ExternalGlobals = effectiveGlobals,
             };
         var analysisOnly = _analysisOnly.Value;
         var compilation = await Task.Run(
@@ -984,7 +1063,16 @@ public sealed class LuaWorkspace : IDisposable
             _analysisCache[cacheKey] = new CacheEntry<LuaWorkspaceModuleResult>(
                 result,
                 EstimateAnalysisBytes(result),
-                Options.RetainFullAnalysisCacheResults);
+                // In compact rounds the strong cache is pure residency: unchanged
+                // modules reuse their compact contribution through _lastContributions
+                // (checked before this cache), and a full compiler model is never read
+                // back after its chunk's AddModule — the round-local references die
+                // with the chunk and the weak entry lets GC reclaim the model right
+                // away. Without this, a 24k-file round retained every module's
+                // syntax/semantic trees until the post-round prune (>35 GB on real
+                // corpora). Full (CLI) rounds keep strong retention for their fast
+                // re-analysis path.
+                Options.RetainFullAnalysisCacheResults && _compactBuilder.Value is null);
             _lastAnalysisResultPin = result;
         }
         _diskCache?.Write(cacheKey, result);
@@ -1279,15 +1367,21 @@ public sealed class LuaWorkspace : IDisposable
     private static LuaWorkspaceModuleResult PopulateSummaryHashes(LuaWorkspaceModuleResult result)
     {
         var symbols = WorkspaceSymbolGraphBuilder.BuildModuleSymbols(result);
-        var exportEntries = symbols.ToDictionary(
-            static symbol => symbol.Key,
-            static symbol => HashText(string.Join('|',
-                symbol.Path,
-                symbol.Kind,
-                symbol.Type.DisplayName,
-                symbol.FunctionKey ?? string.Empty,
-                symbol.IsDynamic)),
-            StringComparer.Ordinal);
+        var exportEntries = symbols
+            .GroupBy(static symbol => symbol.Key, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group =>
+                {
+                    var symbol = group.First();
+                    return HashText(string.Join('|',
+                        symbol.Path,
+                        symbol.Kind,
+                        symbol.Type.DisplayName,
+                        symbol.FunctionKey ?? string.Empty,
+                        symbol.IsDynamic));
+                },
+                StringComparer.Ordinal);
         var exportSummary = string.Join('\n', exportEntries.OrderBy(static pair => pair.Key, StringComparer.Ordinal)
             .Select(static pair => pair.Key + "|" + pair.Value));
         var model = result.Compilation.SemanticModel;
