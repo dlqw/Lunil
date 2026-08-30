@@ -441,7 +441,7 @@ public static class LuaRuntimeOperations
             _ => false,
         };
 
-    private static LuaValue NormalizeArithmeticOperand(
+    internal static LuaValue NormalizeArithmeticOperand(
         LuaState state,
         LuaValue original,
         LuaValue numeric) =>

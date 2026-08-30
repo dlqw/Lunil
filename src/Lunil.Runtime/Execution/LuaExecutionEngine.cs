@@ -60,7 +60,9 @@ internal sealed class LuaExecutionEngine
                         $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
                 }
 
-                VerifiedModules.Add(closure.Module, VerifiedMarker);
+                // A racing Execute may have verified and marked it first; TryAdd
+                // keeps that benign race from throwing.
+                VerifiedModules.TryAdd(closure.Module, VerifiedMarker);
             }
 
             var thread = state.MainThread;
