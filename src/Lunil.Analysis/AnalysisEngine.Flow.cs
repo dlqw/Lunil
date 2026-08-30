@@ -527,6 +527,20 @@ internal sealed partial class AnalysisEngine
             }
         }
 
+        // Member-path narrowings must widen like variables, or a loop whose path
+        // facts change each iteration never reaches a fixed point.
+        foreach (var pair in previous.PathTypes)
+        {
+            if (result.PathTypes.TryGetValue(pair.Key, out var next))
+            {
+                result.PathTypes[pair.Key] = _relations.Union(pair.Value, next);
+            }
+            else
+            {
+                result.PathTypes[pair.Key] = pair.Value;
+            }
+        }
+
         return result;
     }
 

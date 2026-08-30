@@ -549,7 +549,12 @@ internal sealed partial class AnalysisEngine
             var narrowed = NarrowCondition(condition, head);
             exit = narrowed.FalseState;
             var bodyResult = AnalyzeBlock(body, narrowed.TrueState, insideLoop: true);
-            loopBreaks.AddRange(bodyResult.Breaks);
+            if (bodyResult.Breaks.Count > 0)
+            {
+                // Collapse each iteration's breaks into one merged state so the list
+                // cannot grow with the iteration budget.
+                loopBreaks.Add(MergeStates(bodyResult.Breaks, statement.Span));
+            }
             var candidate = MergeStates([state, bodyResult.Fallthrough], statement.Span);
             if (StatesEquivalent(head, candidate))
             {

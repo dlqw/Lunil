@@ -722,11 +722,18 @@ internal static class WorkspaceSymbolGraphBuilder
 
     private static LuaModuleDependency? FindDirectReExport(LuaWorkspaceModuleResult module)
     {
-        var root = module.Compilation.SemanticModel.Syntax.Root;
+        // Only a chunk-level `return require("m")` makes the whole module a pure
+        // re-export; a require nested inside a function does not.
+        var rootReturn = FindMainReturnStatement(module.Compilation.SemanticModel.Syntax.Root);
+        if (rootReturn is null)
+        {
+            return null;
+        }
+
         return module.Dependencies.FirstOrDefault(dependency =>
             dependency.Kind == LuaModuleDependencyKind.Static && dependency.Target is not null &&
-            root.DescendantNodes().Any(node => node.Kind == LuaSyntaxKind.ReturnStatement &&
-                node.Span.Start <= dependency.Span.Start && node.Span.End >= dependency.Span.End));
+            rootReturn.Span.Start <= dependency.Span.Start &&
+            rootReturn.Span.End >= dependency.Span.End);
     }
 
     private static TextSpan FindRootReturnSpan(LuaWorkspaceModuleResult module) =>

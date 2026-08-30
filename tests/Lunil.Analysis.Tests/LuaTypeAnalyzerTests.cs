@@ -1004,6 +1004,18 @@ public sealed class LuaTypeAnalyzerTests
         Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6006");
     }
 
+    [Fact]
+    public void UnreachableCodeAfterGotoDoesNotContributeInference()
+    {
+        var result = Analyze(
+            "local t = {}\nfor i = 1, 3 do\n  if i > 1 then goto continue end\n  t.value = i\n  ::continue::\nend\nreturn t");
+
+        // The goto's dead fall-through must not crash or corrupt inference; the
+        // analysis completes with the loop's contributions intact.
+        Assert.False(result.Diagnostics.Any(static item => item.Code == "LUA6009"),
+            "loop-internal goto targets are reachable and must not be reported unreachable");
+    }
+
     private static LuaAnalysisResult Analyze(
         string source,
         LuaAnalysisOptions? options = null,
