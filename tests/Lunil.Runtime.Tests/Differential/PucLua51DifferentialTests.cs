@@ -37,6 +37,7 @@ public sealed class PucLua51DifferentialTests
         var executable = FindLua51Executable();
         if (executable is null)
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.1 oracle");
             return;
         }
 
@@ -53,6 +54,7 @@ public sealed class PucLua51DifferentialTests
         var compiler = FindLuac51Executable(executable);
         if (executable is null || compiler is null)
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.1 oracle");
             return;
         }
 
@@ -83,6 +85,7 @@ public sealed class PucLua51DifferentialTests
         var executable = FindLua51Executable();
         if (executable is null)
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.1 oracle");
             return;
         }
 
