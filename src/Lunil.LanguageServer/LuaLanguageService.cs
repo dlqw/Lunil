@@ -2776,13 +2776,28 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     private static Uri GetUri(JsonElement parameters)
     {
         var document = parameters.TryGetProperty("textDocument", out var value) ? value : parameters;
+        if (!document.TryGetProperty("uri", out var uri) || uri.ValueKind != JsonValueKind.String)
+        {
+            throw InvalidParams("the textDocument.uri property is required");
+        }
+
         return LanguageServerWorkspace.CanonicalUri(
-            new Uri(document.GetProperty("uri").GetString()!, UriKind.Absolute));
+            new Uri(uri.GetString()!, UriKind.Absolute));
     }
 
-    private static LspPosition GetPosition(JsonElement element) => new(
-        element.GetProperty("line").GetInt32(),
-        element.GetProperty("character").GetInt32());
+    private static LspPosition GetPosition(JsonElement element)
+    {
+        if (!element.TryGetProperty("line", out var line) ||
+            !element.TryGetProperty("character", out var character))
+        {
+            throw InvalidParams("the position line and character properties are required");
+        }
+
+        return new(line.GetInt32(), character.GetInt32());
+    }
+
+    private static JsonRpcException InvalidParams(string reason) => new(
+        -32602, $"Invalid params: {reason}.");
 
     private static LspRange ParseRange(JsonElement element) => new(
         GetPosition(element.GetProperty("start")),

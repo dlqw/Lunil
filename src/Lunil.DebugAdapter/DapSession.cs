@@ -29,6 +29,7 @@ internal sealed class DapSession : IDisposable
     private string? _scriptSource;
     private LuaDebugStepMode _pendingStep;
     private string _lastStopReason = "breakpoint";
+    private bool _isPaused;
     private bool _disconnectRequested;
     private int _nextThreadId = 1;
 
@@ -125,17 +126,20 @@ internal sealed class DapSession : IDisposable
                     break;
                 case "pause":
                     _debugSession.RequestPause();
-                    _lastStopReason = "pause";
+                    lock (_commandLock)
+                    {
+                        _lastStopReason = "pause";
+                    }
                     Respond(message.Id, new JsonObject { ["success"] = true });
                     break;
                 case "stackTrace":
-                    Respond(message.Id, HandleStackTrace(message.Body));
+                    Respond(message.Id, RequirePaused(HandleStackTrace(message.Body)));
                     break;
                 case "scopes":
-                    Respond(message.Id, HandleScopes(message.Body));
+                    Respond(message.Id, RequirePaused(HandleScopes(message.Body)));
                     break;
                 case "variables":
-                    Respond(message.Id, HandleVariables(message.Body));
+                    Respond(message.Id, RequirePaused(HandleVariables(message.Body)));
                     break;
                 case "threads":
                     Respond(message.Id, HandleThreads());
@@ -338,7 +342,9 @@ internal sealed class DapSession : IDisposable
         lock (_commandLock)
         {
             _pendingStep = step;
-            _lastStopReason = step == LuaDebugStepMode.None ? "continue" : "step";
+            // The next stop after a continue is a breakpoint hit; 'continue' is not
+            // a valid DAP stopped reason.
+            _lastStopReason = step == LuaDebugStepMode.None ? "breakpoint" : "step";
         }
 
         _resumeSignal.Release();
@@ -370,6 +376,7 @@ internal sealed class DapSession : IDisposable
                 var line = Math.Max(1, LuaDebugApi.GetCurrentLine(
                     _thread,
                     LuaDebugApi.GetFrame(state, _thread, 0)!));
+                _isPaused = true;
                 _connection.WriteMessage(DapMessage.Event(
                     "stopped",
                     new JsonObject
@@ -381,6 +388,7 @@ internal sealed class DapSession : IDisposable
                     }));
 
                 _resumeSignal.Wait();
+                _isPaused = false;
                 if (_disconnectRequested)
                 {
                     return;
@@ -470,6 +478,24 @@ internal sealed class DapSession : IDisposable
     }
 
     private string GetPauseReason() => _lastStopReason;
+
+    /// <summary>
+    /// Stack inspection races with the running VM; while the thread is not paused
+    /// the request fails instead of reading live frame data.
+    /// </summary>
+    private JsonObject RequirePaused(JsonObject response)
+    {
+        if (!_isPaused)
+        {
+            return new JsonObject
+            {
+                ["success"] = false,
+                ["message"] = "The thread is not paused; stack data is unavailable.",
+            };
+        }
+
+        return response;
+    }
 
     private static string GetFrameName(LuaFrame frame)
     {

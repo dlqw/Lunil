@@ -1456,6 +1456,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         int environmentGeneration;
         ImmutableDictionary<string, LuaType> libraryGlobals;
         ImmutableDictionary<string, LuaType> moduleTypes;
+        LanguageDocumentAnalysis? cachedCandidate = null;
         lock (_gate)
         {
             if (!_documents.TryGetValue(uri.AbsoluteUri, out document!))
@@ -1466,13 +1467,32 @@ internal sealed class LanguageServerWorkspace : IDisposable
             environmentGeneration = _environmentGeneration;
             libraryGlobals = _libraryGlobals;
             moduleTypes = GetModuleTypesNoLock();
+            // Cheap identity checks stay inside the global lock; the full byte
+            // comparison (which may rehydrate a trimmed document from disk) runs
+            // outside so hover/definition never blocks every other request.
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
                 cached.Document.Version == document.Version &&
                 cached.EnvironmentGeneration == environmentGeneration &&
-                cached.Document.Utf8.Span.SequenceEqual(document.Utf8.Span))
+                cached.Document.ByteLength == document.ByteLength)
             {
-                TouchAnalysis(uri.AbsoluteUri);
-                return cached;
+                cachedCandidate = cached;
+            }
+        }
+
+        if (cachedCandidate is not null)
+        {
+            var candidate = cachedCandidate;
+            if (candidate.Document.Utf8.Span.SequenceEqual(document.Utf8.Span))
+            {
+                lock (_gate)
+                {
+                    if (_documents.TryGetValue(uri.AbsoluteUri, out var current) &&
+                        ReferenceEquals(current, document))
+                    {
+                        TouchAnalysis(uri.AbsoluteUri);
+                        return candidate;
+                    }
+                }
             }
         }
 
@@ -3170,6 +3190,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
             catch (Exception exception) when (exception is not OutOfMemoryException and
                 not StackOverflowException and not AccessViolationException)
             {
+                if (exception is OperationCanceledException || cancellationToken.IsCancellationRequested)
+                {
+                    // A cancelled round is not an analysis failure: restore the file to
+                    // its retryable pending state instead of reporting "canceled" as an
+                    // error.
+                    lock (_gate)
+                    {
+                        _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                        _indexErrors.Remove(uri.AbsoluteUri);
+                    }
+
+                    return;
+                }
+
                 // Any failure must land in a retryable Failed state with its reason; a
                 // fire-and-forget task that escapes would leave the document stuck in
                 // InProgress forever with no visible cause.
