@@ -134,6 +134,8 @@ public sealed class LuaClrTimer : IDisposable
     /// <summary>Gets whether the timer was cancelled or disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
+    internal LuaClrTimerRegistration Registration => _registration;
+
     /// <summary>Gets the number of callback ticks dispatched by this timer.</summary>
     public long DispatchedTickCount => Interlocked.Read(ref _dispatchedTickCount);
 
@@ -175,8 +177,6 @@ public sealed class LuaClrTimer : IDisposable
             }
         }
     }
-
-    internal LuaClrTimerRegistration Registration => _registration;
 
     internal bool IsDue(long now)
     {
@@ -601,6 +601,24 @@ public sealed partial class LuaClrBridge
         }
     }
 
+    /// <summary>
+    /// Fails a Lua-facing cancellation while a patch barrier has quiesced the
+    /// timer's generation. Only explicit Lua calls pay this cost: host shutdown
+    /// and garbage collection must always be able to detach the registration.
+    /// </summary>
+    internal void EnsureTimerCancellable(LuaClrTimerRegistration registration)
+    {
+        lock (_callbackGate)
+        {
+            if (registration.State == LuaClrGenerationState.Quiesced)
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.TimerGenerationClosed,
+                    "A quiesced CLR timer cannot be cancelled before patch publication.");
+            }
+        }
+    }
+
     internal void CloseTimerRegistration(LuaClrTimerRegistration registration)
     {
         lock (_callbackGate)
@@ -641,7 +659,27 @@ public sealed partial class LuaClrBridge
                 .ToArray();
             foreach (var timer in timers)
             {
-                timer.Dispose();
+                try
+                {
+                    timer.Dispose();
+                }
+                catch (LuaClrException)
+                {
+                    // A patch barrier quiesced this timer; teardown happens below.
+                }
+            }
+
+            // Host shutdown is not subject to the patch-publication barrier: retire
+            // every remaining registration so disposal is never half-done.
+            foreach (var registration in _timerRegistrations.ToArray())
+            {
+                if (registration.State is LuaClrGenerationState.Quiesced
+                    or LuaClrGenerationState.Stale)
+                {
+                    registration.State = LuaClrGenerationState.Closed;
+                    registration.Timer.Retire();
+                    _timerRegistrations.Remove(registration);
+                }
             }
 
             PruneGenerationRegistrations();

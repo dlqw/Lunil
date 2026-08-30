@@ -476,15 +476,31 @@ namespace Lunil.Generated
     private static string DefaultValue(IParameterSymbol parameter)
     {
         if (!parameter.HasExplicitDefaultValue || parameter.ExplicitDefaultValue is null) return "null";
+        // Enum defaults must emit a numeric cast: the boxed constant stringifies to
+        // its member name, which is not valid in generated code.
+        if (parameter.Type.TypeKind == TypeKind.Enum)
+        {
+            return "(" + parameter.Type.ToDisplayString().Replace("global::", string.Empty) + ")" +
+                System.Convert.ToInt64(parameter.ExplicitDefaultValue, System.Globalization.CultureInfo.InvariantCulture).ToString(
+                    System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         return parameter.ExplicitDefaultValue switch
         {
             string text => Literal(text),
             char value => SymbolDisplay.FormatLiteral(value, quote: true),
             bool value => Bool(value),
-            float value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "F",
-            double value => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "D",
-            _ => Convert.ToString(parameter.ExplicitDefaultValue,
-                System.Globalization.CultureInfo.InvariantCulture) ?? "null",
+            float value when !float.IsInfinity(value) && !float.IsNaN(value) =>
+                value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "F",
+            double value when !double.IsInfinity(value) && !double.IsNaN(value) =>
+                value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "D",
+            float or double => parameter.Type.ToDisplayString().Replace("global::", string.Empty) +
+                "." + nameof(float.PositiveInfinity),
+            decimal value => value.ToString(System.Globalization.CultureInfo.InvariantCulture) + "M",
+            int or long or short or sbyte or byte or ushort or uint or ulong =>
+                Convert.ToString(parameter.ExplicitDefaultValue,
+                    System.Globalization.CultureInfo.InvariantCulture),
+            _ => "default(" + parameter.Type.ToDisplayString().Replace("global::", string.Empty) + ")",
         };
     }
 

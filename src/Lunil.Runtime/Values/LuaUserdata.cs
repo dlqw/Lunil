@@ -89,7 +89,23 @@ public sealed class LuaUserdata : LuaGcObject
         return finalizer.Kind == LuaValueKind.Function;
     }
 
-    internal override void OnCollected() => DisposePayload();
+    internal override void OnCollected()
+    {
+        // Heap bookkeeping is already updated when the sweep releases a payload;
+        // an exception escaping here would corrupt the collection and leave
+        // host registrations permanently rooted. Host code surfaces payload
+        // errors through explicit dispose paths instead.
+        try
+        {
+            DisposePayload();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+            not StackOverflowException and
+            not AccessViolationException)
+        {
+            _ = exception;
+        }
+    }
 
     private static long CalculateLogicalSize(int userValueCount, long payloadLogicalSize)
     {

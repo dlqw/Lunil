@@ -287,6 +287,29 @@ public sealed class LuaClrTimerTests
         Assert.Equal(0, host.DispatchClrTimers());
     }
 
+    [Fact]
+    public void QuiescedTimersRejectCancellationAndReleaseAtTeardown()
+    {
+        var time = new ManualTimeProvider();
+        using var host = CreateHost(time);
+        Assert.True(host.RunUtf8("timer = clr.timer(function() end, 50)").Succeeded);
+        var timer = TimerPayload(host.State.GetGlobal("timer"));
+        var quiescedBefore = host.ClrBridge.QuiescedTimerCount;
+        timer.Registration.State = LuaClrGenerationState.Quiesced;
+
+        // Fail closed: neither host code nor Lua can cancel a quiesced timer
+        // before patch publication.
+        Assert.Throws<LuaClrException>(timer.Dispose);
+        Assert.Equal(quiescedBefore + 1, host.ClrBridge.QuiescedTimerCount);
+        Assert.True(host.RunUtf8(
+            "cancelled_ok = pcall(clr.cancel_timer, timer)").Succeeded);
+        Assert.False(host.State.GetGlobal("cancelled_ok").AsBoolean());
+
+        // Host shutdown is not subject to the patch barrier.
+        host.ClrBridge.DisposeTimers();
+        Assert.Equal(quiescedBefore, host.ClrBridge.QuiescedTimerCount);
+    }
+
     private static LuaHost CreateHost(
         ManualTimeProvider timeProvider,
         int maximumTimers = 32,
