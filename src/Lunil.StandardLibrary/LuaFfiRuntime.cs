@@ -55,6 +55,8 @@ internal sealed class LuaFfiContext : IDisposable
     private readonly LuaTable _bufferMetatable;
     private readonly Dictionary<string, LuaFfiLibraryHandle> _libraries =
         new(StringComparer.Ordinal);
+    private const int MaximumDelegateTypes = 256;
+
     private readonly object _delegateTypeGate = new();
     private readonly Dictionary<LuaFfiSignature, Type> _delegateTypes = [];
     private long _allocatedBytes;
@@ -1104,6 +1106,15 @@ internal sealed class LuaFfiContext : IDisposable
                 throw new LuaFfiException(
                     LuaFfiErrorCode.DynamicCodeUnavailable,
                     "The runtime cannot create a dynamic native delegate type.");
+            }
+
+            // Each distinct signature builds a dynamic assembly; an unbounded cache
+            // would let a script exhaust host memory by binding random signatures.
+            if (_delegateTypes.Count >= MaximumDelegateTypes)
+            {
+                throw new LuaFfiException(
+                    LuaFfiErrorCode.ResourceLimitExceeded,
+                    "The native FFI delegate type limit has been reached.");
             }
 
             var parameterTypes = signature.ParameterTypes
