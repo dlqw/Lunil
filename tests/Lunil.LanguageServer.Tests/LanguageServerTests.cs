@@ -538,7 +538,84 @@ public sealed class LanguageServerTests
         Assert.Contains("**Members (1)**", restored, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task GlobalRenameRewritesReferencesAcrossModules()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var firstUri = new Uri("file:///globals-one.lua");
+        var secondUri = new Uri("file:///globals-two.lua");
+        workspace.Open(firstUri, 1, "hitCount = 0\nlocal function bump() hitCount = hitCount + 1 end\nreturn bump");
+        workspace.Open(secondUri, 1, "local total = hitCount\nreturn total");
+        await workspace.ReindexNowAsync(CancellationToken.None);
+
+        var service = new LuaLanguageService(workspace);
+        var prepareParameters = Element(new
+        {
+            textDocument = new { uri = secondUri.AbsoluteUri },
+            position = new { line = 0, character = 14 },
+        });
+        var prepare = await service.PrepareRenameAsync(prepareParameters, CancellationToken.None);
+        var renameParameters = Element(new
+        {
+            textDocument = new { uri = secondUri.AbsoluteUri },
+            position = new { line = 0, character = 14 },
+            newName = "tally",
+        });
+        var rename = await service.RenameAsync(renameParameters, CancellationToken.None);
+
+        Assert.NotNull(prepare);
+        Assert.Contains("hitCount", prepare!.ToJsonString(), StringComparison.Ordinal);
+        Assert.NotNull(rename);
+        var changes = rename!["changes"]!.AsObject();
+        Assert.True(changes.Count >= 2, "the rename must edit every module that uses the global");
+        var edits = changes.SelectMany(pair => pair.Value!.AsArray()).Count();
+        Assert.True(edits >= 4, $"expected every global use to be renamed, got {edits} edits");
+    }
+
+    [Fact]
+    public async Task PrepareCallHierarchyReturnsASingleItem()
+    {
+        using var workspace = new LanguageServerWorkspace();
+        workspace.Initialize([]);
+        var uri = new Uri("file:///hierarchy.lua");
+        workspace.Open(uri, 1, "local function target() return 1 end\nreturn target");
+        var service = new LuaLanguageService(workspace);
+        var parameters = Element(new
+        {
+            textDocument = new { uri = uri.AbsoluteUri },
+            position = new { line = 0, character = 20 },
+        });
+
+        var item = await service.PrepareCallHierarchyAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(item);
+        Assert.IsType<JsonObject>(item);
+        Assert.NotNull(item!["name"]);
+        Assert.NotNull(item["data"]);
+    }
+
+    [Fact]
+    public async Task MalformedJsonAnswersParseErrorAndKeepsServing()
+    {
+        var malformed = Frame("{not valid json");
+        var request = Frame("""{"jsonrpc":"2.0","id":13,"method":"ping","params":{}}""");
+        await using var input = new MemoryStream(malformed.Concat(request).ToArray());
+        await using var output = new MemoryStream();
+        await using var connection = new JsonRpcConnection(input, output);
+
+        await connection.RunAsync((_, _) => Task.FromResult<JsonNode?>(JsonValue.Create("pong")));
+
+        var payloads = ReadPayloads(output.ToArray());
+        Assert.Equal(2, payloads.Count);
+        using var parseError = JsonDocument.Parse(payloads[0]);
+        Assert.Equal(-32700, parseError.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+        using var response = JsonDocument.Parse(payloads[1]);
+        Assert.Equal("pong", response.RootElement.GetProperty("result").GetString());
+    }
+
     private static async Task WaitForAsync(Func<bool> condition)
+
     {
         for (var attempt = 0; attempt < 100 && !condition(); attempt++)
         {
@@ -1727,6 +1804,26 @@ public sealed class LanguageServerTests
     {
         var payload = Encoding.UTF8.GetBytes(json);
         return Encoding.ASCII.GetBytes($"Content-Length: {payload.Length}\r\n\r\n").Concat(payload).ToArray();
+    }
+
+    private const string HeaderSeparator = "\r\n\r\n";
+
+    private static List<string> ReadPayloads(byte[] framed)
+    {
+        var text = Encoding.ASCII.GetString(framed);
+        var payloads = new List<string>();
+        var position = 0;
+        while (position < text.Length)
+        {
+            var headerEnd = text.IndexOf(HeaderSeparator, position, StringComparison.Ordinal);
+            Assert.True(headerEnd >= position);
+            var header = text[position..headerEnd];
+            var length = int.Parse(header.Split(':')[1].Trim(), System.Globalization.CultureInfo.InvariantCulture);
+            payloads.Add(text[(headerEnd + 4)..(headerEnd + 4 + length)]);
+            position = headerEnd + 4 + length;
+        }
+
+        return payloads;
     }
 
     private static byte[] ReadFirstPayload(byte[] framed)

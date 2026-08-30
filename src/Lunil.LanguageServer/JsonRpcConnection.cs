@@ -359,14 +359,33 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
 
     private bool TryHandleResponse(byte[] payload)
     {
-        using var document = JsonDocument.Parse(payload);
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("method", out _) ||
-            !root.TryGetProperty("id", out var id))
+        JsonDocument document;
+        try
         {
+            document = JsonDocument.Parse(payload);
+        }
+        catch (JsonException)
+        {
+            // Malformed payloads are not responses; let the main loop parse them so
+            // the client receives a -32700 parse error instead of the server dying.
             return false;
         }
 
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("method", out _) ||
+                !root.TryGetProperty("id", out var id))
+            {
+                return false;
+            }
+
+            return HandleResponse(root, id);
+        }
+    }
+
+    private bool HandleResponse(JsonElement root, JsonElement id)
+    {
         if (!_outbound.TryRemove(GetIdKey(id), out var completion))
         {
             return true;

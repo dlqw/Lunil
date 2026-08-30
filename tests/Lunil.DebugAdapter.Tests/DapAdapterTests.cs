@@ -127,6 +127,26 @@ public sealed class DapAdapterTests : IDisposable
     }
 
     [Fact]
+    public void BreakpointsSentWithAbsoluteSourcePathsStillHit()
+    {
+        var script = CreateScript(
+            """
+            local a = 1       -- 2
+            return a          -- 3
+            """);
+        Initialize();
+        Launch(script);
+        SetBreakpoints([2], script);
+        ConfigurationDone();
+
+        var stopped = WaitForEvent("stopped");
+        Assert.Equal(2, (int?)stopped?["line"]);
+
+        Continue();
+        WaitForEvent("terminated");
+    }
+
+    [Fact]
     public void PauseRequestStopsRunningScript()
     {
         var script = CreateScript(
@@ -195,7 +215,7 @@ public sealed class DapAdapterTests : IDisposable
         Assert.True((bool?)response?["success"]);
     }
 
-    private void SetBreakpoints(int[] lines)
+    private void SetBreakpoints(int[] lines, string? path = null)
     {
         var breakpoints = new JsonArray();
         foreach (var line in lines)
@@ -205,7 +225,7 @@ public sealed class DapAdapterTests : IDisposable
 
         var response = Request("setBreakpoints", new JsonObject
         {
-            ["source"] = new JsonObject { ["path"] = _launchedFileName },
+            ["source"] = new JsonObject { ["path"] = path ?? _launchedFileName },
             ["breakpoints"] = breakpoints,
         });
         Assert.True((bool?)response?["success"]);

@@ -325,3 +325,21 @@ public sealed class LuaGodotPersistentStore : ILuaGameLoopPersistentStore
         return Path.Combine(_root, encoded + ".bin");
     }
 }
+
+/// <summary>
+/// Host-facing defaults shared by the Godot game-loop adapter.
+/// </summary>
+internal static class LuaGodotServices
+{
+    /// <summary>
+    /// Default capabilities for scripts loaded from project assets: file access stays
+    /// inside the registered resources, while shell execution, process termination,
+    /// and environment variables remain denied. Trusted access requires an explicit
+    /// <c>ConfigureHostOptions</c> opt-in.
+    /// </summary>
+    public static LuaStandardLibraryOptions CreateDefaultStandardLibrary(ILuaFileSystem fileSystem) =>
+        LuaHostCapabilityProfiles.Create(LuaHostProfile.Restricted) with
+        {
+            FileSystem = fileSystem,
+        };
+}

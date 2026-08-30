@@ -107,10 +107,10 @@ public partial class LuaGodotGameLoop : Node
         {
             ExecutionBackend = LuaHostExecutionBackend.Interpreter,
             ModuleResolver = resolver,
-            StandardLibrary = LuaHostCapabilityProfiles.Create(LuaHostProfile.Trusted) with
-            {
-                FileSystem = resolver,
-            },
+            // Scripts loaded from project assets must not gain shell, process, or
+            // environment access by default; Trusted remains available explicitly
+            // through ConfigureHostOptions.
+            StandardLibrary = LuaGodotServices.CreateDefaultStandardLibrary(resolver),
         };
         var gameLoopOptions = new LuaGameLoopHostOptions
         {

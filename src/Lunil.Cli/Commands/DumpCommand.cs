@@ -230,6 +230,10 @@ internal static class DumpCommand
                 {
                     WriteChunkText(lua53Chunk.MainPrototype, output, 0, "main");
                 }
+                else if (chunk is Lua52Chunk lua52Chunk)
+                {
+                    WriteChunkText(lua52Chunk.MainPrototype, output, 0, "main");
+                }
                 else
                 {
                     WriteChunkText(((Lua54Chunk)chunk!).MainPrototype, output, 0, "main");
@@ -303,6 +307,10 @@ internal static class DumpCommand
                     else if (chunk is Lua53Chunk lua53Chunk)
                     {
                         WriteChunkJson(writer, lua53Chunk.MainPrototype);
+                    }
+                    else if (chunk is Lua52Chunk lua52Chunk)
+                    {
+                        WriteChunkJson(writer, lua52Chunk.MainPrototype);
                     }
                     else
                     {
@@ -524,6 +532,30 @@ internal static class DumpCommand
     }
 
     private static void WriteChunkText(
+        Lua52Prototype prototype,
+        StringBuilder output,
+        int depth,
+        string name)
+    {
+        output.Append(' ', depth * 2).Append("prototype ").Append(name)
+            .Append(" params=").Append(prototype.ParameterCount)
+            .Append(" stack=").Append(prototype.MaximumStackSize)
+            .Append(" code=").AppendLine(prototype.Code.Length.ToString(CultureInfo.InvariantCulture));
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            var instruction = prototype.Code[pc];
+            output.Append(' ', depth * 2 + 2).Append(pc.ToString("D4", CultureInfo.InvariantCulture)).Append(' ')
+                .Append(instruction.Opcode).Append(" raw=0x")
+                .AppendLine(instruction.RawValue.ToString("x8", CultureInfo.InvariantCulture));
+        }
+
+        for (var index = 0; index < prototype.NestedPrototypes.Length; index++)
+        {
+            WriteChunkText(prototype.NestedPrototypes[index], output, depth + 1, name + "." + index);
+        }
+    }
+
+    private static void WriteChunkText(
         Lua53Prototype prototype,
         StringBuilder output,
         int depth,
@@ -545,6 +577,37 @@ internal static class DumpCommand
         {
             WriteChunkText(prototype.NestedPrototypes[index], output, depth + 1, name + "." + index);
         }
+    }
+
+    private static void WriteChunkJson(Utf8JsonWriter writer, Lua52Prototype prototype)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("parameterCount", prototype.ParameterCount);
+        writer.WriteNumber("varArgFlags", prototype.VarArgFlags);
+        writer.WriteNumber("maximumStackSize", prototype.MaximumStackSize);
+        writer.WriteStartArray("code");
+        for (var pc = 0; pc < prototype.Code.Length; pc++)
+        {
+            var instruction = prototype.Code[pc];
+            writer.WriteStartObject();
+            writer.WriteNumber("pc", pc);
+            writer.WriteString("opcode", instruction.Opcode.ToString());
+            writer.WriteString("raw", $"0x{instruction.RawValue:x8}");
+            writer.WriteNumber("a", instruction.A);
+            writer.WriteNumber("b", instruction.B);
+            writer.WriteNumber("c", instruction.C);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteStartArray("prototypes");
+        foreach (var nested in prototype.NestedPrototypes)
+        {
+            WriteChunkJson(writer, nested);
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 
     private static void WriteChunkJson(Utf8JsonWriter writer, Lua53Prototype prototype)

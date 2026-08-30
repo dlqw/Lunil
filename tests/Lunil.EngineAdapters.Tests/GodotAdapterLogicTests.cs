@@ -139,4 +139,16 @@ public sealed class GodotAdapterLogicTests
             AssetId = assetId,
             ModuleName = moduleName,
         };
+
+    [Fact]
+    public void DefaultGodotCapabilitiesDenyProcessAndEnvironmentAccess()
+    {
+        var resolver = new LuaGodotAssetResolver(Array.Empty<LuaGodotScriptResource>());
+        var options = LuaGodotServices.CreateDefaultStandardLibrary(resolver);
+
+        Assert.Same(resolver, options.FileSystem);
+        Assert.Throws<UnauthorizedAccessException>(() => options.OperatingSystem.Execute("dir"));
+        Assert.Throws<UnauthorizedAccessException>(() => options.OperatingSystem.Terminate(1, false));
+        Assert.Null(options.Environment.GetEnvironmentVariable("PATH"));
+    }
 }

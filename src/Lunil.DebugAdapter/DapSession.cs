@@ -215,6 +215,13 @@ internal sealed class DapSession : IDisposable
         if (path is not null)
         {
             _breakpoints[path] = lines;
+            if (_sourcePath is not null && !string.Equals(path, _sourcePath, StringComparison.Ordinal))
+            {
+                // Standard DAP clients send the absolute source path while execution
+                // resolves breakpoints against the launched file name; key both.
+                _breakpoints[_sourcePath] = lines;
+            }
+
             if (_state is not null)
             {
                 ApplyBreakpoints();
