@@ -19,6 +19,10 @@ internal sealed class LuaExecutionEngine
 {
     private const int MaximumCStackDepth = 120;
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<LuaIrModule, object> VerifiedModules = new();
+
+    private static readonly object VerifiedMarker = new();
+
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
     private readonly LuaInterpreterInstructionExecutor _referenceInstructionExecutor = new();
@@ -45,11 +49,18 @@ internal sealed class LuaExecutionEngine
         lock (state.ExecutionGate)
         {
             state.Heap.ValidateValue(LuaValue.FromFunction(closure));
-            var verificationErrors = LuaIrVerifier.Verify(closure.Module);
-            if (!verificationErrors.IsEmpty)
+            // Verification is deterministic over the immutable module, so repeated
+            // Execute calls (REPL loops, game scripts) verify only once per module.
+            if (!VerifiedModules.TryGetValue(closure.Module, out _))
             {
-                throw new LuaRuntimeException(
-                    $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
+                var verificationErrors = LuaIrVerifier.Verify(closure.Module);
+                if (!verificationErrors.IsEmpty)
+                {
+                    throw new LuaRuntimeException(
+                        $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
+                }
+
+                VerifiedModules.Add(closure.Module, VerifiedMarker);
             }
 
             var thread = state.MainThread;
@@ -1497,7 +1508,8 @@ internal sealed class LuaExecutionEngine
         for (var index = thread.Frames.Count - 1; index >= 0; index--)
         {
             var continuation = thread.Frames[index].Continuation;
-            if (continuation.ProtectionKind == LuaProtectedCallKind.Finalizer ||
+            if (continuation.ProtectionKind is LuaProtectedCallKind.Finalizer
+                    or LuaProtectedCallKind.ErrorHandler ||
                 continuation.IsYieldBarrier)
             {
                 return true;

@@ -134,6 +134,19 @@ public sealed class LuaBasicLibraryTests
     }
 
     [Fact]
+    public void PrintUsesTheMetamethodEvenWhenGlobalTostringIsRedefined()
+    {
+        var console = new RecordingConsole();
+        var state = CreateState(console: console);
+        _ = Execute(
+            state,
+            "tostring = function(v) return '!' end; " +
+            "print('a', setmetatable({}, {__tostring=function() return 'custom' end}))");
+
+        Assert.Equal("a\tcustom\n", Encoding.UTF8.GetString(console.Output.ToArray()));
+    }
+
+    [Fact]
     public void ProtectedCallsSupportTailPositionResumableNativeTargets()
     {
         var values = Execute(

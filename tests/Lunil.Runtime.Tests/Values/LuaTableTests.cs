@@ -382,6 +382,20 @@ public sealed class LuaTableTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    [Fact]
+    public void IntegerValuedFloatKeysNormalizeForIteration()
+    {
+        var state = new LuaState();
+        var table = new LuaTable(state.Heap);
+        table.Set(LuaValue.FromFloat(10.0), LuaValue.FromInteger(99));
+
+        Assert.Equal(LuaValue.FromInteger(99), table.Get(LuaValue.FromInteger(10)));
+
+        Assert.True(table.Next(LuaValue.Nil, out var key, out _));
+        Assert.Equal(LuaValueKind.Integer, key.Kind);
+        Assert.Equal(10, key.AsInteger());
+    }
+
     private static WeakReference<LuaTable> CreateDeletedKeyWeakReference(
         LuaState state,
         LuaTable table)

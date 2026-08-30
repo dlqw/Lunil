@@ -573,19 +573,32 @@ internal static class LuaBasicLibrary
             index++;
         }
 
-        if (index == state.Length - 1)
+        // PUC's print converts each value through luaL_tolstring: the __tostring
+        // metamethod first, never the (user-redefinable) global tostring.
+        while (index < state.Length - 1)
         {
-            LuaStandardLibraryContext.Get(context.State).Options.Console.WriteLine();
-            return LuaNativeStep.Completed();
+            var metamethod = GetMetafield(context.State, state[index], "__tostring");
+            if (metamethod.IsNil)
+            {
+                WritePrintValue(
+                    context.State,
+                    index,
+                    DefaultToString(context.State, state[index]).AsString().AsMemory());
+                index++;
+                continue;
+            }
+
+            state[^1] = LuaValue.FromInteger(index);
+            return LuaNativeStep.CallLuaWithReusableState(
+                metamethod,
+                [state[index]],
+                continuationId: 1,
+                stateValues: state,
+                callIsYieldable: false);
         }
 
-        state[^1] = LuaValue.FromInteger(index);
-        return LuaNativeStep.CallLuaWithReusableState(
-            context.State.GetGlobal("tostring"),
-            [state[index]],
-            continuationId: 1,
-            stateValues: state,
-            callIsYieldable: false);
+        LuaStandardLibraryContext.Get(context.State).Options.Console.WriteLine();
+        return LuaNativeStep.Completed();
     }
 
     private static void WritePrintValue(LuaState state, int index, ReadOnlyMemory<byte> bytes)
