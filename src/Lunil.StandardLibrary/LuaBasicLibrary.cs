@@ -573,8 +573,27 @@ internal static class LuaBasicLibrary
             index++;
         }
 
-        // PUC's print converts each value through luaL_tolstring: the __tostring
-        // metamethod first, never the (user-redefinable) global tostring.
+        // Lua 5.1-5.3 print resolves the global tostring on every call; Lua 5.4+
+        // use luaL_tolstring: the __tostring metamethod first, never the global.
+        if (context.State.LanguageVersion is LuaLanguageVersion.Lua51
+            or LuaLanguageVersion.Lua52
+            or LuaLanguageVersion.Lua53)
+        {
+            if (index < state.Length - 1)
+            {
+                state[^1] = LuaValue.FromInteger(index);
+                return LuaNativeStep.CallLuaWithReusableState(
+                    context.State.GetGlobal("tostring"),
+                    [state[index]],
+                    continuationId: 1,
+                    stateValues: state,
+                    callIsYieldable: false);
+            }
+
+            LuaStandardLibraryContext.Get(context.State).Options.Console.WriteLine();
+            return LuaNativeStep.Completed();
+        }
+
         while (index < state.Length - 1)
         {
             var metamethod = GetMetafield(context.State, state[index], "__tostring");
