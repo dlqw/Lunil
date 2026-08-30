@@ -48,6 +48,10 @@ name 或 virtual file path 重复时，初始化会失败。
 `Pause With Tree` 会在 scene tree 暂停期间停止两个 tick phase。使用
 `Maximum Dispatched Callbacks` 限制每次 tick 前的主线程 dispatcher drain。
 
+通过 game-loop node 运行的脚本默认使用受限能力：文件访问仅限于已注册的项目资源，shell 执行
+（`os.execute` 与管道）、进程终止和环境变量均被拒绝，`print` 通过 Godot console 输出。需要
+受信访问的宿主通过 `ConfigureHostOptions` 回调显式开启。
+
 ## 4. 配置生成的 CLR binding
 
 关闭 **Start On Ready**，再从父 scene script 配置并初始化 addon node：

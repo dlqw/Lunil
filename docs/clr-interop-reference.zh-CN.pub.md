@@ -47,7 +47,9 @@ Candidate 会按参数数量、optional/default 参数和 host-side named argume
 支持 nil 到 reference/nullable、boolean、string/char、精确 enum 名与 integer、带溢出检查的 CLR
 数值类型、由 Lua table 表示的 array 和 `ValueTuple`、`LuaValue`、兼容 CLR userdata 以及 primitive
 `object` fallback。CLR rectangular array 与 jagged array 递归转为从 1 开始的嵌套 table。不支持的值
-产生 `NoMatchingConstructor` 或 `NoMatchingMember`。
+产生 `NoMatchingConstructor` 或 `NoMatchingMember`。绑定到 CLR 整型参数的 Lua float 必须具有
+精确的整数表示；小数值会令 overload 选择失败，而不是静默取整。装箱值类型 userdata 的实例成员
+写入会以 `MemberNotAllowed` 拒绝，因为修改只会作用于副本。
 
 `EnumRepresentation` 默认为准确 name string，也可使用 underlying integer 或 `{ name, value }`
 table。`DecimalRepresentation` 默认为 invariant exact string；`ExactInteger` 只接受能由 Lua integer
