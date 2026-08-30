@@ -154,6 +154,20 @@ public static class LuaParser
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         diagnostics.AddRange(previous.Diagnostics.Where(diagnostic =>
             diagnostic.Span.End <= reparseStart));
+        // The suffix reparse cannot see that the reused prefix ended in a return
+        // statement; a full parse reports LUA2008 for any statement that follows it.
+        if (prefixCount > 0 &&
+            previousStatements[prefixCount - 1].Node is { Kind: LuaSyntaxKind.ReturnStatement } &&
+            fragmentBlock.Children.Length > 0 &&
+            fragmentBlock.Children[0].Node is { } firstFragmentStatement)
+        {
+            diagnostics.Add(new Diagnostic(
+                "LUA2008",
+                DiagnosticSeverity.Error,
+                firstFragmentStatement.Span,
+                "A return statement must be the final statement in its block."));
+        }
+
         diagnostics.AddRange(fragment.Diagnostics.Select(diagnostic => new Diagnostic(
             diagnostic.Code,
             diagnostic.Severity,

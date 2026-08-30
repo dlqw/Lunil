@@ -82,6 +82,32 @@ public sealed class LanguageVersionTests
     }
 
     [Fact]
+    public void Lua51TreatsGotoAsAnOrdinaryIdentifier()
+    {
+        var result = LuaParser.Parse(
+            SourceText.FromUtf8("local goto = 1\nprint(goto)\nreturn goto"),
+            LuaLexerOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua51 },
+            LuaParserOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua51 });
+
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua52)]
+    [InlineData(LuaLanguageVersion.Lua53)]
+    [InlineData(LuaLanguageVersion.Lua54)]
+    [InlineData(LuaLanguageVersion.Lua55)]
+    public void Lua52AndLaterKeepGotoReserved(LuaLanguageVersion version)
+    {
+        var result = LuaParser.Parse(
+            SourceText.FromUtf8("local goto = 1"),
+            LuaLexerOptions.Default with { LanguageVersion = version },
+            LuaParserOptions.Default with { LanguageVersion = version });
+
+        Assert.NotEmpty(result.Diagnostics);
+    }
+
+    [Fact]
     public void Lua55AcceptsNamedVarArgParameters()
     {
         var lua55 = LuaParser.Parse(

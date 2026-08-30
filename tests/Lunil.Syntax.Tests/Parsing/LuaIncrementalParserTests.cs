@@ -114,6 +114,21 @@ public sealed class LuaIncrementalParserTests
         Assert.Equal(LuaLanguageVersion.Lua53, result.LanguageVersion);
     }
 
+    [Fact]
+    public void StatementAfterTopLevelReturnMatchesFullParseDiagnostics()
+    {
+        const string Source = "local first = 1\nreturn first\n";
+        var previous = LuaParser.Parse(SourceText.FromUtf8(Source));
+        var change = LuaTextChange.FromUtf8(new TextSpan(Source.Length, 0), "local after = 2\n");
+
+        var incremental = LuaParser.ParseIncremental(previous, change);
+        var full = LuaParser.Parse(change.Apply(previous.Source));
+
+        Assert.False(incremental.IncrementalMetrics!.WasFullReparse);
+        Assert.Contains(full.Diagnostics, static diagnostic => diagnostic.Code == "LUA2008");
+        Assert.Contains(incremental.Diagnostics, static diagnostic => diagnostic.Code == "LUA2008");
+    }
+
     private static void AssertEquivalent(LuaParseResult expected, LuaParseResult actual)
     {
         Assert.Equal(expected.Source.ToArray(), actual.Source.ToArray());

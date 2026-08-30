@@ -31,7 +31,9 @@ public sealed class LanguageVersionSyntaxContractTests
         var result = Parse("::label::\ngoto label\nreturn 0", version);
         if (rejected)
         {
-            Assert.Contains(result.Diagnostics, d => d.Message.Contains("goto", StringComparison.OrdinalIgnoreCase));
+            // Lua 5.1 has neither labels nor goto; 'goto' lexes as an ordinary
+            // identifier there, so the sequence is rejected as a syntax error.
+            Assert.NotEmpty(result.Diagnostics);
         }
         else
         {

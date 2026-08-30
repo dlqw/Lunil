@@ -96,7 +96,9 @@ public static class LuaIrVerifier
             return;
         }
 
-        if (function.ParentFunctionId >= function.Id || function.ParentFunctionId < -1)
+        if (function.ParentFunctionId >= function.Id || function.ParentFunctionId < -1 ||
+            (function.ParentFunctionId >= 0 &&
+             (uint)function.ParentFunctionId >= (uint)module.Functions.Length))
         {
             errors.Add(new(function.Id, -1, "The parent function identifier is invalid."));
         }

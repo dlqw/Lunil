@@ -408,6 +408,22 @@ public sealed class LuaBinderTests
             Assert.Equal(LuaLocalAttributeKind.Constant, candidate.Attribute));
     }
 
+    [Fact]
+    public void Lua55GlobalPostfixAttributeAppliesOnlyToItsName()
+    {
+        const string source = """
+            global x <const>, y = 1, 2
+            y = 3
+            x = 4
+            """;
+
+        var model = Bind(
+            source,
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.Single(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3002");
+    }
+
     private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null)
     {
         options = (options ?? LuaBinderOptions.Default) with

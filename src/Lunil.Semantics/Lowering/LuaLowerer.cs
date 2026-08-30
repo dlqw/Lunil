@@ -1170,7 +1170,10 @@ public static class LuaLowerer
                 {
                     LuaIntegerTokenValue integer when _owner._model.LanguageVersion is
                         LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 =>
-                        LuaIrConstant.FromFloat(integer.Integer),
+                        // Lua 5.1/5.2 numbers are always floats: PUC wraps hexadecimal
+                        // literals into an unsigned 64-bit value (strtoul) and converts
+                        // that value, so the bit pattern must stay unsigned here.
+                        LuaIrConstant.FromFloat(unchecked((double)(ulong)integer.Integer)),
                     LuaIntegerTokenValue integer => LuaIrConstant.FromInteger(integer.Integer),
                     LuaFloatTokenValue floatingPoint => LuaIrConstant.FromFloat(floatingPoint.Float),
                     _ => throw new InvalidOperationException("A numeric token has no decoded value."),
