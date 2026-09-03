@@ -247,6 +247,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
     // Tail of the background chain applying watched-file events; only the caller thread of
     // WatchedFileChanged (the JSON-RPC read loop) touches the field itself.
     private Task _watchedFileWork = Task.CompletedTask;
+    // Tail of the debounced reindex chain; lets tests wait for the scheduled rebuild
+    // instead of guessing a delay. Assignments use Interlocked.Exchange.
+    private Task _latestIndexSettleTask = Task.CompletedTask;
     private bool _disposed;
 
     /// <summary>
@@ -3292,7 +3295,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         LogInfo($"reindex scheduled ({reason ?? "unknown"}): generation {_documentSetGeneration}");
-        _ = Task.Run(async () =>
+        var settle = Task.Run(async () =>
         {
             try
             {
@@ -3311,6 +3314,64 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     $"Lunil workspace: reindex failed: {exception}");
             }
         }, token);
+        Interlocked.Exchange(ref _latestIndexSettleTask, settle);
+    }
+
+    /// <summary>
+    /// Waits for the currently scheduled (debounced) reindex to finish. Returns when no
+    /// newer reindex was scheduled while waiting, so callers observe a settled index.
+    /// </summary>
+    internal async Task WaitForScheduledIndexAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            var settle = Volatile.Read(ref _latestIndexSettleTask);
+            await settle.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (ReferenceEquals(Volatile.Read(ref _latestIndexSettleTask), settle))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits until the workspace stops changing: every scheduled reindex drained and
+    /// the environment generation stable across a full drain. Early rounds still
+    /// growing the declaration surface bump the generation as a side effect of the
+    /// rebuild itself, so callers that assert instance identity across subsequent
+    /// requests must observe a settled generation first.
+    /// </summary>
+    internal async Task WaitForWorkspaceSettledAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            int before;
+            lock (_gate)
+            {
+                before = _environmentGeneration;
+            }
+
+            await WaitForScheduledIndexAsync(cancellationToken).ConfigureAwait(false);
+            int after;
+            lock (_gate)
+            {
+                after = _environmentGeneration;
+            }
+
+            if (before == after)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Whether a cached analysis currently exists for the document.</summary>
+    internal bool HasCachedAnalysis(Uri uri)
+    {
+        lock (_gate)
+        {
+            return _analyses.ContainsKey(uri.AbsoluteUri);
+        }
     }
 
     private void LoadFolders(ImmutableArray<Uri> folders, string reason = "")
