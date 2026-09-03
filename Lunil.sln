@@ -109,6 +109,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.DebugAdapter", "src\L
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.DebugAdapter.Tests", "tests\Lunil.DebugAdapter.Tests\Lunil.DebugAdapter.Tests.csproj", "{89F84929-B1A4-4E96-AD61-220F87813044}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.Build.Generators", "src\Lunil.Build\LuaVersionGenerator.csproj", "{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lunil.Build.Tests", "tests\Lunil.Build.Tests\Lunil.Build.Tests.csproj", "{D3292BC4-F155-40D7-B7A3-A743B480AEDA}"
 EndProject
 Global
@@ -721,6 +723,18 @@ Global
 		{D3292BC4-F155-40D7-B7A3-A743B480AEDA}.Release|x64.Build.0 = Release|Any CPU
 		{D3292BC4-F155-40D7-B7A3-A743B480AEDA}.Release|x86.ActiveCfg = Release|Any CPU
 		{D3292BC4-F155-40D7-B7A3-A743B480AEDA}.Release|x86.Build.0 = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|x64.Build.0 = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Debug|x86.Build.0 = Debug|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|x64.ActiveCfg = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|x64.Build.0 = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|x86.ActiveCfg = Release|Any CPU
+		{8C4A6E52-1F3B-4D77-9A2E-63F5C0B8D914}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

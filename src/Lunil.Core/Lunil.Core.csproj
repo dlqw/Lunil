@@ -1,10 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Lunil.Build\LuaVersionGenerator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
                       SkipGetTargetFrameworkProperties="true"
+                      SetConfiguration="Configuration=$(Configuration)"
                       GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish;LunilReadyToRunPublish"
                       AdditionalProperties="TargetFramework=net9.0" />
   </ItemGroup>

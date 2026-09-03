@@ -6,6 +6,14 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <!-- The compiler loads this component directly as an analyzer, so its deps file
+         and runtimeconfig are never consumed. The deps-file task writes without
+         retry and fails the build when several referencing projects schedule this
+         project concurrently (the solution build strips Configuration from the
+         reference, so it runs Debug in Release builds too). -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <BuildInParallel>false</BuildInParallel>
   </PropertyGroup>
 
   <ItemGroup>

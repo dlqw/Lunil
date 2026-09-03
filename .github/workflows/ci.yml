@@ -128,7 +128,10 @@ jobs:
           dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
           dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Build
-        run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+        # Single MSBuild node: the version generator is referenced by several
+        # projects, and concurrent inner builds race on its obj outputs (Windows
+        # locks the DLL while a compiler process holds it loaded).
+        run: dotnet build Lunil.sln --configuration Release --no-restore -m:1 -p:ContinuousIntegrationBuild=true
       - name: Test
         run: >-
           dotnet test Lunil.sln --configuration Release --no-build --no-restore
