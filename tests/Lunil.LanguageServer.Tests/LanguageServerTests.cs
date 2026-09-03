@@ -89,6 +89,45 @@ public sealed class LanguageServerTests
     }
 
     [Fact]
+    public async Task ConfigureLibraryFoldersReturnsBeforeTheCorpusScanCompletes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lunil-library-tests", Guid.NewGuid().ToString("N"));
+        var libraryRoot = Path.Combine(root, "lib");
+        Directory.CreateDirectory(libraryRoot);
+        var stub = string.Join("\n",
+        [
+            "---@meta",
+            "---@class LibType",
+            "---@field x number",
+            "Lib = {}",
+        ]);
+        for (var index = 0; index < 24; index++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(libraryRoot, $"stub{index}.lua"), stub);
+        }
+
+        try
+        {
+            using var workspace = new LanguageServerWorkspace();
+            workspace.Initialize([]);
+
+            // didChangeConfiguration dispatches this on the JSON-RPC read loop: the option
+            // update completes synchronously, but the declaration scan and library load run
+            // on the thread pool, so no library document can be resident when the call
+            // returns. Requests keep being served while that round is still in flight.
+            workspace.ConfigureLibraryFolders([libraryRoot]);
+            Assert.Empty(workspace.GetDocuments());
+
+            await WaitForAsync(() => workspace.GetDocuments().Length == 24);
+            Assert.NotNull(workspace.GetUri("stub0"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task BuiltinLibraryReceiverHoverIsCompact()
     {
         using var workspace = new LanguageServerWorkspace();

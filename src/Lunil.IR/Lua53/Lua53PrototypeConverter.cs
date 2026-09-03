@@ -168,7 +168,7 @@ public static class Lua53PrototypeConverter
                     break;
                 case Lua53Opcode.LoadConstantExtra:
                     Emit(LuaIrOpcode.LoadConstant, instruction.A,
-                        Prototype.Code[_sourceProgramCounter + 1].Ax);
+                        GetCompanionInstruction("EXTRAARG").Ax);
                     break;
                 case Lua53Opcode.LoadBoolean:
                     EmitLoadConstant(instruction.A, LuaIrConstant.FromBoolean(instruction.B != 0));
@@ -346,7 +346,7 @@ public static class Lua53PrototypeConverter
                     var block = instruction.C;
                     if (block == 0)
                     {
-                        block = Prototype.Code[_sourceProgramCounter + 1].Ax;
+                        block = GetCompanionInstruction("EXTRAARG").Ax;
                     }
 
                     Emit(LuaIrOpcode.SetList, instruction.A,
@@ -504,13 +504,24 @@ public static class Lua53PrototypeConverter
 
         private int GetCompanionJumpTarget()
         {
-            var jump = Prototype.Code[_sourceProgramCounter + 1];
+            var jump = GetCompanionInstruction("JMP");
             if (jump.Opcode != Lua53Opcode.Jump)
             {
                 throw new InvalidDataException("Lua 5.3 conditional instruction is not followed by JMP.");
             }
 
             return checked(_sourceProgramCounter + 2 + jump.SignedBx);
+        }
+
+        private Lua53Instruction GetCompanionInstruction(string expectation)
+        {
+            if (_sourceProgramCounter + 1 >= Prototype.Code.Length)
+            {
+                throw new InvalidDataException(
+                    $"Lua 5.3 chunk ends before the required companion instruction ({expectation}).");
+            }
+
+            return Prototype.Code[_sourceProgramCounter + 1];
         }
 
         private static bool IsConditional(Lua53Instruction instruction) =>

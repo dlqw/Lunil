@@ -186,6 +186,31 @@ public sealed class LanguageVersionSyntaxContractTests
             result.Diagnostics.Count(static item => item.Code == "LUA2016"));
     }
 
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, 1)]
+    [InlineData(LuaLanguageVersion.Lua52, 0)]
+    [InlineData(LuaLanguageVersion.Lua53, 0)]
+    [InlineData(LuaLanguageVersion.Lua54, 0)]
+    [InlineData(LuaLanguageVersion.Lua55, 0)]
+    public void SugarCallStringArgumentEscapesMatchVersion(
+        LuaLanguageVersion version,
+        int expectedParserDiagnostics)
+    {
+        var result = Parse("return f'\\x41'", version);
+
+        Assert.Equal(
+            expectedParserDiagnostics,
+            result.Diagnostics.Count(static item => item.Code == "LUA2016"));
+    }
+
+    [Fact]
+    public void LongStringArgumentNeverReportsEscapeDiagnostics()
+    {
+        var result = Parse("return f[[a\\z b]]", LuaLanguageVersion.Lua51);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA2016");
+    }
+
     [Fact]
     public void Lua55AcceptsPrefixAttributesFromTheOfficialGrammar()
     {

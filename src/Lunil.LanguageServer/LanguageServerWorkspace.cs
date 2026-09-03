@@ -244,6 +244,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private readonly TaskCompletionSource<bool> _declarationsReady =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _declarationsReadySet;
+    // Tail of the background chain applying watched-file events; only the caller thread of
+    // WatchedFileChanged (the JSON-RPC read loop) touches the field itself.
+    private Task _watchedFileWork = Task.CompletedTask;
     private bool _disposed;
 
     /// <summary>
@@ -487,8 +490,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
         else if (removedAny)
         {
-            ScanAllTypeDeclarations();
-            ScheduleIndex("configure-analysis-exclusions");
+            // The declaration rescan is a full-corpus pass; keep it off the read loop.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    ScanAllTypeDeclarations();
+                    ScheduleIndex("configure-analysis-exclusions");
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException and
+                    not StackOverflowException and not AccessViolationException)
+                {
+                    LogInfo($"Lunil workspace: exclusion rescan failed: {exception.Message}");
+                }
+            });
         }
     }
 
@@ -657,8 +672,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
             // No workspace folder was registered (for example a single-file session). Scan the
             // opened document's directory tree, including ancestor directories' direct .lua files,
-            // so cross-file @class/@alias/@enum declarations are still available.
-            ScanAncestorDeclarations(uri);
+            // so cross-file @class/@alias/@enum declarations are still available. The scan reads
+            // ancestor directories from disk; run it off the read loop.
+            _ = Task.Run(() => ScanAncestorDeclarations(uri));
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
@@ -906,6 +922,28 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
         }
 
+        // The disk probes (existence, exclusion classification, content load) are synchronous
+        // file I/O; didChangeWatchedFiles is dispatched on the JSON-RPC read loop, so they run
+        // on the thread pool. Events chain through _watchedFileWork so the corpus updates keep
+        // arrival order.
+        var previous = _watchedFileWork;
+        _watchedFileWork = Task.Run(async () =>
+        {
+            try
+            {
+                await previous.ConfigureAwait(false);
+                ApplyWatchedFileChange(uri, changeType, folders, filter);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                LogInfo($"Lunil workspace: watched file update failed for {uri}: {exception.Message}");
+            }
+        });
+    }
+
+    private void ApplyWatchedFileChange(Uri uri, int changeType, ImmutableArray<Uri> folders, WorkspaceFileFilter? filter)
+    {
         string? exclusion = null;
         var deleted = changeType == 3 || !uri.IsFile || !File.Exists(ToLocalPath(uri));
         if (!deleted)
@@ -1203,9 +1241,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScanAllTypeDeclarations();
-        ScheduleIndex("configure-library-folders");
-        _ = Task.Run(() => LoadLibraryFolders(normalized));
+        // The declaration rescan and the library load are heavy disk/parallel work; the
+        // caller is the JSON-RPC read loop, so they run on the thread pool and only the
+        // lightweight option bookkeeping above completes synchronously.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                ScanAllTypeDeclarations();
+                ScheduleIndex("configure-library-folders");
+                LoadLibraryFolders(normalized);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                LogInfo($"Lunil workspace: library folder update failed: {exception.Message}");
+            }
+        });
     }
 
     /// <summary>Re-reads the configured library folders from disk (`Lunil: Reindex Workspace`).</summary>

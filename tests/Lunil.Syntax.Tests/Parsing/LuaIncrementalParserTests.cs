@@ -129,6 +129,46 @@ public sealed class LuaIncrementalParserTests
         Assert.Contains(incremental.Diagnostics, static diagnostic => diagnostic.Code == "LUA2008");
     }
 
+    [Fact]
+    public void AppendToStatementBoundaryContinuesTheBoundaryStatement()
+    {
+        const string Source = "x = 12";
+        var previous = LuaParser.Parse(SourceText.FromUtf8(Source));
+        var change = LuaTextChange.FromUtf8(new TextSpan(Source.Length, 0), "3");
+
+        var incremental = LuaParser.ParseIncremental(previous, change);
+        var full = LuaParser.Parse(change.Apply(previous.Source));
+
+        AssertEquivalent(full, incremental);
+        Assert.False(incremental.IncrementalMetrics!.WasFullReparse);
+    }
+
+    [Fact]
+    public void AppendOperatorAtStatementBoundaryMatchesFullParse()
+    {
+        const string Source = "x = 1";
+        var previous = LuaParser.Parse(SourceText.FromUtf8(Source));
+        var change = LuaTextChange.FromUtf8(new TextSpan(Source.Length, 0), " + 2");
+
+        var incremental = LuaParser.ParseIncremental(previous, change);
+        var full = LuaParser.Parse(change.Apply(previous.Source));
+
+        AssertEquivalent(full, incremental);
+    }
+
+    [Fact]
+    public void AppendCallArgumentsAtStatementBoundaryMatchesFullParse()
+    {
+        const string Source = "local f\nx = f";
+        var previous = LuaParser.Parse(SourceText.FromUtf8(Source));
+        var change = LuaTextChange.FromUtf8(new TextSpan(Source.Length, 0), "(1)");
+
+        var incremental = LuaParser.ParseIncremental(previous, change);
+        var full = LuaParser.Parse(change.Apply(previous.Source));
+
+        AssertEquivalent(full, incremental);
+    }
+
     private static void AssertEquivalent(LuaParseResult expected, LuaParseResult actual)
     {
         Assert.Equal(expected.Source.ToArray(), actual.Source.ToArray());

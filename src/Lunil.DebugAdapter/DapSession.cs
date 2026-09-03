@@ -16,9 +16,13 @@ namespace Lunil.DebugAdapter;
 /// </summary>
 internal sealed class DapSession : IDisposable
 {
+    private const int MaximumVariablesPerPage = 100;
+
     private readonly DapConnection _connection;
     private readonly LuaDebugSession _debugSession = new();
     private readonly Dictionary<string, HashSet<int>> _breakpoints = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<int>> _breakableLines = new(StringComparer.Ordinal);
+    private readonly Dictionary<int, VariablesTarget> _variablesTargets = new();
     private readonly SemaphoreSlim _resumeSignal = new(0);
     private readonly object _commandLock = new();
     private LuaState? _state;
@@ -29,9 +33,10 @@ internal sealed class DapSession : IDisposable
     private string? _scriptSource;
     private LuaDebugStepMode _pendingStep;
     private string _lastStopReason = "breakpoint";
-    private bool _isPaused;
+    private volatile bool _isPaused;
     private bool _disconnectRequested;
     private int _nextThreadId = 1;
+    private int _nextVariablesReference;
 
     public DapSession(DapConnection connection)
     {
@@ -133,13 +138,13 @@ internal sealed class DapSession : IDisposable
                     Respond(message.Id, new JsonObject { ["success"] = true });
                     break;
                 case "stackTrace":
-                    Respond(message.Id, RequirePaused(HandleStackTrace(message.Body)));
+                    Respond(message.Id, RequirePaused(() => HandleStackTrace(message.Body)));
                     break;
                 case "scopes":
-                    Respond(message.Id, RequirePaused(HandleScopes(message.Body)));
+                    Respond(message.Id, RequirePaused(() => HandleScopes(message.Body)));
                     break;
                 case "variables":
-                    Respond(message.Id, RequirePaused(HandleVariables(message.Body)));
+                    Respond(message.Id, RequirePaused(() => HandleVariables(message.Body)));
                     break;
                 case "threads":
                     Respond(message.Id, HandleThreads());
@@ -203,27 +208,61 @@ internal sealed class DapSession : IDisposable
     private void HandleSetBreakpoints(JsonNode? body)
     {
         var path = (string?)body?["source"]?["path"] ?? _sourcePath;
-        var lines = new HashSet<int>();
+        var verified = new JsonArray();
+        var resolved = new HashSet<int>();
+        var breakable = ResolveBreakableLines(path);
         if (body?["breakpoints"] is JsonArray breakpoints)
         {
             foreach (var item in breakpoints)
             {
                 var line = (int?)item?["line"] ?? 0;
-                if (line > 0)
+                if (line <= 0)
                 {
-                    lines.Add(line);
+                    continue;
                 }
+
+                // Without a resolvable module the requested line is echoed unchanged rather
+                // than pretending it was validated.
+                if (breakable is null)
+                {
+                    verified.Add(new JsonObject { ["verified"] = true, ["line"] = line });
+                    resolved.Add(line);
+                    continue;
+                }
+
+                var index = breakable.BinarySearch(line);
+                if (index < 0)
+                {
+                    index = ~index;
+                }
+
+                if (index >= breakable.Count)
+                {
+                    verified.Add(new JsonObject
+                    {
+                        ["verified"] = false,
+                        ["line"] = line,
+                        ["message"] = $"Line {line} does not map to an executable line.",
+                    });
+                    continue;
+                }
+
+                // Snap forward to the closest executable line so the runtime can actually
+                // stop there; the response reports the line the breakpoint landed on.
+                var mapped = breakable[index];
+                verified.Add(new JsonObject { ["verified"] = true, ["line"] = mapped });
+                resolved.Add(mapped);
             }
         }
 
         if (path is not null)
         {
-            _breakpoints[path] = lines;
+            _breakpoints[path] = resolved;
             if (_sourcePath is not null && !string.Equals(path, _sourcePath, StringComparison.Ordinal))
             {
                 // Standard DAP clients send the absolute source path while execution
                 // resolves breakpoints against the launched file name; key both.
-                _breakpoints[_sourcePath] = lines;
+                _breakpoints[_sourcePath] = resolved;
             }
 
             if (_state is not null)
@@ -232,21 +271,56 @@ internal sealed class DapSession : IDisposable
             }
         }
 
-        var verified = new JsonArray();
-        foreach (var line in lines.Order())
-        {
-            verified.Add(new JsonObject
-            {
-                ["verified"] = true,
-                ["line"] = line,
-            });
-        }
-
         Respond(CurrentRequestId, new JsonObject
         {
             ["success"] = true,
             ["body"] = new JsonObject { ["breakpoints"] = verified },
         });
+    }
+
+    /// <summary>
+    /// The executable lines of the launched program (instruction source lines), or null while
+    /// no compiled snapshot for the requested source is available.
+    /// </summary>
+    private List<int>? ResolveBreakableLines(string? path)
+    {
+        if (path is null || _scriptSource is null)
+        {
+            return null;
+        }
+
+        if (!_breakableLines.TryGetValue(path, out var lines))
+        {
+            // Only the launched program has a source snapshot to compile; other sources
+            // (untouched modules) stay unverified.
+            if (!string.Equals(path, _scriptProgramPath, StringComparison.Ordinal) &&
+                !string.Equals(path, _sourcePath, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var sourceName = "@" + (_scriptProgramPath ?? "script");
+            var compilation = new LuaCompiler().CompileUtf8(_scriptSource, sourceName);
+            if (!compilation.Succeeded || compilation.Module is null)
+            {
+                return null;
+            }
+
+            lines = compilation.Module.Functions
+                .SelectMany(static function => function.Instructions)
+                .Select(static instruction => instruction.SourceLine)
+                .Where(static line => line > 0)
+                .Distinct()
+                .OrderBy(static line => line)
+                .ToList();
+            _breakableLines[path] = lines;
+            if (_sourcePath is not null && !string.Equals(path, _sourcePath, StringComparison.Ordinal))
+            {
+                _breakableLines[_sourcePath] = lines;
+            }
+        }
+
+        return lines;
     }
 
     private int CurrentRequestId { get; set; }
@@ -277,9 +351,19 @@ internal sealed class DapSession : IDisposable
         };
     }
 
-    private static JsonObject HandleScopes(JsonNode? body)
+    private JsonObject HandleScopes(JsonNode? body)
     {
         var frameId = (int?)body?["frameId"] ?? 0;
+        if (_thread is not { } thread || _state is not { } state ||
+            LuaDebugApi.GetFrame(state, thread, frameId) is not { } frame)
+        {
+            return new JsonObject
+            {
+                ["success"] = false,
+                ["message"] = "The requested stack frame is not available.",
+            };
+        }
+
         return new JsonObject
         {
             ["success"] = true,
@@ -287,8 +371,20 @@ internal sealed class DapSession : IDisposable
             {
                 ["scopes"] = new JsonArray
                 {
-                    new JsonObject { ["name"] = "Locals", ["variablesReference"] = EncodeVariablesReference(frameId, 0), ["expensive"] = false },
-                    new JsonObject { ["name"] = "Upvalues", ["variablesReference"] = EncodeVariablesReference(frameId, 1), ["expensive"] = false },
+                    new JsonObject
+                    {
+                        ["name"] = "Locals",
+                        ["variablesReference"] = CreateVariablesTarget(new VariablesTarget(
+                            VariablesKind.Locals, thread, frame, null)),
+                        ["expensive"] = false,
+                    },
+                    new JsonObject
+                    {
+                        ["name"] = "Upvalues",
+                        ["variablesReference"] = CreateVariablesTarget(new VariablesTarget(
+                            VariablesKind.Upvalues, thread, frame, null)),
+                        ["expensive"] = false,
+                    },
                 },
             },
         };
@@ -297,25 +393,32 @@ internal sealed class DapSession : IDisposable
     private JsonObject HandleVariables(JsonNode? body)
     {
         var reference = (int?)body?["variablesReference"] ?? 0;
-        var (frameId, kind) = DecodeVariablesReference(reference);
-        var variables = new JsonArray();
-        if (_thread is { } thread && LuaDebugApi.GetFrame(_state!, thread, frameId) is { } frame)
+        if (!_variablesTargets.TryGetValue(reference, out var target))
         {
-            var index = 1;
-            while (LuaDebugApi.GetLocal(thread, frame, index) is { } local)
+            return new JsonObject
             {
-                var name = string.IsNullOrEmpty(local.Name) ? $"local{index}" : local.Name;
-                variables.Add(FormatValue(name, local.Value));
-                index++;
-            }
+                ["success"] = false,
+                ["message"] = "The variables reference is unknown or no longer valid.",
+            };
+        }
 
-            if (kind == 1)
-            {
-                foreach (var upvalue in EnumerateUpvalues(frame.Closure))
-                {
-                    variables.Add(FormatValue(upvalue.Name, upvalue.Value));
-                }
-            }
+        var start = Math.Max(0, (int?)body?["start"] ?? 0);
+        var requestedCount = (int?)body?["count"] ?? 0;
+        var count = requestedCount > 0
+            ? Math.Min(requestedCount, MaximumVariablesPerPage)
+            : MaximumVariablesPerPage;
+
+        var entries = target.Kind switch
+        {
+            VariablesKind.Upvalues => EnumerateUpvalues(target.Frame!),
+            VariablesKind.Table => EnumerateTableEntries(target.Table!),
+            _ => EnumerateLocals(target),
+        };
+
+        var variables = new JsonArray();
+        foreach (var (name, value) in entries.Skip(start).Take(count))
+        {
+            variables.Add(FormatValue(name, value));
         }
 
         return new JsonObject
@@ -339,6 +442,8 @@ internal sealed class DapSession : IDisposable
 
     private void SetStep(LuaDebugStepMode step)
     {
+        // Variables references handed out while paused would dangle across the resume.
+        _variablesTargets.Clear();
         lock (_commandLock)
         {
             _pendingStep = step;
@@ -480,10 +585,11 @@ internal sealed class DapSession : IDisposable
     private string GetPauseReason() => _lastStopReason;
 
     /// <summary>
-    /// Stack inspection races with the running VM; while the thread is not paused
-    /// the request fails instead of reading live frame data.
+    /// Stack inspection races with the running VM; while the thread is not paused the request
+    /// fails instead of reading live frame data. The response callback only runs once the
+    /// pause check passed, so handlers never touch the frames of a running VM.
     /// </summary>
-    private JsonObject RequirePaused(JsonObject response)
+    private JsonObject RequirePaused(Func<JsonObject> createResponse)
     {
         if (!_isPaused)
         {
@@ -494,7 +600,7 @@ internal sealed class DapSession : IDisposable
             };
         }
 
-        return response;
+        return createResponse();
     }
 
     private static string GetFrameName(LuaFrame frame)
@@ -509,7 +615,7 @@ internal sealed class DapSession : IDisposable
         return "native";
     }
 
-    private static JsonObject FormatValue(string name, LuaValue value)
+    private JsonObject FormatValue(string name, LuaValue value)
     {
         switch (value.Kind)
         {
@@ -524,7 +630,7 @@ internal sealed class DapSession : IDisposable
             case LuaValueKind.String:
                 return new JsonObject { ["name"] = name, ["value"] = $"\"{value.AsString().ToString()}\"", ["variablesReference"] = 0 };
             case LuaValueKind.Table:
-                return new JsonObject { ["name"] = name, ["value"] = value.AsTable().ToString(), ["variablesReference"] = 0 };
+                return FormatTable(name, value.AsTable());
             case LuaValueKind.Function:
                 return new JsonObject { ["name"] = name, ["value"] = value.ToString(), ["variablesReference"] = 0 };
             default:
@@ -532,21 +638,84 @@ internal sealed class DapSession : IDisposable
         }
     }
 
-    private static IEnumerable<(string Name, LuaValue Value)> EnumerateUpvalues(LuaClosure closure)
+    private JsonObject FormatTable(string name, LuaTable table)
     {
-        for (var index = 0; index < closure.Upvalues.Count; index++)
+        var formatted = new JsonObject
         {
-            yield return ($"upvalue{index}", closure.Upvalues[index].Value);
+            ["name"] = name,
+            ["value"] = table.ToString(),
+            ["variablesReference"] = CreateVariablesTarget(
+                new VariablesTarget(VariablesKind.Table, null, null, table)),
+        };
+
+        // Clients use the hint to page through the entries with start/count.
+        var entryCount = table.ArrayLength + table.HashCount;
+        if (entryCount > 0)
+        {
+            formatted["indexedVariables"] = entryCount;
+        }
+
+        return formatted;
+    }
+
+    private static IEnumerable<(string Name, LuaValue Value)> EnumerateLocals(VariablesTarget target)
+    {
+        var index = 1;
+        while (LuaDebugApi.GetLocal(target.Thread!, target.Frame!, index) is { } local)
+        {
+            yield return (string.IsNullOrEmpty(local.Name) ? $"local{index}" : local.Name, local.Value);
+            index++;
         }
     }
 
-    private static int EncodeVariablesReference(int frameId, int kind) => frameId * 2 + kind + 1000;
-
-    private static (int FrameId, int Kind) DecodeVariablesReference(int reference)
+    private static IEnumerable<(string Name, LuaValue Value)> EnumerateUpvalues(LuaFrame frame)
     {
-        var adjusted = reference - 1000;
-        return (adjusted / 2, adjusted % 2);
+        var closure = frame.Closure;
+        var names = closure.Function.Upvalues;
+        for (var index = 0; index < closure.Upvalues.Count; index++)
+        {
+            var name = index < names.Length ? names[index].Name : string.Empty;
+            yield return (string.IsNullOrWhiteSpace(name) ? $"upvalue{index}" : name, closure.Upvalues[index].Value);
+        }
     }
+
+    /// <summary>Enumerates entries array part first, then the hash part, via raw next.</summary>
+    private static IEnumerable<(string Name, LuaValue Value)> EnumerateTableEntries(LuaTable table)
+    {
+        var key = LuaValue.Nil;
+        while (table.Next(key, out key, out var value))
+        {
+            yield return (FormatKeyName(key), value);
+        }
+    }
+
+    private static string FormatKeyName(LuaValue key) => key.Kind switch
+    {
+        LuaValueKind.String => $"[\"{key.AsString().ToString()}\"]",
+        LuaValueKind.Integer => key.AsInteger().ToString(CultureInfo.InvariantCulture),
+        _ => $"[{key}]",
+    };
+
+    private int CreateVariablesTarget(VariablesTarget target)
+    {
+        var reference = ++_nextVariablesReference;
+        _variablesTargets[reference] = target;
+        return reference;
+    }
+
+    private enum VariablesKind : byte
+    {
+        Locals,
+        Upvalues,
+        Table,
+    }
+
+    /// <summary>A variables scope or table bound to one paused stack; only valid until the resume.</summary>
+    private sealed record VariablesTarget(
+        VariablesKind Kind,
+        LuaThread? Thread,
+        LuaFrame? Frame,
+        LuaTable? Table);
 
     private void Respond(int? id, JsonObject body)
     {

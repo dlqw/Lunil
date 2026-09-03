@@ -194,6 +194,154 @@ public sealed class DapAdapterTests : IDisposable
         Assert.True(_process.HasExited || _process.WaitForExit(2000));
     }
 
+    [Fact]
+    public void StackAndVariableRequestsFailWhileRunning()
+    {
+        var script = CreateScript(
+            """
+            local total = 0            -- 2
+            for i = 1, 1000000 do      -- 3
+              total = total + i        -- 4
+            end                        -- 5
+            return total               -- 6
+            """);
+        Initialize();
+        Launch(script);
+        ConfigurationDone();
+
+        Thread.Sleep(300);
+        var stack = Request("stackTrace", new JsonObject { ["threadId"] = 1 });
+        Assert.False((bool?)stack?["success"]);
+        Assert.NotNull((string?)stack?["message"]);
+
+        var variables = Request("variables", new JsonObject { ["variablesReference"] = 1 });
+        Assert.False((bool?)variables?["success"]);
+        Assert.NotNull((string?)variables?["message"]);
+
+        Continue();
+        WaitForEvent("terminated");
+    }
+
+    [Fact]
+    public void SetBreakpointsSnapToExecutableLinesAndRejectUnverifiableLines()
+    {
+        var script = CreateScript(
+            """
+            local value = 40
+            -- comment only
+            return value
+            """);
+        Initialize();
+        Launch(script);
+        var response = SetBreakpoints([1, 2, 30], script);
+        var breakpoints = (JsonArray?)response?["body"]?["breakpoints"];
+        Assert.NotNull(breakpoints);
+        Assert.Equal(3, breakpoints!.Count);
+
+        // An instruction line stays verified at its requested line.
+        Assert.True((bool?)breakpoints[0]?["verified"]);
+        Assert.Equal(1, (int?)breakpoints[0]?["line"]);
+
+        // A comment line snaps forward to the next executable line.
+        Assert.True((bool?)breakpoints[1]?["verified"]);
+        Assert.Equal(3, (int?)breakpoints[1]?["line"]);
+
+        // A line beyond the program cannot map to any executable line.
+        Assert.False((bool?)breakpoints[2]?["verified"]);
+        Assert.Equal(30, (int?)breakpoints[2]?["line"]);
+        Assert.NotNull((string?)breakpoints[2]?["message"]);
+
+        ConfigurationDone();
+        var stopped = WaitForEvent("stopped");
+        Assert.Equal(1, (int?)stopped?["line"]);
+
+        // The snapped breakpoint on line 3 would stop the return; clear before resuming.
+        SetBreakpoints([], script);
+        Continue();
+        WaitForEvent("terminated");
+    }
+
+    [Fact]
+    public void TablesExpandAndReferencesExpireAfterResume()
+    {
+        var script = CreateScript(
+            """
+            local base = 5
+            local items = { 10, 20, name = "lunil" }
+            local function add(value)
+              return value + base
+            end
+            local marker = add(items[1])
+            return marker
+            """);
+        Initialize();
+        Launch(script);
+        SetBreakpoints([4]);
+        ConfigurationDone();
+
+        WaitForEvent("stopped");
+
+        // Inside `add` the upvalue scope lists the closure upvalue by its real name; the
+        // frame's locals must not leak into it.
+        var upvalueScopes = Request("scopes", new JsonObject { ["frameId"] = 0 });
+        var upvalueScopesArray = (JsonArray?)upvalueScopes?["body"]?["scopes"];
+        Assert.NotNull(upvalueScopesArray);
+        var upvalueReference = (int?)upvalueScopesArray![1]?["variablesReference"];
+        Assert.True(upvalueReference > 0);
+        var upvalues = Request("variables", new JsonObject { ["variablesReference"] = upvalueReference });
+        var upvalueArray = (JsonArray?)upvalues?["body"]?["variables"];
+        Assert.NotNull(upvalueArray);
+        var baseUpvalue = upvalueArray!.FirstOrDefault(item =>
+            item?["name"]?.GetValue<string>() == "base");
+        Assert.NotNull(baseUpvalue);
+        Assert.Equal("5", (string?)baseUpvalue?["value"]);
+        Assert.DoesNotContain(upvalueArray, item => item?["name"]?.GetValue<string>() == "value");
+
+        // The caller frame's `items` table expands: array part first, then the hash part.
+        var callerScopes = Request("scopes", new JsonObject { ["frameId"] = 1 });
+        var callerScopesArray = (JsonArray?)callerScopes?["body"]?["scopes"];
+        Assert.NotNull(callerScopesArray);
+        var localsReference = (int?)callerScopesArray![0]?["variablesReference"];
+        Assert.True(localsReference > 0);
+        var locals = Request("variables", new JsonObject { ["variablesReference"] = localsReference });
+        var localsArray = (JsonArray?)locals?["body"]?["variables"];
+        Assert.NotNull(localsArray);
+        var tableVariable = localsArray!.FirstOrDefault(item =>
+            item?["name"]?.GetValue<string>() == "items");
+        Assert.NotNull(tableVariable);
+        var tableReference = (int?)tableVariable?["variablesReference"];
+        Assert.True(tableReference > 0);
+
+        var entries = Request("variables", new JsonObject { ["variablesReference"] = tableReference });
+        var entryArray = (JsonArray?)entries?["body"]?["variables"];
+        Assert.NotNull(entryArray);
+        Assert.Equal(3, entryArray!.Count);
+        Assert.Equal("1", (string?)entryArray[0]?["name"]);
+        Assert.Equal("10", (string?)entryArray[0]?["value"]);
+        Assert.Equal("2", (string?)entryArray[1]?["name"]);
+        Assert.Equal("[\"name\"]", (string?)entryArray[2]?["name"]);
+        Assert.Equal("\"lunil\"", (string?)entryArray[2]?["value"]);
+
+        // Pagination reads a window of the entries instead of restarting the listing.
+        var page = Request("variables", new JsonObject
+        {
+            ["variablesReference"] = tableReference,
+            ["start"] = 1,
+            ["count"] = 1,
+        });
+        var pageArray = (JsonArray?)page?["body"]?["variables"];
+        Assert.NotNull(pageArray);
+        Assert.Single(pageArray!);
+        Assert.Equal("2", (string?)pageArray[0]?["name"]);
+
+        Continue();
+        WaitForEvent("terminated");
+
+        // The resume invalidated every reference handed out while paused.
+        var stale = Request("variables", new JsonObject { ["variablesReference"] = tableReference });
+        Assert.False((bool?)stale?["success"]);
+    }
+
     private void Initialize()
     {
         var response = Request("initialize", new JsonObject
@@ -215,7 +363,7 @@ public sealed class DapAdapterTests : IDisposable
         Assert.True((bool?)response?["success"]);
     }
 
-    private void SetBreakpoints(int[] lines, string? path = null)
+    private JsonObject? SetBreakpoints(int[] lines, string? path = null)
     {
         var breakpoints = new JsonArray();
         foreach (var line in lines)
@@ -229,6 +377,7 @@ public sealed class DapAdapterTests : IDisposable
             ["breakpoints"] = breakpoints,
         });
         Assert.True((bool?)response?["success"]);
+        return response;
     }
 
     private void ConfigurationDone()

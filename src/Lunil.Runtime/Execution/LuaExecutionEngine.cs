@@ -60,9 +60,10 @@ internal sealed class LuaExecutionEngine
                         $"Cannot execute invalid canonical IR: {verificationErrors[0].Message}");
                 }
 
-                // A racing Execute may have verified and marked it first; TryAdd
-                // keeps that benign race from throwing.
-                VerifiedModules.TryAdd(closure.Module, VerifiedMarker);
+                // A racing Execute may have verified and marked it first; GetValue
+                // keeps that benign race from throwing and is available on
+                // netstandard2.1, where ConditionalWeakTable has no TryAdd.
+                VerifiedModules.GetValue(closure.Module, static _ => VerifiedMarker);
             }
 
             var thread = state.MainThread;

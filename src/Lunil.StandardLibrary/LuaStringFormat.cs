@@ -415,6 +415,18 @@ internal static class LuaStringFormat
         {
             text = FormatHexFloat(number, precision, conversion == 'A');
         }
+        else if (!double.IsFinite(number))
+        {
+            // printf renders non-finite values as inf/nan regardless of the
+            // precision specifier; .NET would print "Infinity"/"NaN" instead.
+            var uppercase = conversion is 'E' or 'F' or 'G';
+            var symbol = double.IsNaN(number)
+                ? (uppercase ? "NAN" : "nan")
+                : (uppercase ? "INF" : "inf");
+            text = double.IsNegative(number) && !double.IsNaN(number)
+                ? "-" + symbol
+                : symbol;
+        }
         else
         {
             var effectivePrecision = conversion is 'g' or 'G' && precision == 0
@@ -427,6 +439,11 @@ internal static class LuaStringFormat
                 _ => $"{conversion}{effectivePrecision}",
             };
             text = number.ToString(specifier, CultureInfo.InvariantCulture);
+            if (conversion is 'e' or 'E' or 'g' or 'G')
+            {
+                // printf emits at least two exponent digits; .NET pads to three.
+                text = NormalizeExponentDigits(text);
+            }
         }
 
         if (flags.Contains('#') && double.IsFinite(number))
@@ -435,6 +452,26 @@ internal static class LuaStringFormat
         }
 
         return Encoding.ASCII.GetBytes(text);
+    }
+
+    private static string NormalizeExponentDigits(string text)
+    {
+        var exponentIndex = text.IndexOfAny(['e', 'E']);
+        if (exponentIndex < 0)
+        {
+            return text;
+        }
+
+        var mantissa = text[..exponentIndex];
+        var exponent = text[exponentIndex..];
+        var digits = exponent[2..];
+        var significant = digits.TrimStart('0');
+        if (significant.Length < 2)
+        {
+            significant = digits.Length >= 2 ? digits[^2..] : significant.PadLeft(2, '0');
+        }
+
+        return $"{mantissa}{exponent[..2]}{significant}";
     }
 
     private static string FormatPointer(LuaValue value)

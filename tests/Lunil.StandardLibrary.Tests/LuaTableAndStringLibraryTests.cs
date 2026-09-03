@@ -368,6 +368,35 @@ public sealed class LuaTableAndStringLibraryTests
     }
 
     [Fact]
+    public void FormatFloatConversionsMatchPrintfConventions()
+    {
+        var values = Execute(
+            "return string.format('%e',1)," +
+            "string.format('%E',1)," +
+            "string.format('%.3e',12345.6789)," +
+            "string.format('%e',1e300)," +
+            "string.format('%g',100000)," +
+            "string.format('%g',1e300)," +
+            "string.format('%g',0.0001)," +
+            "string.format('%e',1/0)," +
+            "string.format('%E',-1/0)," +
+            "string.format('%f',1/0)," +
+            "string.format('%g',0/0)");
+
+        Assert.Equal("1.000000e+00", values[0].AsString().ToString());
+        Assert.Equal("1.000000E+00", values[1].AsString().ToString());
+        Assert.Equal("1.235e+04", values[2].AsString().ToString());
+        Assert.Equal("1.000000e+300", values[3].AsString().ToString());
+        Assert.Equal("100000", values[4].AsString().ToString());
+        Assert.Equal("1e+300", values[5].AsString().ToString());
+        Assert.Equal("0.0001", values[6].AsString().ToString());
+        Assert.Equal("inf", values[7].AsString().ToString());
+        Assert.Equal("-INF", values[8].AsString().ToString());
+        Assert.Equal("inf", values[9].AsString().ToString());
+        Assert.Equal("nan", values[10].AsString().ToString());
+    }
+
+    [Fact]
     public void FormatUsesLuaTolStringWithPerInvocationNonYieldableState()
     {
         var values = Execute(

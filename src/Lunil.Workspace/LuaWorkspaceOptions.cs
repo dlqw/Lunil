@@ -45,7 +45,13 @@ public sealed record LuaWorkspaceOptions
 
     public int IndexShardCount { get; init; } = 64;
 
-    /// <summary>Optional directory for versioned, content-addressed compact summary cache files.</summary>
+    /// <summary>
+    /// Optional directory for versioned, content-addressed cache manifests. Entries
+    /// currently record and validate cache identity (key, module, content hash) for
+    /// telemetry and pruning; they do not persist analysis results, so hits skip no
+    /// analysis work. Interpret <see cref="LuaWorkspaceResult"/> disk-cache metrics as
+    /// validation counts, not restored-work counts.
+    /// </summary>
     public string? DiskCacheDirectory { get; init; }
 
     public long MaximumDiskCacheBytes { get; init; } = 2L * 1024 * 1024 * 1024;
