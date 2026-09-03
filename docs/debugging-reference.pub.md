@@ -11,11 +11,11 @@ requests and events, execution model, and the host-side API used to expose a deb
 | --- | --- |
 | Launch | Run a `.lua` file under the reference interpreter with a debug session attached. |
 | Attach | Connect to a game-loop host's named-pipe debug endpoint and relay the protocol. |
-| Breakpoints | Line breakpoints set before execution; `setBreakpoints` replaces the set. |
+| Breakpoints | Line breakpoints set before execution; `setBreakpoints` replaces the set. Launch sources are verified: breakpoints on executable lines report `verified` at the requested line, other lines snap forward to the nearest executable line and the response returns the actual line, and unmappable lines report `verified: false` with a message; sources that cannot be verified keep the requested lines. |
 | Stepping | `stepIn`, `next` (step over), `stepOut`; stepping granularity is not exposed. |
 | Pause | Asynchronous `pause` suspends the turn at the next instruction checkpoint. |
 | Stack | `stackTrace` reports Lua frames of the paused thread with source lines. |
-| Scopes and variables | Locals and upvalues per frame; values are formatted read-only. |
+| Scopes and variables | Locals and upvalues per frame; values are formatted read-only. Table values expand into array entries first and then hash entries, paged with `start`/`count` (at most 100 entries per response), and variable references expire after resume; the Upvalues scope lists only upvalues. |
 | Threads | One DAP thread per active game-loop operation; the launch session reports the main thread. |
 | Events | `initialized`, `stopped` (breakpoint / step / pause reasons), `terminated`, `output`. |
 
