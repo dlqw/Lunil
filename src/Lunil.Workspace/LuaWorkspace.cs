@@ -27,6 +27,16 @@ public sealed class LuaWorkspace : IDisposable
     private readonly Dictionary<string, CacheEntry<DiscoveryEntry>> _discoveryCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CacheEntry<LuaWorkspaceModuleResult>> _analysisCache = new(StringComparer.Ordinal);
     private LuaWorkspaceModuleResult? _lastAnalysisResultPin;
+    /// <summary>
+    /// Strong pins for the module results stored or served during the current and
+    /// previous analysis rounds. Analysis cache entries are weak by default, so a
+    /// GC between two identical rounds can reclaim an entry and turn a repeated
+    /// snapshot into a cache miss; the single last-result pin only ever covers one
+    /// module. Round-scoped pins keep the immediate-repeat contract deterministic
+    /// and release the models again once the round after next starts.
+    /// </summary>
+    private List<LuaWorkspaceModuleResult> _currentRoundPins = [];
+    private List<LuaWorkspaceModuleResult>? _previousRoundPins;
     private Dictionary<string, string> _previousModuleKeys = new(StringComparer.Ordinal);
     private Dictionary<string, ModuleSummaryState> _previousSummaries = new(StringComparer.Ordinal);
     /// <summary>Discovered dependencies per module from the last run, keyed by module name.</summary>
@@ -151,6 +161,15 @@ public sealed class LuaWorkspace : IDisposable
     {
         LunilGuard.NotNull(roots);
         EnterOperation();
+        lock (_cacheLock)
+        {
+            // Rotate the round-scoped pins before this round touches the caches: the
+            // previous round's models stay strongly reachable for exactly one more
+            // round, which makes a repeated identical snapshot hit its cache
+            // regardless of GC timing.
+            _previousRoundPins = _currentRoundPins;
+            _currentRoundPins = [];
+        }
         var gateAcquired = false;
         try
         {
@@ -1073,6 +1092,7 @@ public sealed class LuaWorkspace : IDisposable
                 // keeps entries weak; without this pin the served with-copy is the only strong
                 // reference and a GC between two analyses forces a re-analysis).
                 _lastAnalysisResultPin = cachedResult;
+                _currentRoundPins.Add(cachedResult);
                 Interlocked.Increment(ref operation.CacheHits);
                 return new ModuleAnalysis(
                     cachedResult with
@@ -1148,6 +1168,12 @@ public sealed class LuaWorkspace : IDisposable
                 // re-analysis path.
                 Options.RetainFullAnalysisCacheResults && _compactBuilder.Value is null);
             _lastAnalysisResultPin = result;
+            if (_compactBuilder.Value is null)
+            {
+                // Compact rounds rely on the weak entry being reclaimable right away
+                // (see the entry comment), so only full rounds pin what they store.
+                _currentRoundPins.Add(result);
+            }
         }
         _diskCache?.Write(cacheKey, result);
 
