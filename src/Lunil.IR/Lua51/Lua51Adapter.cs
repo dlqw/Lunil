@@ -327,6 +327,12 @@ public static class Lua51PrototypeConverter
             var instruction = p.Code[pc];
             if (instruction.Opcode == Lua51Opcode.GenericForLoop)
             {
+                if (pc + 1 >= p.Code.Length)
+                {
+                    throw new InvalidDataException(
+                        "Lua 5.1 chunk ends before the generic-for companion jump.");
+                }
+
                 var jump = p.Code[pc + 1];
                 var target = pc + 2 + jump.SignedBx;
                 if ((uint)target > (uint)p.Code.Length)

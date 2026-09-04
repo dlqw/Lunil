@@ -27,6 +27,16 @@ public sealed class LuaWorkspace : IDisposable
     private readonly Dictionary<string, CacheEntry<DiscoveryEntry>> _discoveryCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CacheEntry<LuaWorkspaceModuleResult>> _analysisCache = new(StringComparer.Ordinal);
     private LuaWorkspaceModuleResult? _lastAnalysisResultPin;
+    /// <summary>
+    /// Strong pins for the module results stored or served during the current and
+    /// previous analysis rounds. Analysis cache entries are weak by default, so a
+    /// GC between two identical rounds can reclaim an entry and turn a repeated
+    /// snapshot into a cache miss; the single last-result pin only ever covers one
+    /// module. Round-scoped pins keep the immediate-repeat contract deterministic
+    /// and release the models again once the round after next starts.
+    /// </summary>
+    private List<LuaWorkspaceModuleResult> _currentRoundPins = [];
+    private List<LuaWorkspaceModuleResult>? _previousRoundPins;
     private Dictionary<string, string> _previousModuleKeys = new(StringComparer.Ordinal);
     private Dictionary<string, ModuleSummaryState> _previousSummaries = new(StringComparer.Ordinal);
     /// <summary>Discovered dependencies per module from the last run, keyed by module name.</summary>
@@ -36,6 +46,9 @@ public sealed class LuaWorkspace : IDisposable
         ImmutableDictionary<string, LuaWorkspaceCompactSnapshot.ModuleContribution>.Empty
             .WithComparers(StringComparer.Ordinal);
     /// <summary>Workspace-wide globals from the last completed round (bd, Config, ...).</summary>
+    private readonly Dictionary<string, HashSet<string>> _workspaceGlobalSources =
+        new(StringComparer.Ordinal);
+
     private ImmutableDictionary<string, LuaType> _lastWorkspaceGlobals =
         ImmutableDictionary<string, LuaType>.Empty.WithComparers(StringComparer.Ordinal);
     private int _activeOperations;
@@ -148,6 +161,15 @@ public sealed class LuaWorkspace : IDisposable
     {
         LunilGuard.NotNull(roots);
         EnterOperation();
+        lock (_cacheLock)
+        {
+            // Rotate the round-scoped pins before this round touches the caches: the
+            // previous round's models stay strongly reachable for exactly one more
+            // round, which makes a repeated identical snapshot hit its cache
+            // regardless of GC timing.
+            _previousRoundPins = _currentRoundPins;
+            _currentRoundPins = [];
+        }
         var gateAcquired = false;
         try
         {
@@ -391,7 +413,9 @@ public sealed class LuaWorkspace : IDisposable
             var currentDiscoverySummaries = new Dictionary<string, DiscoverySummary>(StringComparer.Ordinal);
             // Globals assigned across the corpus (game, settings, logger, ...): seeded
             // from the previous round and extended with this round's fresh analyses,
-            // so even reused modules contribute their globals.
+            // so even reused modules contribute their globals. Globals whose only
+            // defining modules disappeared are dropped instead of lingering forever.
+            DropStaleWorkspaceGlobals(discoveries.Keys);
             var workspaceGlobals = new Dictionary<string, LuaType>(
                 _lastWorkspaceGlobals, StringComparer.Ordinal);
             var analyzedComponentCount = 0;
@@ -404,6 +428,9 @@ public sealed class LuaWorkspace : IDisposable
                 {
                     var chunkLength = Math.Min(chunkSize, level.Length - chunkStart);
                     var chunk = level.AsSpan(chunkStart, chunkLength).ToArray();
+                    // All modules in a chunk see the same global snapshot; one
+                    // fingerprint covers the chunk and keeps the cache key sound.
+                    var globalsFingerprint = HashWorkspaceGlobals(workspaceGlobals);
                     var chunkResults = await RunComponentBoundedAsync(
                         chunk,
                         componentId => AnalyzeComponentAsync(
@@ -413,7 +440,8 @@ public sealed class LuaWorkspace : IDisposable
                             exportSnapshot,
                             operation,
                             cancellationToken,
-                            workspaceGlobals.ToImmutableDictionary(StringComparer.Ordinal)),
+                            workspaceGlobals.ToImmutableDictionary(StringComparer.Ordinal),
+                            globalsFingerprint),
                         operation,
                         cancellationToken).ConfigureAwait(false);
                     foreach (var componentResult in chunkResults.OrderBy(static result => result.ComponentId))
@@ -441,10 +469,21 @@ public sealed class LuaWorkspace : IDisposable
                                 foreach (var info in result.Compilation.Analysis.Symbols)
                                 {
                                     if (info.Symbol.Kind == LuaSymbolKind.Global &&
-                                        !string.IsNullOrEmpty(info.Symbol.Name) &&
-                                        !workspaceGlobals.ContainsKey(info.Symbol.Name))
+                                        !string.IsNullOrEmpty(info.Symbol.Name))
                                     {
-                                        workspaceGlobals[info.Symbol.Name] = info.InferredType;
+                                        if (!workspaceGlobals.ContainsKey(info.Symbol.Name))
+                                        {
+                                            workspaceGlobals[info.Symbol.Name] = info.InferredType;
+                                        }
+
+                                        if (!_workspaceGlobalSources.TryGetValue(
+                                                info.Symbol.Name, out var sources))
+                                        {
+                                            sources = [];
+                                            _workspaceGlobalSources[info.Symbol.Name] = sources;
+                                        }
+
+                                        sources.Add(result.Identity.Name);
                                     }
                                 }
 
@@ -813,6 +852,53 @@ public sealed class LuaWorkspace : IDisposable
         return resolved;
     }
 
+    private static string HashWorkspaceGlobals(Dictionary<string, LuaType> globals)
+    {
+        if (globals.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var name in globals.Keys.OrderBy(static candidate => candidate, StringComparer.Ordinal))
+        {
+            builder.Append(name).Append('=').Append(HashType(globals[name])).Append((char)10);
+        }
+
+        return HashText(builder.ToString());
+    }
+
+    /// <summary>
+    /// Removes workspace globals whose every defining module is no longer part of
+    /// the corpus, so deleted modules stop contributing stale cross-file types.
+    /// </summary>
+    private void DropStaleWorkspaceGlobals(IEnumerable<string> currentModuleNames)
+    {
+        if (_workspaceGlobalSources.Count == 0)
+        {
+            return;
+        }
+
+        var current = currentModuleNames.ToImmutableHashSet(StringComparer.Ordinal);
+        var stale = _workspaceGlobalSources
+            .Where(pair => !pair.Value.Any(current.Contains))
+            .Select(pair => pair.Key)
+            .ToArray();
+        if (stale.Length == 0)
+        {
+            return;
+        }
+
+        var builder = _lastWorkspaceGlobals.ToBuilder();
+        foreach (var name in stale)
+        {
+            builder.Remove(name);
+            _workspaceGlobalSources.Remove(name);
+        }
+
+        _lastWorkspaceGlobals = builder.ToImmutable();
+    }
+
     private async Task<ComponentAnalysis> AnalyzeComponentAsync(
         LuaModuleStronglyConnectedComponent component,
         IReadOnlyDictionary<string, DiscoveryEntry> discoveries,
@@ -820,7 +906,8 @@ public sealed class LuaWorkspace : IDisposable
         ImmutableDictionary<string, ExportValue> externalExports,
         OperationMetrics operation,
         CancellationToken cancellationToken,
-        ImmutableDictionary<string, LuaType>? workspaceGlobals = null)
+        ImmutableDictionary<string, LuaType>? workspaceGlobals = null,
+        string workspaceGlobalsFingerprint = "")
     {
         var componentDiscoveries = await RunBoundedAsync(
             component.Modules,
@@ -862,7 +949,8 @@ public sealed class LuaWorkspace : IDisposable
                     iteration,
                     operation,
                     cancellationToken,
-                    workspaceGlobals),
+                    workspaceGlobals,
+                    workspaceGlobalsFingerprint),
                 operation,
                 cancellationToken).ConfigureAwait(false);
             final = analyzed.OrderBy(static module => module.Result.Identity.Name, StringComparer.Ordinal)
@@ -927,7 +1015,8 @@ public sealed class LuaWorkspace : IDisposable
         int iteration,
         OperationMetrics operation,
         CancellationToken cancellationToken,
-        ImmutableDictionary<string, LuaType>? workspaceGlobals = null)
+        ImmutableDictionary<string, LuaType>? workspaceGlobals = null,
+        string workspaceGlobalsFingerprint = "")
     {
         var moduleTypes = ImmutableDictionary.CreateBuilder<string, LuaType>(StringComparer.Ordinal);
         var keyBuilder = new StringBuilder()
@@ -936,6 +1025,10 @@ public sealed class LuaWorkspace : IDisposable
             .Append(discovery.Document.SourceIdentity).Append('\n')
             .Append(discovery.ContentHash).Append('\n')
             .Append(_analysisOnly.Value ? "analysis-only\n" : "verified\n");
+        // The analysis environment injects cross-module workspace globals; their
+        // contents must participate in the cache key or modules analyzed before a
+        // global was defined would serve stale types forever.
+        keyBuilder.Append("globals:").Append(workspaceGlobalsFingerprint).Append('\n');
         var hostSummaryHash = string.Empty;
         if (Options.HostContract is { } hostContract)
         {
@@ -999,6 +1092,7 @@ public sealed class LuaWorkspace : IDisposable
                 // keeps entries weak; without this pin the served with-copy is the only strong
                 // reference and a GC between two analyses forces a re-analysis).
                 _lastAnalysisResultPin = cachedResult;
+                _currentRoundPins.Add(cachedResult);
                 Interlocked.Increment(ref operation.CacheHits);
                 return new ModuleAnalysis(
                     cachedResult with
@@ -1074,6 +1168,12 @@ public sealed class LuaWorkspace : IDisposable
                 // re-analysis path.
                 Options.RetainFullAnalysisCacheResults && _compactBuilder.Value is null);
             _lastAnalysisResultPin = result;
+            if (_compactBuilder.Value is null)
+            {
+                // Compact rounds rely on the weak entry being reclaimable right away
+                // (see the entry comment), so only full rounds pin what they store.
+                _currentRoundPins.Add(result);
+            }
         }
         _diskCache?.Write(cacheKey, result);
 

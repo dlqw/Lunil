@@ -501,6 +501,15 @@ public sealed partial class LuaClrBridge
         }
     }
 
+    private static bool IsIntegralTarget(Type type) => type == typeof(byte) ||
+        type == typeof(sbyte) ||
+        type == typeof(short) ||
+        type == typeof(ushort) ||
+        type == typeof(int) ||
+        type == typeof(uint) ||
+        type == typeof(long) ||
+        type == typeof(ulong);
+
     private static LuaClrException ProjectionFailed(string kind, Exception exception) => new(
         LuaClrErrorCode.ConversionFailed,
         $"The CLR {kind} failed while it was being projected to Lua.",
@@ -619,6 +628,16 @@ public sealed partial class LuaClrBridge
         }
         if (IsNumeric(nonNullable) && value.Kind is LuaValueKind.Integer or LuaValueKind.Float)
         {
+            // Lua 5.3+ semantics: a float without an exact integer representation
+            // never binds to an integral CLR parameter instead of silently rounding.
+            if (value.Kind == LuaValueKind.Float && IsIntegralTarget(nonNullable) &&
+                !value.TryGetInteger(out _))
+            {
+                converted = null;
+                score = int.MaxValue;
+                return false;
+            }
+
             var number = value.Kind == LuaValueKind.Integer ? (object)value.AsInteger() : value.AsFloat();
             try
             {

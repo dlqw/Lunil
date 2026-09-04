@@ -103,7 +103,7 @@ Lua-facing failures surface as `ffi {Code}: {message}` with a stable `LuaFfiErro
 | `NativeInvocationFailed` | The native call itself threw. |
 | `BufferClosed` | Buffer used after release. |
 | `AllocationLimitExceeded` | Native allocation budget exhausted. |
-| `ResourceLimitExceeded` | Open-library limit reached. |
+| `ResourceLimitExceeded` | Open-library or dynamic delegate-type limit reached. |
 | `DynamicCodeUnavailable` | Dynamic adaptation is needed but unavailable. |
 | `BindingConflict` | Duplicate registry entry for the same library/symbol. |
 

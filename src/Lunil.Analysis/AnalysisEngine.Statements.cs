@@ -549,7 +549,12 @@ internal sealed partial class AnalysisEngine
             var narrowed = NarrowCondition(condition, head);
             exit = narrowed.FalseState;
             var bodyResult = AnalyzeBlock(body, narrowed.TrueState, insideLoop: true);
-            loopBreaks.AddRange(bodyResult.Breaks);
+            if (bodyResult.Breaks.Count > 0)
+            {
+                // Collapse each iteration's breaks into one merged state so the list
+                // cannot grow with the iteration budget.
+                loopBreaks.Add(MergeStates(bodyResult.Breaks, statement.Span));
+            }
             var candidate = MergeStates([state, bodyResult.Fallthrough], statement.Span);
             if (StatesEquivalent(head, candidate))
             {
@@ -618,20 +623,16 @@ internal sealed partial class AnalysisEngine
 
         var token = statement.ChildTokens().FirstOrDefault(static item =>
             item.Kind == LuaTokenKind.Identifier && !item.IsMissing);
-        var loopState = state.Clone();
+        var bindings = new List<(VariableKey Key, LuaType Type)>();
         if (token is not null && _declarations.TryGetValue(token.Span, out var symbol))
         {
             var key = VariableKey.Local(symbol.Id);
-            loopState.SetType(key, LuaTypes.Number);
-            loopState.MarkAssigned(key);
+            bindings.Add((key, LuaTypes.Number));
             _declaredTypes[key] = LuaTypes.Number;
             RecordSymbolInference(symbol, LuaTypes.Number);
         }
 
-        var bodyResult = AnalyzeBlock(body, loopState, insideLoop: true);
-        return new BlockResult(
-            MergeStates([state, bodyResult.Fallthrough, .. bodyResult.Breaks], statement.Span),
-            []);
+        return AnalyzeForBody(statement, body, state, bindings);
     }
 
     private BlockResult AnalyzeGenericFor(LuaSyntaxNode statement, FlowState state)
@@ -641,9 +642,9 @@ internal sealed partial class AnalysisEngine
         var body = statement.ChildNodes().Single(static node => node.Kind == LuaSyntaxKind.Block);
         var iteratorPack = InferExpressionList(expressions, state, GetAnnotations(statement));
         var loopValues = InferGenericForValues(expressions, iteratorPack, state);
-        var loopState = state.Clone();
         var names = nameList.ChildTokens().Where(static token =>
             token.Kind == LuaTokenKind.Identifier && !token.IsMissing).ToArray();
+        var bindings = new List<(VariableKey Key, LuaType Type)>();
         for (var index = 0; index < names.Length; index++)
         {
             if (!_declarations.TryGetValue(names[index].Span, out var symbol))
@@ -658,16 +659,73 @@ internal sealed partial class AnalysisEngine
                 type = LuaTypes.Any;
             }
 
-            loopState.SetType(key, type);
-            loopState.MarkAssigned(key);
+            bindings.Add((key, type));
             _declaredTypes[key] = type;
             RecordSymbolInference(symbol, type);
         }
 
-        var bodyResult = AnalyzeBlock(body, loopState, insideLoop: true);
-        return new BlockResult(
-            MergeStates([state, bodyResult.Fallthrough, .. bodyResult.Breaks], statement.Span),
-            []);
+        return AnalyzeForBody(statement, body, state, bindings);
+    }
+
+    /// <summary>
+    /// Runs a for loop's body to a fixed point with the same budget, widening and
+    /// convergence rules as <see cref="AnalyzeWhile"/>, so assignments carried across
+    /// iterations reach reads on the next iteration instead of being analyzed against
+    /// the pre-loop state only. The loop variables are re-bound from their declared
+    /// types on every iteration, so in-body writes to them never leak past the
+    /// iteration that performed them.
+    /// </summary>
+    private BlockResult AnalyzeForBody(
+        LuaSyntaxNode statement,
+        LuaSyntaxNode body,
+        FlowState state,
+        List<(VariableKey Key, LuaType Type)> bindings)
+    {
+        var head = state.Clone();
+        BindLoopVariables(head, bindings);
+        var loopBreaks = new List<FlowState>();
+        for (var iteration = 0; iteration < _context.Options.MaximumFlowIterations; iteration++)
+        {
+            _currentFunction!.FlowIterations++;
+            var bodyResult = AnalyzeBlock(body, head, insideLoop: true);
+            if (bodyResult.Breaks.Count > 0)
+            {
+                // Collapse each iteration's breaks into one merged state so the list
+                // cannot grow with the iteration budget.
+                loopBreaks.Add(MergeStates(bodyResult.Breaks, statement.Span));
+            }
+
+            var candidate = MergeStates([state, bodyResult.Fallthrough], statement.Span);
+            BindLoopVariables(candidate, bindings);
+            if (StatesEquivalent(head, candidate))
+            {
+                head = candidate;
+                break;
+            }
+
+            head = WidenState(head, candidate, statement.Span);
+            if (iteration == _context.Options.MaximumFlowIterations - 1)
+            {
+                _currentFunction.WasWidened = true;
+                _context.AddDiagnostic(
+                    "LUA6012",
+                    LoopKeywordSpan(statement),
+                    "For-loop flow did not converge within the configured iteration budget; values were widened.");
+            }
+        }
+
+        return new BlockResult(MergeStates([head, .. loopBreaks], statement.Span), []);
+    }
+
+    private static void BindLoopVariables(
+        FlowState target,
+        List<(VariableKey Key, LuaType Type)> bindings)
+    {
+        foreach (var binding in bindings)
+        {
+            target.SetType(binding.Key, binding.Type);
+            target.MarkAssigned(binding.Key);
+        }
     }
 
     private LuaTypePack InferGenericForValues(

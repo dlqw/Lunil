@@ -50,7 +50,10 @@ Supported inputs include nil to reference/nullable types, booleans, strings/char
 and integer values, CLR numeric types with overflow checks, arrays and `ValueTuple` values represented
 by Lua tables, `LuaValue`, compatible CLR userdata, and primitive `object` fallback. Rectangular CLR
 arrays and jagged arrays become recursively nested one-based tables. Unsupported values produce
-`NoMatchingConstructor` or `NoMatchingMember`.
+`NoMatchingConstructor` or `NoMatchingMember`. Lua floats bound to integral CLR parameters must
+carry an exact integer representation; fractional values fail overload resolution instead of
+rounding. Instance members of boxed value-type userdata reject writes with `MemberNotAllowed`
+because the mutation would only reach a copy.
 
 `EnumRepresentation` defaults to exact name strings and can instead use underlying integers or
 `{ name, value }` tables. `DecimalRepresentation` defaults to invariant exact strings;

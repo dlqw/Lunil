@@ -895,6 +895,14 @@ public sealed partial class LuaClrBridge
         var (instance, type, stableLease) = UnwrapTarget(target);
         using var stableLeaseScope = stableLease;
         EnsureMemberAllowed(type, memberName);
+
+        // Instance members of a value type mutate a boxed copy: writes would be
+        // silently lost, so they fail closed instead.
+        if (instance is not null && type.IsValueType)
+        {
+            throw new LuaClrException(LuaClrErrorCode.MemberNotAllowed,
+                $"CLR member '{memberName}' cannot be written through a boxed value-type instance.");
+        }
         var generatedBinding = GetRegisteredBinding(type.FullName ?? type.Name);
         if (generatedBinding is not null)
         {
@@ -1716,7 +1724,9 @@ public sealed partial class LuaClrBridge
         var bridge = GetBridge(state, values);
         try
         {
-            RequireTimer(Required(values, 1, "clr.cancel_timer"), bridge).Cancel();
+            var timer = RequireTimer(Required(values, 1, "clr.cancel_timer"), bridge);
+            bridge.EnsureTimerCancellable(timer.Registration);
+            timer.Cancel();
             return [];
         }
         catch (LuaClrException exception)

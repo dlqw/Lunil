@@ -83,10 +83,11 @@ internal sealed class DapConnection : IDisposable
             throw new InvalidDataException("DAP message body is not valid JSON.");
         }
 
-        if (body["command"] is not null && body["seq"] is JsonNode sequence)
+        // DAP request ids come from the 'id' field; 'seq' is the message sequence
+        // number and may differ from the id.
+        if (body["command"] is not null && body["id"] is JsonNode requestId)
         {
-            var id = sequence.GetValue<int>();
-            return DapMessage.Request(body, id);
+            return DapMessage.Request(body, requestId.GetValue<int>());
         }
 
         if (body["type"]?.GetValue<string>() == "response" && body["request_seq"] is JsonNode requestSequence)
@@ -144,6 +145,7 @@ internal sealed class DapConnection : IDisposable
             case DapMessageKind.Request:
                 body["type"] = "request";
                 body["command"] = message.Method;
+                body["id"] = message.Id;
                 if (message.Body is not null)
                 {
                     body["arguments"] = message.Body.DeepClone();

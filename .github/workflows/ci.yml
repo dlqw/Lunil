@@ -24,6 +24,7 @@ jobs:
   change_scope:
     name: Determine change scope
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       heavy: ${{ steps.scope.outputs.heavy }}
       docs-only: ${{ steps.scope.outputs.docs-only }}
@@ -112,6 +113,7 @@ jobs:
           - os: macos-latest
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -126,11 +128,19 @@ jobs:
           dotnet restore benchmarks/Lunil.NeoLua.Harness/Lunil.NeoLua.Harness.csproj
           dotnet restore benchmarks/Lunil.UniLua.Harness/Lunil.UniLua.Harness.csproj
       - name: Build
-        run: dotnet build Lunil.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+        # Single MSBuild node: the version generator is referenced by several
+        # projects, and concurrent inner builds race on its obj outputs (Windows
+        # locks the DLL while a compiler process holds it loaded).
+        run: dotnet build Lunil.sln --configuration Release --no-restore -m:1 -p:ContinuousIntegrationBuild=true
       - name: Test
         run: >-
           dotnet test Lunil.sln --configuration Release --no-build --no-restore
-          --filter "FullyQualifiedName!~Lunil.Conformance.Tests&FullyQualifiedName!~Lunil.BackendDifferential.Tests&FullyQualifiedName!~Lunil.Stability.Tests"
+          --filter "FullyQualifiedName!~Lunil.Conformance.Tests&FullyQualifiedName!~Lunil.BackendDifferential.Tests&FullyQualifiedName!~Lunil.Stability.Tests&FullyQualifiedName!~Lunil.Runtime.Tests.Differential.PucLua"
+      - name: Run the netstandard2.1 portable fixture
+        if: matrix.rid == 'linux-x64'
+        run: >-
+          dotnet run --project tests/Lunil.Portable.Fixture/Lunil.Portable.Fixture.csproj
+          --configuration Release --no-build
       - name: Run conformance, five-backend differential, and deterministic stability gates
         shell: pwsh
         run: >-
@@ -196,6 +206,7 @@ jobs:
     needs: change_scope
     if: needs.change_scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -225,6 +236,7 @@ jobs:
     needs: change_scope
     if: needs.change_scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -247,12 +259,23 @@ jobs:
     if: needs.change_scope.outputs.docs-only == 'true'
     needs: change_scope
     strategy:
+      fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
-    runs-on: ubuntu-latest
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
     steps:
       - name: Document the intentional lightweight path
         run: echo "Documentation-only change; build and test are intentionally skipped."
@@ -262,6 +285,9 @@ jobs:
     needs: change_scope
     if: needs.change_scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LUNIL_REQUIRE_PUC_ORACLE: '1'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -278,6 +304,26 @@ jobs:
           --configuration Release
           --filter "FullyQualifiedName~Lunil.Runtime.Tests.Differential.PucLua"
 
+  release-fuzz-smoke:
+    name: Release fuzz fixture smoke
+    needs: change_scope
+    if: >-
+      needs.change_scope.outputs.heavy == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/*.csproj"
+      - name: Run the release fuzz fixture
+        shell: pwsh
+        run: ./scripts/Test-ReleaseFuzz.ps1
+
   backend-performance-decision:
     name: Aggregate Tier 1/Tier 2/Loop OSR six-RID evidence
     if: >-
@@ -288,6 +334,7 @@ jobs:
       - change_scope
       - build-and-test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -311,6 +358,7 @@ jobs:
       - build-and-test
     if: needs.change_scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -331,6 +379,7 @@ jobs:
     name: Formatting and packages
     needs: change_scope
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Verify public repository safety

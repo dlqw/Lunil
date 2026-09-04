@@ -571,6 +571,99 @@ public sealed class LuaTypeAnalyzerTests
     }
 
     [Fact]
+    public void NumericForCarriedAssignmentReachesNextIterationRead()
+    {
+        var result = Analyze(
+            """
+            local s
+            for i = 1, n do
+                if i > 1 then
+                    print(s)
+                end
+                s = 1
+            end
+            """);
+
+        // The read in later iterations flows from the previous iteration's write
+        // instead of staying at the pre-loop nil binding.
+        Assert.Contains(result.Expressions, static item => item.Type.DisplayName == "1|nil");
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6012");
+    }
+
+    [Fact]
+    public void GenericForCarriedAssignmentReachesNextIterationRead()
+    {
+        var result = Analyze(
+            """
+            local values = { 'a' }
+            local found
+            for key, value in ipairs(values) do
+                if key > 1 then
+                    print(found)
+                end
+                found = value
+            end
+            """);
+
+        Assert.Contains(result.Expressions, static item => item.Type.DisplayName == "'a'|nil");
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA6012");
+    }
+
+    [Fact]
+    public void NumericForControlVariableKeepsNumberAcrossIterations()
+    {
+        var result = Analyze(
+            """
+            local total = 0
+            for i = 1, n do
+                total = total + i
+                i = "polluted"
+            end
+            return total
+            """);
+
+        // The write to the control variable is scoped to its own iteration; the
+        // arithmetic that precedes it stays numeric in every iteration.
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code == "LUA6003" &&
+            item.Message.Contains("not 'polluted'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GenericForIteratorVariablesReturnToIteratorTypes()
+    {
+        var result = Analyze(
+            """
+            local values = { 'a', 'b' }
+            for key, value in ipairs(values) do
+                print(#value)
+                value = 42
+            end
+            """);
+
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code == "LUA6003" &&
+            item.Message.Contains("not '42'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NonConvergingForLoopWidensWithinBudget()
+    {
+        var result = Analyze(
+            """
+            local s
+            for i = 1, n do
+                s = "x"
+            end
+            return s
+            """,
+            new LuaAnalysisOptions { MaximumFlowIterations = 1 });
+
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6012");
+        Assert.True(result.Functions[0].WasWidened);
+    }
+
+    [Fact]
     public void CfgResolvesGotoLabelsAndLoopBreaks()
     {
         var result = Analyze(
@@ -963,6 +1056,49 @@ public sealed class LuaTypeAnalyzerTests
     }
 
     [Fact]
+    public void NarrowedCapturedReadKeepsFlowType()
+    {
+        var result = Analyze(
+            """
+            ---@class Point
+            ---@field x number
+            local Point = {}
+            ---@return Point|nil
+            local function find() end
+            local p = find()
+            local move = function() p = nil end
+            if p then
+                print(p.x)
+            end
+            _ = move
+            """);
+
+        // The closure write lowers the cell bound, but the read sits behind the nil
+        // guard and must keep the narrowed flow type.
+        Assert.DoesNotContain(result.Diagnostics, static item =>
+            item.Code is "LUA6020" or "LUA6007");
+    }
+
+    [Fact]
+    public void CapturedReadWithoutNarrowingStillReportsNilAccess()
+    {
+        var result = Analyze(
+            """
+            ---@class Point
+            ---@field x number
+            local Point = {}
+            ---@return Point|nil
+            local function find() end
+            local p = find()
+            local move = function() p = nil end
+            print(p.x)
+            _ = move
+            """);
+
+        Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6020");
+    }
+
+    [Fact]
     public void EmptyTableInitializersSatisfyAnnotatedSlots()
     {
         var result = Analyze(
@@ -1002,6 +1138,18 @@ public sealed class LuaTypeAnalyzerTests
         Assert.Contains(result.Diagnostics, static item =>
             item.Code == "LUA6003" && item.Message.Contains("not 'true'", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, static item => item.Code == "LUA6006");
+    }
+
+    [Fact]
+    public void UnreachableCodeAfterGotoDoesNotContributeInference()
+    {
+        var result = Analyze(
+            "local t = {}\nfor i = 1, 3 do\n  if i > 1 then goto continue end\n  t.value = i\n  ::continue::\nend\nreturn t");
+
+        // The goto's dead fall-through must not crash or corrupt inference; the
+        // analysis completes with the loop's contributions intact.
+        Assert.False(result.Diagnostics.Any(static item => item.Code == "LUA6009"),
+            "loop-internal goto targets are reachable and must not be reported unreachable");
     }
 
     private static LuaAnalysisResult Analyze(

@@ -472,10 +472,19 @@ public static class LuaBinder
                 .Where(static node => node.Kind == LuaSyntaxKind.AttributedName)
                 .Select(ReadAttributedName)
                 .ToArray();
+            // A Lua 5.5 prefixed attribute applies to every name in the declaration
+            // list, not only the name it precedes.
+            var listAttribute = declarations.Length > 0 && declarations[0].IsPrefix
+                ? declarations[0].Attribute
+                : LuaLocalAttributeKind.None;
             var closeCount = 0;
-            foreach (var declaration in declarations)
+            for (var index = 0; index < declarations.Length; index++)
             {
-                if (declaration.Attribute == LuaLocalAttributeKind.ToBeClosed && ++closeCount > 1)
+                var declaration = declarations[index];
+                var attribute = index > 0 && declaration.Attribute == LuaLocalAttributeKind.None
+                    ? listAttribute
+                    : declaration.Attribute;
+                if (attribute == LuaLocalAttributeKind.ToBeClosed && ++closeCount > 1)
                 {
                     AddDiagnostic(
                         "LUA3004",
@@ -483,7 +492,7 @@ public static class LuaBinder
                         "A local declaration cannot contain multiple to-be-closed variables.");
                 }
 
-                DeclareToken(declaration.NameToken, LuaSymbolKind.Local, declaration.Attribute);
+                DeclareToken(declaration.NameToken, LuaSymbolKind.Local, attribute);
             }
         }
 
@@ -592,6 +601,19 @@ public static class LuaBinder
         private AttributedName ReadAttributedName(LuaSyntaxNode node)
         {
             var tokens = node.ChildTokens().ToArray();
+            if (tokens.Length > 0 && tokens[0].Kind == LuaTokenKind.LessThan)
+            {
+                // Lua 5.5 prefixed form: the parser emits [<, attribute, >, name], so
+                // the attribute precedes the name and applies to the whole list.
+                var attributeToken = tokens
+                    .Skip(1)
+                    .FirstOrDefault(static token => token.Kind == LuaTokenKind.Identifier);
+                var prefixedName = tokens
+                    .LastOrDefault(static token => token.Kind == LuaTokenKind.Identifier)
+                    ?? CreateSyntheticToken(node.Span.Start);
+                return new AttributedName(prefixedName, ReadAttributeKind(attributeToken), IsPrefix: true);
+            }
+
             var name = tokens.FirstOrDefault(static token => token.Kind == LuaTokenKind.Identifier)
                 ?? CreateSyntheticToken(node.Span.Start);
             var attribute = LuaLocalAttributeKind.None;
@@ -602,18 +624,25 @@ public static class LuaBinder
                     .Where(static token => token.Kind == LuaTokenKind.Identifier)
                     .Skip(1)
                     .FirstOrDefault();
-                if (attributeToken is not null && !attributeToken.IsMissing)
-                {
-                    attribute = GetName(attributeToken) switch
-                    {
-                        "const" => LuaLocalAttributeKind.Constant,
-                        "close" => LuaLocalAttributeKind.ToBeClosed,
-                        var unknown => ReportUnknownAttribute(attributeToken, unknown),
-                    };
-                }
+                attribute = ReadAttributeKind(attributeToken);
             }
 
             return new AttributedName(name, attribute);
+        }
+
+        private LuaLocalAttributeKind ReadAttributeKind(LuaSyntaxToken? attributeToken)
+        {
+            if (attributeToken is null || attributeToken.IsMissing)
+            {
+                return LuaLocalAttributeKind.None;
+            }
+
+            return GetName(attributeToken) switch
+            {
+                "const" => LuaLocalAttributeKind.Constant,
+                "close" => LuaLocalAttributeKind.ToBeClosed,
+                var unknown => ReportUnknownAttribute(attributeToken, unknown),
+            };
         }
 
         private LuaLocalAttributeKind ReportUnknownAttribute(LuaSyntaxToken token, string name)
@@ -1523,6 +1552,7 @@ public static class LuaBinder
 
         private sealed record AttributedName(
             LuaSyntaxToken NameToken,
-            LuaLocalAttributeKind Attribute);
+            LuaLocalAttributeKind Attribute,
+            bool IsPrefix = false);
     }
 }

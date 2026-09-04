@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
@@ -284,6 +286,68 @@ public sealed class LuaLowererTests
         Assert.Null(result.Module);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "LUA3005");
     }
+
+    [Fact]
+    public void RejectsOutOfRangeParentReferencesWithoutUpvalues()
+    {
+        var root = new LuaIrFunction
+        {
+            Id = 0,
+            Span = default,
+            RegisterCount = 1,
+            Instructions = ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0)),
+            BasicBlocks = LuaIrControlFlow.Build(
+                ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0))),
+        };
+        var orphan = new LuaIrFunction
+        {
+            Id = 3,
+            Span = default,
+            ParentFunctionId = 2,
+            RegisterCount = 1,
+            Instructions = ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0)),
+            BasicBlocks = LuaIrControlFlow.Build(
+                ImmutableArray.Create(new LuaIrInstruction(LuaIrOpcode.Return, 0, 0))),
+        };
+        var module = new LuaIrModule { Functions = [root, orphan] };
+
+        var errors = LuaIrVerifier.Verify(module);
+
+        Assert.Contains(errors, error =>
+            error.Message.Contains("parent function identifier", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Lua51HexadecimalOverflowConvertsTheUnsignedWrappedValueToFloat()
+    {
+        var result = Lower("return 0xFFFFFFFFFFFFFFFF", LuaLanguageVersion.Lua51);
+
+        var module = Assert.IsType<LuaIrModule>(result.Module);
+        Assert.Empty(LuaIrVerifier.Verify(module));
+        var constant = Assert.Single(
+            module.Functions[0].Constants,
+            static candidate => candidate.Kind == LuaIrConstantKind.Float);
+        Assert.Equal(18446744073709551616.0, constant.Float);
+    }
+
+    [Fact]
+    public void Lua54HexadecimalIntegersRemainIntegers()
+    {
+        var result = Lower("return 0xFFFFFFFFFFFFFFFF", LuaLanguageVersion.Lua54);
+
+        var module = Assert.IsType<LuaIrModule>(result.Module);
+        Assert.Contains(
+            module.Functions[0].Constants,
+            static candidate => candidate.Kind == LuaIrConstantKind.Integer &&
+                candidate.Integer == -1);
+    }
+
+    private static LuaLoweringResult Lower(string source, LuaLanguageVersion version) => LuaLowerer.Lower(
+        LuaBinder.Bind(
+            LuaParser.Parse(
+                SourceText.FromUtf8(source),
+                parserOptions: new LuaParserOptions { LanguageVersion = version }),
+            new LuaBinderOptions { LanguageVersion = version }));
 
     private static LuaLoweringResult Lower(string source) => LuaLowerer.Lower(
         LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));

@@ -299,6 +299,36 @@ public sealed class LuaAnnotationParserTests
         Assert.Equal("total", TextOf(document, @return.Returns[0].NameSpan));
     }
 
+    [Fact]
+    public void TableTypesWithBareElementEntriesParseWithoutDiagnostics()
+    {
+        var document = Parse(
+            """
+            ---@alias Members { string }
+            ---@alias Mixed { [string]: number, Inventory }
+            ---@alias Quoted { "entry" }
+            return 1
+            """);
+
+        Assert.Empty(document.Diagnostics);
+        var members = Assert.IsType<LuaTableTypeSyntax>(Assert.IsType<LuaAliasAnnotationSyntax>(document.Annotations[0]).Type);
+        var member = Assert.Single(members.Fields);
+        Assert.Null(member.Name);
+        Assert.Null(member.KeyType);
+        Assert.Equal("string", TextOf(document, member.ValueType.Span));
+
+        var mixed = Assert.IsType<LuaTableTypeSyntax>(Assert.IsType<LuaAliasAnnotationSyntax>(document.Annotations[1]).Type);
+        Assert.Equal(2, mixed.Fields.Length);
+        Assert.NotNull(mixed.Fields[0].KeyType);
+        Assert.Null(mixed.Fields[1].Name);
+        Assert.Equal("Inventory", TextOf(document, mixed.Fields[1].ValueType.Span));
+
+        var quoted = Assert.IsType<LuaTableTypeSyntax>(Assert.IsType<LuaAliasAnnotationSyntax>(document.Annotations[2]).Type);
+        var entry = Assert.Single(quoted.Fields);
+        Assert.Null(entry.Name);
+        Assert.Equal("\"entry\"", TextOf(document, entry.ValueType.Span));
+    }
+
     private static string TextOf(LuaAnnotationDocument document, TextSpan span) =>
         System.Text.Encoding.UTF8.GetString(document.Source.GetSpan(span));
 

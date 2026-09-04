@@ -1,3 +1,4 @@
+using Lunil.Core;
 using Lunil.Core.Text;
 using Lunil.IR.Lua54;
 using Lunil.Runtime.Execution;
@@ -6,6 +7,7 @@ using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
 using Lunil.Semantics.Binding;
 using Lunil.Semantics.Lowering;
+using Lunil.Syntax.Lexing;
 using Lunil.Syntax.Parsing;
 
 namespace Lunil.Runtime.Tests.Operations;
@@ -106,17 +108,83 @@ public sealed class LuaMetamethodTests
     }
 
     [Fact]
-    public void ImplementsEqualityOrderingAndLessEqualFallbackRules()
+    public void ImplementsEqualityAndOrderingMetamethodRules()
     {
         const string source = """
             local mt = {}
             function mt.__eq(a, b) return a.value == b.value end
             function mt.__lt(a, b) return a.value < b.value end
+            function mt.__le(a, b) return a.value <= b.value end
             local a = setmetatable({ value = 1 }, mt)
             local b = setmetatable({ value = 2 }, mt)
             local c = setmetatable({ value = 1 }, mt)
             return a == c, a ~= c, a < b, a <= b, b <= a
             """;
+
+        Assert.Equal(
+            [
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(false),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(true),
+                LuaValue.FromBoolean(false),
+            ],
+            Execute(source));
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, true)]
+    [InlineData(LuaLanguageVersion.Lua52, true)]
+    [InlineData(LuaLanguageVersion.Lua53, true)]
+    [InlineData(LuaLanguageVersion.Lua54, false)]
+    [InlineData(LuaLanguageVersion.Lua55, false)]
+    public void LessThanOrEqualFallbackFollowsVersion(LuaLanguageVersion version, bool fallsBack)
+    {
+        const string source = """
+            local mt = {}
+            function mt.__lt(a, b) return a.value < b.value end
+            local a = setmetatable({ value = 1 }, mt)
+            local b = setmetatable({ value = 2 }, mt)
+            return a <= b
+            """;
+
+        if (fallsBack)
+        {
+            var values = Execute(source, CreateStateWithSetMetatable(version), version);
+            Assert.Equal(LuaValue.FromBoolean(true), values[0]);
+        }
+        else
+        {
+            var error = Assert.Throws<LuaRuntimeException>(() =>
+                Execute(source, CreateStateWithSetMetatable(version), version));
+            Assert.Contains("attempt to compare", error.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void OrderingTypeRulesMatchPerVersionReference()
+    {
+        const string source = """
+            local mt = { __lt = function() return true end }
+            local t = setmetatable({}, mt)
+            return t < t, 1 < t
+            """;
+
+        // Lua 5.4 consults the ordering metamethod of either operand.
+        Assert.Equal(
+            [LuaValue.FromBoolean(true), LuaValue.FromBoolean(true)],
+            Execute(source));
+
+        // Lua 5.1 rejects mixed-type ordering outright.
+        var error = Assert.Throws<LuaRuntimeException>(() =>
+            Execute(source, CreateStateWithSetMetatable(LuaLanguageVersion.Lua51), LuaLanguageVersion.Lua51));
+        Assert.Contains("attempt to compare", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MixedIntegerFloatComparisonsTreatNegativeZeroAsEqual()
+    {
+        const string source = "return 0 == -0.0, -0.0 < 0, 0 <= -0.0, -0.0 == 0, 0 < -0.0";
 
         Assert.Equal(
             [
@@ -259,10 +327,13 @@ public sealed class LuaMetamethodTests
         Assert.Equal("alive", completed.Values[1].AsString().ToString());
     }
 
-    private static LuaValue[] Execute(string source, LuaState? state = null)
+    private static LuaValue[] Execute(
+        string source,
+        LuaState? state = null,
+        LuaLanguageVersion? version = null)
     {
         state ??= CreateStateWithSetMetatable();
-        var module = Compile(source);
+        var module = Compile(source, version ?? state.LanguageVersion);
         return new LuaInterpreter().Execute(state, state.CreateMainClosure(module)).Values.ToArray();
     }
 
@@ -293,10 +364,11 @@ public sealed class LuaMetamethodTests
             ? LuaNativeStep.Yielded([LuaValue.FromInteger(41)], continuationId: 1)
             : LuaNativeStep.Completed(values[0]);
 
-    private static LuaState CreateStateWithSetMetatable()
+    private static LuaState CreateStateWithSetMetatable(LuaLanguageVersion version = LuaLanguageVersion.Lua54)
     {
         var state = new LuaState(new LuaStateOptions
         {
+            LanguageVersion = version,
             Heap = LuaHeapOptions.Default with { HashSeed = 1234 },
         });
         state.SetGlobal(
@@ -312,10 +384,14 @@ public sealed class LuaMetamethodTests
         return state;
     }
 
-    private static Lunil.IR.Canonical.LuaIrModule Compile(string source)
+    private static Lunil.IR.Canonical.LuaIrModule Compile(
+        string source,
+        LuaLanguageVersion version = LuaLanguageVersion.Lua54)
     {
-        var lowering = LuaLowerer.Lower(
-            LuaBinder.Bind(LuaParser.Parse(SourceText.FromUtf8(source))));
+        var lexerOptions = LuaLexerOptions.Default with { LanguageVersion = version };
+        var parserOptions = LuaParserOptions.Default with { LanguageVersion = version };
+        var parse = LuaParser.Parse(SourceText.FromUtf8(source), lexerOptions, parserOptions);
+        var lowering = LuaLowerer.Lower(LuaBinder.Bind(parse));
         Assert.Empty(lowering.Diagnostics);
         return Assert.IsType<Lunil.IR.Canonical.LuaIrModule>(lowering.Module);
     }

@@ -11,11 +11,11 @@ Lunil 调试适配器协议（DAP）集成参考：协议面、支持的请求�
 | --- | --- |
 | Launch | 在参考解释器下运行 `.lua` 文件并挂接调试会话。 |
 | Attach | 连接游戏循环宿主的命名管道调试端点并中继协议。 |
-| 断点 | 执行前设置的行断点；`setBreakpoints` 整体替换断点集。 |
+| 断点 | 执行前设置的行断点；`setBreakpoints` 整体替换断点集。启动源码会做断点验证：命中可执行行的断点在请求行报告 `verified`，其余行向前吸附到最近可执行行并在响应中回填实际行号，无法映射的行报告 `verified: false` 并附 message；无法验证的源码保持请求行回显。 |
 | 单步 | `stepIn`、`next`（跳过）、`stepOut`；不暴露步进粒度。 |
 | 暂停 | 异步 `pause` 在下一个指令检查点挂起回合。 |
 | 栈 | `stackTrace` 上报暂停线程的 Lua 帧与源码行。 |
-| 作用域与变量 | 每帧的局部变量与上值；值为只读格式化。 |
+| 作用域与变量 | 每帧的局部变量与上值；值为只读格式化。表值可展开，数组条目在前、哈希条目在后，支持 `start`/`count` 分页（单次响应最多 100 条），resume 后变量引用失效；Upvalues 作用域只列出上值。 |
 | 线程 | attach 模式每个活动游戏循环操作一个 DAP 线程；launch 会话上报主线程。 |
 | 事件 | `initialized`、`stopped`（breakpoint / step / pause 原因）、`terminated`、`output`。 |
 

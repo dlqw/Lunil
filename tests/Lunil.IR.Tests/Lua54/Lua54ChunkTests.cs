@@ -555,6 +555,52 @@ public sealed class Lua54ChunkTests
     }
 
     [Fact]
+    public void CanonicalWriterRaisesReturnCloseFlagForToBeClosedVariables()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.MarkToBeClosed, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 1, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 2,
+            instructions);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        var returns = chunk.MainPrototype.Code
+            .Where(static instruction => instruction.Opcode == Lua54Opcode.Return)
+            .ToList();
+        Assert.NotEmpty(returns);
+        Assert.All(returns, static instruction => Assert.True(instruction.K));
+        Assert.Empty(Lua54ChunkVerifier.Verify(chunk));
+    }
+
+    [Fact]
+    public void CanonicalWriterKeepsReturnCloseFlagDownWithoutCapturesOrToBeClosed()
+    {
+        var instructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.LoadConstant, 0, 0, sourceLine: 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 1, sourceLine: 1));
+        var function = CreateIrFunction(
+            0,
+            registerCount: 1,
+            instructions,
+            constants: [LuaIrConstant.FromInteger(1)]);
+
+        var chunk = Lua54CanonicalPrototypeWriter.CreateChunk(
+            new LuaIrModule { Functions = [function] },
+            0);
+
+        var returns = chunk.MainPrototype.Code
+            .Where(static instruction => instruction.Opcode == Lua54Opcode.Return)
+            .ToList();
+        Assert.NotEmpty(returns);
+        Assert.All(returns, static instruction => Assert.False(instruction.K));
+    }
+
+    [Fact]
     public void CanonicalWriterPreservesComparisonDebugLocalBoundary()
     {
         var instructions = ImmutableArray.Create(

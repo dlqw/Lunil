@@ -722,6 +722,46 @@ public sealed class LunilCliTests
     }
 
     [Fact]
+    public async Task Lua52DumpChunkUsesLua52PrototypeAdapter()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("dump52.lua", "return 42");
+
+        var result = await fixture.RunAsync(
+            "dump",
+            script,
+            "--kind",
+            "chunk",
+            "--lua-version",
+            "5.2");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("prototype main", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("LoadConstant", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Lua52DumpChunkJsonEmitsPrototypeDetails()
+    {
+        using var fixture = new CliFixture();
+        var script = fixture.Write("dump52json.lua", "return 42");
+
+        var result = await fixture.RunAsync(
+            "dump",
+            script,
+            "--kind",
+            "chunk",
+            "--format",
+            "json",
+            "--lua-version",
+            "5.2");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("\"parameterCount\"", result.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains("\"opcode\": \"LoadConstant\"", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Lua53DumpChunkUsesLua53OpcodeAdapter()
     {
         using var fixture = new CliFixture();

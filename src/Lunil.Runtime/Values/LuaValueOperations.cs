@@ -565,12 +565,14 @@ public static class LuaValueOperations
             return comparison;
         }
 
-        return floatingPoint.CompareTo((double)integral) switch
+        // IEEE equality first: CompareTo distinguishes -0.0 from 0.0, but Lua
+        // treats them as equal, exactly like luai_numeq on the converted value.
+        if (floatingPoint == (double)integral)
         {
-            > 0 => -1,
-            < 0 => 1,
-            _ => 0,
-        };
+            return 0;
+        }
+
+        return floatingPoint > (double)integral ? -1 : 1;
     }
 
     private static long Shift(long value, long count, bool left)

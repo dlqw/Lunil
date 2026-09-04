@@ -1198,9 +1198,10 @@ internal static class LuaCilMethodPlanner
         int consumedLocal,
         LuaCompiledExitReason reason)
     {
-        Emit(plan, CilPlanInstruction.WithInt32(
-            CilPlanOpCode.LoadLocal,
-            ProgramCounterLocal));
+        // Read the committed frame PC: every emitted instruction commits its pc to
+        // the frame, while ProgramCounterLocal still holds the entry pc.
+        Emit(plan, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadArgument, FrameArgument, -1));
+        Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.FrameGetProgramCounter));
         Emit(plan, CilPlanInstruction.WithInt32(CilPlanOpCode.LoadLocal, consumedLocal));
         LoadInt32(plan, (int)reason, -1);
         Emit(plan, CilPlanInstruction.Call(CilWellKnownCalls.ExitDeopt));

@@ -118,6 +118,28 @@ public sealed class LuaProtectedCallTests
         Assert.Equal(LuaThreadStatus.Error, state.MainThread.Status);
     }
 
+    [Fact]
+    public void ErrorHandlerFramesRejectYield()
+    {
+        var state = CreateState();
+        state.InstallCoroutineModule();
+        var values = new LuaInterpreter()
+            .Execute(state, state.CreateMainClosure(Compile(
+            "local co = coroutine.create(function() " +
+            "local ok, err = xpcall(error, function() coroutine.yield(1) return 'h' end); " +
+            "return ok, err end); " +
+            "local done, a = coroutine.resume(co); " +
+            "return done, a, coroutine.status(co)")))
+            .Values.ToArray();
+
+        // The handler's yield must fail like any C-boundary yield instead of
+        // suspending the thread with the message handler mid-flight.
+        Assert.Multiple(
+            () => Assert.True(values[0].AsBoolean()),
+            () => Assert.False(values[1].AsBoolean()),
+            () => Assert.Equal("dead", values[2].AsString().ToString()));
+    }
+
     private static LuaValue[] Execute(string source)
     {
         var state = CreateState();

@@ -1439,9 +1439,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var reference = context is null ? null : FindReference(context.Analysis, context.ByteOffset);
         var symbol = reference?.Symbol ??
             (context is null ? null : FindDeclaredSymbolAt(context.Analysis, context.ByteOffset));
-        if (context is null || symbol is null || symbol.Kind == LuaSymbolKind.Environment ||
+        var isGlobalReference = reference?.ResolutionKind == LuaNameResolutionKind.Global;
+        if (context is null || symbol is null ||
+            symbol.Kind == LuaSymbolKind.Environment && !isGlobalReference ||
             symbol.IsReadOnly ||
-            reference?.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is null)
+            isGlobalReference && workspace.GetSnapshot() is null)
         {
             return null;
         }
@@ -1450,7 +1452,7 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         return new JsonObject
         {
             ["range"] = LanguageServerWorkspace.ToJson(context.Analysis.Document.ToRange(span)),
-            ["placeholder"] = symbol.Name,
+            ["placeholder"] = reference?.Name ?? symbol.Name,
         };
     }
 
@@ -1466,13 +1468,16 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
         var reference = context is null ? null : FindReference(context.Analysis, context.ByteOffset);
         var symbol = reference?.Symbol ??
             (context is null ? null : FindDeclaredSymbolAt(context.Analysis, context.ByteOffset));
+        // Global references fold into the implicit _ENV symbol; they are renamed by
+        // name through the workspace index instead of by symbol key.
+        var isGlobalReference = reference?.ResolutionKind == LuaNameResolutionKind.Global;
         if (context is null || symbol is null || symbol.IsReadOnly ||
-            symbol.Kind == LuaSymbolKind.Environment)
+            symbol.Kind == LuaSymbolKind.Environment && !isGlobalReference)
         {
             return null;
         }
 
-        if (context.Analysis.Compilation.SemanticModel.Symbols.Any(existing =>
+        if (!isGlobalReference && context.Analysis.Compilation.SemanticModel.Symbols.Any(existing =>
                 existing.FunctionId == symbol.FunctionId && existing.Name == newName &&
                 existing.Id != symbol.Id))
         {
@@ -1981,11 +1986,11 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
             .OrderBy(static function => function.Span.Length).FirstOrDefault();
         if (function is null) return null;
         var key = context.Analysis.Compilation.SemanticModel.GetFunctionKey(function, context.Analysis.Module).Value;
-        return new JsonArray(CallHierarchyItem(
+        return CallHierarchyItem(
             key,
             function.Id == 0 ? context.Analysis.Module.Name : $"function#{function.Id}",
             context.Analysis.Document.Uri,
-            context.Analysis.Document.ToRange(function.Span)));
+            context.Analysis.Document.ToRange(function.Span));
     }
 
     public JsonNode IncomingCalls(JsonElement parameters) => CallHierarchyEdges(parameters, incoming: true);
@@ -2026,9 +2031,10 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     {
         if (reference.ResolutionKind == LuaNameResolutionKind.Global && workspace.GetSnapshot() is { } snapshot)
         {
+            // Globals fold into the implicit _ENV symbol, so the workspace index
+            // addresses them by name rather than by symbol key.
             var builder = ImmutableArray.CreateBuilder<JsonObject>();
-            var key = analysis.Compilation.SemanticModel.GetSymbolKey(reference.Symbol, analysis.Module);
-            foreach (var item in snapshot.FindReferences(key))
+            foreach (var item in snapshot.FindGlobalReferences(reference.Name))
             {
                 var uri = workspace.GetUri(item.Module.Name);
                 if (uri is not null && workspace.TryGetDocument(uri, out var document))
@@ -2770,13 +2776,28 @@ internal sealed partial class LuaLanguageService(LanguageServerWorkspace workspa
     private static Uri GetUri(JsonElement parameters)
     {
         var document = parameters.TryGetProperty("textDocument", out var value) ? value : parameters;
+        if (!document.TryGetProperty("uri", out var uri) || uri.ValueKind != JsonValueKind.String)
+        {
+            throw InvalidParams("the textDocument.uri property is required");
+        }
+
         return LanguageServerWorkspace.CanonicalUri(
-            new Uri(document.GetProperty("uri").GetString()!, UriKind.Absolute));
+            new Uri(uri.GetString()!, UriKind.Absolute));
     }
 
-    private static LspPosition GetPosition(JsonElement element) => new(
-        element.GetProperty("line").GetInt32(),
-        element.GetProperty("character").GetInt32());
+    private static LspPosition GetPosition(JsonElement element)
+    {
+        if (!element.TryGetProperty("line", out var line) ||
+            !element.TryGetProperty("character", out var character))
+        {
+            throw InvalidParams("the position line and character properties are required");
+        }
+
+        return new(line.GetInt32(), character.GetInt32());
+    }
+
+    private static JsonRpcException InvalidParams(string reason) => new(
+        -32602, $"Invalid params: {reason}.");
 
     private static LspRange ParseRange(JsonElement element) => new(
         GetPosition(element.GetProperty("start")),

@@ -36,6 +36,7 @@ public sealed class PucLua52DifferentialTests
             "lua52");
         if (executable is null)
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.2 oracle");
             return;
         }
 
@@ -59,6 +60,7 @@ public sealed class PucLua52DifferentialTests
             "luac52");
         if (executable is null || compiler is null)
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.2 oracle");
             return;
         }
 

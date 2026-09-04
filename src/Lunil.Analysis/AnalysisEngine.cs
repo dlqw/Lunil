@@ -639,6 +639,18 @@ internal sealed partial class AnalysisEngine
         return state;
     }
 
+    /// <summary>
+    /// An unconditional goto leaves no fall-through path, matching the control-flow
+    /// graph's unreachability. Precise label merges would need a goto dataflow
+    /// graph; until then the stopped path contributes no narrowing or inference.
+    /// </summary>
+    private static BlockResult AnalyzeGoto(FlowState state)
+    {
+        var ended = state.Clone();
+        ended.Reachable = false;
+        return new BlockResult(ended, []);
+    }
+
     private BlockResult AnalyzeBlock(
         LuaSyntaxNode block,
         FlowState incoming,
@@ -653,6 +665,13 @@ internal sealed partial class AnalysisEngine
         var breaks = new List<FlowState>();
         foreach (var statement in block.ChildNodes())
         {
+            if (!state.Reachable)
+            {
+                // Statements after a goto are unreachable (the CFG already reports
+                // them); analyzing them would let dead code shape live types.
+                break;
+            }
+
             ApplyCasts(statement, state);
             var result = AnalyzeStatement(statement, state, insideLoop);
             state = result.Fallthrough;
@@ -674,7 +693,7 @@ internal sealed partial class AnalysisEngine
             LuaSyntaxKind.AssignmentStatement => AnalyzeAssignment(statement, state),
             LuaSyntaxKind.CallStatement => AnalyzeCallStatement(statement, state),
             LuaSyntaxKind.BreakStatement => AnalyzeBreak(statement, state, insideLoop),
-            LuaSyntaxKind.GotoStatement => BlockResult.Next(state),
+            LuaSyntaxKind.GotoStatement => AnalyzeGoto(state),
             LuaSyntaxKind.DoStatement => AnalyzeDo(statement, state, insideLoop),
             LuaSyntaxKind.WhileStatement => AnalyzeWhile(statement, state),
             LuaSyntaxKind.RepeatStatement => AnalyzeRepeat(statement, state),

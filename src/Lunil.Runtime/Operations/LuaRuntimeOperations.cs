@@ -239,6 +239,15 @@ public static class LuaRuntimeOperations
                 LuaValueOperations.Binary(state, operation, left, right));
         }
 
+        // PUC Lua 5.1 rejects ordering operands of different types outright; 5.2
+        // and later instead consult the ordering metamethod of either operand.
+        if (operation is LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual &&
+            state.OrderingRequiresSameType &&
+            left.Kind != right.Kind)
+        {
+            throw new LuaRuntimeException(BinaryTypeError(operation, left, right));
+        }
+
         if (operation == LuaIrBinaryOperator.LessThanOrEqual)
         {
             var lessOrEqual = GetBinaryMetamethod(state, left, right, LuaMetamethod.LessThanOrEqual);
@@ -247,14 +256,17 @@ public static class LuaRuntimeOperations
                 return LuaOperationResolution.Call(lessOrEqual, left, right);
             }
 
-            var lessThan = GetBinaryMetamethod(state, right, left, LuaMetamethod.LessThan);
-            if (!lessThan.IsNil)
+            if (state.AllowsLessThanOrEqualFallback)
             {
-                return LuaOperationResolution.Call(
-                    lessThan,
-                    right,
-                    left,
-                    LuaResultTransform.LogicalNot);
+                var lessThan = GetBinaryMetamethod(state, right, left, LuaMetamethod.LessThan);
+                if (!lessThan.IsNil)
+                {
+                    return LuaOperationResolution.Call(
+                        lessThan,
+                        right,
+                        left,
+                        LuaResultTransform.LogicalNot);
+                }
             }
         }
 
@@ -441,7 +453,7 @@ public static class LuaRuntimeOperations
             _ => false,
         };
 
-    private static LuaValue NormalizeArithmeticOperand(
+    internal static LuaValue NormalizeArithmeticOperand(
         LuaState state,
         LuaValue original,
         LuaValue numeric) =>

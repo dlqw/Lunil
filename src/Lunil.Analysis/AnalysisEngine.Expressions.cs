@@ -131,7 +131,13 @@ internal sealed partial class AnalysisEngine
             }
 
             cell.Readers.Add(_currentFunction?.FunctionId ?? 0);
-            state.SetType(key, cell.Type);
+            // The cell type is the lower bound for symbols without a binding of their
+            // own; a state that already narrowed the variable (or assigned it in this
+            // flow) must keep that type instead of being reset to the raw cell union.
+            if (!state.TryGetType(key, out _))
+            {
+                state.SetType(key, cell.Type);
+            }
         }
         if (!key.IsGlobal && !state.IsAssigned(key))
         {

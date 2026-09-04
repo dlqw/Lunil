@@ -1,12 +1,63 @@
 using System.Collections.Immutable;
 using Lunil.Core;
 using Lunil.IR.Canonical;
+using Lunil.IR.Lua54;
 using Lunil.IR.Lua55;
 
 namespace Lunil.IR.Tests.Lua55;
 
 public sealed class Lua55AdapterTests
 {
+    [Fact]
+    public void Lua55ChunkBoundaryShiftsLoopClosureUpvalueDescriptors()
+    {
+        // Canonical IR keeps the Lua 5.4 numeric-for layout (control value at A+3);
+        // the loop closure captures that control register from the parent frame.
+        // The Lua 5.5 chunk layout stores the control value at A+2, so writing the
+        // chunk must shift the closure's in-stack descriptor with the body registers
+        // and reading it back must restore the canonical index.
+        var childInstructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 1));
+        var child = new LuaIrFunction
+        {
+            Id = 1,
+            ParentFunctionId = 0,
+            Span = default,
+            RegisterCount = 1,
+            Upvalues = [new LuaIrUpvalue("i", 1, LuaIrUpvalueSourceKind.Register, 3)],
+            Instructions = childInstructions,
+            BasicBlocks = LuaIrControlFlow.Build(childInstructions),
+        };
+        var parentInstructions = ImmutableArray.Create(
+            new LuaIrInstruction(LuaIrOpcode.NumericForPrepare, 0, 3),
+            new LuaIrInstruction(LuaIrOpcode.Closure, 4, 1),
+            new LuaIrInstruction(LuaIrOpcode.NumericForLoop, 0, 1),
+            new LuaIrInstruction(LuaIrOpcode.Return, 0, 0));
+        var parent = new LuaIrFunction
+        {
+            Id = 0,
+            ParentFunctionId = -1,
+            Span = default,
+            RegisterCount = 5,
+            Instructions = parentInstructions,
+            BasicBlocks = LuaIrControlFlow.Build(parentInstructions),
+        };
+        var module = new LuaIrModule
+        {
+            LanguageVersion = LuaLanguageVersion.Lua55,
+            MainFunctionId = 0,
+            Functions = [parent, child],
+        };
+
+        var bytes = Lua55CanonicalPrototypeWriter.Write(module, 0);
+        var converted = Lua55PrototypeConverter.Convert(bytes);
+
+        Assert.Equal(0x55, bytes[4]);
+        Assert.Equal(4, converted.Functions[0].Instructions[1].A);
+        Assert.Equal(LuaIrUpvalueSourceKind.Register, converted.Functions[1].Upvalues[0].SourceKind);
+        Assert.Equal(3, converted.Functions[1].Upvalues[0].SourceIndex);
+    }
+
     [Fact]
     public void VersionedAdapterKeepsLua55IdentityAcrossItsBoundary()
     {

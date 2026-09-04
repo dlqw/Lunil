@@ -70,7 +70,9 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 Push-Location $extensionRoot
 try {
     if (-not $SkipNodeInstall) {
-        & npm ci
+        # Audit calls hit a registry endpoint that is not needed for a
+        # reproducible install and has been failing in CI.
+        & npm ci --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
     }
     if (-not $SkipExtensionCheck) {

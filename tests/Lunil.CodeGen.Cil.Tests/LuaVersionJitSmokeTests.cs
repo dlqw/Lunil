@@ -104,6 +104,34 @@ public sealed class LuaVersionJitSmokeTests
         }
     }
 
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua53, LuaValueKind.Float)]
+    [InlineData(LuaLanguageVersion.Lua54, LuaValueKind.Integer)]
+    public void CompiledArithmeticStringCoercionMatchesTheInterpreter(
+        LuaLanguageVersion version,
+        LuaValueKind expectedKind)
+    {
+        var compilation = new LuaCompiler(new LuaCompilerOptions
+        {
+            LanguageVersion = version,
+        }).CompileUtf8("local result\nfor i = 1, 200 do result = 10 + \"5\"\nend\nreturn result", "@jit-strnum.lua");
+        Assert.True(compilation.Succeeded, string.Join(Environment.NewLine, compilation.Diagnostics));
+
+        var state = new LuaState(new LuaStateOptions { LanguageVersion = version });
+        LuaStandardLibrary.InstallAll(state);
+        using var jit = new LuaJitExecutor(LuaJitExecutorOptions.Default with
+        {
+            SynchronousCompilation = true,
+            FunctionEntryThreshold = 1,
+            BackedgeThreshold = 1,
+        });
+        var result = jit.Execute(state, state.CreateMainClosure(compilation.Module!));
+
+        Assert.Equal(LuaVmSignal.Completed, result.Signal);
+        Assert.Equal(expectedKind, result.Values[0].Kind);
+        Assert.Equal(15.0, result.Values[0].AsFloat(), 1e-9);
+    }
+
     [Fact]
     public void JitModuleIdentityRejectsCrossVersionReuse()
     {

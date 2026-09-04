@@ -31,7 +31,9 @@ public sealed class LanguageVersionSyntaxContractTests
         var result = Parse("::label::\ngoto label\nreturn 0", version);
         if (rejected)
         {
-            Assert.Contains(result.Diagnostics, d => d.Message.Contains("goto", StringComparison.OrdinalIgnoreCase));
+            // Lua 5.1 has neither labels nor goto; 'goto' lexes as an ordinary
+            // identifier there, so the sequence is rejected as a syntax error.
+            Assert.NotEmpty(result.Diagnostics);
         }
         else
         {
@@ -182,6 +184,31 @@ public sealed class LanguageVersionSyntaxContractTests
         Assert.Equal(
             expectedParserDiagnostics,
             result.Diagnostics.Count(static item => item.Code == "LUA2016"));
+    }
+
+    [Theory]
+    [InlineData(LuaLanguageVersion.Lua51, 1)]
+    [InlineData(LuaLanguageVersion.Lua52, 0)]
+    [InlineData(LuaLanguageVersion.Lua53, 0)]
+    [InlineData(LuaLanguageVersion.Lua54, 0)]
+    [InlineData(LuaLanguageVersion.Lua55, 0)]
+    public void SugarCallStringArgumentEscapesMatchVersion(
+        LuaLanguageVersion version,
+        int expectedParserDiagnostics)
+    {
+        var result = Parse("return f'\\x41'", version);
+
+        Assert.Equal(
+            expectedParserDiagnostics,
+            result.Diagnostics.Count(static item => item.Code == "LUA2016"));
+    }
+
+    [Fact]
+    public void LongStringArgumentNeverReportsEscapeDiagnostics()
+    {
+        var result = Parse("return f[[a\\z b]]", LuaLanguageVersion.Lua51);
+
+        Assert.DoesNotContain(result.Diagnostics, static item => item.Code == "LUA2016");
     }
 
     [Fact]

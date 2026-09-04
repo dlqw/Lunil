@@ -35,7 +35,8 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _requests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonNode?>> _outbound = new(StringComparer.Ordinal);
-    private readonly ConcurrentBag<Task> _inflight = [];
+    private readonly object _inflightGate = new();
+    private readonly List<Task> _inflight = [];
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -99,7 +100,22 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
             }
 
             var task = DispatchRequestAsync(dispatcher, request, cancellationToken);
-            _inflight.Add(task);
+            lock (_inflightGate)
+            {
+                _inflight.Add(task);
+            }
+
+            _ = task.ContinueWith(
+                finished =>
+                {
+                    lock (_inflightGate)
+                    {
+                        _inflight.Remove(finished);
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         await WaitForInflightAsync(cancellationToken).ConfigureAwait(false);
@@ -107,7 +123,12 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
 
     private async Task WaitForInflightAsync(CancellationToken cancellationToken)
     {
-        var inflight = _inflight.ToArray();
+        Task[] inflight;
+        lock (_inflightGate)
+        {
+            inflight = [.. _inflight];
+        }
+
         if (inflight.Length == 0)
         {
             return;
@@ -359,14 +380,33 @@ internal sealed class JsonRpcConnection : IAsyncDisposable
 
     private bool TryHandleResponse(byte[] payload)
     {
-        using var document = JsonDocument.Parse(payload);
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("method", out _) ||
-            !root.TryGetProperty("id", out var id))
+        JsonDocument document;
+        try
         {
+            document = JsonDocument.Parse(payload);
+        }
+        catch (JsonException)
+        {
+            // Malformed payloads are not responses; let the main loop parse them so
+            // the client receives a -32700 parse error instead of the server dying.
             return false;
         }
 
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("method", out _) ||
+                !root.TryGetProperty("id", out var id))
+            {
+                return false;
+            }
+
+            return HandleResponse(root, id);
+        }
+    }
+
+    private bool HandleResponse(JsonElement root, JsonElement id)
+    {
         if (!_outbound.TryRemove(GetIdKey(id), out var completion))
         {
             return true;

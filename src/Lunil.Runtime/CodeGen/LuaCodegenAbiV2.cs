@@ -267,6 +267,13 @@ public static class LuaCodegenAbiV2
                     "The verified arithmetic primitive guard admitted a non-number.");
             }
 
+            // Keep the JIT result identical to the interpreter: Lua 5.3 coerces
+            // integer-valued arithmetic strings to floats.
+            numericLeft = LuaRuntimeOperations.NormalizeArithmeticOperand(
+                context.State, left, numericLeft);
+            numericRight = LuaRuntimeOperations.NormalizeArithmeticOperand(
+                context.State, right, numericRight);
+
             result = numericLeft.Kind == LuaValueKind.Integer &&
                 numericRight.Kind == LuaValueKind.Integer
                     ? LuaValueOperations.BinaryIntegerSpecialized(

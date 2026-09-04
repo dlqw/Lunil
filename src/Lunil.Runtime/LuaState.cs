@@ -47,6 +47,15 @@ public sealed class LuaState
         ArithmeticStringCoercionProducesFloat = features.ArithmeticStringCoercionProducesFloat;
         CoercesNumericStringsForBitwiseOperations =
             features.CoercesNumericStringsForBitwiseOperations;
+        // Ordering behaviors verified against the vendored PUC reference sources:
+        // luaV_lessequal in 5.1-5.3 falls back to __lt when __le is missing while
+        // 5.4+ raises an order error, and only 5.1 (luaV_lessthan) rejects
+        // different-type operands outright. Kept off the generated version profile
+        // because extending the public LuaVersionFeatures record is not allowed in
+        // a patch release.
+        AllowsLessThanOrEqualFallback = LanguageVersion is
+            LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 or LuaLanguageVersion.Lua53;
+        OrderingRequiresSameType = LanguageVersion == LuaLanguageVersion.Lua51;
         Heap = new LuaHeap(options.Heap);
         Heap.PreservesDeadThreadOpenUpvalues = features.PreservesDeadThreadOpenUpvalues;
         Strings = new LuaStringPool(Heap);
@@ -65,6 +74,10 @@ public sealed class LuaState
     internal bool ArithmeticStringCoercionProducesFloat { get; }
 
     internal bool CoercesNumericStringsForBitwiseOperations { get; }
+
+    internal bool AllowsLessThanOrEqualFallback { get; }
+
+    internal bool OrderingRequiresSameType { get; }
 
     public LuaHeap Heap { get; }
 

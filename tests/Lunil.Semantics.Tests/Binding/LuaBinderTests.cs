@@ -349,6 +349,81 @@ public sealed class LuaBinderTests
             Assert.InRange(reference.ContainingFunctionId, 0, model.Functions.Length - 1));
     }
 
+    [Fact]
+    public void Lua55PrefixAttributeBindsTheFollowingNameAsConstant()
+    {
+        const string source = """
+            local <const> x = 1
+            x = 2
+            """;
+
+        var model = Bind(
+            source,
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        var symbol = Assert.Single(model.Symbols, candidate => candidate.Name == "x");
+        Assert.Equal(LuaSymbolKind.Local, symbol.Kind);
+        Assert.Equal(LuaLocalAttributeKind.Constant, symbol.Attribute);
+        Assert.Empty(model.Symbols.Where(candidate => candidate.Name == "const"));
+        Assert.Single(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3002");
+    }
+
+    [Fact]
+    public void Lua55PrefixAttributeAppliesToEveryNameInTheList()
+    {
+        const string source = """
+            local <const> x, y = 1, 2
+            x = 3
+            y = 4
+            """;
+
+        var model = Bind(
+            source,
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3003");
+        Assert.All(model.Symbols.Where(candidate => candidate.Name is "x" or "y"), candidate =>
+        {
+            Assert.Equal(LuaSymbolKind.Local, candidate.Kind);
+            Assert.Equal(LuaLocalAttributeKind.Constant, candidate.Attribute);
+        });
+        Assert.Equal(2, model.Diagnostics.Count(diagnostic => diagnostic.Code == "LUA3002"));
+    }
+
+    [Fact]
+    public void Lua55PrefixAttributeDoesNotLeakPastTheDeclarationStatement()
+    {
+        const string source = """
+            local <const> x, y = 1, 2
+            local plain = 3
+            plain = 4
+            """;
+
+        var model = Bind(
+            source,
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.DoesNotContain(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3002");
+        Assert.All(model.Symbols.Where(candidate => candidate.Name is "x" or "y"), candidate =>
+            Assert.Equal(LuaLocalAttributeKind.Constant, candidate.Attribute));
+    }
+
+    [Fact]
+    public void Lua55GlobalPostfixAttributeAppliesOnlyToItsName()
+    {
+        const string source = """
+            global x <const>, y = 1, 2
+            y = 3
+            x = 4
+            """;
+
+        var model = Bind(
+            source,
+            LuaBinderOptions.Default with { LanguageVersion = LuaLanguageVersion.Lua55 });
+
+        Assert.Single(model.Diagnostics, diagnostic => diagnostic.Code == "LUA3002");
+    }
+
     private static LuaSemanticModel Bind(string source, LuaBinderOptions? options = null)
     {
         options = (options ?? LuaBinderOptions.Default) with

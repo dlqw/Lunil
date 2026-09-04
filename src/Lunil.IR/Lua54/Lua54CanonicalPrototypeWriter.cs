@@ -117,6 +117,7 @@ public static class Lua54CanonicalPrototypeWriter
         private readonly Dictionary<int, int> _openSetListBases = [];
         private readonly HashSet<int> _canonicalJumpTargets;
         private readonly HashSet<int> _capturedRegisters;
+        private readonly bool _needsClose;
         private readonly int[] _programCounterMap;
         private readonly bool[][] _liveAfter;
         private readonly int _temporary0;
@@ -133,6 +134,12 @@ public static class Lua54CanonicalPrototypeWriter
                 .ToDictionary(static pair => pair.id, static pair => pair.index);
             _canonicalJumpTargets = CollectCanonicalJumpTargets(function);
             _capturedRegisters = CollectCapturedRegisters(owner, _children);
+            // PUC luaK_finish raises RETURN/TAILCALL k for the whole function when
+            // markupval captured a local or marktobeclosed saw a to-be-closed
+            // variable; dropping the flag skips __close on the PUC VM.
+            _needsClose = _capturedRegisters.Count != 0 ||
+                function.Instructions.Any(static instruction =>
+                    instruction.Opcode == LuaIrOpcode.MarkToBeClosed);
             _programCounterMap = new int[function.Instructions.Length + 1];
             _liveAfter = AnalyzeRegisterLiveness(owner, function, _capturedRegisters);
             _temporary0 = function.RegisterCount;
@@ -353,7 +360,7 @@ public static class Lua54CanonicalPrototypeWriter
                         instruction.B < 0 ? 0 : instruction.B + 1,
                         VarArgReturnAdjustment,
                         line,
-                        k: _capturedRegisters.Count != 0);
+                        k: _needsClose);
                     break;
                 case LuaIrOpcode.Return:
                     EmitAbc(
@@ -362,7 +369,7 @@ public static class Lua54CanonicalPrototypeWriter
                         instruction.B < 0 ? 0 : instruction.B + 1,
                         VarArgReturnAdjustment,
                         line,
-                        k: _capturedRegisters.Count != 0);
+                        k: _needsClose);
                     break;
                 case LuaIrOpcode.Close:
                     EmitAbc(Lua54Opcode.Close, instruction.A, 0, 0, line);
@@ -493,7 +500,7 @@ public static class Lua54CanonicalPrototypeWriter
                     2,
                     VarArgReturnAdjustment,
                     second.SourceLine,
-                    k: _capturedRegisters.Count != 0);
+                    k: _needsClose);
                 finalProgramCounter = programCounter + 1;
                 return true;
             }

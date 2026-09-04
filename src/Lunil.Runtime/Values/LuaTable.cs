@@ -565,6 +565,13 @@ public sealed class LuaTable : LuaGcObject
     public void Set(LuaValue key, LuaValue value)
     {
         ValidateKey(key);
+        // PUC normalizes float keys with an exact integer representation to the
+        // integer key, so pairs/next observe 10 rather than 10.0 for t[10.0].
+        if (key.Kind == LuaValueKind.Float && key.TryGetInteger(out var normalized))
+        {
+            key = LuaValue.FromInteger(normalized);
+        }
+
         Owner.ValidateValue(key);
         Owner.ValidateValue(value);
         var barrierOwner = Owner.ValidateWriteBarrierOwner(this);

@@ -279,7 +279,7 @@ internal sealed class LuaLanguageServer : IDisposable
 
     private JsonNode? DidOpen(JsonElement parameters)
     {
-        var item = parameters.GetProperty("textDocument");
+        var item = RequireTextDocument(parameters);
         _workspace.Open(
             LanguageServerWorkspace.CanonicalUri(new Uri(item.GetProperty("uri").GetString()!, UriKind.Absolute)),
             item.GetProperty("version").GetInt32(),
@@ -289,7 +289,7 @@ internal sealed class LuaLanguageServer : IDisposable
 
     private JsonNode? DidChange(JsonElement parameters)
     {
-        var item = parameters.GetProperty("textDocument");
+        var item = RequireTextDocument(parameters);
         var uri = LanguageServerWorkspace.CanonicalUri(
             new Uri(item.GetProperty("uri").GetString()!, UriKind.Absolute));
         var changes = parameters.GetProperty("contentChanges").EnumerateArray().Select(change =>
@@ -314,13 +314,31 @@ internal sealed class LuaLanguageServer : IDisposable
         return null;
     }
 
+    private static JsonElement RequireTextDocument(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("textDocument", out var item) ||
+            item.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonRpcException(-32602, "Invalid params: textDocument is required.");
+        }
+
+        return item;
+    }
+
     private JsonNode? DidSave(JsonElement parameters)
     {
         var uri = GetUri(parameters);
         if (parameters.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String &&
             _workspace.TryGetDocument(uri, out var document))
         {
-            _workspace.Change(uri, document.Version + 1, [new LspTextChange(null, text.GetString()!)]);
+            // The client owns the version counter: a save whose text already matches
+            // the synchronized document must not fabricate a version bump that would
+            // desynchronize later didChange notifications.
+            if (!string.Equals(document.Text, text.GetString(), StringComparison.Ordinal))
+            {
+                _workspace.Change(uri, document.Version + 1,
+                    [new LspTextChange(null, text.GetString()!)]);
+            }
         }
 
         return null;

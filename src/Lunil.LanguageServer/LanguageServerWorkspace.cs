@@ -244,6 +244,12 @@ internal sealed class LanguageServerWorkspace : IDisposable
     private readonly TaskCompletionSource<bool> _declarationsReady =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _declarationsReadySet;
+    // Tail of the background chain applying watched-file events; only the caller thread of
+    // WatchedFileChanged (the JSON-RPC read loop) touches the field itself.
+    private Task _watchedFileWork = Task.CompletedTask;
+    // Tail of the debounced reindex chain; lets tests wait for the scheduled rebuild
+    // instead of guessing a delay. Assignments use Interlocked.Exchange.
+    private Task _latestIndexSettleTask = Task.CompletedTask;
     private bool _disposed;
 
     /// <summary>
@@ -487,8 +493,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
         else if (removedAny)
         {
-            ScanAllTypeDeclarations();
-            ScheduleIndex("configure-analysis-exclusions");
+            // The declaration rescan is a full-corpus pass; keep it off the read loop.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    ScanAllTypeDeclarations();
+                    ScheduleIndex("configure-analysis-exclusions");
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException and
+                    not StackOverflowException and not AccessViolationException)
+                {
+                    LogInfo($"Lunil workspace: exclusion rescan failed: {exception.Message}");
+                }
+            });
         }
     }
 
@@ -657,8 +675,9 @@ internal sealed class LanguageServerWorkspace : IDisposable
         {
             // No workspace folder was registered (for example a single-file session). Scan the
             // opened document's directory tree, including ancestor directories' direct .lua files,
-            // so cross-file @class/@alias/@enum declarations are still available.
-            ScanAncestorDeclarations(uri);
+            // so cross-file @class/@alias/@enum declarations are still available. The scan reads
+            // ancestor directories from disk; run it off the read loop.
+            _ = Task.Run(() => ScanAncestorDeclarations(uri));
         }
 
         _ = AnalyzeAndPublishAsync(uri, version, CancellationToken.None);
@@ -906,6 +925,28 @@ internal sealed class LanguageServerWorkspace : IDisposable
             }
         }
 
+        // The disk probes (existence, exclusion classification, content load) are synchronous
+        // file I/O; didChangeWatchedFiles is dispatched on the JSON-RPC read loop, so they run
+        // on the thread pool. Events chain through _watchedFileWork so the corpus updates keep
+        // arrival order.
+        var previous = _watchedFileWork;
+        _watchedFileWork = Task.Run(async () =>
+        {
+            try
+            {
+                await previous.ConfigureAwait(false);
+                ApplyWatchedFileChange(uri, changeType, folders, filter);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                LogInfo($"Lunil workspace: watched file update failed for {uri}: {exception.Message}");
+            }
+        });
+    }
+
+    private void ApplyWatchedFileChange(Uri uri, int changeType, ImmutableArray<Uri> folders, WorkspaceFileFilter? filter)
+    {
         string? exclusion = null;
         var deleted = changeType == 3 || !uri.IsFile || !File.Exists(ToLocalPath(uri));
         if (!deleted)
@@ -1203,9 +1244,23 @@ internal sealed class LanguageServerWorkspace : IDisposable
             InvalidateIndexNoLock();
         }
 
-        ScanAllTypeDeclarations();
-        ScheduleIndex("configure-library-folders");
-        _ = Task.Run(() => LoadLibraryFolders(normalized));
+        // The declaration rescan and the library load are heavy disk/parallel work; the
+        // caller is the JSON-RPC read loop, so they run on the thread pool and only the
+        // lightweight option bookkeeping above completes synchronously.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                ScanAllTypeDeclarations();
+                ScheduleIndex("configure-library-folders");
+                LoadLibraryFolders(normalized);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException and
+                not StackOverflowException and not AccessViolationException)
+            {
+                LogInfo($"Lunil workspace: library folder update failed: {exception.Message}");
+            }
+        });
     }
 
     /// <summary>Re-reads the configured library folders from disk (`Lunil: Reindex Workspace`).</summary>
@@ -1456,6 +1511,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         int environmentGeneration;
         ImmutableDictionary<string, LuaType> libraryGlobals;
         ImmutableDictionary<string, LuaType> moduleTypes;
+        LanguageDocumentAnalysis? cachedCandidate = null;
         lock (_gate)
         {
             if (!_documents.TryGetValue(uri.AbsoluteUri, out document!))
@@ -1466,13 +1522,32 @@ internal sealed class LanguageServerWorkspace : IDisposable
             environmentGeneration = _environmentGeneration;
             libraryGlobals = _libraryGlobals;
             moduleTypes = GetModuleTypesNoLock();
+            // Cheap identity checks stay inside the global lock; the full byte
+            // comparison (which may rehydrate a trimmed document from disk) runs
+            // outside so hover/definition never blocks every other request.
             if (_analyses.TryGetValue(uri.AbsoluteUri, out var cached) &&
                 cached.Document.Version == document.Version &&
                 cached.EnvironmentGeneration == environmentGeneration &&
-                cached.Document.Utf8.Span.SequenceEqual(document.Utf8.Span))
+                cached.Document.ByteLength == document.ByteLength)
             {
-                TouchAnalysis(uri.AbsoluteUri);
-                return cached;
+                cachedCandidate = cached;
+            }
+        }
+
+        if (cachedCandidate is not null)
+        {
+            var candidate = cachedCandidate;
+            if (candidate.Document.Utf8.Span.SequenceEqual(document.Utf8.Span))
+            {
+                lock (_gate)
+                {
+                    if (_documents.TryGetValue(uri.AbsoluteUri, out var current) &&
+                        ReferenceEquals(current, document))
+                    {
+                        TouchAnalysis(uri.AbsoluteUri);
+                        return candidate;
+                    }
+                }
             }
         }
 
@@ -3170,6 +3245,20 @@ internal sealed class LanguageServerWorkspace : IDisposable
             catch (Exception exception) when (exception is not OutOfMemoryException and
                 not StackOverflowException and not AccessViolationException)
             {
+                if (exception is OperationCanceledException || cancellationToken.IsCancellationRequested)
+                {
+                    // A cancelled round is not an analysis failure: restore the file to
+                    // its retryable pending state instead of reporting "canceled" as an
+                    // error.
+                    lock (_gate)
+                    {
+                        _indexStatus[uri.AbsoluteUri] = FileIndexStatus.Pending;
+                        _indexErrors.Remove(uri.AbsoluteUri);
+                    }
+
+                    return;
+                }
+
                 // Any failure must land in a retryable Failed state with its reason; a
                 // fire-and-forget task that escapes would leave the document stuck in
                 // InProgress forever with no visible cause.
@@ -3206,7 +3295,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         }
 
         LogInfo($"reindex scheduled ({reason ?? "unknown"}): generation {_documentSetGeneration}");
-        _ = Task.Run(async () =>
+        var settle = Task.Run(async () =>
         {
             try
             {
@@ -3225,6 +3314,64 @@ internal sealed class LanguageServerWorkspace : IDisposable
                     $"Lunil workspace: reindex failed: {exception}");
             }
         }, token);
+        Interlocked.Exchange(ref _latestIndexSettleTask, settle);
+    }
+
+    /// <summary>
+    /// Waits for the currently scheduled (debounced) reindex to finish. Returns when no
+    /// newer reindex was scheduled while waiting, so callers observe a settled index.
+    /// </summary>
+    internal async Task WaitForScheduledIndexAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            var settle = Volatile.Read(ref _latestIndexSettleTask);
+            await settle.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (ReferenceEquals(Volatile.Read(ref _latestIndexSettleTask), settle))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits until the workspace stops changing: every scheduled reindex drained and
+    /// the environment generation stable across a full drain. Early rounds still
+    /// growing the declaration surface bump the generation as a side effect of the
+    /// rebuild itself, so callers that assert instance identity across subsequent
+    /// requests must observe a settled generation first.
+    /// </summary>
+    internal async Task WaitForWorkspaceSettledAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            int before;
+            lock (_gate)
+            {
+                before = _environmentGeneration;
+            }
+
+            await WaitForScheduledIndexAsync(cancellationToken).ConfigureAwait(false);
+            int after;
+            lock (_gate)
+            {
+                after = _environmentGeneration;
+            }
+
+            if (before == after)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Whether a cached analysis currently exists for the document.</summary>
+    internal bool HasCachedAnalysis(Uri uri)
+    {
+        lock (_gate)
+        {
+            return _analyses.ContainsKey(uri.AbsoluteUri);
+        }
     }
 
     private void LoadFolders(ImmutableArray<Uri> folders, string reason = "")

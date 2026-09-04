@@ -49,6 +49,11 @@ The node:
 `Pause With Tree` suppresses both tick phases while the scene tree is paused. Set
 `Maximum Dispatched Callbacks` to bound the main-thread dispatcher drain before each tick.
 
+Scripts running through the game-loop node start with restricted capabilities: file access is
+limited to the registered project resources, shell execution (`os.execute` and pipes), process
+termination, and environment variables are denied, and `print` routes through the Godot console.
+Hosts that need trusted access opt in explicitly through the `ConfigureHostOptions` callback.
+
 ## 4. Configure generated CLR bindings
 
 Disable **Start On Ready**, then configure and initialize the addon node from a parent scene script:

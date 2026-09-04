@@ -21,9 +21,7 @@ internal static class Lua55RegisterLayoutAdapter
 
     private static Lua54Prototype NormalizePrototype(Lua54Prototype prototype)
     {
-        var nested = prototype.NestedPrototypes.IsDefaultOrEmpty
-            ? prototype.NestedPrototypes
-            : prototype.NestedPrototypes.Select(NormalizePrototype).ToImmutableArray();
+        var nested = AdaptNested(prototype, thresholdOffset: 2, delta: 1, NormalizePrototype);
         var (code, addedSlots) = RemapLoops(prototype.Code, thresholdOffset: 2, delta: 1);
         code = NormalizeVarArgPrepare(code, prototype.ParameterCount);
         var maximumStackSize = checked(prototype.MaximumStackSize + addedSlots);
@@ -42,9 +40,7 @@ internal static class Lua55RegisterLayoutAdapter
 
     private static Lua54Prototype DenormalizePrototype(Lua54Prototype prototype)
     {
-        var nested = prototype.NestedPrototypes.IsDefaultOrEmpty
-            ? prototype.NestedPrototypes
-            : prototype.NestedPrototypes.Select(DenormalizePrototype).ToImmutableArray();
+        var nested = AdaptNested(prototype, thresholdOffset: 3, delta: -1, DenormalizePrototype);
         var (code, _) = RemapLoops(prototype.Code, thresholdOffset: 3, delta: -1);
         code = NormalizeVarArgPrepare(code, 0);
         return prototype with
@@ -52,6 +48,107 @@ internal static class Lua55RegisterLayoutAdapter
             Code = code,
             NestedPrototypes = nested,
         };
+    }
+
+    /// <summary>
+    /// Recurses into nested prototypes after shifting their in-stack upvalue
+    /// descriptors.  A closure created inside a remapped loop body captures the
+    /// parent's loop registers, so descriptors pointing at registers at or above
+    /// the loop threshold must move with the body they name.
+    /// </summary>
+    private static ImmutableArray<Lua54Prototype> AdaptNested(
+        Lua54Prototype prototype,
+        int thresholdOffset,
+        int delta,
+        Func<Lua54Prototype, Lua54Prototype> recurse)
+    {
+        if (prototype.NestedPrototypes.IsDefaultOrEmpty)
+        {
+            return prototype.NestedPrototypes;
+        }
+
+        var loops = FindLoops(prototype.Code)
+            .OrderByDescending(static loop => loop.Start)
+            .ToArray();
+        return prototype.NestedPrototypes
+            .Select((child, index) => recurse(
+                loops.Length == 0
+                    ? child
+                    : ShiftInStackDescriptors(
+                        child,
+                        prototype.Code,
+                        loops,
+                        thresholdOffset,
+                        delta,
+                        index)))
+            .ToImmutableArray();
+    }
+
+    private static Lua54Prototype ShiftInStackDescriptors(
+        Lua54Prototype child,
+        ImmutableArray<Lua54Instruction> parentCode,
+        (int Start, int BodyEnd, int Register, bool Generic)[] loops,
+        int thresholdOffset,
+        int delta,
+        int childIndex)
+    {
+        if (child.Upvalues.IsDefaultOrEmpty)
+        {
+            return child;
+        }
+
+        var upvalues = child.Upvalues;
+        for (var creationPc = 0; creationPc < parentCode.Length; creationPc++)
+        {
+            var instruction = parentCode[creationPc];
+            if (instruction.Opcode != Lua54Opcode.Closure || instruction.Bx != childIndex)
+            {
+                continue;
+            }
+
+            var adjusted = upvalues.ToArray();
+            var changed = false;
+            for (var index = 0; index < adjusted.Length; index++)
+            {
+                var descriptor = adjusted[index];
+                if (descriptor.InStack != 1)
+                {
+                    continue;
+                }
+
+                var value = (int)descriptor.Index;
+                foreach (var loop in loops)
+                {
+                    var loopOffset = loop.Generic ? thresholdOffset + 1 : thresholdOffset;
+                    var threshold = checked(loop.Register + loopOffset);
+                    if (creationPc > loop.Start && creationPc < loop.BodyEnd && value >= threshold)
+                    {
+                        value += delta;
+                    }
+                }
+
+                if (value == descriptor.Index)
+                {
+                    continue;
+                }
+
+                if ((uint)value > byte.MaxValue)
+                {
+                    throw new Lua55ChunkFormatException(
+                        "numeric-for register normalization exceeds the register limit");
+                }
+
+                adjusted[index] = descriptor with { Index = (byte)value };
+                changed = true;
+            }
+
+            if (changed)
+            {
+                upvalues = adjusted.ToImmutableArray();
+            }
+        }
+
+        return upvalues == child.Upvalues ? child : child with { Upvalues = upvalues };
     }
 
     private static ImmutableArray<Lua54Instruction> NormalizeVarArgPrepare(

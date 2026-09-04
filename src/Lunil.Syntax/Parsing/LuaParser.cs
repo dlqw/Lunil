@@ -100,9 +100,13 @@ public static class LuaParser
 
         var previousStatements = previousBlock.Children;
         var prefixCount = 0;
+        // A statement whose full span ends exactly at the change position is never
+        // reused: an inserted byte there can extend the statement's last token or
+        // continue its expression (digits, names, operators, call arguments), so the
+        // boundary statement must reparse together with the edited text.
         while (prefixCount < previousStatements.Length &&
                previousStatements[prefixCount].Node is { } statement &&
-               statement.FullSpan.End <= change.Span.Start)
+               statement.FullSpan.End < change.Span.Start)
         {
             prefixCount++;
         }
@@ -154,6 +158,20 @@ public static class LuaParser
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         diagnostics.AddRange(previous.Diagnostics.Where(diagnostic =>
             diagnostic.Span.End <= reparseStart));
+        // The suffix reparse cannot see that the reused prefix ended in a return
+        // statement; a full parse reports LUA2008 for any statement that follows it.
+        if (prefixCount > 0 &&
+            previousStatements[prefixCount - 1].Node is { Kind: LuaSyntaxKind.ReturnStatement } &&
+            fragmentBlock.Children.Length > 0 &&
+            fragmentBlock.Children[0].Node is { } firstFragmentStatement)
+        {
+            diagnostics.Add(new Diagnostic(
+                "LUA2008",
+                DiagnosticSeverity.Error,
+                firstFragmentStatement.Span,
+                "A return statement must be the final statement in its block."));
+        }
+
         diagnostics.AddRange(fragment.Diagnostics.Select(diagnostic => new Diagnostic(
             diagnostic.Code,
             diagnostic.Severity,
@@ -941,6 +959,19 @@ public static class LuaParser
         private LuaSyntaxNode ParseStringLiteralExpression()
         {
             var token = Consume();
+            ValidateStringEscapeVersions(token);
+            return CreateNode(LuaSyntaxKind.StringLiteralExpression, [token]);
+        }
+
+        private void ValidateStringEscapeVersions(LuaSyntaxToken token)
+        {
+            // Long strings never process escapes, so only quoted strings carry
+            // version-gated escape sequences.
+            if (token.Kind != LuaTokenKind.StringLiteral)
+            {
+                return;
+            }
+
             var text = _lexResult.Source.GetSpan(token.Span);
             for (var index = 1; index + 1 < text.Length; index++)
             {
@@ -966,8 +997,6 @@ public static class LuaParser
                         $"The \\{(char)escape} string escape requires Lua {requiredVersion} or later.");
                 }
             }
-
-            return CreateNode(LuaSyntaxKind.StringLiteralExpression, [token]);
         }
 
         private LuaSyntaxNode ParseFunctionExpression()
@@ -1068,7 +1097,9 @@ public static class LuaParser
             }
             else if (Current.Kind is LuaTokenKind.StringLiteral or LuaTokenKind.LongStringLiteral)
             {
-                children.Add(CreateNode(LuaSyntaxKind.StringLiteralExpression, [Consume()]));
+                var token = Consume();
+                ValidateStringEscapeVersions(token);
+                children.Add(CreateNode(LuaSyntaxKind.StringLiteralExpression, [token]));
             }
             else
             {

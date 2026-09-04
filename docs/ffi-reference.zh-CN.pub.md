@@ -96,7 +96,7 @@ Lua 侧失败以 `ffi {Code}: {message}` 形式呈现，携带稳定 `LuaFfiErro
 | `NativeInvocationFailed` | native 调用本身抛错。 |
 | `BufferClosed` | 释放后使用 buffer。 |
 | `AllocationLimitExceeded` | native 分配预算耗尽。 |
-| `ResourceLimitExceeded` | 达到打开库数量上限。 |
+| `ResourceLimitExceeded` | 达到打开库数量或动态 delegate 类型上限。 |
 | `DynamicCodeUnavailable` | 需要动态适配但不可用。 |
 | `BindingConflict` | 同一 library/symbol 的重复注册。 |
 

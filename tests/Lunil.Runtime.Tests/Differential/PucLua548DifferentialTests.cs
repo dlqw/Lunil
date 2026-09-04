@@ -49,6 +49,7 @@ public sealed class PucLua548DifferentialTests
     {
         if (!IsPucLuaAvailable())
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.4.8 oracle");
             return;
         }
 
@@ -64,6 +65,7 @@ public sealed class PucLua548DifferentialTests
     {
         if (!IsPucLuaAvailable())
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.4.8 oracle");
             return;
         }
 
@@ -75,6 +77,7 @@ public sealed class PucLua548DifferentialTests
     {
         if (!IsPucLuaAvailable())
         {
+            PucOracleGate.RefuseIfRequired("PUC Lua 5.4.8 oracle");
             return;
         }
 

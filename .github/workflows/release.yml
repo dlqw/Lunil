@@ -10,7 +10,31 @@ permissions:
   packages: write
 
 jobs:
+  requires-ci:
+    name: Tag must reference a CI-passing commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Verify successful build-and-test check runs exist for the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          sha='${{ github.sha }}'
+          count=$(gh api "repos/${{ github.repository }}/commits/$sha/check-runs" --paginate\
+            --jq '[.check_runs[] | select(.conclusion == "success" and (.name | startswith("Build and test")))] | length')
+          echo "Successful 'Build and test' check runs for $sha: $count"
+          if [ "$count" -lt 6 ]; then
+            echo "::error::The tagged commit does not have six successful 'Build and test' check runs; refusing to release."
+            exit 1
+          fi
+
   validate:
+    timeout-minutes: 15
+    needs: requires-ci
     name: Validate release version
     runs-on: ubuntu-latest
     outputs:
@@ -61,6 +85,7 @@ jobs:
           - os: macos-latest
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -129,6 +154,7 @@ jobs:
     name: VS Code extension packages
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -160,6 +186,7 @@ jobs:
       - packages
       - vscode
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/download-artifact@v8
         with:

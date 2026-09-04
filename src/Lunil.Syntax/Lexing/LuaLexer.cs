@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Lunil.Core;
 using Lunil.Core.Diagnostics;
 using Lunil.Core.Text;
+using Lunil.Syntax.Parsing;
 
 namespace Lunil.Syntax.Lexing;
 
@@ -318,10 +319,18 @@ public static class LuaLexer
 
             var kind = LuaSyntaxFacts.GetIdentifierOrKeywordKind(
                 _source.GetSpan(TextSpan.FromBounds(start, _position)));
-            return kind == LuaTokenKind.GlobalKeyword &&
-                _options.LanguageVersion != LuaLanguageVersion.Lua55
-                    ? LuaTokenKind.Identifier
-                    : kind;
+            return kind switch
+            {
+                LuaTokenKind.GlobalKeyword when _options.LanguageVersion != LuaLanguageVersion.Lua55 =>
+                    LuaTokenKind.Identifier,
+                // 'goto' became a reserved word in Lua 5.2; earlier versions treat it
+                // as an ordinary identifier.
+                LuaTokenKind.GotoKeyword when !LuaGrammarFeatureTable
+                    .Get(_options.LanguageVersion)
+                    .SupportsGotoAndLabels =>
+                    LuaTokenKind.Identifier,
+                _ => kind,
+            };
         }
 
         private LuaTokenKind ReadNumericLiteral()

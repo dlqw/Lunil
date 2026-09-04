@@ -15,13 +15,13 @@ Unity 或 Godot 宿主定义。
 
 ## 1. 安装 VSIX
 
-从 0.18.0 release 下载匹配的 `lunil-lua-0.18.0-<target>.vsix` 与 `.sha256`。Target 包括
+从 0.18.1 release 下载匹配的 `lunil-lua-0.18.1-<target>.vsix` 与 `.sha256`。Target 包括
 `win32-x64`、`win32-arm64`、`linux-x64`、`linux-arm64`、`darwin-x64`、`darwin-arm64`。
 
 使用 **Extensions: Install from VSIX...**，或执行：
 
 ```bash
-code --install-extension lunil-lua-0.18.0-win32-x64.vsix
+code --install-extension lunil-lua-0.18.1-win32-x64.vsix
 ```
 
 每个 VSIX 只包含一个目标平台的 self-contained server，不需要单独安装 .NET。打开包含 Lua 文件的
