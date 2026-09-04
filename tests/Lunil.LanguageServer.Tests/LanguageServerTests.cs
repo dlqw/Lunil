@@ -60,6 +60,10 @@ public sealed class LanguageServerTests
             var appUri = new Uri("file:///src/app.lua");
             workspace.Open(appUri, 1, "local total = Game.sum({ x = 1, y = 2 })\nreturn total");
             await workspace.ReindexNowAsync(CancellationToken.None);
+            // A round can still grow the declaration surface as a side effect;
+            // wait for the rebuild chain and the environment generation to settle
+            // so navigation observes a converged environment.
+            await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
             var service = new LuaLanguageService(workspace);
 
             // The host-injected global's member keeps its declared signature instead
@@ -210,6 +214,10 @@ public sealed class LanguageServerTests
             "local config = { width = 1, height = 2, depth = 3, scale = 4, bias = 5, alpha = 6 }\n" +
             "return { flip = flip, config = config }");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // A member signature links the workspace class names it mentions below the fence.
@@ -259,6 +267,10 @@ public sealed class LanguageServerTests
             "local instance = Mid:new()\n" +
             "return instance");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var newDefinition = await service.DefinitionAsync(Element(new
@@ -315,6 +327,10 @@ public sealed class LanguageServerTests
             "systems[2]:configure()\n" +
             "return systems");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
         var hoverAt = async (int line, int character) => (await service.HoverAsync(Element(new
         {
@@ -404,6 +420,10 @@ public sealed class LanguageServerTests
             "return bootstrap()",
         ]));
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // The generic library constructor's instance resolves over the SUBCLASS the
@@ -487,6 +507,10 @@ public sealed class LanguageServerTests
             "logger:info(\"hi\")",
         ]));
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
         var hoverAt = async (Uri uri, int line, int character) => (await service.HoverAsync(Element(new
         {
@@ -555,6 +579,10 @@ public sealed class LanguageServerTests
             "function Greeter:hello() end\n" +
             "return Greeter");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace, new ServerLocalization());
 
         var hoverOnce = async () => await service.HoverAsync(Element(new
@@ -587,6 +615,10 @@ public sealed class LanguageServerTests
         workspace.Open(firstUri, 1, "hitCount = 0\nlocal function bump() hitCount = hitCount + 1 end\nreturn bump");
         workspace.Open(secondUri, 1, "local total = hitCount\nreturn total");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
 
         var service = new LuaLanguageService(workspace);
         var prepareParameters = Element(new
@@ -780,6 +812,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nreturn util.greet(\"world\")");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // References from the definition site (receiver M is the local module table) must
@@ -815,6 +851,10 @@ public sealed class LanguageServerTests
         workspace.Open(helperUri, 1, "function helper() return 1 end\nreturn helper()");
         workspace.Open(appUri, 1, "return helper() + 1");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
         var parameters = Element(new
         {
@@ -846,6 +886,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1, "local util = require(\"lib.util\")\nreturn util.f()");
         workspace.Open(secondUri, 1, "local u2 = require('lib.util')\nreturn u2.f()");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var references = await service.ReferencesAsync(Element(new
@@ -879,6 +923,10 @@ public sealed class LanguageServerTests
         Assert.Equal(0, (int)pending["succeeded"]!);
 
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var indexed = workspace.GetIndexStatus();
         Assert.Equal(0, (int)indexed["pending"]!);
         Assert.Equal(2, (int)indexed["succeeded"]!);
@@ -923,6 +971,10 @@ public sealed class LanguageServerTests
             "local npc = Animal:extend(\"npc\")\n" +
             "return npc");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // Hover over the inherited `extend` shows its signature from the base module.
@@ -1058,6 +1110,10 @@ public sealed class LanguageServerTests
         workspace.Open(vecUri, 1, vecSource);
         workspace.Open(appUri, 1, appSource);
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // F12 on the type reference in app's @param jumps to vec.lua's class declaration.
@@ -1142,6 +1198,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local Tool = require(\"tool\")" + "\n" + "return Tool.use");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // References from the class declaration include the module's require sites.
@@ -1222,6 +1282,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local Animal = require(\"animal\")\nlocal x = Animal.");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var completion = await service.CompletionAsync(Element(new
@@ -1324,6 +1388,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nreturn util.greet(util.version)");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var definition = await service.DefinitionAsync(Element(new
@@ -1373,6 +1441,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nlocal x = util.");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var memberCompletion = await service.CompletionAsync(Element(new
@@ -1396,6 +1468,10 @@ public sealed class LanguageServerTests
 
         workspace.Open(appUri, 2, "local util = require(\"");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var requireCompletion = await service.CompletionAsync(Element(new
         {
             textDocument = new { uri = appUri.AbsoluteUri },
@@ -1574,6 +1650,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1, "local service = require('service')\nreturn service.run()");
 
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var snapshot = workspace.GetSnapshot();
 
         Assert.NotNull(snapshot);
@@ -1590,6 +1670,10 @@ public sealed class LanguageServerTests
         workspace.Open(moduleUri, 1,
             "local M = {}\nfunction M.run() return 1 end\nfunction M.stop() return 0 end\nreturn M");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var symbols = service.WorkspaceSymbols("run");
@@ -1612,6 +1696,10 @@ public sealed class LanguageServerTests
         workspace.Open(midUri, 1, "---@class Mid : Base\nlocal Mid = {}\nreturn Mid");
         workspace.Open(derivedUri, 1, "---@class Derived : Mid\nlocal Derived = {}\nreturn Derived");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         var hierarchy = await service.ClassHierarchyAsync(Element(new
@@ -1644,6 +1732,10 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "return host.Engine.Utility.TimeUtil.now()");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
 
         // The class segment of the dotted path is addressable as a member of the
@@ -1682,6 +1774,10 @@ public sealed class LanguageServerTests
         var uri = new Uri("file:///host.lua");
         workspace.Open(uri, 1, "return game.run()");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        // A round can still grow the declaration surface as a side effect;
+        // wait for the rebuild chain and the environment generation to settle
+        // so navigation observes a converged environment.
+        await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
         var service = new LuaLanguageService(workspace);
         var parameters = Element(new
         {
