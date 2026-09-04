@@ -445,8 +445,8 @@
     "@types/vscode": "1.96.0",
     "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "3.9.2",
-    "esbuild": "0.25.3",
+    "esbuild": "0.28.2",
     "mocha": "11.1.0",
-    "typescript": "5.8.3"
+    "typescript": "7.0.2"
   }
 }
