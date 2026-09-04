@@ -60,6 +60,7 @@ public sealed class LanguageServerTests
             var appUri = new Uri("file:///src/app.lua");
             workspace.Open(appUri, 1, "local total = Game.sum({ x = 1, y = 2 })\nreturn total");
             await workspace.ReindexNowAsync(CancellationToken.None);
+            await workspace.ReindexNowAsync(CancellationToken.None);
             // A round can still grow the declaration surface as a side effect;
             // wait for the rebuild chain and the environment generation to settle
             // so navigation observes a converged environment.
@@ -214,6 +215,7 @@ public sealed class LanguageServerTests
             "local config = { width = 1, height = 2, depth = 3, scale = 4, bias = 5, alpha = 6 }\n" +
             "return { flip = flip, config = config }");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -266,6 +268,7 @@ public sealed class LanguageServerTests
             "local Mid = require(\"mid\")\n" +
             "local instance = Mid:new()\n" +
             "return instance");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -326,6 +329,7 @@ public sealed class LanguageServerTests
             "for _, system in ipairs(systems) do system:configure() end\n" +
             "systems[2]:configure()\n" +
             "return systems");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -420,6 +424,7 @@ public sealed class LanguageServerTests
             "return bootstrap()",
         ]));
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -507,6 +512,7 @@ public sealed class LanguageServerTests
             "logger:info(\"hi\")",
         ]));
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -579,6 +585,7 @@ public sealed class LanguageServerTests
             "function Greeter:hello() end\n" +
             "return Greeter");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -614,6 +621,7 @@ public sealed class LanguageServerTests
         var secondUri = new Uri("file:///globals-two.lua");
         workspace.Open(firstUri, 1, "hitCount = 0\nlocal function bump() hitCount = hitCount + 1 end\nreturn bump");
         workspace.Open(secondUri, 1, "local total = hitCount\nreturn total");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -812,6 +820,7 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nreturn util.greet(\"world\")");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -851,6 +860,7 @@ public sealed class LanguageServerTests
         workspace.Open(helperUri, 1, "function helper() return 1 end\nreturn helper()");
         workspace.Open(appUri, 1, "return helper() + 1");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -885,6 +895,7 @@ public sealed class LanguageServerTests
         workspace.Open(utilUri, 1, "local M = {}\nfunction M.f() return 1 end\nreturn M");
         workspace.Open(appUri, 1, "local util = require(\"lib.util\")\nreturn util.f()");
         workspace.Open(secondUri, 1, "local u2 = require('lib.util')\nreturn u2.f()");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -922,6 +933,7 @@ public sealed class LanguageServerTests
         Assert.Equal(2, (int)pending["pending"]!);
         Assert.Equal(0, (int)pending["succeeded"]!);
 
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -970,6 +982,7 @@ public sealed class LanguageServerTests
             "local Animal = require(\"animal\")\n" +
             "local npc = Animal:extend(\"npc\")\n" +
             "return npc");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1110,6 +1123,7 @@ public sealed class LanguageServerTests
         workspace.Open(vecUri, 1, vecSource);
         workspace.Open(appUri, 1, appSource);
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -1198,6 +1212,7 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local Tool = require(\"tool\")" + "\n" + "return Tool.use");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -1281,6 +1296,7 @@ public sealed class LanguageServerTests
             "local Animal = Base:extend(\"Animal\")\nfunction Animal:init() end\nreturn Animal");
         workspace.Open(appUri, 1,
             "local Animal = require(\"animal\")\nlocal x = Animal.");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1388,6 +1404,7 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nreturn util.greet(util.version)");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -1441,6 +1458,7 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1,
             "local util = require(\"lib.util\")\nlocal x = util.");
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -1467,6 +1485,7 @@ public sealed class LanguageServerTests
         _ = methodCompletion;
 
         workspace.Open(appUri, 2, "local util = require(\"");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1650,6 +1669,7 @@ public sealed class LanguageServerTests
         workspace.Open(appUri, 1, "local service = require('service')\nreturn service.run()");
 
         await workspace.ReindexNowAsync(CancellationToken.None);
+        await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
         // so navigation observes a converged environment.
@@ -1669,6 +1689,7 @@ public sealed class LanguageServerTests
         var moduleUri = new Uri("file:///service.lua");
         workspace.Open(moduleUri, 1,
             "local M = {}\nfunction M.run() return 1 end\nfunction M.stop() return 0 end\nreturn M");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1695,6 +1716,7 @@ public sealed class LanguageServerTests
         workspace.Open(baseUri, 1, "---@class Base\nlocal Base = {}\nreturn Base");
         workspace.Open(midUri, 1, "---@class Mid : Base\nlocal Mid = {}\nreturn Mid");
         workspace.Open(derivedUri, 1, "---@class Derived : Mid\nlocal Derived = {}\nreturn Derived");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1731,6 +1753,7 @@ public sealed class LanguageServerTests
             "return TimeUtil");
         workspace.Open(appUri, 1,
             "return host.Engine.Utility.TimeUtil.now()");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
@@ -1773,6 +1796,7 @@ public sealed class LanguageServerTests
         workspace.ConfigureHostContract(contract.ToJson(), path: null);
         var uri = new Uri("file:///host.lua");
         workspace.Open(uri, 1, "return game.run()");
+        await workspace.ReindexNowAsync(CancellationToken.None);
         await workspace.ReindexNowAsync(CancellationToken.None);
         // A round can still grow the declaration surface as a side effect;
         // wait for the rebuild chain and the environment generation to settle
