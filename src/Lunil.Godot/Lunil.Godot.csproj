@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="GodotSharp" Version="4.4.1" />
+    <PackageReference Include="GodotSharp" Version="4.7.2" />
     <PackageReference Include="Godot.SourceGenerators" Version="4.7.1" PrivateAssets="all" />
     <ProjectReference Include="..\Lunil.Hosting\Lunil.Hosting.csproj" />
   </ItemGroup>
