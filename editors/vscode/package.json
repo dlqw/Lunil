@@ -442,7 +442,7 @@
   "devDependencies": {
     "@types/mocha": "10.0.10",
     "@types/node": "22.15.3",
-    "@types/vscode": "1.96.0",
+    "@types/vscode": "1.134.0",
     "@vscode/test-electron": "3.1.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.2",
