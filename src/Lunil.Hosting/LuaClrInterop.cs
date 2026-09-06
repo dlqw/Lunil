@@ -128,7 +128,7 @@ public enum LuaClrErrorCode : byte
 }
 
 /// <summary>An exception with a stable CLR bridge error category.</summary>
-public sealed class LuaClrException : Exception
+public sealed class LuaClrException : LuaHostException
 {
     /// <summary>Creates a bridge exception with no inner exception.</summary>
     public LuaClrException(LuaClrErrorCode code, string message)

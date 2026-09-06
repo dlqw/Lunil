@@ -1116,7 +1116,7 @@ internal sealed class LuaExecutionEngine
                     scheduler,
                     thread,
                     thread.Entry,
-                    native.StepBody(context, 0, arguments));
+                    InvokeNativeStep(native, context, 0, arguments));
             }
             else
             {
@@ -2454,7 +2454,7 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 function.TryGetNativeClosure());
-            var step = native.StepBody(context, 0, resolvedArguments);
+            var step = InvokeNativeStep(native, context, 0, resolvedArguments);
             return ContinueNative(
                 state,
                 scheduler,
@@ -2966,7 +2966,8 @@ internal sealed class LuaExecutionEngine
                     state,
                     thread,
                     callable.TryGetNativeClosure());
-                step = native.StepBody(
+                step = InvokeNativeStep(
+                    native,
                     context,
                     0,
                     thread.Stack.AsReadOnlySpan(argumentStart, argumentCount));
@@ -3233,7 +3234,7 @@ internal sealed class LuaExecutionEngine
                 state,
                 thread,
                 resolved.Callable.TryGetNativeClosure());
-            var step = native.StepBody(context, 0, resolvedArguments);
+            var step = InvokeNativeStep(native, context, 0, resolvedArguments);
             _ = ContinueNative(
                 state,
                 scheduler,
@@ -5519,17 +5520,66 @@ internal sealed class LuaExecutionEngine
         LuaValue function,
         ReadOnlySpan<LuaValue> arguments)
     {
+        var nativeFunction = function.TryGetNativeFunction() ??
+            throw new InvalidOperationException("The callable is not a native function.");
         var previous = state.RunningNativeFunction;
         state.RunningNativeFunction = function;
         try
         {
-            return function.TryGetNativeFunction()?.Body!(state, arguments) ??
-                throw new InvalidOperationException("The callable is not a native function.");
+            return nativeFunction.Body!(state, arguments);
+        }
+        catch (LuaRuntimeException)
+        {
+            throw;
+        }
+        catch (LuaHostException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw ConvertNativeClrException(exception);
         }
         finally
         {
             state.RunningNativeFunction = previous;
         }
+    }
+
+    private static LuaNativeStep InvokeNativeStep(
+        LuaNativeFunction native,
+        LuaNativeCallContext context,
+        int continuationId,
+        ReadOnlySpan<LuaValue> arguments)
+    {
+        var stepBody = native.StepBody ??
+            throw new InvalidOperationException("The native function has no step body.");
+        try
+        {
+            return stepBody(context, continuationId, arguments);
+        }
+        catch (LuaRuntimeException)
+        {
+            throw;
+        }
+        catch (LuaHostException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw ConvertNativeClrException(exception);
+        }
+    }
+
+    private static LuaRuntimeException ConvertNativeClrException(Exception exception)
+    {
+        // Native bodies are a host boundary: an arbitrary CLR exception must fail the
+        // enclosing protected call as a Lua error instead of terminating the scheduler.
+        // The original exception stays reachable as InnerException for programmatic hosts.
+        return new LuaRuntimeException(
+            $"{exception.GetType().FullName}: {exception.Message}",
+            exception);
     }
 
     private static LuaClosure CreateNativeCallbackTrampoline(
