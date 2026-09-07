@@ -151,7 +151,7 @@ internal sealed partial class LuaExecutionEngine
                     {
                         throw new LuaRuntimeException(
                             "attempt to yield across a non-yieldable boundary",
-                           
+
                             bypassProtectedNativeCallback: true);
                     }
 

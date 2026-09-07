@@ -29,15 +29,15 @@ public static class LuaChunkCodec
         LuaChunkFormat format,
         ReadOnlySpan<byte> bytes,
         Lua54ChunkReaderOptions? options) => format switch
-    {
-        LuaChunkFormat.Lua51 => Lua51PrototypeConverter.Convert(bytes),
-        LuaChunkFormat.Lua52 => Lua52PrototypeConverter.Convert(bytes, TranslateOptions52(options)),
-        LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(bytes, TranslateOptions(options)),
-        LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(bytes, options),
-        LuaChunkFormat.Lua55 => Lua55PrototypeConverter.Convert(bytes, options),
-        _ => throw new NotSupportedException(
-            "The selected binary adapter does not declare a chunk format."),
-    };
+        {
+            LuaChunkFormat.Lua51 => Lua51PrototypeConverter.Convert(bytes),
+            LuaChunkFormat.Lua52 => Lua52PrototypeConverter.Convert(bytes, TranslateOptions52(options)),
+            LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(bytes, TranslateOptions(options)),
+            LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(bytes, options),
+            LuaChunkFormat.Lua55 => Lua55PrototypeConverter.Convert(bytes, options),
+            _ => throw new NotSupportedException(
+                "The selected binary adapter does not declare a chunk format."),
+        };
 
     /// <summary>
     /// Writes the canonical module as a binary chunk of the given format.
@@ -47,15 +47,15 @@ public static class LuaChunkCodec
         LuaIrModule module,
         int functionId,
         bool stripDebug) => format switch
-    {
-        LuaChunkFormat.Lua51 => Lua51CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
-        LuaChunkFormat.Lua52 => Lua52CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
-        LuaChunkFormat.Lua53 => Lua53CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
-        LuaChunkFormat.Lua54 => Lua54CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
-        LuaChunkFormat.Lua55 => Lua55CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
-        _ => throw new NotSupportedException(
-            "The selected binary adapter does not declare a chunk format."),
-    };
+        {
+            LuaChunkFormat.Lua51 => Lua51CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
+            LuaChunkFormat.Lua52 => Lua52CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
+            LuaChunkFormat.Lua53 => Lua53CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
+            LuaChunkFormat.Lua54 => Lua54CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
+            LuaChunkFormat.Lua55 => Lua55CanonicalPrototypeWriter.Write(module, functionId, stripDebug),
+            _ => throw new NotSupportedException(
+                "The selected binary adapter does not declare a chunk format."),
+        };
 
     private static Lua53ChunkReaderOptions? TranslateOptions(Lua54ChunkReaderOptions? options) => options is null
         ? null

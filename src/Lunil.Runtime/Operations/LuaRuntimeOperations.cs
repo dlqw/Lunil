@@ -136,7 +136,7 @@ public static class LuaRuntimeOperations
             !operand.TryGetInteger(out _))
         {
             throw new LuaRuntimeException("number has no integer representation")
-                { Kind = LuaRuntimeErrorKind.IntegerConversion };
+            { Kind = LuaRuntimeErrorKind.IntegerConversion };
         }
 
         if (CanExecutePrimitive(operation, operand))
@@ -214,7 +214,7 @@ public static class LuaRuntimeOperations
                     !numericRightBitwise.TryGetInteger(out var rightValue))
                 {
                     throw new LuaRuntimeException("number has no integer representation")
-                { Kind = LuaRuntimeErrorKind.IntegerConversion };
+                    { Kind = LuaRuntimeErrorKind.IntegerConversion };
                 }
 
                 return LuaOperationResolution.Immediate(
