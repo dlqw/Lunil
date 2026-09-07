@@ -161,8 +161,10 @@ public sealed class DapAdapterTests : IDisposable
         Launch(script);
         ConfigurationDone();
 
-        Thread.Sleep(300);
-        var response = Request("pause", new JsonObject { ["threadId"] = 1 });
+        var response = RequestUntil(
+            "pause",
+            new JsonObject { ["threadId"] = 1 },
+            static candidate => (bool?)candidate?["success"] == true);
         Assert.True((bool?)response?["success"]);
 
         var stopped = WaitForEvent("stopped");
@@ -190,7 +192,6 @@ public sealed class DapAdapterTests : IDisposable
     {
         Initialize();
         Request("disconnect", null);
-        Thread.Sleep(200);
         Assert.True(_process.HasExited || _process.WaitForExit(2000));
     }
 
@@ -209,8 +210,10 @@ public sealed class DapAdapterTests : IDisposable
         Launch(script);
         ConfigurationDone();
 
-        Thread.Sleep(300);
-        var stack = Request("stackTrace", new JsonObject { ["threadId"] = 1 });
+        var stack = RequestUntil(
+            "stackTrace",
+            new JsonObject { ["threadId"] = 1 },
+            static candidate => (bool?)candidate?["success"] == false);
         Assert.False((bool?)stack?["success"]);
         Assert.NotNull((string?)stack?["message"]);
 
@@ -389,6 +392,27 @@ public sealed class DapAdapterTests : IDisposable
     private void Continue() => Request("continue", new JsonObject { ["threadId"] = 1 });
 
     private void Step(string command) => Request(command, new JsonObject { ["threadId"] = 1 });
+
+    private JsonObject? RequestUntil(
+        string command,
+        JsonObject arguments,
+        Func<JsonObject?, bool> predicate,
+        int timeoutMilliseconds = 5000)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(timeoutMilliseconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            var response = Request(command, arguments);
+            if (predicate(response))
+            {
+                return response;
+            }
+
+            Thread.Sleep(25);
+        }
+
+        return Request(command, arguments);
+    }
 
     private JsonObject? Request(string command, JsonNode? arguments)
     {
