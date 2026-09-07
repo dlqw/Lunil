@@ -19,6 +19,7 @@ internal sealed class LuaTieredJitRegistry :
 {
     private const int CodegenVersion = LuaJitProfileCodec.CurrentCodegenVersion;
     private const int MaximumNoNumericTier2EligibilityEvaluations = 2;
+    internal const int DefaultMaximumTrackedFunctionEntries = 16_384;
     private readonly LuaJitExecutorOptions _options;
     private readonly ILuaDynamicCodeCapabilities _capabilities;
     private readonly ILuaTier1Compiler _compiler;
@@ -51,6 +52,8 @@ internal sealed class LuaTieredJitRegistry :
     private long _deoptimizations;
     private long _cacheEvictions;
     private long _invalidations;
+    private long _invalidationStamp;
+    private readonly int _maximumTrackedFunctionEntries = DefaultMaximumTrackedFunctionEntries;
     private long _totalQueueLatencyTicks;
     private long _totalCompilationTicks;
     private long _tier2CompilationQueued;
@@ -114,12 +117,32 @@ internal sealed class LuaTieredJitRegistry :
         ILuaTier1Compiler compiler,
         ILuaTier2Compiler tier2Compiler,
         ILuaLoopOsrCompiler loopOsrCompiler)
+        : this(
+            options,
+            capabilities,
+            compiler,
+            tier2Compiler,
+            loopOsrCompiler,
+            DefaultMaximumTrackedFunctionEntries)
     {
+    }
+
+    internal LuaTieredJitRegistry(
+        LuaJitExecutorOptions options,
+        ILuaDynamicCodeCapabilities capabilities,
+        ILuaTier1Compiler compiler,
+        ILuaTier2Compiler tier2Compiler,
+        ILuaLoopOsrCompiler loopOsrCompiler,
+        int maximumTrackedFunctionEntries)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumTrackedFunctionEntries, 1);
+
         _options = options;
         _capabilities = capabilities;
         _compiler = compiler;
         _tier2Compiler = tier2Compiler;
         _loopOsrCompiler = loopOsrCompiler;
+        _maximumTrackedFunctionEntries = maximumTrackedFunctionEntries;
         _queue = Channel.CreateBounded<CompilationRequest>(new BoundedChannelOptions(
             options.CompilationQueueCapacity)
         {
@@ -562,6 +585,10 @@ internal sealed class LuaTieredJitRegistry :
             Interlocked.Add(ref _backedges, backedgeCount);
         }
     }
+
+    internal int TrackedEntryCount => _entries.Count;
+
+    internal int TrackedModuleGenerationCount => _moduleGenerations.Count;
 
     public LuaJitStatistics GetStatistics() => new(
         Interlocked.Read(ref _functionEntries),
@@ -3685,6 +3712,54 @@ internal sealed class LuaTieredJitRegistry :
             Tier: LuaJitCompilationTier.LoopOsr));
     }
 
+    private void SweepInvalidatedEntries()
+    {
+        // Candidates are read without the per-entry gate and revalidated under it: only
+        // tombstones (State == Invalidated) are eligible, oldest invalidation first.
+        List<KeyValuePair<FunctionKey, FunctionEntry>>? candidates = null;
+        foreach (var pair in _entries)
+        {
+            if (pair.Value.State == LuaJitFunctionState.Invalidated)
+            {
+                candidates ??= [];
+                candidates.Add(pair);
+            }
+        }
+
+        if (candidates is null)
+        {
+            return;
+        }
+
+        candidates.Sort(static (left, right) =>
+            left.Value.InvalidatedStamp.CompareTo(right.Value.InvalidatedStamp));
+        var removalTarget = _entries.Count - _maximumTrackedFunctionEntries;
+        var removed = 0;
+        foreach (var pair in candidates)
+        {
+            if (removed >= removalTarget)
+            {
+                break;
+            }
+
+            var entry = pair.Value;
+            lock (entry.Gate)
+            {
+                if (entry.State != LuaJitFunctionState.Invalidated)
+                {
+                    continue;
+                }
+
+                if (_entries.TryGetValue(pair.Key, out var current) &&
+                    ReferenceEquals(current, entry) &&
+                    _entries.TryRemove(pair.Key, out _))
+                {
+                    removed++;
+                }
+            }
+        }
+    }
+
     private void InvalidateModule(string moduleContentId)
     {
         var generation = GetBackendGeneration(moduleContentId);
@@ -3694,11 +3769,12 @@ internal sealed class LuaTieredJitRegistry :
         {
             lock (_cacheGate)
             {
-                foreach (var entry in _entries.Where(pair => string.Equals(
+                foreach (var pair in _entries.Where(pair => string.Equals(
                     pair.Key.ModuleContentId,
                     moduleContentId,
-                    StringComparison.Ordinal)).Select(static pair => pair.Value))
+                    StringComparison.Ordinal)))
                 {
+                    var entry = pair.Value;
                     lock (entry.Gate)
                     {
                         if (entry.EstimatedCodeBytes != 0)
@@ -3717,6 +3793,7 @@ internal sealed class LuaTieredJitRegistry :
                         entry.EstimatedCodeBytes = 0;
                         entry.ActiveTier = LuaJitCompilationTier.Interpreter;
                         entry.State = LuaJitFunctionState.Invalidated;
+                        entry.InvalidatedStamp = ++_invalidationStamp;
                         entry.Tier2State = LuaJitTier2State.Invalidated;
                         Volatile.Write(ref entry.Tier2ProfilingActive, 0);
                         ResetTier2PromotionStateLocked(entry);
@@ -3752,6 +3829,29 @@ internal sealed class LuaTieredJitRegistry :
                             entry.Key.ModuleContentId,
                             entry.Key.FunctionId,
                             LuaJitFunctionState.Invalidated));
+                    }
+                }
+
+                // Tombstones keep the observable Invalidated state (function-state queries,
+                // terminal routes, and cross-invalidation publication guards all read it),
+                // so they are retained but bounded: once the table exceeds its cap, the
+                // oldest invalidated entries are reclaimed.
+                if (_entries.Count > _maximumTrackedFunctionEntries)
+                {
+                    SweepInvalidatedEntries();
+                }
+
+                // Reclaim generations whose content id no longer has tracked entries, so
+                // the generation table also stays bounded across hot reloads. In-flight
+                // compiled delegates hold their generation object directly and are unaffected.
+                var liveContentIds = _entries.Keys
+                    .Select(static key => key.ModuleContentId)
+                    .ToHashSet(StringComparer.Ordinal);
+                foreach (var trackedContentId in _moduleGenerations.Keys)
+                {
+                    if (!liveContentIds.Contains(trackedContentId))
+                    {
+                        _ = _moduleGenerations.TryRemove(trackedContentId, out _);
                     }
                 }
             }
@@ -4150,6 +4250,8 @@ internal sealed class LuaTieredJitRegistry :
         public Lock Gate { get; } = new();
 
         public LuaJitFunctionState State { get; set; }
+
+        public long InvalidatedStamp;
 
         public LuaJitCompilationTier ActiveTier { get; set; }
 

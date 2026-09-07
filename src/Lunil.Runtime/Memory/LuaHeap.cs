@@ -96,7 +96,7 @@ public sealed class LuaHeap
         _pendingFinalizers.Count != 0 ||
         IsRunning &&
         (Phase != LuaGcPhase.Paused ||
-            _allocationDebt >= _options.StepSizeBytes ||
+            _allocationDebt >= StepSizeThreshold() ||
             _options.StressEveryAllocation && _allocatedSinceSafePoint);
 
     /// <summary>
@@ -171,7 +171,24 @@ public sealed class LuaHeap
         }
     }
 
-    public void SafePoint() => SafePoint(_options.StepObjectBudget);
+    public void SafePoint() => SafePoint(StepBudget());
+
+    /// <summary>
+    /// Maps <c>collectgarbage("setpause")</c> onto the logical collector: the allocation
+    /// debt that restarts collection scales by <c>Pause / 200</c>, so the default of 200
+    /// keeps the configured pacing unchanged and larger values delay the next cycle like
+    /// PUC Lua's pause ratio.
+    /// </summary>
+    private long StepSizeThreshold() => _options.StepSizeBytes * (long)Pause / 200;
+
+    /// <summary>
+    /// Maps <c>collectgarbage("setstepmul")</c> onto the logical collector: the per-step
+    /// object budget scales by <c>StepMultiplier / 100</c>, so the default of 100 keeps the
+    /// configured budget unchanged and larger values collect more per step.
+    /// </summary>
+    private int StepBudget() => (int)Math.Min(
+        int.MaxValue,
+        Math.Max(1, (long)_options.StepObjectBudget * StepMultiplier / 100));
 
     internal void SafePoint(int stepObjectBudget)
     {
@@ -182,7 +199,7 @@ public sealed class LuaHeap
         }
 
         if (!_allocatedSinceSafePoint && Phase == LuaGcPhase.Paused &&
-            _allocationDebt < _options.StepSizeBytes)
+            _allocationDebt < StepSizeThreshold())
         {
             return;
         }
@@ -191,7 +208,7 @@ public sealed class LuaHeap
         {
             CollectFull();
         }
-        else if (Phase != LuaGcPhase.Paused || _allocationDebt >= _options.StepSizeBytes)
+        else if (Phase != LuaGcPhase.Paused || _allocationDebt >= StepSizeThreshold())
         {
             Step(stepObjectBudget);
         }
@@ -253,6 +270,11 @@ public sealed class LuaHeap
 
     public void Restart() => IsRunning = true;
 
+    /// <summary>
+    /// Sets the pause ratio that scales the allocation debt restarting collection
+    /// (<c>collectgarbage("setpause")</c>). The default of 200 keeps the configured pacing;
+    /// zero keeps the current value, matching PUC Lua's missing-argument convention.
+    /// </summary>
     public int SetPause(int value)
     {
         var previous = Pause;
@@ -264,6 +286,11 @@ public sealed class LuaHeap
         return previous;
     }
 
+    /// <summary>
+    /// Sets the step multiplier that scales the per-step object budget
+    /// (<c>collectgarbage("setstepmul")</c>). The default of 100 keeps the configured
+    /// budget; zero keeps the current value, matching PUC Lua's missing-argument convention.
+    /// </summary>
     public int SetStepMultiplier(int value)
     {
         var previous = StepMultiplier;
