@@ -291,13 +291,28 @@ public sealed class LanguageServerTests
         }), CancellationToken.None);
         Assert.Contains("new(", newHover!["contents"]!["value"]!.GetValue<string>(), StringComparison.Ordinal);
 
-        // The class card lists the runtime base group and extends row.
-        var midHover = await service.HoverAsync(Element(new
+        // The class card lists the runtime base group and extends row. The runtime-edge
+        // rebuild and the snapshot member tables can converge on different index rounds
+        // under load; re-run a settle round until the card carries the inherited members.
+        string? midValue = null;
+        for (var attempt = 0; attempt < 6 && midValue is null; attempt++)
         {
-            textDocument = new { uri = midUri.AbsoluteUri },
-            position = new { line = 2, character = 6 },
-        }), CancellationToken.None);
-        var midValue = midHover!["contents"]!["value"]!.GetValue<string>();
+            await workspace.ReindexNowAsync(CancellationToken.None);
+            await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
+            var midHover = await service.HoverAsync(Element(new
+            {
+                textDocument = new { uri = midUri.AbsoluteUri },
+                position = new { line = 2, character = 6 },
+            }), CancellationToken.None);
+            var candidate = midHover!["contents"]!["value"]!.GetValue<string>();
+            if (candidate.Contains("Inherited from Class", StringComparison.Ordinal) &&
+                candidate.Contains("| Extends | [Class](", StringComparison.Ordinal))
+            {
+                midValue = candidate;
+            }
+        }
+
+        Assert.NotNull(midValue);
         Assert.Contains("Inherited from Class", midValue, StringComparison.Ordinal);
         Assert.Contains("| Extends | [Class](", midValue, StringComparison.Ordinal);
     }
@@ -349,7 +364,23 @@ public sealed class LanguageServerTests
 
         // The require alias carries the exported class type through `new`; loop
         // variables over instances hover with their class card.
-        var loopVariable = await hoverAt(2, 7);
+        // The module-types snapshot and the runtime class data can converge on different
+        // index rounds under load; re-run settle rounds until the card is complete.
+        string? loopVariable = null;
+        for (var attempt = 0; attempt < 6 && loopVariable is null; attempt++)
+        {
+            await workspace.ReindexNowAsync(CancellationToken.None);
+            await workspace.WaitForWorkspaceSettledAsync(CancellationToken.None);
+            var candidate = await hoverAt(2, 7);
+            if (candidate is not null &&
+                candidate.Contains("class Sub", StringComparison.Ordinal) &&
+                candidate.Contains("[configure]", StringComparison.Ordinal))
+            {
+                loopVariable = candidate;
+            }
+        }
+
+        Assert.NotNull(loopVariable);
         Assert.Contains("class Sub", loopVariable, StringComparison.Ordinal);
         Assert.Contains("[configure]", loopVariable, StringComparison.Ordinal);
 
