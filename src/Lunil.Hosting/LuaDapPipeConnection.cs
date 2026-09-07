@@ -84,9 +84,11 @@ internal sealed class LuaDapPipeConnection : IDisposable
             throw new InvalidDataException("DAP message body is not valid JSON.");
         }
 
-        if (body["command"] is not null && body["seq"] is JsonNode sequence)
+        // DAP request ids come from the 'id' field; 'seq' is the message sequence
+        // number and may differ from the id.
+        if (body["command"] is not null && body["id"] is JsonNode requestId)
         {
-            return LuaDapMessage.Request(body, sequence.GetValue<int>());
+            return LuaDapMessage.Request(body, requestId.GetValue<int>());
         }
 
         if (body["type"]?.GetValue<string>() == "response" && body["request_seq"] is JsonNode requestSequence)

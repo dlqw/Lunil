@@ -18,7 +18,7 @@ internal sealed class LuaHostCilJitBackend : ILuaHostJitBackend
     {
         _executor = new LuaJitExecutor(new LuaJitExecutorOptions
         {
-            Policy = (LuaJitPolicy)options.Policy,
+            Policy = MapPolicy(options.Policy),
             FunctionEntryThreshold = options.FunctionEntryThreshold,
             BackedgeThreshold = options.BackedgeThreshold,
             SynchronousCompilation = options.SynchronousCompilation,
@@ -121,7 +121,7 @@ internal sealed class LuaHostCilJitBackend : ILuaHostJitBackend
             },
             cancellationToken);
         return new LuaHostJitWarmupResult(
-            (LuaHostJitWarmupStatus)result.Status,
+            MapWarmupStatus(result.Status),
             result.CandidateFunctionCount,
             result.SelectedFunctionCount,
             result.ReadyFunctionCount,
@@ -139,7 +139,25 @@ internal sealed class LuaHostCilJitBackend : ILuaHostJitBackend
 
     public void Dispose() => _executor.Dispose();
 
-    private static LuaHostJitStatistics Convert(LuaJitStatistics value) => new(
+    internal static LuaJitPolicy MapPolicy(LuaHostJitPolicy policy) => policy switch
+    {
+        LuaHostJitPolicy.InterpreterOnly => LuaJitPolicy.InterpreterOnly,
+        LuaHostJitPolicy.Auto => LuaJitPolicy.Auto,
+        LuaHostJitPolicy.PreferJit => LuaJitPolicy.PreferJit,
+        LuaHostJitPolicy.RequireJit => LuaJitPolicy.RequireJit,
+        _ => throw new ArgumentOutOfRangeException(nameof(policy)),
+    };
+
+    internal static LuaHostJitWarmupStatus MapWarmupStatus(LuaJitWarmupStatus status) => status switch
+    {
+        LuaJitWarmupStatus.Completed => LuaHostJitWarmupStatus.Completed,
+        LuaJitWarmupStatus.CompletedWithFailures => LuaHostJitWarmupStatus.CompletedWithFailures,
+        LuaJitWarmupStatus.TimedOut => LuaHostJitWarmupStatus.TimedOut,
+        LuaJitWarmupStatus.Disabled => LuaHostJitWarmupStatus.Disabled,
+        _ => throw new ArgumentOutOfRangeException(nameof(status)),
+    };
+
+    internal static LuaHostJitStatistics Convert(LuaJitStatistics value) => new(
         value.FunctionEntries,
         value.Backedges,
         value.CompilationQueued,
