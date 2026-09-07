@@ -12,6 +12,7 @@ using Lunil.IR.Canonical;
 using Lunil.IR.Lua52;
 using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
+using Lunil.IR;
 using Lunil.IR.Lua54;
 using Lunil.IR.Lua55;
 using Lunil.Syntax.Lexing;

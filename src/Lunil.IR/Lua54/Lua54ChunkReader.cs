@@ -43,9 +43,9 @@ public static class Lua54ChunkReader
 
     private ref struct Reader
     {
-        private readonly ReadOnlySpan<byte> _data;
         private readonly Lua54ChunkReaderOptions _options;
-        private int _offset;
+        private ChunkByteReader _bytes;
+        private int _offset => _bytes.Offset;
         private int _prototypeCount;
         private int _instructionCount;
         private int _constantCount;
@@ -55,9 +55,31 @@ public static class Lua54ChunkReader
 
         public Reader(ReadOnlySpan<byte> data, Lua54ChunkReaderOptions options)
         {
-            _data = data;
             _options = options;
+            _bytes = new ChunkByteReader(
+                data,
+                static (reason, offset) => new Lua54ChunkFormatException(reason, offset));
         }
+
+        private byte ReadByte() => _bytes.ReadByte();
+
+        private ReadOnlySpan<byte> ReadBytes(int count) => _bytes.ReadBytes(count);
+
+        private void Expect(ReadOnlySpan<byte> expected, string reason) =>
+            _bytes.Expect(expected, reason);
+
+        private void ExpectByte(byte expected, string reason) =>
+            _bytes.ExpectByte(expected, reason);
+
+        private void EnsureCountFitsRemaining(
+            int count,
+            int minimumBytesPerEntry,
+            string description) =>
+            _bytes.EnsureCountFitsRemaining(count, minimumBytesPerEntry, description);
+
+        private void Fail(string reason) => _bytes.Fail(reason);
+
+        private T Fail<T>(string reason) => _bytes.Fail<T>(reason);
 
         public Lua54Chunk ReadChunk()
         {
@@ -106,7 +128,7 @@ public static class Lua54ChunkReader
             var mainUpvalueCount = ReadByte();
             var main = ReadPrototype(parentSource: null, depth: 1);
 
-            if (!_options.AllowTrailingData && _offset != _data.Length)
+            if (!_options.AllowTrailingData && !_bytes.AtEnd)
             {
                 Fail("trailing data after main prototype");
             }
@@ -140,11 +162,7 @@ public static class Lua54ChunkReader
 
         private Lua54Prototype ReadPrototype(Lua54String? parentSource, int depth)
         {
-            if (depth > _options.MaximumPrototypeDepth)
-            {
-                Fail("prototype nesting exceeds the configured limit");
-            }
-
+            _bytes.FailIfDepthExceeds(depth, _options.MaximumPrototypeDepth);
             AddToBudget(ref _prototypeCount, 1, _options.MaximumPrototypeCount, "prototype count");
 
             var source = ReadNullableString() ?? parentSource;
@@ -367,57 +385,6 @@ public static class Lua54ChunkReader
             }
         }
 
-        private void Expect(ReadOnlySpan<byte> expected, string reason)
-        {
-            var offset = _offset;
-            if (!ReadBytes(expected.Length).SequenceEqual(expected))
-            {
-                throw new Lua54ChunkFormatException(reason, offset);
-            }
-        }
-
-        private void ExpectByte(byte expected, string reason)
-        {
-            var offset = _offset;
-            if (ReadByte() != expected)
-            {
-                throw new Lua54ChunkFormatException(reason, offset);
-            }
-        }
-
-        private byte ReadByte()
-        {
-            if ((uint)_offset >= (uint)_data.Length)
-            {
-                Fail("truncated chunk");
-            }
-
-            return _data[_offset++];
-        }
-
-        private ReadOnlySpan<byte> ReadBytes(int count)
-        {
-            if (count < 0 || count > _data.Length - _offset)
-            {
-                Fail("truncated chunk");
-            }
-
-            var result = _data.Slice(_offset, count);
-            _offset += count;
-            return result;
-        }
-
-        private void EnsureCountFitsRemaining(
-            int count,
-            int minimumBytesPerEntry,
-            string description)
-        {
-            if (count > (_data.Length - _offset) / minimumBytesPerEntry)
-            {
-                Fail($"truncated chunk: {description} cannot fit in the remaining chunk data");
-            }
-        }
-
         private static long ReadInteger(ReadOnlySpan<byte> bytes, Lua54ByteOrder byteOrder) =>
             (bytes.Length, byteOrder) switch
             {
@@ -458,8 +425,5 @@ public static class Lua54ChunkReader
             current += added;
         }
 
-        private void Fail(string reason) => throw new Lua54ChunkFormatException(reason, _offset);
-
-        private T Fail<T>(string reason) => throw new Lua54ChunkFormatException(reason, _offset);
     }
 }

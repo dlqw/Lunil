@@ -4,17 +4,12 @@ using System.Diagnostics;
 
 namespace Lunil.IR.Lua52;
 
-public sealed class Lua52ChunkFormatException : FormatException
+public sealed class Lua52ChunkFormatException : LuaChunkFormatException
 {
     public Lua52ChunkFormatException(string reason, int offset = 0)
-        : base($"Bad Lua 5.2 binary chunk at byte {offset}: {reason}")
+        : base("Lua 5.2", reason, offset)
     {
-        Reason = reason;
-        Offset = offset;
     }
-
-    public string Reason { get; }
-    public int Offset { get; }
 }
 
 /// <summary>Bounded reader for the official Lua 5.2 binary chunk format.</summary>
@@ -37,9 +32,9 @@ public static class Lua52ChunkReader
 
     private ref struct Reader
     {
-        private readonly ReadOnlySpan<byte> _data;
         private readonly Lua52ChunkReaderOptions _options;
-        private int _offset;
+        private ChunkByteReader _bytes;
+        private int _offset => _bytes.Offset;
         private int _prototypeCount;
         private int _instructionCount;
         private int _constantCount;
@@ -49,9 +44,17 @@ public static class Lua52ChunkReader
 
         public Reader(ReadOnlySpan<byte> data, Lua52ChunkReaderOptions options)
         {
-            _data = data;
             _options = options;
+            _bytes = new ChunkByteReader(
+                data,
+                static (reason, offset) => new Lua52ChunkFormatException(reason, offset));
         }
+
+        private ReadOnlySpan<byte> ReadBytes(int count) => _bytes.ReadBytes(count);
+
+        private void Fail(string reason) => _bytes.Fail(reason);
+
+        private T Fail<T>(string reason) => _bytes.Fail<T>(reason);
 
         public Lua52Chunk ReadChunk()
         {
@@ -76,6 +79,7 @@ public static class Lua52ChunkReader
             }
 
             Expect(Tail, "corrupted LUAC_TAIL marker");
+            _bytes.SetLittleEndian(endian == 1);
             _target = new Lua52ChunkTarget(
                 endian == 1 ? Lua52ByteOrder.LittleEndian : Lua52ByteOrder.BigEndian,
                 sizeOfInt,
@@ -83,7 +87,7 @@ public static class Lua52ChunkReader
                 instructionSize,
                 numberSize);
             var main = ReadPrototype(null, 1);
-            if (!_options.AllowTrailingData && _offset != _data.Length)
+            if (!_options.AllowTrailingData && !_bytes.AtEnd)
             {
                 Fail("trailing data after main prototype");
             }
@@ -93,11 +97,7 @@ public static class Lua52ChunkReader
 
         private Lua52Prototype ReadPrototype(Lua52String? parentSource, int depth)
         {
-            if (depth > _options.MaximumPrototypeDepth)
-            {
-                Fail("prototype nesting exceeds the configured limit");
-            }
-
+            _bytes.FailIfDepthExceeds(depth, _options.MaximumPrototypeDepth);
             AddBudget(ref _prototypeCount, 1, _options.MaximumPrototypeCount, "prototype count");
             // Lua 5.2 stores the source name in the debug tail, after code/constants/upvalues;
             // unlike Lua 5.3 it is not the first field of a prototype.
@@ -256,18 +256,12 @@ public static class Lua52ChunkReader
             return value;
         }
 
-        private int ReadSignedInt() => _target.ByteOrder == Lua52ByteOrder.LittleEndian
-            ? BinaryPrimitives.ReadInt32LittleEndian(ReadBytes(4))
-            : BinaryPrimitives.ReadInt32BigEndian(ReadBytes(4));
+        private int ReadSignedInt() => _bytes.ReadSignedInt32();
 
         private ulong ReadSizeT() => _target.SizeOfSizeT switch
         {
-            4 => _target.ByteOrder == Lua52ByteOrder.LittleEndian
-                ? BinaryPrimitives.ReadUInt32LittleEndian(ReadBytes(4))
-                : BinaryPrimitives.ReadUInt32BigEndian(ReadBytes(4)),
-            8 => _target.ByteOrder == Lua52ByteOrder.LittleEndian
-                ? BinaryPrimitives.ReadUInt64LittleEndian(ReadBytes(8))
-                : BinaryPrimitives.ReadUInt64BigEndian(ReadBytes(8)),
+            4 => _bytes.ReadUnsignedInt32(),
+            8 => _bytes.ReadUnsignedInt64(),
             _ => throw new LunilUnreachableException(),
         };
 
@@ -284,24 +278,12 @@ public static class Lua52ChunkReader
 
         private byte ReadByte()
         {
-            if ((uint)_offset >= (uint)_data.Length)
+            if (_bytes.BytesRemaining == 0)
             {
                 Fail("unexpected end of chunk");
             }
 
-            return _data[_offset++];
-        }
-
-        private ReadOnlySpan<byte> ReadBytes(int count)
-        {
-            if (count < 0 || count > _data.Length - _offset)
-            {
-                Fail("truncated chunk");
-            }
-
-            var result = _data.Slice(_offset, count);
-            _offset += count;
-            return result;
+            return _bytes.ReadByte();
         }
 
         private void Expect(ReadOnlySpan<byte> expected, string reason)
@@ -322,7 +304,7 @@ public static class Lua52ChunkReader
 
         private void EnsureCount(int count, int minimumBytes, string description)
         {
-            if (count < 0 || count > (_data.Length - _offset) / minimumBytes)
+            if (count < 0 || count > _bytes.BytesRemaining / minimumBytes)
             {
                 Fail($"invalid {description}");
             }
@@ -338,7 +320,5 @@ public static class Lua52ChunkReader
             current += amount;
         }
 
-        private void Fail(string reason) => throw new Lua52ChunkFormatException(reason, _offset);
-        private T Fail<T>(string reason) => throw new Lua52ChunkFormatException(reason, _offset);
     }
 }

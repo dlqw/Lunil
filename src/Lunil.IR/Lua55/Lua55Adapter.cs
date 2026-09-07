@@ -11,11 +11,7 @@ public sealed record Lua55Chunk(byte[] Bytes)
 }
 
 public sealed class Lua55ChunkFormatException(string reason, int offset = 0)
-    : FormatException($"Bad Lua 5.5 binary chunk at byte {offset}: {reason}")
-{
-    public string Reason { get; } = reason;
-    public int Offset { get; } = offset;
-}
+    : LuaChunkFormatException("Lua 5.5", reason, offset);
 
 public static class Lua55PrototypeConverter
 {

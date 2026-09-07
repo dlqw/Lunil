@@ -13,4 +13,5 @@ public sealed record Lua52ChunkReaderOptions
     public int MaximumStringBytes { get; init; } = LuaChunkReaderLimits.MaximumStringBytes;
     public int MaximumDebugEntryCount { get; init; } = LuaChunkReaderLimits.MaximumDebugEntryCount;
     public bool AllowTrailingData { get; init; }
+
 }
