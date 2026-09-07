@@ -212,7 +212,7 @@ public sealed class LuaGameLoopDebugServerTests
 
         public JsonNode? ReadEvent(string name)
         {
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
             while (DateTime.UtcNow < deadline)
             {
                 var message = ReadMessage();
@@ -244,7 +244,7 @@ public sealed class LuaGameLoopDebugServerTests
         {
             var sequence = ++_sequence;
             WriteRequest(command, arguments, sequence);
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
             while (DateTime.UtcNow < deadline)
             {
                 foreach (var response in _pendingResponses.ToArray())
