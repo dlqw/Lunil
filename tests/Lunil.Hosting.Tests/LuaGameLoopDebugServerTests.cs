@@ -280,11 +280,14 @@ public sealed class LuaGameLoopDebugServerTests
 
         private void WriteRequest(string command, JsonNode? arguments, int? sequence = null)
         {
+            var requestSequence = sequence ?? ++_sequence;
             var body = new JsonObject
             {
-                ["seq"] = sequence ?? ++_sequence,
+                ["seq"] = requestSequence,
                 ["type"] = "request",
                 ["command"] = command,
+                // DAP requests correlate by 'id'; 'seq' is only the message sequence.
+                ["id"] = requestSequence,
             };
             if (arguments is not null)
             {
