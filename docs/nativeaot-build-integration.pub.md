@@ -19,7 +19,9 @@ using var host = new LuaHost(new LuaHostOptions
 ```
 
 `Auto` also selects the interpreter when dynamic code is unavailable. Explicit `Jit` requires the
-.NET 10 dynamic-code backend and throws `PlatformNotSupportedException` in NativeAOT.
+.NET 10 dynamic-code backend and throws `PlatformNotSupportedException` in NativeAOT. The
+`RequireJit` JIT policy fails construction the same way instead of falling back to the
+interpreter.
 
 ## 2. Generate CLR bindings
 

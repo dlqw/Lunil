@@ -33,7 +33,9 @@ requests and events, execution model, and the host-side API used to expose a deb
 ## Protocol surface
 
 The adapter speaks DAP over stdio using `Content-Length` framing. In attach mode it relays frames
-verbatim between the client and the host pipe, so the host serves the protocol.
+verbatim between the client and the host pipe, so the host serves the protocol. Requests are
+correlated by their `id` field (`request_seq` for responses), so clients whose request `id`
+differs from `seq` work unchanged.
 
 | Request | Behavior |
 | --- | --- |

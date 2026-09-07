@@ -143,5 +143,7 @@ Lua-facing failures surface as `ffi {Code}: {message}` with a stable `LuaFfiErro
   is unloaded when the last lease is released or the library is explicitly closed.
 - `__gc` and `__close` metamethods release native resources; finalizer paths never escape into
   the Lua collector.
+- Disposing the owning FFI context also closes every live buffer, returns its bytes to the
+  allocation budget, and buffers carry a finalizer as a last-resort release path.
 - Pointer results are returned as `nil` when null; non-null pointers become pointer userdata
   that refuse access after their owning library closes.
