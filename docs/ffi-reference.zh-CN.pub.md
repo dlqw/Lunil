@@ -135,4 +135,6 @@ Lua 侧失败以 `ffi {Code}: {message}` 形式呈现，携带稳定 `LuaFfiErro
 - Library userdata 与绑定闭包各自持有 native handle 的独立 lease。最后一个 lease 释放或
   库被显式关闭时，handle 被卸载。
 - `__gc` 与 `__close` metamethod 释放原生资源；finalizer 路径不会逃逸到 Lua 收集器。
+- 销毁所属 FFI context 时会一并关闭所有存活 buffer 并将其字节数返还分配预算；
+  buffer 另有终结器作为最终释放兜底。
 - 指针结果为空时返回 `nil`；非空指针成为 pointer userdata，其所属库关闭后拒绝访问。

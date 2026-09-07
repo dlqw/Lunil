@@ -17,7 +17,8 @@ using var host = new LuaHost(new LuaHostOptions
 ```
 
 动态代码不可用时，`Auto` 也会选择解释器。显式 `Jit` 需要 .NET 10 dynamic-code backend，并会在
-NativeAOT 中抛出 `PlatformNotSupportedException`。
+NativeAOT 中抛出 `PlatformNotSupportedException`。`RequireJit` JIT 策略在动态代码不可用时同样
+在构造期抛出该异常，而不是回退到解释器。
 
 ## 2. 生成 CLR binding
 

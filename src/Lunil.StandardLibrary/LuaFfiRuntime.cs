@@ -59,6 +59,7 @@ internal sealed class LuaFfiContext : IDisposable
 
     private readonly object _delegateTypeGate = new();
     private readonly Dictionary<LuaFfiSignature, Type> _delegateTypes = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<LuaFfiBuffer, byte> _buffers = new();
     private long _allocatedBytes;
     private int _disposed;
 
@@ -541,6 +542,10 @@ internal sealed class LuaFfiContext : IDisposable
     }
 
     internal void Release(long bytes) => Interlocked.Add(ref _allocatedBytes, -bytes);
+
+    internal void Register(LuaFfiBuffer buffer) => _buffers.TryAdd(buffer, 0);
+
+    internal void Unregister(LuaFfiBuffer buffer) => _buffers.TryRemove(buffer, out _);
 
     internal int MaximumStringBytes => _options.MaximumStringBytes;
 
@@ -1200,6 +1205,14 @@ internal sealed class LuaFfiContext : IDisposable
             {
                 library.ForceClose();
             }
+
+            // Reclaim every native buffer still registered with this context so disposing
+            // the context releases unmanaged memory and returns the allocation budget even
+            // when scripts never closed their buffers. Buffer disposal is idempotent.
+            foreach (var buffer in _buffers.Keys.ToArray())
+            {
+                buffer.Dispose();
+            }
         }
     }
 }
@@ -1496,6 +1509,8 @@ internal sealed class LuaFfiBuffer : IDisposable
             _context.Release(length);
             throw;
         }
+
+        _context.Register(this);
     }
 
     public int Length { get; }
@@ -1675,8 +1690,13 @@ internal sealed class LuaFfiBuffer : IDisposable
         {
             Marshal.FreeHGlobal(_address);
             _context.Release(Length);
+            _context.Unregister(this);
         }
+
+        GC.SuppressFinalize(this);
     }
+
+    ~LuaFfiBuffer() => Dispose();
 
     private static LuaValue PointerValue(LuaState state, IntPtr address) =>
         address == IntPtr.Zero

@@ -365,13 +365,18 @@ public sealed partial class LuaHost : IDisposable
     private void ThrowIfDisposed() =>
         LunilGuard.NotDisposed(Volatile.Read(ref _disposed) != 0, this);
 
-    private static LuaHostExecutionBackend ResolveExecutionBackend(
+    internal static LuaHostExecutionBackend ResolveExecutionBackend(
         LuaHostExecutionBackend requested,
         bool isDynamicCodeAvailable,
         LuaHostJitPolicy jitPolicy) => requested switch
         {
             LuaHostExecutionBackend.Auto when jitPolicy == LuaHostJitPolicy.InterpreterOnly =>
                 LuaHostExecutionBackend.Interpreter,
+            LuaHostExecutionBackend.Auto when jitPolicy == LuaHostJitPolicy.RequireJit &&
+                !isDynamicCodeAvailable =>
+                throw new PlatformNotSupportedException(
+                    "The RequireJit policy cannot be satisfied because dynamic code is not " +
+                    "available on this runtime; the host refuses to fall back to the interpreter."),
             LuaHostExecutionBackend.Auto => isDynamicCodeAvailable
                 ? LuaHostExecutionBackend.Jit
                 : LuaHostExecutionBackend.Interpreter,

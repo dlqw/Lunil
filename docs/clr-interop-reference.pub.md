@@ -70,7 +70,11 @@ Methods with `ref`/`out` parameters use `RefOutRepresentation`. The default
 `Positional` and `NamedTable` select one representation. `Task` and `ValueTask` results become
 `LuaClrTask`. `LuaClrCancellation` converts to `CancellationToken`; nil maps to
 `CancellationToken.None`. CLR exceptions become `LuaClrException`/catchable Lua errors.
-`IncludeExceptionMessages` controls whether host exception messages are exposed.
+`IncludeExceptionMessages` controls whether host exception messages are exposed. Native
+functions that throw any other CLR exception fail the enclosing protected call with a
+catchable Lua error naming the exception type and message; `LuaClrException` derives from
+`Lunil.Runtime.LuaHostException` and still crosses the execution boundary as a typed CLR
+exception.
 
 ## Callback and task contracts
 

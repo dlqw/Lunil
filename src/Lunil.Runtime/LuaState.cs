@@ -4,6 +4,7 @@ using Lunil.IR.Canonical;
 using Lunil.IR.Lua52;
 using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
+using Lunil.IR;
 using Lunil.IR.Lua54;
 using Lunil.IR.Lua55;
 using Lunil.Runtime.Execution;
@@ -330,57 +331,14 @@ public sealed class LuaState
                 "is not compiled into this build.");
         }
 
-        return CreateMainClosure(features.ChunkFormat switch
-        {
-            LuaChunkFormat.Lua51 => Lua51PrototypeConverter.Convert(binaryChunk),
-            LuaChunkFormat.Lua52 => Lua52PrototypeConverter.Convert(
-                binaryChunk,
-                TranslateReaderOptions52(options)),
-            LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(
-                binaryChunk,
-                TranslateReaderOptions(options)),
-            LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(binaryChunk, options),
-            LuaChunkFormat.Lua55 => Lua55PrototypeConverter.Convert(binaryChunk, options),
-            _ => throw new NotSupportedException(
-                $"The {LuaLanguageVersions.GetDisplayName(LanguageVersion)} binary adapter " +
-                "does not declare a chunk format."),
-        });
+        return CreateMainClosure(LuaChunkCodec.ReadPrototypeModule(
+            features.ChunkFormat,
+            binaryChunk,
+            options));
     }
 
     public LuaClosure LoadBinaryChunk(Lua54Chunk chunk) =>
         CreateMainClosure(Lua54PrototypeConverter.Convert(chunk));
-
-    private static Lua53ChunkReaderOptions? TranslateReaderOptions(
-        Lua54ChunkReaderOptions? options) => options is null
-            ? null
-            : new Lua53ChunkReaderOptions
-            {
-                MaximumChunkBytes = options.MaximumChunkBytes,
-                MaximumPrototypeDepth = options.MaximumPrototypeDepth,
-                MaximumPrototypeCount = options.MaximumPrototypeCount,
-                MaximumInstructionCount = options.MaximumInstructionCount,
-                MaximumConstantCount = options.MaximumConstantCount,
-                MaximumUpvalueCount = options.MaximumUpvalueCount,
-                MaximumStringBytes = options.MaximumStringBytes,
-                MaximumDebugEntryCount = options.MaximumDebugEntryCount,
-                AllowTrailingData = options.AllowTrailingData,
-            };
-
-    private static Lua52ChunkReaderOptions? TranslateReaderOptions52(
-        Lua54ChunkReaderOptions? options) => options is null
-            ? null
-            : new Lua52ChunkReaderOptions
-            {
-                MaximumChunkBytes = options.MaximumChunkBytes,
-                MaximumPrototypeDepth = options.MaximumPrototypeDepth,
-                MaximumPrototypeCount = options.MaximumPrototypeCount,
-                MaximumInstructionCount = options.MaximumInstructionCount,
-                MaximumConstantCount = options.MaximumConstantCount,
-                MaximumUpvalueCount = options.MaximumUpvalueCount,
-                MaximumStringBytes = options.MaximumStringBytes,
-                MaximumDebugEntryCount = options.MaximumDebugEntryCount,
-                AllowTrailingData = options.AllowTrailingData,
-            };
 
     internal void AttachLoadedModuleCache(LuaTable loaded)
     {

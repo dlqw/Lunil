@@ -29,6 +29,23 @@ public sealed class LuaJitExecutor : IDisposable
         ILuaTier1Compiler compiler,
         ILuaTier2Compiler? tier2Compiler = null,
         ILuaLoopOsrCompiler? loopOsrCompiler = null)
+        : this(
+            options,
+            capabilities,
+            compiler,
+            tier2Compiler,
+            loopOsrCompiler,
+            LuaTieredJitRegistry.DefaultMaximumTrackedFunctionEntries)
+    {
+    }
+
+    internal LuaJitExecutor(
+        LuaJitExecutorOptions options,
+        ILuaDynamicCodeCapabilities capabilities,
+        ILuaTier1Compiler compiler,
+        ILuaTier2Compiler? tier2Compiler,
+        ILuaLoopOsrCompiler? loopOsrCompiler,
+        int maximumTrackedFunctionEntries)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -56,7 +73,8 @@ public sealed class LuaJitExecutor : IDisposable
             capabilities,
             compiler,
             selectedTier2Compiler,
-            selectedLoopOsrCompiler);
+            selectedLoopOsrCompiler,
+            maximumTrackedFunctionEntries);
         _engine = new LuaExecutionEngine(options.Interpreter, _registry);
     }
 
@@ -112,6 +130,10 @@ public sealed class LuaJitExecutor : IDisposable
     }
 
     public LuaJitStatistics Statistics => _registry.GetStatistics();
+
+    internal int TrackedEntryCount => _registry.TrackedEntryCount;
+
+    internal int TrackedModuleGenerationCount => _registry.TrackedModuleGenerationCount;
 
     public event EventHandler<LuaJitEvent>? EventOccurred
     {

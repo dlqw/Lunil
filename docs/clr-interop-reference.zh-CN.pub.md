@@ -65,7 +65,10 @@ byte，并拒绝 cycle。
 `Positional` 与 `NamedTable` 只选择一种 representation。`Task` 与 `ValueTask` 结果变为
 `LuaClrTask`。`LuaClrCancellation` 转换为 `CancellationToken`；nil 映射到
 `CancellationToken.None`。CLR exception 变为 `LuaClrException`/可捕获 Lua error。
-`IncludeExceptionMessages` 控制是否暴露 Host exception message。
+`IncludeExceptionMessages` 控制是否暴露 Host exception message。native function 抛出的其他
+CLR exception 会使所在 protected call 以可捕获的 Lua error 失败，错误文本携带 exception 类型与
+message；`LuaClrException` 派生自 `Lunil.Runtime.LuaHostException`，仍以类型化 CLR exception
+穿过执行边界。
 
 ## Callback 与 task 契约
 

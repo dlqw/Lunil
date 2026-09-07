@@ -4,6 +4,7 @@ using Lunil.Core;
 using Lunil.IR.Lua52;
 using Lunil.IR.Lua51;
 using Lunil.IR.Lua53;
+using Lunil.IR;
 using Lunil.IR.Lua54;
 using Lunil.IR.Lua55;
 
@@ -29,15 +30,9 @@ internal static class CheckCommand
         {
             try
             {
-                _ = LuaVersionFeatureTable.Get(context.Options.LanguageVersion).ChunkFormat switch
-                {
-                    LuaChunkFormat.Lua51 => Lua51PrototypeConverter.Convert(input.Bytes),
-                    LuaChunkFormat.Lua52 => Lua52PrototypeConverter.Convert(input.Bytes),
-                    LuaChunkFormat.Lua53 => Lua53PrototypeConverter.Convert(input.Bytes),
-                    LuaChunkFormat.Lua54 => Lua54PrototypeConverter.Convert(input.Bytes),
-                    LuaChunkFormat.Lua55 => Lua55PrototypeConverter.Convert(input.Bytes),
-                    _ => throw new NotSupportedException("The selected binary adapter is not available."),
-                };
+                _ = LuaChunkCodec.ReadPrototypeModule(
+                    LuaVersionFeatureTable.Get(context.Options.LanguageVersion).ChunkFormat,
+                    input.Bytes);
             }
             catch (Exception exception) when (exception is Lua52ChunkFormatException or
                 Lua51ChunkFormatException or

@@ -1,15 +1,11 @@
 namespace Lunil.IR.Lua54;
 
-public sealed class Lua54ChunkFormatException : FormatException
+public sealed class Lua54ChunkFormatException : LuaChunkFormatException
 {
     public Lua54ChunkFormatException(string reason, int byteOffset)
-        : base($"Bad Lua 5.4 binary chunk at byte {byteOffset}: {reason}")
+        : base("Lua 5.4", reason, byteOffset)
     {
-        Reason = reason;
-        ByteOffset = byteOffset;
     }
 
-    public string Reason { get; }
-
-    public int ByteOffset { get; }
+    public int ByteOffset => Offset;
 }

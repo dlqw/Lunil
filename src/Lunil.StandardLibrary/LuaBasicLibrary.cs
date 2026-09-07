@@ -103,7 +103,7 @@ internal static class LuaBasicLibrary
 
         if (arguments.Length <= 1)
         {
-            throw new LuaRuntimeException("assertion failed!");
+            throw new LuaRuntimeException("assertion failed!") { Kind = LuaRuntimeErrorKind.Assertion };
         }
 
         throw new LuaRuntimeException(arguments[1]);
