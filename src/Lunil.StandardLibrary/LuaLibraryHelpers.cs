@@ -153,5 +153,8 @@ internal static class LuaLibraryHelpers
     }
 
     public static LuaRuntimeException BadArgument(string function, int zeroBasedIndex, string detail) =>
-        new($"bad argument #{zeroBasedIndex + 1} to '{function}' ({detail})");
+        new($"bad argument #{zeroBasedIndex + 1} to '{function}' ({detail})")
+        {
+            Kind = LuaRuntimeErrorKind.BadArgument,
+        };
 }

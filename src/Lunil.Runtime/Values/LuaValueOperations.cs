@@ -601,7 +601,7 @@ public static class LuaValueOperations
     {
         if (divisor == 0)
         {
-            throw new LuaRuntimeException("attempt to divide by zero");
+            throw new LuaRuntimeException("attempt to divide by zero") { Kind = LuaRuntimeErrorKind.AttemptTo };
         }
 
         if (divisor == -1)
@@ -623,7 +623,7 @@ public static class LuaValueOperations
     {
         if (divisor == 0)
         {
-            throw new LuaRuntimeException("attempt to perform 'n%0'");
+            throw new LuaRuntimeException("attempt to perform 'n%0'") { Kind = LuaRuntimeErrorKind.AttemptTo };
         }
 
         if (divisor == -1)
@@ -685,5 +685,5 @@ public static class LuaValueOperations
 
     private static long ToInteger(LuaValue value) => value.TryGetInteger(out var integer)
         ? integer
-        : throw new LuaRuntimeException($"Number has no integer representation: {value}.");
+        : throw new LuaRuntimeException($"Number has no integer representation: {value}.") { Kind = LuaRuntimeErrorKind.IntegerConversion };
 }

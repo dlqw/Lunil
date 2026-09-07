@@ -38,7 +38,8 @@ public static class LuaRuntimeOperations
                 }
 
                 throw new LuaRuntimeException(
-                    $"attempt to index a {LuaValueOperations.TypeName(target)} value");
+                    $"attempt to index a {LuaValueOperations.TypeName(target)} value")
+                { Kind = LuaRuntimeErrorKind.AttemptTo };
             }
 
             if (metamethod.Kind != LuaValueKind.Function)
@@ -87,7 +88,8 @@ public static class LuaRuntimeOperations
                 }
 
                 throw new LuaRuntimeException(
-                    $"attempt to index a {LuaValueOperations.TypeName(target)} value");
+                    $"attempt to index a {LuaValueOperations.TypeName(target)} value")
+                { Kind = LuaRuntimeErrorKind.AttemptTo };
             }
 
             if (metamethod.Kind != LuaValueKind.Function)
@@ -122,7 +124,8 @@ public static class LuaRuntimeOperations
         {
             if (!numericBitwiseOperand.TryGetInteger(out var integerOperand))
             {
-                throw new LuaRuntimeException("number has no integer representation");
+                throw new LuaRuntimeException("number has no integer representation")
+                { Kind = LuaRuntimeErrorKind.IntegerConversion };
             }
 
             return LuaOperationResolution.Immediate(
@@ -132,7 +135,8 @@ public static class LuaRuntimeOperations
         if (operation == LuaIrUnaryOperator.BitwiseNot && IsNumber(operand) &&
             !operand.TryGetInteger(out _))
         {
-            throw new LuaRuntimeException("number has no integer representation");
+            throw new LuaRuntimeException("number has no integer representation")
+                { Kind = LuaRuntimeErrorKind.IntegerConversion };
         }
 
         if (CanExecutePrimitive(operation, operand))
@@ -209,7 +213,8 @@ public static class LuaRuntimeOperations
                 if (!numericLeftBitwise.TryGetInteger(out var leftValue) ||
                     !numericRightBitwise.TryGetInteger(out var rightValue))
                 {
-                    throw new LuaRuntimeException("number has no integer representation");
+                    throw new LuaRuntimeException("number has no integer representation")
+                { Kind = LuaRuntimeErrorKind.IntegerConversion };
                 }
 
                 return LuaOperationResolution.Immediate(
@@ -226,7 +231,8 @@ public static class LuaRuntimeOperations
         {
             if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
             {
-                throw new LuaRuntimeException("number has no integer representation");
+                throw new LuaRuntimeException("number has no integer representation")
+                { Kind = LuaRuntimeErrorKind.IntegerConversion };
             }
 
             return LuaOperationResolution.Immediate(
@@ -297,7 +303,8 @@ public static class LuaRuntimeOperations
             if (metamethod.IsNil)
             {
                 throw new LuaRuntimeException(
-                    $"attempt to call a {LuaValueOperations.TypeName(callable)} value");
+                    $"attempt to call a {LuaValueOperations.TypeName(callable)} value")
+                { Kind = LuaRuntimeErrorKind.AttemptTo };
             }
 
             var expanded = new LuaValue[resolvedArguments.Length + 1];

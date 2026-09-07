@@ -33,6 +33,10 @@ public sealed class LuaRuntimeException : Exception
 
     internal bool BypassProtectedNativeCallback { get; }
 
+    /// <summary>Gets or sets the forensic classification used by error enrichment.</summary>
+    internal LuaRuntimeErrorKind Kind { get; set; }
+        = LuaRuntimeErrorKind.None;
+
     public LuaValue ErrorValue => HasErrorValue
         ? _errorValue
         : throw new InvalidOperationException("The exception does not carry a Lua error value.");
