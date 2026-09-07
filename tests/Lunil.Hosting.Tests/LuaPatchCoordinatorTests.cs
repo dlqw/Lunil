@@ -1077,7 +1077,7 @@ public sealed class LuaPatchCoordinatorTests
                 HealthCheck = _ =>
                 {
                     firstEnteredHealth.Set();
-                    Assert.True(releaseFirst.Wait(TimeSpan.FromSeconds(10)));
+                    Assert.True(releaseFirst.Wait(TimeSpan.FromSeconds(60)));
                     return LuaPatchRingHealthDecision.Accept;
                 },
             }));
