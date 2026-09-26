@@ -124,6 +124,8 @@ public sealed class LuaFunctionVersion
     internal LuaTableAllocationHint GetOrCreateTableAllocationHint(int programCounter) =>
         _caches.GetOrCreateTableAllocationHint(programCounter);
 
+    internal LuaTier05Code GetOrCreateTier05Code() => _caches.GetOrCreateTier05Code(Function);
+
     internal LuaFunctionVersion CreateSuccessor(long generation) => new(
         RuntimeData,
         Function,
@@ -208,6 +210,7 @@ internal sealed class LuaFunctionVersionCaches
     private readonly LuaString?[] _materializedStringConstants;
     private readonly LuaTableAllocationHint?[] _tableAllocationHints;
     private readonly object _constantGate = new();
+    private LuaTier05Code? _tier05Code;
     private int _framelessCallEntries;
 
     public LuaFunctionVersionCaches(LuaIrFunction function)
@@ -288,6 +291,18 @@ internal sealed class LuaFunctionVersionCaches
             ref _tableAllocationHints[programCounter],
             candidate,
             null) ?? candidate;
+    }
+
+    public LuaTier05Code GetOrCreateTier05Code(LuaIrFunction function)
+    {
+        var existing = Volatile.Read(ref _tier05Code);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var candidate = LuaTier05Code.Encode(function);
+        return Interlocked.CompareExchange(ref _tier05Code, candidate, null) ?? candidate;
     }
 
     private static int GetFramelessInstructionCount(LuaIrFunction function)
