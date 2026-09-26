@@ -106,6 +106,8 @@ public sealed class LuaHeap
     /// </summary>
     internal bool PreservesDeadThreadOpenUpvalues { get; set; }
 
+    internal bool SkipMutationValidation { get; set; }
+
     internal IEnumerable<LuaGcObject> PermanentRoots => _permanentRoots.Keys;
 
     internal IEnumerable<LuaValue> HandleRoots => _handles.Values;
@@ -364,8 +366,12 @@ public sealed class LuaHeap
 
     public void WriteBarrier(LuaGcObject owner, LuaValue value)
     {
-        ValidateObject(owner);
-        ValidateValue(value);
+        if (!SkipMutationValidation)
+        {
+            ValidateObject(owner);
+            ValidateValue(value);
+        }
+
         var target = value.TryGetGcObject();
         if (target is null)
         {
@@ -404,21 +410,33 @@ public sealed class LuaHeap
 
     public void WriteBarrierBack(LuaGcObject owner, LuaValue value)
     {
-        ValidateObject(owner);
-        ValidateValue(value);
+        if (!SkipMutationValidation)
+        {
+            ValidateObject(owner);
+            ValidateValue(value);
+        }
+
         WriteBarrierBackCore(owner, value.TryGetGcObject());
     }
 
     internal void WriteBarrierBack(LuaGcObject owner, LuaGcObject target)
     {
-        ValidateObject(owner);
-        ValidateValueObject(target);
+        if (!SkipMutationValidation)
+        {
+            ValidateObject(owner);
+            ValidateValueObject(target);
+        }
+
         WriteBarrierBackCore(owner, target);
     }
 
     internal ValidatedWriteBarrierOwner ValidateWriteBarrierOwner(LuaGcObject owner)
     {
-        ValidateObject(owner);
+        if (!SkipMutationValidation)
+        {
+            ValidateObject(owner);
+        }
+
         return new ValidatedWriteBarrierOwner(this, owner);
     }
 

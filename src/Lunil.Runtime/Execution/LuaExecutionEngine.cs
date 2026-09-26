@@ -297,6 +297,9 @@ internal sealed partial class LuaExecutionEngine
             throw new LuaRuntimeException("C stack overflow");
         }
 
+        state.Heap.SkipMutationValidation =
+            _options.PerformanceProfile == LuaPerformanceProfile.Unchecked;
+
         var previousRunningThread = state.RunningThread;
         var previousRunningThreadIsYieldable = state.RunningThreadIsYieldable;
         var previousIsRunningFinalizer = state.IsRunningFinalizer;
