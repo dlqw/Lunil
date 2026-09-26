@@ -19,9 +19,17 @@ public sealed record LuaExecutionResult(
     public long ExecutedInstructionCount { get; init; }
 }
 
+public enum LuaPerformanceProfile : byte
+{
+    Balanced = 0,
+    Unchecked = 1,
+}
+
 public sealed record LuaInterpreterOptions
 {
     public static LuaInterpreterOptions Default { get; } = new();
+
+    public LuaPerformanceProfile PerformanceProfile { get; init; } = LuaPerformanceProfile.Balanced;
 
     public long MaximumInstructionCount { get; init; } = 100_000_000;
 
