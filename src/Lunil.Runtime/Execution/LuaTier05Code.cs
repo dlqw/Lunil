@@ -49,6 +49,7 @@ internal enum LuaTier05Opcode : byte
     BinaryShiftRight = 39,
     Call = 40,
     Return = 41,
+    TailCall = 42,
 }
 
 internal sealed class LuaTier05Code
@@ -322,6 +323,16 @@ internal sealed class LuaTier05Code
                 }
 
                 stream.WriteByte((byte)LuaTier05Opcode.Return);
+                stream.WriteByte((byte)instruction.A);
+                stream.WriteByte(unchecked((byte)(instruction.B + 1)));
+                return true;
+            case LuaIrOpcode.TailCall:
+                if (!compactRegisters || !Fits(instruction.A) || instruction.B is < -1 or > 254)
+                {
+                    return false;
+                }
+
+                stream.WriteByte((byte)LuaTier05Opcode.TailCall);
                 stream.WriteByte((byte)instruction.A);
                 stream.WriteByte(unchecked((byte)(instruction.B + 1)));
                 return true;
