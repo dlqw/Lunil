@@ -694,6 +694,70 @@ internal static class LuaTier05Interpreter
                         pc = canonicalToOffset[ip];
                         continue;
                     }
+                case (int)LuaTier05Opcode.TailCall:
+                    {
+                        if (DisableInlineCall ||
+                            frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter ||
+                            frame.Continuation.Kind != LuaContinuationKind.None ||
+                            frame.Continuation.ProtectionKind != LuaProtectedCallKind.None ||
+                            frame.Continuation.IsCloseHandler ||
+                            frame.ToBeClosedSlots.Count != 0 ||
+                            frame.IsDebugHook ||
+                            thread.UnwindState is not null)
+                        {
+                            goto SlowPath;
+                        }
+
+                        var tailFunctionIndex = frameBase + stream[pc + 1];
+                        var tailClosure =
+                            ReadRegister(stack, frameBase, stream[pc + 1]).TryGetClosure();
+                        if (tailClosure is null)
+                        {
+                            goto SlowPath;
+                        }
+
+                        var tailCode = tailClosure.FunctionVersion.GetOrCreateTier05Code();
+                        if (!tailCode.HasFastInstructions)
+                        {
+                            goto SlowPath;
+                        }
+
+                        var tailEncodedArgumentCount = stream[pc + 2];
+                        var tailArgumentStart = tailFunctionIndex + 1;
+                        var tailArgumentCount = tailEncodedArgumentCount == 0
+                            ? Math.Max(0, frame.Top - tailArgumentStart)
+                            : tailEncodedArgumentCount - 1;
+                        var tailReturnBase = frame.ReturnBase;
+                        var tailExpectedResults = frame.ExpectedResults;
+                        frame.ProgramCounter = ip;
+                        thread.CloseUpvalues(frameBase);
+                        thread.PopFrame();
+                        var replacement = engine.PushFrameFromStack(
+                            thread,
+                            tailClosure,
+                            tailArgumentStart,
+                            tailArgumentCount,
+                            tailReturnBase,
+                            tailExpectedResults);
+                        if (replacement.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
+                        {
+                            context.SetExitFrame(replacement);
+                            return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
+                        }
+
+                        frame = replacement;
+                        frameBase = replacement.Base;
+                        upvalues = replacement.Closure.Upvalues;
+                        instructions = ImmutableCollectionsMarshal.AsArray(
+                            replacement.Function.Instructions)!;
+                        code = tailCode;
+                        stream = code.Stream;
+                        canonicalToOffset = code.CanonicalToOffset;
+                        instructionCount = instructions.Length;
+                        ip = 0;
+                        pc = 0;
+                        continue;
+                    }
                 default:
                     goto SlowPath;
             }
