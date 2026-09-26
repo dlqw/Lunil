@@ -39,20 +39,44 @@ public readonly struct LuaValue : IEquatable<LuaValue>
         _payload = payload;
     }
 
-    public LuaValueKind Kind => _tagOrReference switch
+    public LuaValueKind Kind
     {
-        null => LuaValueKind.Nil,
-        var tag when ReferenceEquals(tag, BooleanTag) => LuaValueKind.Boolean,
-        var tag when ReferenceEquals(tag, IntegerTag) => LuaValueKind.Integer,
-        var tag when ReferenceEquals(tag, FloatTag) => LuaValueKind.Float,
-        LuaString => LuaValueKind.String,
-        LuaTable => LuaValueKind.Table,
-        LuaClosure or LuaNativeFunction or LuaNativeClosure => LuaValueKind.Function,
-        LuaThread => LuaValueKind.Thread,
-        LuaUserdata => LuaValueKind.Userdata,
-        LuaLightUserdata => LuaValueKind.LightUserdata,
-        _ => throw new InvalidOperationException("The Lua value contains an unknown reference kind."),
-    };
+        get
+        {
+            var reference = _tagOrReference;
+            if (ReferenceEquals(reference, IntegerTag))
+            {
+                return LuaValueKind.Integer;
+            }
+
+            if (ReferenceEquals(reference, FloatTag))
+            {
+                return LuaValueKind.Float;
+            }
+
+            if (reference is null)
+            {
+                return LuaValueKind.Nil;
+            }
+
+            if (ReferenceEquals(reference, BooleanTag))
+            {
+                return LuaValueKind.Boolean;
+            }
+
+            return reference switch
+            {
+                LuaString => LuaValueKind.String,
+                LuaTable => LuaValueKind.Table,
+                LuaClosure or LuaNativeFunction or LuaNativeClosure => LuaValueKind.Function,
+                LuaThread => LuaValueKind.Thread,
+                LuaUserdata => LuaValueKind.Userdata,
+                LuaLightUserdata => LuaValueKind.LightUserdata,
+                _ => throw new InvalidOperationException(
+                    "The Lua value contains an unknown reference kind."),
+            };
+        }
+    }
 
     public bool IsNil => _tagOrReference is null;
 

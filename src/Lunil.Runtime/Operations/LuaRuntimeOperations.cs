@@ -317,6 +317,109 @@ public static class LuaRuntimeOperations
         throw new LuaRuntimeException("'__call' chain is too long; possible loop.");
     }
 
+    /// <summary>
+    /// Resolves operations that cannot reach a metamethod or coercion rule, sharing the
+    /// specialized helpers with the compiled tiers. The interpreter stays inside its
+    /// compact loop for these results instead of re-entering scheduler validation.
+    /// </summary>
+    internal static bool TryResolvePrimitiveBinary(
+        LuaIrBinaryOperator operation,
+        LuaValue left,
+        LuaValue right,
+        out LuaValue result)
+    {
+        if (left.IsInteger)
+        {
+            if (right.IsInteger)
+            {
+                if (operation != LuaIrBinaryOperator.Concatenate)
+                {
+                    result = LuaValueOperations.BinaryIntegerSpecialized(operation, left, right);
+                    return true;
+                }
+            }
+            else if (right.IsFloat && IsNumberSpecializedOperation(operation))
+            {
+                result = LuaValueOperations.BinaryMixedNumericSpecialized(operation, left, right);
+                return true;
+            }
+        }
+        else if (left.IsFloat)
+        {
+            if (right.IsFloat)
+            {
+                if (IsNumberSpecializedOperation(operation))
+                {
+                    result = LuaValueOperations.BinaryFloatSpecialized(operation, left, right);
+                    return true;
+                }
+            }
+            else if (right.IsInteger && IsNumberSpecializedOperation(operation))
+            {
+                result = LuaValueOperations.BinaryMixedNumericSpecialized(operation, left, right);
+                return true;
+            }
+        }
+
+        result = LuaValue.Nil;
+        return false;
+    }
+
+    /// <summary>See <see cref="TryResolvePrimitiveBinary"/>; covers numeric negation,
+    /// integer bitwise-not, logical-not, string length, and metatable-free table length.</summary>
+    internal static bool TryResolvePrimitiveUnary(
+        LuaIrUnaryOperator operation,
+        LuaValue operand,
+        out LuaValue result)
+    {
+        if (operand.IsInteger)
+        {
+            if (operation is LuaIrUnaryOperator.Negate or LuaIrUnaryOperator.BitwiseNot)
+            {
+                result = LuaValueOperations.UnaryIntegerSpecialized(operation, operand);
+                return true;
+            }
+        }
+        else if (operand.IsFloat && operation == LuaIrUnaryOperator.Negate)
+        {
+            result = LuaValueOperations.UnaryFloatSpecialized(operation, operand);
+            return true;
+        }
+
+        if (operation == LuaIrUnaryOperator.LogicalNot)
+        {
+            result = LuaValue.FromBoolean(!operand.IsTruthy);
+            return true;
+        }
+
+        if (operation == LuaIrUnaryOperator.Length)
+        {
+            if (operand.TryGetString() is { } text)
+            {
+                result = LuaValue.FromInteger(text.Length);
+                return true;
+            }
+
+            if (operand.TryGetTable() is { } table &&
+                (table.Metatable is null ||
+                    table.Metatable.GetMetamethodField(LuaMetamethod.Length).IsNil))
+            {
+                result = LuaValue.FromInteger(table.ArrayLength);
+                return true;
+            }
+        }
+
+        result = LuaValue.Nil;
+        return false;
+    }
+
+    private static bool IsNumberSpecializedOperation(LuaIrBinaryOperator operation) => operation is
+        LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or LuaIrBinaryOperator.Multiply or
+        LuaIrBinaryOperator.Divide or LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
+        LuaIrBinaryOperator.Power or LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
+        LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
+        LuaIrBinaryOperator.GreaterThan or LuaIrBinaryOperator.GreaterThanOrEqual;
+
     internal static LuaValue GetMetamethod(
         LuaState state,
         LuaValue value,

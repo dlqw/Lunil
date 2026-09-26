@@ -257,18 +257,18 @@ public static class LuaValueOperations
 
     public static bool NumberEquals(LuaValue left, LuaValue right)
     {
-        if (left.Kind == LuaValueKind.Integer && right.Kind == LuaValueKind.Integer)
+        if (left.IsInteger && right.IsInteger)
         {
             return left.AsInteger() == right.AsInteger();
         }
 
-        if (left.Kind == LuaValueKind.Float && right.Kind == LuaValueKind.Float)
+        if (left.IsFloat && right.IsFloat)
         {
             return left.AsFloat() == right.AsFloat();
         }
 
-        var integer = left.Kind == LuaValueKind.Integer ? left.AsInteger() : right.AsInteger();
-        var floatingPoint = left.Kind == LuaValueKind.Float ? left.AsFloat() : right.AsFloat();
+        var integer = left.IsInteger ? left.AsInteger() : right.AsInteger();
+        var floatingPoint = left.IsFloat ? left.AsFloat() : right.AsFloat();
         return IntegerFloatCompare(integer, floatingPoint) == 0;
     }
 
@@ -318,7 +318,7 @@ public static class LuaValueOperations
 
     public static bool TryToNumber(LuaValue value, out LuaValue number)
     {
-        if (IsNumber(value))
+        if (value.IsInteger || value.IsFloat)
         {
             number = value;
             return true;
@@ -677,7 +677,7 @@ public static class LuaValueOperations
     }
 
     private static bool IsNumber(LuaValue value) =>
-        value.Kind is LuaValueKind.Integer or LuaValueKind.Float;
+        value.IsInteger || value.IsFloat;
 
     private static double ToNumber(LuaValue value) => TryToNumber(value, out var number)
         ? number.AsFloat()

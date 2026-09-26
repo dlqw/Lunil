@@ -27,13 +27,7 @@ internal sealed partial class LuaExecutionEngine
     {
         if (!resolution.RequiresCall)
         {
-            if (expectedResults > 0)
-            {
-                thread.Stack.WriteUnchecked(returnBase, resolution.Value);
-                frame.Top = Math.Max(frame.Top, AddStackOffset(returnBase, 1));
-            }
-
-            frame.ProgramCounter++;
+            WriteImmediateOperationResult(thread, frame, resolution, returnBase, expectedResults);
             return;
         }
 
@@ -1365,6 +1359,22 @@ internal sealed partial class LuaExecutionEngine
 
         thread.PushFrame(frame);
         return frame;
+    }
+
+    private static void WriteImmediateOperationResult(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaOperationResolution resolution,
+        int returnBase,
+        int expectedResults)
+    {
+        if (expectedResults > 0)
+        {
+            thread.Stack.WriteUnchecked(returnBase, resolution.Value);
+            frame.Top = Math.Max(frame.Top, AddStackOffset(returnBase, 1));
+        }
+
+        frame.ProgramCounter++;
     }
 
     private LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>

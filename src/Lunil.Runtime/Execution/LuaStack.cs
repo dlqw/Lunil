@@ -46,6 +46,8 @@ public sealed class LuaStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void WriteUnchecked(int index, LuaValue value)
     {
+        // A single isinst rejects primitive-tagged values faster than explicit sentinel
+        // tag comparisons; the tier2 arithmetic workload measured both forms.
         if (value.TryGetGcObject() is { } target)
         {
             _owner.Owner.WriteBarrierBack(_owner, target);

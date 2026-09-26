@@ -34,12 +34,20 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 in instruction);
         }
 
+        // The stack object identity, the frame base, and the heap reference are stable for
+        // the whole compact run: the stack grows its internal array in place, the base is
+        // fixed between frame pushes, and the heap pointer never changes on the state.
+        var stack = thread.Stack;
+        var frameBase = frame.Base;
+        var heap = state.Heap;
         var result = ExecuteInstruction(
             engine,
             context,
             state,
             thread,
             frame,
+            stack,
+            frameBase,
             in instruction);
         var instructions = ImmutableCollectionsMarshal.AsArray(
             frame.Function.Instructions)!;
@@ -48,7 +56,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         while (true)
         {
             var runSafePoint = --instructionsUntilSafePoint == 0 ||
-                state.Heap.RequiresInterpreterSafePoint;
+                heap.RequiresInterpreterSafePoint;
             if (result is not InterpreterInstructionResult.Continue and
                 not InterpreterInstructionResult.ContinueWithSchedulerCheck)
             {
@@ -94,6 +102,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 state,
                 thread,
                 frame,
+                stack,
+                frameBase,
                 in instructions[frame.ProgramCounter]);
         }
     }
@@ -120,8 +130,30 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             state,
             thread,
             frame,
+            thread.Stack,
+            frame.Base,
             in instruction);
         return MaterializeExit(result, context, frame.ProgramCounter);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static LuaValue ReadRegister(LuaStack stack, int frameBase, int register) =>
+        stack.ReadUnchecked(frameBase + register);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteRegister(
+        LuaStack stack,
+        LuaFrame frame,
+        int frameBase,
+        int register,
+        LuaValue value)
+    {
+        var index = frameBase + register;
+        stack.WriteUnchecked(index, value);
+        if (frame.Top <= index)
+        {
+            frame.Top = index + 1;
+        }
     }
 
     private static InterpreterInstructionResult ExecuteInstruction(
@@ -130,6 +162,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         LuaState state,
         LuaThread thread,
         LuaFrame frame,
+        LuaStack stack,
+        int frameBase,
         in LuaIrInstruction instruction)
     {
         if (!context.TryReserveSingleInterpreterInstruction())
@@ -140,52 +174,60 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         switch (instruction.Opcode)
         {
             case LuaIrOpcode.LoadConstant:
-                LuaExecutionEngine.Write(thread, frame, instruction.A, LuaExecutionEngine.MaterializeConstant(
-                    state,
-                    thread,
+                WriteRegister(
+                    stack,
                     frame,
-                    instruction.B));
+                    frameBase,
+                    instruction.A,
+                    LuaExecutionEngine.MaterializeConstant(
+                        state,
+                        thread,
+                        frame,
+                        instruction.B));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.LoadNil:
                 for (var index = 0; index < instruction.B; index++)
                 {
-                    LuaExecutionEngine.Write(thread, frame, instruction.A + index, LuaValue.Nil);
+                    WriteRegister(stack, frame, frameBase, instruction.A + index, LuaValue.Nil);
                 }
 
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.Move:
-                LuaExecutionEngine.Write(
-                    thread,
+                WriteRegister(
+                    stack,
                     frame,
+                    frameBase,
                     instruction.A,
-                    LuaExecutionEngine.Read(thread, frame, instruction.B));
+                    ReadRegister(stack, frameBase, instruction.B));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.SetTop:
-                LuaExecutionEngine.SetFrameTop(thread, frame, frame.Base + instruction.A);
+                LuaExecutionEngine.SetFrameTop(thread, frame, frameBase + instruction.A);
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.GetUpvalue:
-                LuaExecutionEngine.Write(
-                    thread,
+                WriteRegister(
+                    stack,
                     frame,
+                    frameBase,
                     instruction.A,
                     frame.Closure.Upvalues[instruction.B].Value);
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.SetUpvalue:
                 frame.Closure.Upvalues[instruction.A].Value =
-                    LuaExecutionEngine.Read(thread, frame, instruction.B);
+                    ReadRegister(stack, frameBase, instruction.B);
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.NewTable:
                 var allocationHint = frame.GetOrCreateTableAllocationHint(
                     frame.ProgramCounter);
-                LuaExecutionEngine.Write(
-                    thread,
+                WriteRegister(
+                    stack,
                     frame,
+                    frameBase,
                     instruction.A,
                     LuaValue.FromTable(state.CreateTableForAllocationSite(
                         instruction.C,
@@ -194,41 +236,103 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.GetTable:
-                engine.ExecuteOperation(
-                    state,
-                    context.Scheduler ??
-                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
-                    thread,
-                    frame,
-                    LuaRuntimeOperations.GetIndex(
+                {
+                    var target = ReadRegister(stack, frameBase, instruction.B);
+                    if (target.TryGetTable() is { } table && table.Metatable is null)
+                    {
+                        // Without a metatable the index cannot reach __index, so the plain
+                        // lookup result (value or nil) is final and the compact loop can
+                        // continue without scheduler revalidation.
+                        WriteRegister(
+                            stack,
+                            frame,
+                            frameBase,
+                            instruction.A,
+                            table.Get(ReadRegister(stack, frameBase, instruction.C)));
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    var getIndexResolution = LuaRuntimeOperations.GetIndex(
                         state,
-                        LuaExecutionEngine.Read(thread, frame, instruction.B),
-                        LuaExecutionEngine.Read(thread, frame, instruction.C)),
-                    frame.Base + instruction.A,
-                    expectedResults: 1);
-                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                        target,
+                        ReadRegister(stack, frameBase, instruction.C));
+                    if (!getIndexResolution.RequiresCall)
+                    {
+                        // Immediate resolutions (including metatable-backed hits) commit the
+                        // result inline and stay in the compact loop; only metamethod calls
+                        // pay the scheduler revalidation below.
+                        WriteRegister(
+                            stack,
+                            frame,
+                            frameBase,
+                            instruction.A,
+                            getIndexResolution.Value);
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    engine.ExecuteOperation(
+                        state,
+                        context.Scheduler ??
+                            throw new InvalidOperationException("The interpreter scheduler is unavailable."),
+                        thread,
+                        frame,
+                        getIndexResolution,
+                        frame.Base + instruction.A,
+                        expectedResults: 1);
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                }
             case LuaIrOpcode.SetTable:
-                engine.ExecuteOperation(
-                    state,
-                    context.Scheduler ??
-                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
-                    thread,
-                    frame,
-                    LuaRuntimeOperations.SetIndex(
+                {
+                    var target = ReadRegister(stack, frameBase, instruction.A);
+                    var key = ReadRegister(stack, frameBase, instruction.B);
+                    var value = ReadRegister(stack, frameBase, instruction.C);
+                    if (target.TryGetTable() is { } table && table.Metatable is null)
+                    {
+                        if (table.TryGetExistingEntry(key, out _, out var entry))
+                        {
+                            table.SetExistingEntry(entry, key, value);
+                        }
+                        else
+                        {
+                            table.Set(key, value);
+                        }
+
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    var setIndexResolution = LuaRuntimeOperations.SetIndex(state, target, key, value);
+                    if (!setIndexResolution.RequiresCall)
+                    {
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    engine.ExecuteOperation(
                         state,
-                        LuaExecutionEngine.Read(thread, frame, instruction.A),
-                        LuaExecutionEngine.Read(thread, frame, instruction.B),
-                        LuaExecutionEngine.Read(thread, frame, instruction.C)),
-                    frame.Top,
-                    expectedResults: 0);
-                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                        context.Scheduler ??
+                            throw new InvalidOperationException("The interpreter scheduler is unavailable."),
+                        thread,
+                        frame,
+                        setIndexResolution,
+                        frame.Top,
+                        expectedResults: 0);
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                }
             case LuaIrOpcode.SetList:
                 LuaExecutionEngine.ExecuteSetList(thread, frame, instruction);
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.Closure:
-                LuaExecutionEngine.Write(thread, frame, instruction.A, LuaValue.FromFunction(
-                    LuaExecutionEngine.CreateClosure(thread, frame, instruction.B)));
+                WriteRegister(
+                    stack,
+                    frame,
+                    frameBase,
+                    instruction.A,
+                    LuaValue.FromFunction(
+                        LuaExecutionEngine.CreateClosure(thread, frame, instruction.B)));
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.VarArg:
@@ -248,34 +352,78 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter++;
                 break;
             case LuaIrOpcode.Unary:
-                engine.ExecuteOperation(
-                    state,
-                    context.Scheduler ??
-                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
-                    thread,
-                    frame,
-                    LuaRuntimeOperations.Unary(
+                {
+                    var operand = ReadRegister(stack, frameBase, instruction.B);
+                    if (LuaRuntimeOperations.TryResolvePrimitiveUnary(
+                            (LuaIrUnaryOperator)instruction.C,
+                            operand,
+                            out var unaryResult))
+                    {
+                        WriteRegister(stack, frame, frameBase, instruction.A, unaryResult);
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    var unaryResolution = LuaRuntimeOperations.Unary(
                         state,
                         (LuaIrUnaryOperator)instruction.C,
-                        LuaExecutionEngine.Read(thread, frame, instruction.B)),
-                    frame.Base + instruction.A,
-                    expectedResults: 1);
-                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                        operand);
+                    if (!unaryResolution.RequiresCall)
+                    {
+                        WriteRegister(stack, frame, frameBase, instruction.A, unaryResolution.Value);
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    engine.ExecuteOperation(
+                        state,
+                        context.Scheduler ??
+                            throw new InvalidOperationException("The interpreter scheduler is unavailable."),
+                        thread,
+                        frame,
+                        unaryResolution,
+                        frame.Base + instruction.A,
+                        expectedResults: 1);
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                }
             case LuaIrOpcode.Binary:
-                engine.ExecuteOperation(
-                    state,
-                    context.Scheduler ??
-                        throw new InvalidOperationException("The interpreter scheduler is unavailable."),
-                    thread,
-                    frame,
-                    LuaRuntimeOperations.Binary(
+                {
+                    var left = ReadRegister(stack, frameBase, instruction.B);
+                    var right = ReadRegister(stack, frameBase, instruction.C);
+                    if (LuaRuntimeOperations.TryResolvePrimitiveBinary(
+                            (LuaIrBinaryOperator)instruction.D,
+                            left,
+                            right,
+                            out var binaryResult))
+                    {
+                        WriteRegister(stack, frame, frameBase, instruction.A, binaryResult);
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    var binaryResolution = LuaRuntimeOperations.Binary(
                         state,
                         (LuaIrBinaryOperator)instruction.D,
-                        LuaExecutionEngine.Read(thread, frame, instruction.B),
-                        LuaExecutionEngine.Read(thread, frame, instruction.C)),
-                    frame.Base + instruction.A,
-                    expectedResults: 1);
-                return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                        left,
+                        right);
+                    if (!binaryResolution.RequiresCall)
+                    {
+                        WriteRegister(stack, frame, frameBase, instruction.A, binaryResolution.Value);
+                        frame.ProgramCounter++;
+                        break;
+                    }
+
+                    engine.ExecuteOperation(
+                        state,
+                        context.Scheduler ??
+                            throw new InvalidOperationException("The interpreter scheduler is unavailable."),
+                        thread,
+                        frame,
+                        binaryResolution,
+                        frame.Base + instruction.A,
+                        expectedResults: 1);
+                    return InterpreterInstructionResult.ContinueWithSchedulerCheck;
+                }
             case LuaIrOpcode.Jump:
                 if (instruction.C >= 0 &&
                     engine.TryCloseFrom(state, thread, frame, instruction.C, LuaValue.Nil))
@@ -286,7 +434,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 frame.ProgramCounter = instruction.B;
                 break;
             case LuaIrOpcode.JumpIfFalse:
-                var falseCondition = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy;
+                var falseCondition = ReadRegister(stack, frameBase, instruction.A).IsTruthy;
                 if (instruction.D != 0)
                 {
                     LuaExecutionEngine.SetFrameTop(thread, frame, frame.Base + instruction.C);
@@ -297,7 +445,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                     : instruction.B;
                 break;
             case LuaIrOpcode.JumpIfTrue:
-                var trueCondition = LuaExecutionEngine.Read(thread, frame, instruction.A).IsTruthy;
+                var trueCondition = ReadRegister(stack, frameBase, instruction.A).IsTruthy;
                 if (instruction.D != 0)
                 {
                     LuaExecutionEngine.SetFrameTop(thread, frame, frame.Base + instruction.C);
@@ -323,7 +471,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 break;
             case LuaIrOpcode.MarkToBeClosed:
                 {
-                    var value = LuaExecutionEngine.Read(thread, frame, instruction.A);
+                    var value = ReadRegister(stack, frameBase, instruction.A);
                     if (value.IsTruthy)
                     {
                         var close = LuaRuntimeOperations.GetMetamethod(
