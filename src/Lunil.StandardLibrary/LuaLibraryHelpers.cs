@@ -65,6 +65,28 @@ internal static class LuaLibraryHelpers
         string? debugName = null) =>
         Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(debugName ?? name, body)));
 
+    /// <summary>
+    /// Registers a single-result native that also exposes the allocation-free span fast
+    /// path; the array body delegates to the same implementation so both paths agree.
+    /// </summary>
+    public static void SetSpanFunction(
+        LuaState state,
+        LuaTable table,
+        string name,
+        Func<LuaState, ReadOnlySpan<LuaValue>, LuaValue> body,
+        string? debugName = null)
+    {
+        var descriptor = new LuaNativeFunction(debugName ?? name, (s, arguments) => [body(s, arguments)])
+        {
+            SpanBody = (s, arguments, results) =>
+            {
+                results[0] = body(s, arguments);
+                return 1;
+            },
+        };
+        Set(state, table, name, LuaValue.FromFunction(descriptor));
+    }
+
     public static void SetFunction(
         LuaState state,
         LuaTable table,

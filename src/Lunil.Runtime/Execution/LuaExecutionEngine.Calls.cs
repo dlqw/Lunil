@@ -16,6 +16,9 @@ namespace Lunil.Runtime.Execution;
 
 internal sealed partial class LuaExecutionEngine
 {
+    /// <summary>Upper bound for span-body scratch results; larger needs fall back to bodies.</summary>
+    private const int NativeSpanScratchCapacity = 8;
+
     private void ContinueNativeRoot(
         LuaState state,
         LuaScheduler scheduler,
@@ -235,6 +238,7 @@ internal sealed partial class LuaExecutionEngine
         ReadOnlySpan<LuaValue> resolvedArguments;
         var argumentsInCallerStack = false;
         var callMetamethod = false;
+        var tailArgumentsOnStack = false;
         if (tailCall && frame.Continuation.Kind == LuaContinuationKind.TailCall)
         {
             function = frame.Continuation.Value;
@@ -245,8 +249,11 @@ internal sealed partial class LuaExecutionEngine
             function = directFunction;
             resolvedArguments = thread.Stack.AsReadOnlySpan(argumentStart, argumentCount);
             argumentsInCallerStack = !tailCall;
-            if (tailCall)
+            if (tailCall && frame.ToBeClosedSlots.Count != 0)
             {
+                // A pending <close> handler can suspend the frame mid-tail-call, and the
+                // re-entry state must survive whatever executes in between, so only that
+                // case needs the durable argument snapshot.
                 var snapshot = resolvedArguments.ToArray();
                 frame.Continuation.Kind = LuaContinuationKind.TailCall;
                 frame.Continuation.Value = function;
@@ -259,26 +266,67 @@ internal sealed partial class LuaExecutionEngine
 
                 resolvedArguments = snapshot;
             }
+            else
+            {
+                tailArgumentsOnStack = tailCall;
+            }
         }
         else
         {
-            callMetamethod = true;
-            var resolvedCall = LuaRuntimeOperations.ResolveCall(
+            var callMetafunction = LuaRuntimeOperations.GetMetamethod(
                 state,
-                thread.Stack.ReadUnchecked(functionIndex),
-                thread.Stack.AsReadOnlySpan(argumentStart, argumentCount));
-            function = resolvedCall.Callable;
-            var resolvedArgumentSnapshot = resolvedCall.MaterializeArgumentsForRuntime();
-            resolvedArguments = resolvedArgumentSnapshot;
-            if (tailCall)
+                directFunction,
+                LuaMetamethod.Call);
+            if (callMetafunction.TryGetClosure() is not null)
             {
-                frame.Continuation.Kind = LuaContinuationKind.TailCall;
-                frame.Continuation.Value = function;
-                frame.Continuation.Values = resolvedArgumentSnapshot;
-                thread.Owner.WriteBarrier(thread, function);
-                foreach (var value in resolvedArguments)
+                // A single-level __call consumes [callable, arguments...] which are already
+                // contiguous at functionIndex, so the generic resolution materialization is
+                // unnecessary for the common non-chained case.
+                function = callMetafunction;
+                callMetamethod = true;
+                argumentStart = functionIndex;
+                argumentCount++;
+                resolvedArguments = thread.Stack.AsReadOnlySpan(argumentStart, argumentCount);
+                argumentsInCallerStack = !tailCall;
+                if (tailCall && frame.ToBeClosedSlots.Count != 0)
                 {
-                    thread.Owner.WriteBarrier(thread, value);
+                    var callSnapshot = resolvedArguments.ToArray();
+                    frame.Continuation.Kind = LuaContinuationKind.TailCall;
+                    frame.Continuation.Value = function;
+                    frame.Continuation.Values = callSnapshot;
+                    thread.Owner.WriteBarrier(thread, function);
+                    foreach (var value in callSnapshot)
+                    {
+                        thread.Owner.WriteBarrier(thread, value);
+                    }
+
+                    resolvedArguments = callSnapshot;
+                }
+                else
+                {
+                    tailArgumentsOnStack = tailCall;
+                }
+            }
+            else
+            {
+                callMetamethod = true;
+                var resolvedCall = LuaRuntimeOperations.ResolveCall(
+                    state,
+                    thread.Stack.ReadUnchecked(functionIndex),
+                    thread.Stack.AsReadOnlySpan(argumentStart, argumentCount));
+                function = resolvedCall.Callable;
+                var resolvedArgumentSnapshot = resolvedCall.MaterializeArgumentsForRuntime();
+                resolvedArguments = resolvedArgumentSnapshot;
+                if (tailCall)
+                {
+                    frame.Continuation.Kind = LuaContinuationKind.TailCall;
+                    frame.Continuation.Value = function;
+                    frame.Continuation.Values = resolvedArgumentSnapshot;
+                    thread.Owner.WriteBarrier(thread, function);
+                    foreach (var value in resolvedArguments)
+                    {
+                        thread.Owner.WriteBarrier(thread, value);
+                    }
                 }
             }
         }
@@ -419,18 +467,42 @@ internal sealed partial class LuaExecutionEngine
                 var isCloseHandler = frame.Continuation.IsCloseHandler;
                 CommitPendingBackedges(frame);
                 thread.PopFrame();
-                var replacement = PushFrame(
-                    thread,
-                    closure,
-                    resolvedArguments,
-                    returnBase,
-                    expectedResults,
-                    protectionKind,
-                    errorHandler,
-                    isCloseHandler,
-                    frame.IsDebugHook,
-                    frame.IsHidden,
-                    scheduleCallHook: false);
+                LuaFrame replacement;
+                if (tailArgumentsOnStack)
+                {
+                    // The arguments still live in the retiring frame's window; the
+                    // stack-to-stack push copies them out before clearing, and the new
+                    // frame reuses the same base so the window does not move.
+                    replacement = PushFrameFromStack(
+                        thread,
+                        closure,
+                        argumentStart,
+                        argumentCount,
+                        returnBase,
+                        expectedResults,
+                        protectionKind: protectionKind,
+                        errorHandler: errorHandler,
+                        isCloseHandler: isCloseHandler,
+                        isDebugHook: frame.IsDebugHook,
+                        isHidden: frame.IsHidden,
+                        scheduleCallHook: false);
+                }
+                else
+                {
+                    replacement = PushFrame(
+                        thread,
+                        closure,
+                        resolvedArguments,
+                        returnBase,
+                        expectedResults,
+                        protectionKind,
+                        errorHandler,
+                        isCloseHandler,
+                        frame.IsDebugHook,
+                        frame.IsHidden,
+                        scheduleCallHook: false);
+                }
+
                 replacement.Continuation.ProtectionFunction = protectionFunction;
                 replacement.IsTailCall = true;
                 if (callMetamethod)
@@ -467,13 +539,17 @@ internal sealed partial class LuaExecutionEngine
             frame.ProgramCounter++;
             if (argumentsInCallerStack)
             {
-                PushFrameFromStack(
+                var callee = PushFrameFromStack(
                     thread,
                     closure,
                     argumentStart,
                     argumentCount,
                     returnBase,
                     expectedResults);
+                if (callMetamethod)
+                {
+                    SetDebugFunctionName(callee, "call", "metamethod");
+                }
             }
             else
             {
@@ -519,6 +595,20 @@ internal sealed partial class LuaExecutionEngine
                 step);
         }
 
+        if (native.SpanBody is { } spanBody && !tailCall &&
+            TryExecuteNativeSpanCall(
+                state,
+                thread,
+                frame,
+                function,
+                spanBody,
+                resolvedArguments,
+                functionIndex,
+                instruction.C))
+        {
+            return null;
+        }
+
         var results = InvokeNativeBody(state, function, resolvedArguments);
         if (tailCall)
         {
@@ -543,6 +633,77 @@ internal sealed partial class LuaExecutionEngine
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Executes an ordinary native call through the allocation-free span body: results are
+    /// written to a scratch window above the caller's registers and copied down, so the
+    /// intermediate result array never exists. Returning -1 makes the caller fall back to
+    /// the array body, which keeps multi-result and unexpected-count cases exact.
+    /// </summary>
+    private bool TryExecuteNativeSpanCall(
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaValue function,
+        LuaNativeSpanBody spanBody,
+        ReadOnlySpan<LuaValue> arguments,
+        int functionIndex,
+        int expectedResults)
+    {
+        var capacity = expectedResults >= 0
+            ? Math.Clamp(expectedResults, 1, NativeSpanScratchCapacity)
+            : NativeSpanScratchCapacity;
+        var scratchBase = Math.Max(frame.Top, functionIndex + 1 + arguments.Length);
+        EnsureScratchWindow(thread, scratchBase, capacity);
+        var scratch = thread.Stack.AsSpan(scratchBase, capacity);
+        int count;
+        var previous = state.RunningNativeFunction;
+        state.RunningNativeFunction = function;
+        try
+        {
+            count = spanBody(state, arguments, scratch);
+        }
+        catch (LuaRuntimeException)
+        {
+            throw;
+        }
+        catch (LuaHostException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw ConvertNativeClrException(exception);
+        }
+        finally
+        {
+            state.RunningNativeFunction = previous;
+        }
+
+        if (count < 0)
+        {
+            return false;
+        }
+
+        LunilGuard.LessThanOrEqual(count, capacity);
+        // The native wrote through a raw span, so the write barriers the checked accessors
+        // would have applied are run here for the values it produced.
+        for (var index = 0; index < count; index++)
+        {
+            if (scratch[index].TryGetGcObject() is { } barrierTarget)
+            {
+                thread.Owner.WriteBarrierBack(thread, barrierTarget);
+            }
+        }
+
+        // The scratch window sits above the destination, so copying down cannot clobber
+        // values that have not been read yet.
+        var written = scratch[..count];
+        WriteCallResults(thread, frame, functionIndex, expectedResults, written);
+        frame.ProgramCounter++;
+        ScheduleNativeReturnHook(thread, frame, function, written);
+        return true;
     }
 
     internal bool TryExecuteFramelessCall(

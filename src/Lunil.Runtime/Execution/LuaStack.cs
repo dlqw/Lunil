@@ -107,5 +107,18 @@ public sealed class LuaStack
         EnsureCapacity(checked(start + length));
         return _values.AsSpan(start, length);
     }
+
+    /// <summary>
+    /// A writable window above the frame registers for native span results. Callers must
+    /// run the owner's write barrier for any collectable value written through this span;
+    /// ordinary execution writes keep using the barrier-checked accessors.
+    /// </summary>
+    internal Span<LuaValue> AsSpan(int start, int length)
+    {
+        LunilGuard.NotNegative(start);
+        LunilGuard.NotNegative(length);
+        EnsureCapacity(checked(start + length));
+        return _values.AsSpan(start, length);
+    }
 }
 #pragma warning restore CA1711

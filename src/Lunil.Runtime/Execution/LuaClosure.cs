@@ -198,6 +198,16 @@ public delegate LuaValue[] LuaNativeFunctionBody(
     LuaState state,
     ReadOnlySpan<LuaValue> arguments);
 
+/// <summary>
+/// An allocation-free native fast path. Writes at most <paramref name="results"/>.Length
+/// values, returns the written result count, or -1 to fall back to the array-based body.
+/// Implementations must not retain either span.
+/// </summary>
+public delegate int LuaNativeSpanBody(
+    LuaState state,
+    ReadOnlySpan<LuaValue> arguments,
+    Span<LuaValue> results);
+
 public delegate LuaNativeStep LuaNativeFunctionStepBody(
     LuaNativeCallContext context,
     int continuationId,
@@ -468,6 +478,12 @@ public sealed class LuaNativeFunction
     internal LuaNativeFunctionBody? Body { get; }
 
     internal LuaNativeFunctionStepBody? StepBody { get; }
+
+    /// <summary>
+    /// Optional allocation-free fast path used by ordinary (non-tail, non-resumable)
+    /// calls; the array body stays authoritative for every other path.
+    /// </summary>
+    internal LuaNativeSpanBody? SpanBody { get; set; }
 
     internal LuaNativeFunctionKind Kind { get; }
 
