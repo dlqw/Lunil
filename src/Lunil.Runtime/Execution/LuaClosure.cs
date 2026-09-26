@@ -201,9 +201,10 @@ public delegate LuaValue[] LuaNativeFunctionBody(
 /// <summary>
 /// An allocation-free native fast path. Writes at most <paramref name="results"/>.Length
 /// values, returns the written result count, or -1 to fall back to the array-based body.
-/// Implementations must not retain either span.
+/// Implementations must not retain either span. This seam is internal: the runtime and
+/// the built-in libraries attach it through friend-assembly access.
 /// </summary>
-public delegate int LuaNativeSpanBody(
+internal delegate int LuaNativeSpanBody(
     LuaState state,
     ReadOnlySpan<LuaValue> arguments,
     Span<LuaValue> results);
