@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Operations;
@@ -9,6 +11,12 @@ namespace Lunil.Runtime.Execution;
 
 internal static class LuaTier05Interpreter
 {
+    private static readonly bool DisableInlineCall =
+        Environment.GetEnvironmentVariable("LUNIL_T05_DISABLE_CALL") is not null;
+
+    private static readonly bool EnableInlineReturn =
+        Environment.GetEnvironmentVariable("LUNIL_T05_INLINE_RETURN") is not null;
+
     internal static LuaCompiledExit Run(
         LuaExecutionEngine engine,
         LuaExecutionContext context,
@@ -21,11 +29,12 @@ internal static class LuaTier05Interpreter
         var ip = frame.ProgramCounter;
         try
         {
-            return RunLoop(engine, context, state, thread, frame, instructions, code, ref ip);
+            return RunLoop(engine, context, state, thread, ref frame, instructions, code, ref ip);
         }
         catch
         {
             frame.ProgramCounter = ip;
+            context.SetExitFrame(frame);
             throw;
         }
     }
@@ -35,7 +44,7 @@ internal static class LuaTier05Interpreter
         LuaExecutionContext context,
         LuaState state,
         LuaThread thread,
-        LuaFrame frame,
+        ref LuaFrame frame,
         LuaIrInstruction[] instructions,
         LuaTier05Code code,
         ref int ip)
@@ -48,19 +57,22 @@ internal static class LuaTier05Interpreter
         var upvalues = frame.Closure.Upvalues;
         var instructionCount = instructions.Length;
         var pc = canonicalToOffset[ip];
-        var untilSafePoint = 32;
+        var untilSafePoint = CompactSafePointInterval;
+        var inlineDepth = 0;
 
         while (true)
         {
             if ((uint)ip >= (uint)instructionCount)
             {
                 frame.ProgramCounter = ip;
+                context.SetExitFrame(frame);
                 return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
             }
 
             if (!context.TryReserveSingleInterpreterInstruction())
             {
                 frame.ProgramCounter = ip;
+                context.SetExitFrame(frame);
                 return MaterializeExit(
                     InterpreterInstructionResult.InstructionBudget,
                     context,
@@ -69,8 +81,9 @@ internal static class LuaTier05Interpreter
 
             if (--untilSafePoint == 0 || heap.RequiresInterpreterSafePoint)
             {
-                untilSafePoint = 32;
+                untilSafePoint = CompactSafePointInterval;
                 frame.ProgramCounter = ip;
+                thread.AdvanceFramePoolEpoch();
                 if (!engine.TryContinueCompactInterpreterLoop(
                         context,
                         state,
@@ -78,6 +91,7 @@ internal static class LuaTier05Interpreter
                         frame,
                         runSafePoint: true))
                 {
+                    context.SetExitFrame(frame);
                     return LuaCompiledExit.Continue(
                         frame.ProgramCounter,
                         context.InstructionsConsumed);
@@ -164,10 +178,7 @@ internal static class LuaTier05Interpreter
                     ip++;
                     continue;
                 case (int)LuaTier05Opcode.SetTop:
-                    LuaExecutionEngine.SetFrameTop(
-                        thread,
-                        frame,
-                        frameBase + stream[pc + 1]);
+                    LuaExecutionEngine.SetFrameTop(thread, frame, frameBase + stream[pc + 1]);
                     pc += 2;
                     ip++;
                     continue;
@@ -192,29 +203,6 @@ internal static class LuaTier05Interpreter
                     pc = canonicalToOffset[ip];
                     continue;
                 case (int)LuaTier05Opcode.JumpIfFalse:
-                    {
-                        var condition = ReadRegister(stack, frameBase, stream[pc + 1]).IsTruthy;
-                        if (stream[pc + 3] != 0)
-                        {
-                            LuaExecutionEngine.SetFrameTop(
-                                thread,
-                                frame,
-                                frameBase + stream[pc + 2]);
-                        }
-
-                        if (condition)
-                        {
-                            pc += 8;
-                            ip++;
-                        }
-                        else
-                        {
-                            ip = BinaryPrimitives.ReadInt32LittleEndian(stream.AsSpan(pc + 4, 4));
-                            pc = canonicalToOffset[ip];
-                        }
-
-                        continue;
-                    }
                 case (int)LuaTier05Opcode.JumpIfTrue:
                     {
                         var condition = ReadRegister(stack, frameBase, stream[pc + 1]).IsTruthy;
@@ -226,7 +214,10 @@ internal static class LuaTier05Interpreter
                                 frameBase + stream[pc + 2]);
                         }
 
-                        if (condition)
+                        var branchTaken = op == (int)LuaTier05Opcode.JumpIfTrue
+                            ? condition
+                            : !condition;
+                        if (branchTaken)
                         {
                             ip = BinaryPrimitives.ReadInt32LittleEndian(stream.AsSpan(pc + 4, 4));
                             pc = canonicalToOffset[ip];
@@ -295,7 +286,7 @@ internal static class LuaTier05Interpreter
                         var target = ReadRegister(stack, frameBase, stream[pc + 1]);
                         var key = ReadRegister(stack, frameBase, stream[pc + 2]);
                         var value = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (target.TryGetTable() is not { } table || table.Metatable is not null)
+                        if (target.TryGetTable() is not { } table || table.Metatable is null)
                         {
                             goto SlowPath;
                         }
@@ -317,343 +308,390 @@ internal static class LuaTier05Interpreter
                 case (int)LuaTier05Opcode.BitwiseNot:
                 case (int)LuaTier05Opcode.LogicalNot:
                 case (int)LuaTier05Opcode.Length:
+                    if (!UnaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            (LuaIrUnaryOperator)(op - (int)LuaTier05Opcode.Negate)))
                     {
-                        var operand = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveUnary(
-                                (LuaIrUnaryOperator)(op - (int)LuaTier05Opcode.Negate),
-                                operand,
-                                out var unaryResult))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], unaryResult);
-                        pc += 3;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 3;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryAdd:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Add))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Add,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinarySubtract:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Subtract))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Subtract,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryMultiply:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Multiply))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Multiply,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryDivide:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Divide))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Divide,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryFloorDivide:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.FloorDivide))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.FloorDivide,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryModulo:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Modulo))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Modulo,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryPower:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Power))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Power,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryEqual:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.Equal))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.Equal,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryNotEqual:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.NotEqual))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.NotEqual,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryLessThan:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.LessThan))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.LessThan,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryLessThanOrEqual:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.LessThanOrEqual))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.LessThanOrEqual,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryGreaterThan:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.GreaterThan))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.GreaterThan,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryGreaterThanOrEqual:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.GreaterThanOrEqual))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.GreaterThanOrEqual,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseAnd:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.BitwiseAnd))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.BitwiseAnd,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseOr:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.BitwiseOr))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.BitwiseOr,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseXor:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.BitwiseXor))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.BitwiseXor,
-                                left,
-                                right,
-                                out var result))
-                        {
-                            goto SlowPath;
-                        }
-
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
-                        continue;
+                        goto SlowPath;
                     }
+
+                    pc += 4;
+                    ip++;
+                    continue;
                 case (int)LuaTier05Opcode.BinaryShiftLeft:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.ShiftLeft))
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.ShiftLeft,
-                                left,
-                                right,
-                                out var result))
+                        goto SlowPath;
+                    }
+
+                    pc += 4;
+                    ip++;
+                    continue;
+                case (int)LuaTier05Opcode.BinaryShiftRight:
+                    if (!BinaryFast(
+                            stack,
+                            frame,
+                            frameBase,
+                            stream,
+                            pc,
+                            LuaIrBinaryOperator.ShiftRight))
+                    {
+                        goto SlowPath;
+                    }
+
+                    pc += 4;
+                    ip++;
+                    continue;
+                case (int)LuaTier05Opcode.Call:
+                    {
+                        if (DisableInlineCall ||
+                            frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
                             goto SlowPath;
                         }
 
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
+                        var functionIndex = frameBase + stream[pc + 1];
+                        var closure = ReadRegister(stack, frameBase, stream[pc + 1]).TryGetClosure();
+                        if (closure is null)
+                        {
+                            goto SlowPath;
+                        }
+
+                        var calleeCode = closure.FunctionVersion.GetOrCreateTier05Code();
+                        if (!calleeCode.HasFastInstructions)
+                        {
+                            goto SlowPath;
+                        }
+
+                        var encodedArgumentCount = stream[pc + 2];
+                        var expectedResults = stream[pc + 3] == 0 ? -1 : stream[pc + 3] - 1;
+                        var argumentStart = functionIndex + 1;
+                        var argumentCount = encodedArgumentCount == 0
+                            ? Math.Max(0, frame.Top - argumentStart)
+                            : encodedArgumentCount - 1;
+                        frame.ProgramCounter = ip + 1;
+                        var callee = engine.PushFrameFromStack(
+                            thread,
+                            closure,
+                            argumentStart,
+                            argumentCount,
+                            functionIndex,
+                            expectedResults);
+                        if (callee.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
+                        {
+                            context.SetExitFrame(callee);
+                            return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
+                        }
+
+                        frame = callee;
+                        frameBase = callee.Base;
+                        upvalues = callee.Closure.Upvalues;
+                        instructions = ImmutableCollectionsMarshal.AsArray(callee.Function.Instructions)!;
+                        code = calleeCode;
+                        stream = code.Stream;
+                        canonicalToOffset = code.CanonicalToOffset;
+                        instructionCount = instructions.Length;
+                        inlineDepth++;
+                        ip = 0;
+                        pc = 0;
                         continue;
                     }
-                case (int)LuaTier05Opcode.BinaryShiftRight:
+                case (int)LuaTier05Opcode.Return:
                     {
-                        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(
-                                LuaIrBinaryOperator.ShiftRight,
-                                left,
-                                right,
-                                out var result))
+                        if (!EnableInlineReturn ||
+                            inlineDepth == 0 ||
+                            frame.Continuation.Kind != LuaContinuationKind.None ||
+                            frame.Continuation.ProtectionKind != LuaProtectedCallKind.None ||
+                            frame.Continuation.IsCloseHandler ||
+                            frame.ToBeClosedSlots.Count != 0 ||
+                            frame.IsDebugHook ||
+                            thread.UnwindState is not null ||
+                            thread.FrameCount <= 1 ||
+                            thread.Frames[thread.FrameCount - 2].Continuation.Kind !=
+                                LuaContinuationKind.None)
                         {
                             goto SlowPath;
                         }
 
-                        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-                        pc += 4;
-                        ip++;
+                        var start = frameBase + stream[pc + 1];
+                        var encodedResultCount = stream[pc + 2];
+                        var count = encodedResultCount == 0
+                            ? Math.Max(0, frame.Top - start)
+                            : encodedResultCount - 1;
+                        var returnBase = frame.ReturnBase;
+                        var expectedResults = frame.ExpectedResults;
+                        var callerFrame = thread.Frames[thread.FrameCount - 2];
+                        thread.CloseUpvalues(frameBase);
+                        var results = thread.Stack.AsReadOnlySpan(start, count);
+                        thread.PopFrame();
+                        engine.WriteCallResults(
+                            thread,
+                            callerFrame,
+                            returnBase,
+                            expectedResults,
+                            results);
+                        inlineDepth--;
+                        frame = callerFrame;
+                        frameBase = callerFrame.Base;
+                        upvalues = callerFrame.Closure.Upvalues;
+                        instructions = ImmutableCollectionsMarshal.AsArray(
+                            callerFrame.Function.Instructions)!;
+                        code = callerFrame.FunctionVersion.GetOrCreateTier05Code();
+                        stream = code.Stream;
+                        canonicalToOffset = code.CanonicalToOffset;
+                        instructionCount = instructions.Length;
+                        ip = callerFrame.ProgramCounter;
+                        pc = canonicalToOffset[ip];
                         continue;
                     }
                 default:
@@ -676,6 +714,7 @@ SlowPath:
                 ip = frame.ProgramCounter;
                 if ((uint)ip >= (uint)instructionCount)
                 {
+                    context.SetExitFrame(frame);
                     return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
                 }
 
@@ -685,13 +724,54 @@ SlowPath:
 
             if (slowResult == InterpreterInstructionResult.ContinueWithSchedulerCheck)
             {
+                context.SetExitFrame(frame);
                 return LuaCompiledExit.Continue(
                     frame.ProgramCounter,
                     context.InstructionsConsumed);
             }
 
             frame.ProgramCounter = ip;
+            context.SetExitFrame(frame);
             return MaterializeExit(slowResult, context, ip);
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool UnaryFast(
+        LuaStack stack,
+        LuaFrame frame,
+        int frameBase,
+        byte[] stream,
+        int pc,
+        LuaIrUnaryOperator operation)
+    {
+        var operand = ReadRegister(stack, frameBase, stream[pc + 2]);
+        if (!LuaRuntimeOperations.TryResolvePrimitiveUnary(operation, operand, out var result))
+        {
+            return false;
+        }
+
+        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool BinaryFast(
+        LuaStack stack,
+        LuaFrame frame,
+        int frameBase,
+        byte[] stream,
+        int pc,
+        LuaIrBinaryOperator operation)
+    {
+        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
+        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
+        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(operation, left, right, out var result))
+        {
+            return false;
+        }
+
+        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
+        return true;
     }
 }
