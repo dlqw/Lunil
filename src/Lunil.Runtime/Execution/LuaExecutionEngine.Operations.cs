@@ -27,13 +27,7 @@ internal sealed partial class LuaExecutionEngine
     {
         if (!resolution.RequiresCall)
         {
-            if (expectedResults > 0)
-            {
-                thread.Stack.WriteUnchecked(returnBase, resolution.Value);
-                frame.Top = Math.Max(frame.Top, AddStackOffset(returnBase, 1));
-            }
-
-            frame.ProgramCounter++;
+            WriteImmediateOperationResult(thread, frame, resolution, returnBase, expectedResults);
             return;
         }
 
@@ -1273,7 +1267,13 @@ internal sealed partial class LuaExecutionEngine
         int argumentCount,
         int returnBase,
         int expectedResults,
-        int minimumBase = -1)
+        int minimumBase = -1,
+        LuaProtectedCallKind protectionKind = LuaProtectedCallKind.None,
+        LuaValue errorHandler = default,
+        bool isCloseHandler = false,
+        bool isDebugHook = false,
+        bool isHidden = false,
+        bool scheduleCallHook = true)
     {
         const int emergencyCallDepth = 200;
         var callDepthLimit = thread.UnwindState?.ActiveErrorHandler is not null
@@ -1313,6 +1313,11 @@ internal sealed partial class LuaExecutionEngine
             returnBase,
             expectedResults,
             varArgs,
+            protectionKind,
+            errorHandler,
+            isCloseHandler,
+            isDebugHook,
+            isHidden,
             functionVersion: functionVersion);
         if (argumentStart != @base)
         {
@@ -1354,7 +1359,8 @@ internal sealed partial class LuaExecutionEngine
         }
 
         frame.InstructionRoute = GetInitialFrameInstructionRoute(frame);
-        if (!thread.IsRunningDebugHook && !thread.DebugHook.IsNil &&
+        if (scheduleCallHook && !isDebugHook && !isHidden && !thread.IsRunningDebugHook &&
+            !thread.DebugHook.IsNil &&
             HasDebugHook(thread, LuaDebugHookMask.Call))
         {
             frame.PendingDebugHookEvent = "call";
@@ -1365,6 +1371,22 @@ internal sealed partial class LuaExecutionEngine
 
         thread.PushFrame(frame);
         return frame;
+    }
+
+    private static void WriteImmediateOperationResult(
+        LuaThread thread,
+        LuaFrame frame,
+        LuaOperationResolution resolution,
+        int returnBase,
+        int expectedResults)
+    {
+        if (expectedResults > 0)
+        {
+            thread.Stack.WriteUnchecked(returnBase, resolution.Value);
+            frame.Top = Math.Max(frame.Top, AddStackOffset(returnBase, 1));
+        }
+
+        frame.ProgramCounter++;
     }
 
     private LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>

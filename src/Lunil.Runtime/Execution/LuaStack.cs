@@ -46,6 +46,8 @@ public sealed class LuaStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void WriteUnchecked(int index, LuaValue value)
     {
+        // A single isinst rejects primitive-tagged values faster than explicit sentinel
+        // tag comparisons; the tier2 arithmetic workload measured both forms.
         if (value.TryGetGcObject() is { } target)
         {
             _owner.Owner.WriteBarrierBack(_owner, target);
@@ -99,6 +101,19 @@ public sealed class LuaStack
     }
 
     internal ReadOnlySpan<LuaValue> AsReadOnlySpan(int start, int length)
+    {
+        LunilGuard.NotNegative(start);
+        LunilGuard.NotNegative(length);
+        EnsureCapacity(checked(start + length));
+        return _values.AsSpan(start, length);
+    }
+
+    /// <summary>
+    /// A writable window above the frame registers for native span results. Callers must
+    /// run the owner's write barrier for any collectable value written through this span;
+    /// ordinary execution writes keep using the barrier-checked accessors.
+    /// </summary>
+    internal Span<LuaValue> AsSpan(int start, int length)
     {
         LunilGuard.NotNegative(start);
         LunilGuard.NotNegative(length);

@@ -6,6 +6,15 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.StandardLibrary;
 
+/// <summary>
+/// A single-result native body shared by the array and span registration paths. A dedicated
+/// delegate keeps the ReadOnlySpan parameter legal on netstandard2.1, where Func cannot
+/// take ref-struct arguments.
+/// </summary>
+internal delegate LuaValue LuaSingleResultNativeBody(
+    LuaState state,
+    ReadOnlySpan<LuaValue> arguments);
+
 internal static class LuaLibraryHelpers
 {
     public static LuaValue String(LuaState state, string value) =>
@@ -64,6 +73,28 @@ internal static class LuaLibraryHelpers
         LuaNativeFunctionBody body,
         string? debugName = null) =>
         Set(state, table, name, LuaValue.FromFunction(new LuaNativeFunction(debugName ?? name, body)));
+
+    /// <summary>
+    /// Registers a single-result native that also exposes the allocation-free span fast
+    /// path; the array body delegates to the same implementation so both paths agree.
+    /// </summary>
+    public static void SetSpanFunction(
+        LuaState state,
+        LuaTable table,
+        string name,
+        LuaSingleResultNativeBody body,
+        string? debugName = null)
+    {
+        var descriptor = new LuaNativeFunction(debugName ?? name, (s, arguments) => [body(s, arguments)])
+        {
+            SpanBody = (s, arguments, results) =>
+            {
+                results[0] = body(s, arguments);
+                return 1;
+            },
+        };
+        Set(state, table, name, LuaValue.FromFunction(descriptor));
+    }
 
     public static void SetFunction(
         LuaState state,

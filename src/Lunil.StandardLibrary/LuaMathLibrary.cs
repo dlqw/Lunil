@@ -23,28 +23,28 @@ internal static class LuaMathLibrary
         SetUnary(state, module, "sin", Math.Sin);
         SetUnary(state, module, "sqrt", Math.Sqrt);
         SetUnary(state, module, "tan", Math.Tan);
-        LuaLibraryHelpers.SetFunction(state, module, "abs", Abs);
-        LuaLibraryHelpers.SetFunction(state, module, "atan", Atan);
-        LuaLibraryHelpers.SetFunction(state, module, "ceil", Ceil);
-        LuaLibraryHelpers.SetFunction(state, module, "deg", Deg);
-        LuaLibraryHelpers.SetFunction(state, module, "floor", Floor);
-        LuaLibraryHelpers.SetFunction(state, module, "fmod", Fmod);
-        LuaLibraryHelpers.SetFunction(state, module, "log", Log);
-        LuaLibraryHelpers.SetFunction(state, module, "log10", Log10);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "abs", Abs);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "atan", Atan);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "ceil", Ceil);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "deg", Deg);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "floor", Floor);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "fmod", Fmod);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "log", Log);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "log10", Log10);
         LuaLibraryHelpers.SetFunction(state, module, "max", Max);
         LuaLibraryHelpers.SetFunction(state, module, "min", Min);
         LuaLibraryHelpers.SetFunction(state, module, "modf", Modf);
-        LuaLibraryHelpers.SetFunction(state, module, "rad", Rad);
-        LuaLibraryHelpers.SetFunction(state, module, "tointeger", ToInteger);
-        LuaLibraryHelpers.SetFunction(state, module, "type", NumberType);
-        LuaLibraryHelpers.SetFunction(state, module, "ult", UnsignedLessThan);
-        LuaLibraryHelpers.SetFunction(state, module, "atan2", Atan2);
-        LuaLibraryHelpers.SetFunction(state, module, "pow", Pow);
-        LuaLibraryHelpers.SetFunction(state, module, "sinh", Sinh);
-        LuaLibraryHelpers.SetFunction(state, module, "cosh", Cosh);
-        LuaLibraryHelpers.SetFunction(state, module, "tanh", Tanh);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "rad", Rad);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "tointeger", ToInteger);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "type", NumberType);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "ult", UnsignedLessThan);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "atan2", Atan2);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "pow", Pow);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "sinh", Sinh);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "cosh", Cosh);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "tanh", Tanh);
         LuaLibraryHelpers.SetFunction(state, module, "frexp", Frexp);
-        LuaLibraryHelpers.SetFunction(state, module, "ldexp", Ldexp);
+        LuaLibraryHelpers.SetSpanFunction(state, module, "ldexp", Ldexp);
 
         var random = new LuaRandomState();
         LuaLibraryHelpers.SetFunction(state, module, "random", random.Random);
@@ -62,51 +62,51 @@ internal static class LuaMathLibrary
         LuaTable module,
         string name,
         Func<double, double> operation) =>
-        LuaLibraryHelpers.SetFunction(
+        LuaLibraryHelpers.SetSpanFunction(
             state,
             module,
             name,
             (_, arguments) =>
-                [LuaValue.FromFloat(operation(LuaLibraryHelpers.CheckNumber(arguments, 0, name)))]);
+                LuaValue.FromFloat(operation(LuaLibraryHelpers.CheckNumber(arguments, 0, name))));
 
-    private static LuaValue[] Abs(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue Abs(LuaState _, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "abs");
         if (value.Kind == LuaValueKind.Integer)
         {
             var integer = value.AsInteger();
-            return [LuaValue.FromInteger(integer < 0 ? unchecked(0L - integer) : integer)];
+            return LuaValue.FromInteger(integer < 0 ? unchecked(0L - integer) : integer);
         }
 
-        return [LuaValue.FromFloat(Math.Abs(LuaLibraryHelpers.CheckNumber(arguments, 0, "abs")))];
+        return LuaValue.FromFloat(Math.Abs(LuaLibraryHelpers.CheckNumber(arguments, 0, "abs")));
     }
 
-    private static LuaValue[] Atan(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Atan2(
+    private static LuaValue Atan(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Atan2(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "atan"),
-            LuaLibraryHelpers.OptionalNumber(arguments, 1, 1, "atan")))];
+            LuaLibraryHelpers.OptionalNumber(arguments, 1, 1, "atan")));
 
-    private static LuaValue[] Atan2(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Atan2(
+    private static LuaValue Atan2(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Atan2(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "atan2"),
-            LuaLibraryHelpers.CheckNumber(arguments, 1, "atan2")))];
+            LuaLibraryHelpers.CheckNumber(arguments, 1, "atan2")));
 
-    private static LuaValue[] Pow(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Pow(
+    private static LuaValue Pow(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Pow(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "pow"),
-            LuaLibraryHelpers.CheckNumber(arguments, 1, "pow")))];
+            LuaLibraryHelpers.CheckNumber(arguments, 1, "pow")));
 
-    private static LuaValue[] Log10(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Log10(LuaLibraryHelpers.CheckNumber(arguments, 0, "log10")))];
+    private static LuaValue Log10(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Log10(LuaLibraryHelpers.CheckNumber(arguments, 0, "log10")));
 
-    private static LuaValue[] Sinh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Sinh(LuaLibraryHelpers.CheckNumber(arguments, 0, "sinh")))];
+    private static LuaValue Sinh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Sinh(LuaLibraryHelpers.CheckNumber(arguments, 0, "sinh")));
 
-    private static LuaValue[] Cosh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Cosh(LuaLibraryHelpers.CheckNumber(arguments, 0, "cosh")))];
+    private static LuaValue Cosh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Cosh(LuaLibraryHelpers.CheckNumber(arguments, 0, "cosh")));
 
-    private static LuaValue[] Tanh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(Math.Tanh(LuaLibraryHelpers.CheckNumber(arguments, 0, "tanh")))];
+    private static LuaValue Tanh(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(Math.Tanh(LuaLibraryHelpers.CheckNumber(arguments, 0, "tanh")));
 
     private static LuaValue[] Frexp(LuaState _, ReadOnlySpan<LuaValue> arguments)
     {
@@ -124,16 +124,16 @@ internal static class LuaMathLibrary
         ];
     }
 
-    private static LuaValue[] Ldexp(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(LunilMath.ScaleB(
+    private static LuaValue Ldexp(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(LunilMath.ScaleB(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "ldexp"),
-            checked((int)LuaLibraryHelpers.CheckInteger(arguments, 1, "ldexp"))))];
+            checked((int)LuaLibraryHelpers.CheckInteger(arguments, 1, "ldexp"))));
 
-    private static LuaValue[] Floor(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [RoundToIntegerWhenPossible(arguments, "floor", Math.Floor)];
+    private static LuaValue Floor(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        RoundToIntegerWhenPossible(arguments, "floor", Math.Floor);
 
-    private static LuaValue[] Ceil(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [RoundToIntegerWhenPossible(arguments, "ceil", Math.Ceiling)];
+    private static LuaValue Ceil(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        RoundToIntegerWhenPossible(arguments, "ceil", Math.Ceiling);
 
     private static LuaValue RoundToIntegerWhenPossible(
         ReadOnlySpan<LuaValue> arguments,
@@ -150,7 +150,7 @@ internal static class LuaMathLibrary
             LuaLibraryHelpers.CheckNumber(arguments, 0, name)));
     }
 
-    private static LuaValue[] Fmod(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue Fmod(LuaState _, ReadOnlySpan<LuaValue> arguments)
     {
         var left = LuaLibraryHelpers.Required(arguments, 0, "fmod");
         var right = LuaLibraryHelpers.Required(arguments, 1, "fmod");
@@ -162,12 +162,12 @@ internal static class LuaMathLibrary
                 throw LuaLibraryHelpers.BadArgument("fmod", 1, "zero");
             }
 
-            return [LuaValue.FromInteger(divisor == -1 ? 0 : left.AsInteger() % divisor)];
+            return LuaValue.FromInteger(divisor == -1 ? 0 : left.AsInteger() % divisor);
         }
 
-        return [LuaValue.FromFloat(
+        return LuaValue.FromFloat(
             LuaLibraryHelpers.CheckNumber(arguments, 0, "fmod") %
-            LuaLibraryHelpers.CheckNumber(arguments, 1, "fmod"))];
+            LuaLibraryHelpers.CheckNumber(arguments, 1, "fmod"));
     }
 
     private static LuaValue[] Modf(LuaState _, ReadOnlySpan<LuaValue> arguments)
@@ -187,50 +187,50 @@ internal static class LuaMathLibrary
         ];
     }
 
-    private static LuaValue[] Log(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue Log(LuaState _, ReadOnlySpan<LuaValue> arguments)
     {
         var number = LuaLibraryHelpers.CheckNumber(arguments, 0, "log");
         if (arguments.Length < 2 || arguments[1].IsNil)
         {
-            return [LuaValue.FromFloat(Math.Log(number))];
+            return LuaValue.FromFloat(Math.Log(number));
         }
 
         var @base = LuaLibraryHelpers.CheckNumber(arguments, 1, "log");
         var result = @base == 2 ? LunilMath.Log2(number) :
             @base == 10 ? Math.Log10(number) : Math.Log(number) / Math.Log(@base);
-        return [LuaValue.FromFloat(result)];
+        return LuaValue.FromFloat(result);
     }
 
-    private static LuaValue[] Deg(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(LuaLibraryHelpers.CheckNumber(arguments, 0, "deg") * (180 / Pi))];
+    private static LuaValue Deg(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(LuaLibraryHelpers.CheckNumber(arguments, 0, "deg") * (180 / Pi));
 
-    private static LuaValue[] Rad(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(LuaLibraryHelpers.CheckNumber(arguments, 0, "rad") * (Pi / 180))];
+    private static LuaValue Rad(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromFloat(LuaLibraryHelpers.CheckNumber(arguments, 0, "rad") * (Pi / 180));
 
-    private static LuaValue[] ToInteger(LuaState _, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue ToInteger(LuaState _, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "tointeger");
         return LuaValueOperations.TryToNumber(value, out var number) &&
             number.TryGetInteger(out var integer)
-                ? [LuaValue.FromInteger(integer)]
-                : [LuaValue.Nil];
+                ? LuaValue.FromInteger(integer)
+                : LuaValue.Nil;
     }
 
-    private static LuaValue[] NumberType(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private static LuaValue NumberType(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var value = LuaLibraryHelpers.Required(arguments, 0, "type");
         return value.Kind switch
         {
-            LuaValueKind.Integer => [LuaLibraryHelpers.String(state, "integer")],
-            LuaValueKind.Float => [LuaLibraryHelpers.String(state, "float")],
-            _ => [LuaValue.Nil],
+            LuaValueKind.Integer => LuaLibraryHelpers.String(state, "integer"),
+            LuaValueKind.Float => LuaLibraryHelpers.String(state, "float"),
+            _ => LuaValue.Nil,
         };
     }
 
-    private static LuaValue[] UnsignedLessThan(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromBoolean(
+    private static LuaValue UnsignedLessThan(LuaState _, ReadOnlySpan<LuaValue> arguments) =>
+        LuaValue.FromBoolean(
             (ulong)LuaLibraryHelpers.CheckInteger(arguments, 0, "ult") <
-            (ulong)LuaLibraryHelpers.CheckInteger(arguments, 1, "ult"))];
+            (ulong)LuaLibraryHelpers.CheckInteger(arguments, 1, "ult"));
 
     private static LuaNativeStep Min(
         LuaNativeCallContext context,
