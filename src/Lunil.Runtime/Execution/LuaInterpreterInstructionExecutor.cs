@@ -35,7 +35,8 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         }
 
         var tier05Code = frame.FunctionVersion.GetOrCreateTier05Code();
-        if (tier05Code.HasFastInstructions)
+        if (tier05Code.HasFastInstructions &&
+            frame.InstructionRoute == LuaFrameInstructionRoute.Interpreter)
         {
             return LuaTier05Interpreter.Run(
                 engine,
