@@ -308,7 +308,11 @@ public sealed class LuaTable : LuaGcObject
             return true;
         }
 
-        Owner.ValidateValue(value);
+        if (!Owner.SkipMutationValidation)
+        {
+            Owner.ValidateValue(value);
+        }
+
         var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
         barrierOwner.WriteBackValidated(value);
         SetHash(key, value);
@@ -326,7 +330,11 @@ public sealed class LuaTable : LuaGcObject
         out LuaValue value,
         out LuaTableExistingEntry entry)
     {
-        Owner.ValidateValue(key);
+        if (!Owner.SkipMutationValidation)
+        {
+            Owner.ValidateValue(key);
+        }
+
         if (key.IsNil || key.Kind == LuaValueKind.Float && double.IsNaN(key.AsFloat()))
         {
             value = LuaValue.Nil;
@@ -370,7 +378,11 @@ public sealed class LuaTable : LuaGcObject
         LuaValue key,
         out LuaValue value)
     {
-        Owner.ValidateValue(key);
+        if (!Owner.SkipMutationValidation)
+        {
+            Owner.ValidateValue(key);
+        }
+
         if (entry.IsArray)
         {
             if ((uint)entry.Index < (uint)_array.Count &&
@@ -516,8 +528,11 @@ public sealed class LuaTable : LuaGcObject
         LuaValue value)
     {
         ValidateKey(key);
-        Owner.ValidateValue(key);
-        Owner.ValidateValue(value);
+        if (!Owner.SkipMutationValidation)
+        {
+            Owner.ValidateValue(key);
+            Owner.ValidateValue(value);
+        }
         var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
         barrierOwner.WriteBackValidated(key);
         barrierOwner.WriteBackValidated(value);
@@ -572,8 +587,12 @@ public sealed class LuaTable : LuaGcObject
             key = LuaValue.FromInteger(normalized);
         }
 
-        Owner.ValidateValue(key);
-        Owner.ValidateValue(value);
+        if (!Owner.SkipMutationValidation)
+        {
+            Owner.ValidateValue(key);
+            Owner.ValidateValue(value);
+        }
+
         var barrierOwner = Owner.ValidateWriteBarrierOwner(this);
         barrierOwner.WriteBackValidated(key);
         barrierOwner.WriteBackValidated(value);

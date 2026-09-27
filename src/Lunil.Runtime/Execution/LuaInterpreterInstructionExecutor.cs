@@ -10,7 +10,7 @@ namespace Lunil.Runtime.Execution;
 /// <summary>Reference canonical-instruction executor beneath the shared scheduler.</summary>
 internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecutor
 {
-    private const int CompactSafePointInterval = 32;
+    internal const int CompactSafePointInterval = 32;
 
     public LuaFrameInstructionRoute GetInitialFrameInstructionRoute(LuaFrame frame) =>
         LuaFrameInstructionRoute.Interpreter;
@@ -32,6 +32,20 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 thread,
                 frame,
                 in instruction);
+        }
+
+        var tier05Code = frame.FunctionVersion.GetOrCreateTier05Code();
+        if (tier05Code.HasFastInstructions &&
+            frame.InstructionRoute == LuaFrameInstructionRoute.Interpreter)
+        {
+            return LuaTier05Interpreter.Run(
+                engine,
+                context,
+                state,
+                thread,
+                frame,
+                ImmutableCollectionsMarshal.AsArray(frame.Function.Instructions)!,
+                tier05Code);
         }
 
         // The stack object identity, the frame base, and the heap reference are stable for
@@ -137,11 +151,11 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static LuaValue ReadRegister(LuaStack stack, int frameBase, int register) =>
+    internal static LuaValue ReadRegister(LuaStack stack, int frameBase, int register) =>
         stack.ReadUnchecked(frameBase + register);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void WriteRegister(
+    internal static void WriteRegister(
         LuaStack stack,
         LuaFrame frame,
         int frameBase,
@@ -171,6 +185,27 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
             return InterpreterInstructionResult.InstructionBudget;
         }
 
+        return ExecuteInstructionCore(
+            engine,
+            context,
+            state,
+            thread,
+            frame,
+            stack,
+            frameBase,
+            in instruction);
+    }
+
+    internal static InterpreterInstructionResult ExecuteInstructionCore(
+        LuaExecutionEngine engine,
+        LuaExecutionContext context,
+        LuaState state,
+        LuaThread thread,
+        LuaFrame frame,
+        LuaStack stack,
+        int frameBase,
+        in LuaIrInstruction instruction)
+    {
         switch (instruction.Opcode)
         {
             case LuaIrOpcode.LoadConstant:
@@ -509,7 +544,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static LuaCompiledExit MaterializeExit(
+    internal static LuaCompiledExit MaterializeExit(
         InterpreterInstructionResult result,
         LuaExecutionContext context,
         int programCounter) => result switch
@@ -535,7 +570,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                 $"Unknown interpreter instruction result {result}."),
         };
 
-    private enum InterpreterInstructionResult : byte
+    internal enum InterpreterInstructionResult : byte
     {
         Continue,
         ContinueWithSchedulerCheck,

@@ -1260,7 +1260,7 @@ internal sealed partial class LuaExecutionEngine
         return frame;
     }
 
-    private LuaFrame PushFrameFromStack(
+    internal LuaFrame PushFrameFromStack(
         LuaThread thread,
         LuaClosure closure,
         int argumentStart,
@@ -1586,7 +1586,7 @@ internal sealed partial class LuaExecutionEngine
                 $"Instruction {instruction.Opcode} is not a metamethod operation."),
         };
 
-    private void WriteCallResults(
+    internal void WriteCallResults(
         LuaThread thread,
         LuaFrame caller,
         int returnBase,

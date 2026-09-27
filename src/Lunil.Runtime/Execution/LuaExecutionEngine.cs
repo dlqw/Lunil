@@ -297,6 +297,9 @@ internal sealed partial class LuaExecutionEngine
             throw new LuaRuntimeException("C stack overflow");
         }
 
+        state.Heap.SkipMutationValidation =
+            _options.PerformanceProfile == LuaPerformanceProfile.Unchecked;
+
         var previousRunningThread = state.RunningThread;
         var previousRunningThreadIsYieldable = state.RunningThreadIsYieldable;
         var previousIsRunningFinalizer = state.IsRunningFinalizer;
@@ -450,6 +453,7 @@ internal sealed partial class LuaExecutionEngine
                 var frame = thread.CurrentFrame;
                 ImmutableArray<LuaValue>? result;
                 LuaExecutionContext? pendingInstructionContext = null;
+                LuaExecutionContext? iterationContext = null;
                 try
                 {
                     if (frame.Continuation.Kind == LuaContinuationKind.ProtectedCall)
@@ -490,6 +494,7 @@ internal sealed partial class LuaExecutionEngine
                         }
 
                         var executionContext = activation.ExecutionContext;
+                        iterationContext = executionContext;
                         if (executionContext is null)
                         {
                             executionContext = new LuaExecutionContext(
@@ -651,7 +656,8 @@ internal sealed partial class LuaExecutionEngine
                             pendingInstructionContext.InstructionsConsumed);
                     }
 
-                    var exceptionFrame = pendingInstructionContext?.ExitFrame ?? frame;
+                    var exceptionFrame = pendingInstructionContext?.ExitFrame ??
+                        iterationContext?.ExitFrame ?? frame;
                     var enrichedException = LuaRuntimeErrorForensics.EnrichRuntimeException(
                         thread,
                         exceptionFrame,
