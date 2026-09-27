@@ -60,10 +60,10 @@ internal static class LuaTier05Interpreter
         {
             if ((uint)ip >= (uint)instructionCount)
             {
-                                frame.ProgramCounter = ip;
+                frame.ProgramCounter = ip;
                 frame.Top = top;
                 context.SetExitFrame(frame);
-            return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
+                return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
             }
 
             if (!context.TryReserveSingleInterpreterInstruction())
@@ -89,10 +89,10 @@ internal static class LuaTier05Interpreter
                         frame,
                         runSafePoint: true))
                 {
-                                        context.SetExitFrame(frame);
-            return LuaCompiledExit.Continue(
-                        frame.ProgramCounter,
-                        context.InstructionsConsumed);
+                    context.SetExitFrame(frame);
+                    return LuaCompiledExit.Continue(
+                                frame.ProgramCounter,
+                                context.InstructionsConsumed);
                 }
 
                 top = frame.Top;
@@ -848,7 +848,7 @@ internal static class LuaTier05Interpreter
                             expectedResults);
                         if (callee.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
-                                                        context.SetExitFrame(callee);
+                            context.SetExitFrame(callee);
                             return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
                         }
 
@@ -916,7 +916,7 @@ internal static class LuaTier05Interpreter
                             tailExpectedResults);
                         if (replacement.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
-                                                        context.SetExitFrame(replacement);
+                            context.SetExitFrame(replacement);
                             return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
                         }
 
@@ -939,7 +939,7 @@ internal static class LuaTier05Interpreter
                     goto SlowPath;
             }
 
-SlowPath:
+        SlowPath:
             frame.ProgramCounter = ip;
             frame.Top = top;
             var slowResult = ExecuteInstructionCore(
@@ -956,7 +956,7 @@ SlowPath:
                 ip = frame.ProgramCounter;
                 if ((uint)ip >= (uint)instructionCount)
                 {
-                                        context.SetExitFrame(frame);
+                    context.SetExitFrame(frame);
                     return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
                 }
 
@@ -973,14 +973,14 @@ SlowPath:
 
             if (slowResult == InterpreterInstructionResult.ContinueWithSchedulerCheck)
             {
-                                context.SetExitFrame(frame);
+                context.SetExitFrame(frame);
                 return LuaCompiledExit.Continue(
                     frame.ProgramCounter,
                     context.InstructionsConsumed);
             }
 
             frame.ProgramCounter = ip;
-                        context.SetExitFrame(frame);
+            context.SetExitFrame(frame);
             return MaterializeExit(slowResult, context, ip);
         }
     }
