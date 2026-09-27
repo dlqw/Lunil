@@ -205,11 +205,6 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         int frameBase,
         in LuaIrInstruction instruction)
     {
-        if (!context.TryReserveSingleInterpreterInstruction())
-        {
-            return InterpreterInstructionResult.InstructionBudget;
-        }
-
         switch (instruction.Opcode)
         {
             case LuaIrOpcode.LoadConstant:

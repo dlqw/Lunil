@@ -11,11 +11,6 @@ namespace Lunil.Runtime.Execution;
 
 internal static class LuaTier05Interpreter
 {
-    private static readonly bool DisableInlineCall =
-        Environment.GetEnvironmentVariable("LUNIL_T05_DISABLE_CALL") is not null;
-
-    private static readonly bool EnableInlineReturn =
-        Environment.GetEnvironmentVariable("LUNIL_T05_INLINE_RETURN") is not null;
 
     internal static LuaCompiledExit Run(
         LuaExecutionEngine engine,
@@ -52,26 +47,29 @@ internal static class LuaTier05Interpreter
         var stream = code.Stream;
         var canonicalToOffset = code.CanonicalToOffset;
         var stack = thread.Stack;
+        var values = stack.Values;
         var frameBase = frame.Base;
+        var top = frame.Top;
         var heap = state.Heap;
         var upvalues = frame.Closure.Upvalues;
         var instructionCount = instructions.Length;
         var pc = canonicalToOffset[ip];
         var untilSafePoint = CompactSafePointInterval;
-        var inlineDepth = 0;
 
         while (true)
         {
             if ((uint)ip >= (uint)instructionCount)
             {
-                frame.ProgramCounter = ip;
+                                frame.ProgramCounter = ip;
+                frame.Top = top;
                 context.SetExitFrame(frame);
-                return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
+            return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
             }
 
             if (!context.TryReserveSingleInterpreterInstruction())
             {
                 frame.ProgramCounter = ip;
+                frame.Top = top;
                 context.SetExitFrame(frame);
                 return MaterializeExit(
                     InterpreterInstructionResult.InstructionBudget,
@@ -83,7 +81,7 @@ internal static class LuaTier05Interpreter
             {
                 untilSafePoint = CompactSafePointInterval;
                 frame.ProgramCounter = ip;
-                thread.AdvanceFramePoolEpoch();
+                frame.Top = top;
                 if (!engine.TryContinueCompactInterpreterLoop(
                         context,
                         state,
@@ -91,110 +89,153 @@ internal static class LuaTier05Interpreter
                         frame,
                         runSafePoint: true))
                 {
-                    context.SetExitFrame(frame);
-                    return LuaCompiledExit.Continue(
+                                        context.SetExitFrame(frame);
+            return LuaCompiledExit.Continue(
                         frame.ProgramCounter,
                         context.InstructionsConsumed);
                 }
+
+                top = frame.Top;
+                values = stack.Values;
             }
 
             var op = stream[pc];
             switch (op)
             {
                 case (int)LuaTier05Opcode.LoadConstInt:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        LuaValue.FromInteger(
-                            BinaryPrimitives.ReadInt32LittleEndian(stream.AsSpan(pc + 2, 4))));
-                    pc += 6;
-                    ip++;
-                    continue;
-                case (int)LuaTier05Opcode.LoadConstIntWide:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        LuaValue.FromInteger(
-                            BinaryPrimitives.ReadInt64LittleEndian(stream.AsSpan(pc + 2, 8))));
-                    pc += 10;
-                    ip++;
-                    continue;
-                case (int)LuaTier05Opcode.LoadConstFloat:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        LuaValue.FromFloat(BitConverter.Int64BitsToDouble(
-                            BinaryPrimitives.ReadInt64LittleEndian(stream.AsSpan(pc + 2, 8)))));
-                    pc += 10;
-                    ip++;
-                    continue;
-                case (int)LuaTier05Opcode.LoadConst:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        LuaExecutionEngine.MaterializeConstant(
-                            state,
-                            thread,
-                            frame,
-                            stream[pc + 2]));
-                    pc += 3;
-                    ip++;
-                    continue;
-                case (int)LuaTier05Opcode.LoadNilOne:
-                    WriteRegister(stack, frame, frameBase, stream[pc + 1], LuaValue.Nil);
-                    pc += 2;
-                    ip++;
-                    continue;
-                case (int)LuaTier05Opcode.LoadNil:
-                    for (var index = 0; index < stream[pc + 2]; index++)
                     {
-                        WriteRegister(
-                            stack,
-                            frame,
-                            frameBase,
-                            stream[pc + 1] + index,
-                            LuaValue.Nil);
-                    }
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = LuaValue.FromInteger(
+                            BinaryPrimitives.ReadInt32LittleEndian(stream.AsSpan(pc + 2, 4)));
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
 
-                    pc += 3;
-                    ip++;
-                    continue;
+                        pc += 6;
+                        ip++;
+                        continue;
+                    }
+                case (int)LuaTier05Opcode.LoadConstIntWide:
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = LuaValue.FromInteger(
+                            BinaryPrimitives.ReadInt64LittleEndian(stream.AsSpan(pc + 2, 8)));
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 10;
+                        ip++;
+                        continue;
+                    }
+                case (int)LuaTier05Opcode.LoadConstFloat:
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = LuaValue.FromFloat(BitConverter.Int64BitsToDouble(
+                            BinaryPrimitives.ReadInt64LittleEndian(stream.AsSpan(pc + 2, 8))));
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 10;
+                        ip++;
+                        continue;
+                    }
+                case (int)LuaTier05Opcode.LoadConst:
+                    {
+                        frame.Top = top;
+                        var destination = frameBase + stream[pc + 1];
+                        stack.WriteUnchecked(
+                            destination,
+                            LuaExecutionEngine.MaterializeConstant(
+                                state,
+                                thread,
+                                frame,
+                                stream[pc + 2]));
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 3;
+                        ip++;
+                        continue;
+                    }
+                case (int)LuaTier05Opcode.LoadNilOne:
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = LuaValue.Nil;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 2;
+                        ip++;
+                        continue;
+                    }
+                case (int)LuaTier05Opcode.LoadNil:
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        var count = stream[pc + 2];
+                        for (var index = 0; index < count; index++)
+                        {
+                            values[destination + index] = LuaValue.Nil;
+                        }
+
+                        if (top < destination + count)
+                        {
+                            top = destination + count;
+                        }
+
+                        pc += 3;
+                        ip++;
+                        continue;
+                    }
                 case (int)LuaTier05Opcode.Move:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        ReadRegister(stack, frameBase, stream[pc + 2]));
-                    pc += 3;
-                    ip++;
-                    continue;
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        stack.WriteUnchecked(destination, values[frameBase + stream[pc + 2]]);
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 3;
+                        ip++;
+                        continue;
+                    }
                 case (int)LuaTier05Opcode.SetTop:
-                    LuaExecutionEngine.SetFrameTop(thread, frame, frameBase + stream[pc + 1]);
-                    pc += 2;
-                    ip++;
-                    continue;
+                    {
+                        var newTop = frameBase + stream[pc + 1];
+                        if (top > newTop)
+                        {
+                            Array.Clear(values, newTop, top - newTop);
+                        }
+
+                        top = newTop;
+                        pc += 2;
+                        ip++;
+                        continue;
+                    }
                 case (int)LuaTier05Opcode.GetUpvalue:
-                    WriteRegister(
-                        stack,
-                        frame,
-                        frameBase,
-                        stream[pc + 1],
-                        upvalues[stream[pc + 2]].Value);
-                    pc += 3;
-                    ip++;
-                    continue;
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        stack.WriteUnchecked(destination, upvalues[stream[pc + 2]].Value);
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
+                        pc += 3;
+                        ip++;
+                        continue;
+                    }
                 case (int)LuaTier05Opcode.SetUpvalue:
-                    upvalues[stream[pc + 1]].Value =
-                        ReadRegister(stack, frameBase, stream[pc + 2]);
+                    upvalues[stream[pc + 1]].Value = values[frameBase + stream[pc + 2]];
                     pc += 3;
                     ip++;
                     continue;
@@ -205,13 +246,16 @@ internal static class LuaTier05Interpreter
                 case (int)LuaTier05Opcode.JumpIfFalse:
                 case (int)LuaTier05Opcode.JumpIfTrue:
                     {
-                        var condition = ReadRegister(stack, frameBase, stream[pc + 1]).IsTruthy;
+                        var condition = values[frameBase + stream[pc + 1]].IsTruthy;
                         if (stream[pc + 3] != 0)
                         {
-                            LuaExecutionEngine.SetFrameTop(
-                                thread,
-                                frame,
-                                frameBase + stream[pc + 2]);
+                            var newTop = frameBase + stream[pc + 2];
+                            if (top > newTop)
+                            {
+                                Array.Clear(values, newTop, top - newTop);
+                            }
+
+                            top = newTop;
                         }
 
                         var branchTaken = op == (int)LuaTier05Opcode.JumpIfTrue
@@ -233,14 +277,13 @@ internal static class LuaTier05Interpreter
                 case (int)LuaTier05Opcode.NumericForLoop:
                     {
                         var control = stream[pc + 1];
-                        var step = ReadRegister(stack, frameBase, control + 2);
+                        var step = values[frameBase + control + 2];
                         if (!step.IsInteger)
                         {
                             goto SlowPath;
                         }
 
-                        var counter = ReadRegister(stack, frameBase, control + 1);
-                        var count = unchecked((ulong)counter.AsInteger());
+                        var count = unchecked((ulong)values[frameBase + control + 1].AsInteger());
                         if (count == 0)
                         {
                             pc += 6;
@@ -248,45 +291,50 @@ internal static class LuaTier05Interpreter
                             continue;
                         }
 
-                        var index = ReadRegister(stack, frameBase, control);
-                        index = LuaValue.FromInteger(
-                            unchecked(index.AsInteger() + step.AsInteger()));
-                        WriteRegister(
-                            stack,
-                            frame,
-                            frameBase,
-                            control + 1,
-                            LuaValue.FromInteger(unchecked((long)(count - 1))));
-                        WriteRegister(stack, frame, frameBase, control, index);
-                        WriteRegister(stack, frame, frameBase, control + 3, index);
+                        var index = LuaValue.FromInteger(unchecked(
+                            values[frameBase + control].AsInteger() + step.AsInteger()));
+                        values[frameBase + control + 1] = LuaValue.FromInteger(
+                            unchecked((long)(count - 1)));
+                        values[frameBase + control] = index;
+                        values[frameBase + control + 3] = index;
+                        if (top <= frameBase + control + 3)
+                        {
+                            top = frameBase + control + 4;
+                        }
+
                         ip = BinaryPrimitives.ReadInt32LittleEndian(stream.AsSpan(pc + 2, 4));
                         pc = canonicalToOffset[ip];
                         continue;
                     }
                 case (int)LuaTier05Opcode.GetTable:
                     {
-                        var target = ReadRegister(stack, frameBase, stream[pc + 2]);
+                        frame.Top = top;
+                        var target = values[frameBase + stream[pc + 2]];
                         if (target.TryGetTable() is not { } table || table.Metatable is not null)
                         {
                             goto SlowPath;
                         }
 
-                        WriteRegister(
-                            stack,
-                            frame,
-                            frameBase,
-                            stream[pc + 1],
-                            table.Get(ReadRegister(stack, frameBase, stream[pc + 3])));
+                        var destination = frameBase + stream[pc + 1];
+                        stack.WriteUnchecked(
+                            destination,
+                            table.Get(values[frameBase + stream[pc + 3]]));
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
+
                         pc += 4;
                         ip++;
                         continue;
                     }
                 case (int)LuaTier05Opcode.SetTable:
                     {
-                        var target = ReadRegister(stack, frameBase, stream[pc + 1]);
-                        var key = ReadRegister(stack, frameBase, stream[pc + 2]);
-                        var value = ReadRegister(stack, frameBase, stream[pc + 3]);
-                        if (target.TryGetTable() is not { } table || table.Metatable is null)
+                        frame.Top = top;
+                        var target = values[frameBase + stream[pc + 1]];
+                        var key = values[frameBase + stream[pc + 2]];
+                        var value = values[frameBase + stream[pc + 3]];
+                        if (target.TryGetTable() is not { } table || table.Metatable is not null)
                         {
                             goto SlowPath;
                         }
@@ -309,14 +357,23 @@ internal static class LuaTier05Interpreter
                 case (int)LuaTier05Opcode.LogicalNot:
                 case (int)LuaTier05Opcode.Length:
                     if (!UnaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            (LuaIrUnaryOperator)(op - (int)LuaTier05Opcode.Negate)))
+                            (LuaIrUnaryOperator)(op - (int)LuaTier05Opcode.Negate),
+                            out var unaryResult))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = unaryResult;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 3;
@@ -324,14 +381,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryAdd:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Add))
+                            LuaIrBinaryOperator.Add,
+                            out var binaryAdd))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryAdd;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -339,14 +405,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinarySubtract:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Subtract))
+                            LuaIrBinaryOperator.Subtract,
+                            out var binarySubtract))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binarySubtract;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -354,14 +429,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryMultiply:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Multiply))
+                            LuaIrBinaryOperator.Multiply,
+                            out var binaryMultiply))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryMultiply;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -369,14 +453,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryDivide:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Divide))
+                            LuaIrBinaryOperator.Divide,
+                            out var binaryDivide))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryDivide;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -384,14 +477,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryFloorDivide:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.FloorDivide))
+                            LuaIrBinaryOperator.FloorDivide,
+                            out var binaryFloorDivide))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryFloorDivide;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -399,14 +501,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryModulo:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Modulo))
+                            LuaIrBinaryOperator.Modulo,
+                            out var binaryModulo))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryModulo;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -414,14 +525,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryPower:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Power))
+                            LuaIrBinaryOperator.Power,
+                            out var binaryPower))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryPower;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -429,14 +549,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryEqual:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.Equal))
+                            LuaIrBinaryOperator.Equal,
+                            out var binaryEqual))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryEqual;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -444,14 +573,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryNotEqual:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.NotEqual))
+                            LuaIrBinaryOperator.NotEqual,
+                            out var binaryNotEqual))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryNotEqual;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -459,14 +597,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryLessThan:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.LessThan))
+                            LuaIrBinaryOperator.LessThan,
+                            out var binaryLessThan))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryLessThan;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -474,14 +621,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryLessThanOrEqual:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.LessThanOrEqual))
+                            LuaIrBinaryOperator.LessThanOrEqual,
+                            out var binaryLessThanOrEqual))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryLessThanOrEqual;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -489,14 +645,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryGreaterThan:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.GreaterThan))
+                            LuaIrBinaryOperator.GreaterThan,
+                            out var binaryGreaterThan))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryGreaterThan;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -504,14 +669,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryGreaterThanOrEqual:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.GreaterThanOrEqual))
+                            LuaIrBinaryOperator.GreaterThanOrEqual,
+                            out var binaryGreaterThanOrEqual))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryGreaterThanOrEqual;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -519,14 +693,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseAnd:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.BitwiseAnd))
+                            LuaIrBinaryOperator.BitwiseAnd,
+                            out var binaryBitwiseAnd))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryBitwiseAnd;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -534,14 +717,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseOr:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.BitwiseOr))
+                            LuaIrBinaryOperator.BitwiseOr,
+                            out var binaryBitwiseOr))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryBitwiseOr;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -549,14 +741,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryBitwiseXor:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.BitwiseXor))
+                            LuaIrBinaryOperator.BitwiseXor,
+                            out var binaryBitwiseXor))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryBitwiseXor;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -564,14 +765,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryShiftLeft:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.ShiftLeft))
+                            LuaIrBinaryOperator.ShiftLeft,
+                            out var binaryShiftLeft))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryShiftLeft;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -579,14 +789,23 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.BinaryShiftRight:
                     if (!BinaryFast(
-                            stack,
-                            frame,
+                            values,
                             frameBase,
                             stream,
                             pc,
-                            LuaIrBinaryOperator.ShiftRight))
+                            LuaIrBinaryOperator.ShiftRight,
+                            out var binaryShiftRight))
                     {
                         goto SlowPath;
+                    }
+
+                    {
+                        var destination = frameBase + stream[pc + 1];
+                        values[destination] = binaryShiftRight;
+                        if (top <= destination)
+                        {
+                            top = destination + 1;
+                        }
                     }
 
                     pc += 4;
@@ -594,14 +813,13 @@ internal static class LuaTier05Interpreter
                     continue;
                 case (int)LuaTier05Opcode.Call:
                     {
-                        if (DisableInlineCall ||
-                            frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
+                        if (frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
                             goto SlowPath;
                         }
 
                         var functionIndex = frameBase + stream[pc + 1];
-                        var closure = ReadRegister(stack, frameBase, stream[pc + 1]).TryGetClosure();
+                        var closure = values[functionIndex].TryGetClosure();
                         if (closure is null)
                         {
                             goto SlowPath;
@@ -613,13 +831,14 @@ internal static class LuaTier05Interpreter
                             goto SlowPath;
                         }
 
+                        frame.ProgramCounter = ip + 1;
+                        frame.Top = top;
                         var encodedArgumentCount = stream[pc + 2];
                         var expectedResults = stream[pc + 3] == 0 ? -1 : stream[pc + 3] - 1;
                         var argumentStart = functionIndex + 1;
                         var argumentCount = encodedArgumentCount == 0
                             ? Math.Max(0, frame.Top - argumentStart)
                             : encodedArgumentCount - 1;
-                        frame.ProgramCounter = ip + 1;
                         var callee = engine.PushFrameFromStack(
                             thread,
                             closure,
@@ -629,75 +848,27 @@ internal static class LuaTier05Interpreter
                             expectedResults);
                         if (callee.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
-                            context.SetExitFrame(callee);
+                                                        context.SetExitFrame(callee);
                             return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
                         }
 
                         frame = callee;
                         frameBase = callee.Base;
+                        top = callee.Top;
                         upvalues = callee.Closure.Upvalues;
                         instructions = ImmutableCollectionsMarshal.AsArray(callee.Function.Instructions)!;
                         code = calleeCode;
                         stream = code.Stream;
                         canonicalToOffset = code.CanonicalToOffset;
                         instructionCount = instructions.Length;
-                        inlineDepth++;
+                        values = stack.Values;
                         ip = 0;
                         pc = 0;
                         continue;
                     }
-                case (int)LuaTier05Opcode.Return:
-                    {
-                        if (!EnableInlineReturn ||
-                            inlineDepth == 0 ||
-                            frame.Continuation.Kind != LuaContinuationKind.None ||
-                            frame.Continuation.ProtectionKind != LuaProtectedCallKind.None ||
-                            frame.Continuation.IsCloseHandler ||
-                            frame.ToBeClosedSlots.Count != 0 ||
-                            frame.IsDebugHook ||
-                            thread.UnwindState is not null ||
-                            thread.FrameCount <= 1 ||
-                            thread.Frames[thread.FrameCount - 2].Continuation.Kind !=
-                                LuaContinuationKind.None)
-                        {
-                            goto SlowPath;
-                        }
-
-                        var start = frameBase + stream[pc + 1];
-                        var encodedResultCount = stream[pc + 2];
-                        var count = encodedResultCount == 0
-                            ? Math.Max(0, frame.Top - start)
-                            : encodedResultCount - 1;
-                        var returnBase = frame.ReturnBase;
-                        var expectedResults = frame.ExpectedResults;
-                        var callerFrame = thread.Frames[thread.FrameCount - 2];
-                        thread.CloseUpvalues(frameBase);
-                        var results = thread.Stack.AsReadOnlySpan(start, count);
-                        thread.PopFrame();
-                        engine.WriteCallResults(
-                            thread,
-                            callerFrame,
-                            returnBase,
-                            expectedResults,
-                            results);
-                        inlineDepth--;
-                        frame = callerFrame;
-                        frameBase = callerFrame.Base;
-                        upvalues = callerFrame.Closure.Upvalues;
-                        instructions = ImmutableCollectionsMarshal.AsArray(
-                            callerFrame.Function.Instructions)!;
-                        code = callerFrame.FunctionVersion.GetOrCreateTier05Code();
-                        stream = code.Stream;
-                        canonicalToOffset = code.CanonicalToOffset;
-                        instructionCount = instructions.Length;
-                        ip = callerFrame.ProgramCounter;
-                        pc = canonicalToOffset[ip];
-                        continue;
-                    }
                 case (int)LuaTier05Opcode.TailCall:
                     {
-                        if (DisableInlineCall ||
-                            frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter ||
+                        if (frame.InstructionRoute != LuaFrameInstructionRoute.Interpreter ||
                             frame.Continuation.Kind != LuaContinuationKind.None ||
                             frame.Continuation.ProtectionKind != LuaProtectedCallKind.None ||
                             frame.Continuation.IsCloseHandler ||
@@ -709,8 +880,7 @@ internal static class LuaTier05Interpreter
                         }
 
                         var tailFunctionIndex = frameBase + stream[pc + 1];
-                        var tailClosure =
-                            ReadRegister(stack, frameBase, stream[pc + 1]).TryGetClosure();
+                        var tailClosure = values[tailFunctionIndex].TryGetClosure();
                         if (tailClosure is null)
                         {
                             goto SlowPath;
@@ -722,6 +892,7 @@ internal static class LuaTier05Interpreter
                             goto SlowPath;
                         }
 
+                        frame.Top = top;
                         var tailEncodedArgumentCount = stream[pc + 2];
                         var tailArgumentStart = tailFunctionIndex + 1;
                         var tailArgumentCount = tailEncodedArgumentCount == 0
@@ -730,7 +901,11 @@ internal static class LuaTier05Interpreter
                         var tailReturnBase = frame.ReturnBase;
                         var tailExpectedResults = frame.ExpectedResults;
                         frame.ProgramCounter = ip;
-                        thread.CloseUpvalues(frameBase);
+                        if (thread.HasOpenUpvalueAtOrAbove(frameBase))
+                        {
+                            thread.CloseUpvalues(frameBase);
+                        }
+
                         thread.PopFrame();
                         var replacement = engine.PushFrameFromStack(
                             thread,
@@ -741,12 +916,13 @@ internal static class LuaTier05Interpreter
                             tailExpectedResults);
                         if (replacement.InstructionRoute != LuaFrameInstructionRoute.Interpreter)
                         {
-                            context.SetExitFrame(replacement);
+                                                        context.SetExitFrame(replacement);
                             return LuaCompiledExit.Continue(0, context.InstructionsConsumed);
                         }
 
                         frame = replacement;
                         frameBase = replacement.Base;
+                        top = replacement.Top;
                         upvalues = replacement.Closure.Upvalues;
                         instructions = ImmutableCollectionsMarshal.AsArray(
                             replacement.Function.Instructions)!;
@@ -754,6 +930,7 @@ internal static class LuaTier05Interpreter
                         stream = code.Stream;
                         canonicalToOffset = code.CanonicalToOffset;
                         instructionCount = instructions.Length;
+                        values = stack.Values;
                         ip = 0;
                         pc = 0;
                         continue;
@@ -764,6 +941,7 @@ internal static class LuaTier05Interpreter
 
 SlowPath:
             frame.ProgramCounter = ip;
+            frame.Top = top;
             var slowResult = ExecuteInstructionCore(
                 engine,
                 context,
@@ -778,64 +956,65 @@ SlowPath:
                 ip = frame.ProgramCounter;
                 if ((uint)ip >= (uint)instructionCount)
                 {
-                    context.SetExitFrame(frame);
+                                        context.SetExitFrame(frame);
                     return LuaCompiledExit.Continue(ip, context.InstructionsConsumed);
                 }
 
+                if (heap.RequiresInterpreterSafePoint)
+                {
+                    untilSafePoint = 1;
+                }
+
+                top = frame.Top;
+                values = stack.Values;
                 pc = canonicalToOffset[ip];
                 continue;
             }
 
             if (slowResult == InterpreterInstructionResult.ContinueWithSchedulerCheck)
             {
-                context.SetExitFrame(frame);
+                                context.SetExitFrame(frame);
                 return LuaCompiledExit.Continue(
                     frame.ProgramCounter,
                     context.InstructionsConsumed);
             }
 
             frame.ProgramCounter = ip;
-            context.SetExitFrame(frame);
+                        context.SetExitFrame(frame);
             return MaterializeExit(slowResult, context, ip);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool UnaryFast(
-        LuaStack stack,
-        LuaFrame frame,
+        LuaValue[] values,
         int frameBase,
         byte[] stream,
         int pc,
-        LuaIrUnaryOperator operation)
+        LuaIrUnaryOperator operation,
+        out LuaValue result)
     {
-        var operand = ReadRegister(stack, frameBase, stream[pc + 2]);
-        if (!LuaRuntimeOperations.TryResolvePrimitiveUnary(operation, operand, out var result))
-        {
-            return false;
-        }
-
-        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-        return true;
+        var operand = values[frameBase + stream[pc + 2]];
+        return LuaRuntimeOperations.TryResolvePrimitiveUnary(operation, operand, out result);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool BinaryFast(
-        LuaStack stack,
-        LuaFrame frame,
+        LuaValue[] values,
         int frameBase,
         byte[] stream,
         int pc,
-        LuaIrBinaryOperator operation)
+        LuaIrBinaryOperator operation,
+        out LuaValue result)
     {
-        var left = ReadRegister(stack, frameBase, stream[pc + 2]);
-        var right = ReadRegister(stack, frameBase, stream[pc + 3]);
-        if (!LuaRuntimeOperations.TryResolvePrimitiveBinary(operation, left, right, out var result))
+        if (operation == LuaIrBinaryOperator.Concatenate)
         {
+            result = LuaValue.Nil;
             return false;
         }
 
-        WriteRegister(stack, frame, frameBase, stream[pc + 1], result);
-        return true;
+        var left = values[frameBase + stream[pc + 2]];
+        var right = values[frameBase + stream[pc + 3]];
+        return LuaRuntimeOperations.TryResolvePrimitiveBinary(operation, left, right, out result);
     }
 }
