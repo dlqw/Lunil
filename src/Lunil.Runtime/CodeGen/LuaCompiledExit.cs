@@ -243,6 +243,7 @@ public sealed class LuaExecutionContext
         return true;
     }
 
+
     public bool IsDebugModeCurrent() => DebugModeVersion == Thread.DebugModeVersion;
 
     /// <summary>

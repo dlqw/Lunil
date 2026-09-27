@@ -43,6 +43,8 @@ public sealed class LuaStack
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal LuaValue ReadUnchecked(int index) => _values[index];
 
+    internal LuaValue[] Values => _values;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void WriteUnchecked(int index, LuaValue value)
     {
