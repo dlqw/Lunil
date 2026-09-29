@@ -8,7 +8,7 @@ using Lunil.Runtime.Values;
 namespace Lunil.Runtime.Execution;
 
 /// <summary>Reference canonical-instruction executor beneath the shared scheduler.</summary>
-internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecutor
+internal sealed partial class LuaInterpreterInstructionExecutor : ILuaInstructionExecutor
 {
     internal const int CompactSafePointInterval = 32;
 
@@ -38,7 +38,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
         if (tier05Code.HasFastInstructions &&
             frame.InstructionRoute == LuaFrameInstructionRoute.Interpreter)
         {
-            return LuaTier05Interpreter.Run(
+            return LuaInterpreterInstructionExecutor.RunTier05(
                 engine,
                 context,
                 state,

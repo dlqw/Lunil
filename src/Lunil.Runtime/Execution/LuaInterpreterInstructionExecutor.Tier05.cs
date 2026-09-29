@@ -5,14 +5,13 @@ using Lunil.IR.Canonical;
 using Lunil.Runtime.CodeGen;
 using Lunil.Runtime.Operations;
 using Lunil.Runtime.Values;
-using static Lunil.Runtime.Execution.LuaInterpreterInstructionExecutor;
 
 namespace Lunil.Runtime.Execution;
 
-internal static class LuaTier05Interpreter
+/// <summary>Tier 0.5 compact-stream interpreter loop owned by the reference executor.</summary>
+internal sealed partial class LuaInterpreterInstructionExecutor
 {
-
-    internal static LuaCompiledExit Run(
+    internal static LuaCompiledExit RunTier05(
         LuaExecutionEngine engine,
         LuaExecutionContext context,
         LuaState state,
