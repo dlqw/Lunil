@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text;
 using Lunil.Analysis;
@@ -271,26 +272,32 @@ public sealed class LuaClrTypeBinding
 /// <summary>Registers exact, reflection-free CLR bindings and explicitly allowlisted closed generic types.</summary>
 public sealed class LuaClrBindingRegistry
 {
-    private readonly object _gate = new();
-    private readonly Dictionary<string, LuaClrTypeBinding> _types = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _closedGenerics = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, LuaClrTypeBinding> _types = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _closedGenerics = new(StringComparer.Ordinal);
 
-    /// <summary>Registers one exact type. Conflicting registrations fail closed.</summary>
+    /// <summary>Registers one exact type. Conflicting registrations fail closed. Lookups are
+    /// lock-free so the per-call registry path never contends with registration.</summary>
     public void Register(LuaClrTypeBinding binding)
     {
         LunilGuard.NotNull(binding);
-        lock (_gate)
+        if (_types.TryGetValue(binding.TypeName, out var existing))
         {
-            if (_types.TryGetValue(binding.TypeName, out var existing))
+            if (!ReferenceEquals(existing, binding))
             {
-                if (!ReferenceEquals(existing, binding))
-                {
-                    throw new LuaClrException(LuaClrErrorCode.BindingConflict,
-                        $"CLR type '{binding.TypeName}' has conflicting static bindings.");
-                }
-                return;
+                throw new LuaClrException(LuaClrErrorCode.BindingConflict,
+                    $"CLR type '{binding.TypeName}' has conflicting static bindings.");
             }
-            _types.Add(binding.TypeName, binding);
+            return;
+        }
+        if (!_types.TryAdd(binding.TypeName, binding))
+        {
+            // A racing registration won the slot; only an identical binding is accepted.
+            if (!_types.TryGetValue(binding.TypeName, out var winner) ||
+                !ReferenceEquals(winner, binding))
+            {
+                throw new LuaClrException(LuaClrErrorCode.BindingConflict,
+                    $"CLR type '{binding.TypeName}' has conflicting static bindings.");
+            }
         }
     }
 
@@ -310,16 +317,13 @@ public sealed class LuaClrBindingRegistry
         }
         Register(binding);
         var key = ClosedGenericKey(genericTypeName, typeArgumentNames);
-        lock (_gate)
+        if (_closedGenerics.TryGetValue(key, out var existing) &&
+            !string.Equals(existing, binding.TypeName, StringComparison.Ordinal))
         {
-            if (_closedGenerics.TryGetValue(key, out var existing) &&
-                !string.Equals(existing, binding.TypeName, StringComparison.Ordinal))
-            {
-                throw new LuaClrException(LuaClrErrorCode.BindingConflict,
-                    $"Closed generic binding '{key}' has conflicting registrations.");
-            }
-            _closedGenerics[key] = binding.TypeName;
+            throw new LuaClrException(LuaClrErrorCode.BindingConflict,
+                $"Closed generic binding '{key}' has conflicting registrations.");
         }
+        _closedGenerics[key] = binding.TypeName;
     }
 
     /// <summary>Registers a closed generic using a C# 9-compatible generated string array.</summary>
@@ -330,13 +334,8 @@ public sealed class LuaClrBindingRegistry
             genericTypeName, typeArgumentNames.ToImmutableArray(), binding);
 
     /// <summary>Attempts to retrieve an exact type binding.</summary>
-    public bool TryGet(string typeName, out LuaClrTypeBinding? binding)
-    {
-        lock (_gate)
-        {
-            return _types.TryGetValue(typeName, out binding);
-        }
-    }
+    public bool TryGet(string typeName, out LuaClrTypeBinding? binding) =>
+        _types.TryGetValue(typeName, out binding);
 
     /// <summary>Resolves only a pre-registered closed generic binding.</summary>
     public LuaClrTypeBinding ResolveClosedGeneric(
@@ -344,26 +343,18 @@ public sealed class LuaClrBindingRegistry
         ImmutableArray<string> typeArgumentNames)
     {
         var key = ClosedGenericKey(genericTypeName, typeArgumentNames);
-        lock (_gate)
+        if (_closedGenerics.TryGetValue(key, out var typeName) &&
+            _types.TryGetValue(typeName, out var binding))
         {
-            if (_closedGenerics.TryGetValue(key, out var typeName) &&
-                _types.TryGetValue(typeName, out var binding))
-            {
-                return binding;
-            }
+            return binding;
         }
         throw new LuaClrException(LuaClrErrorCode.TypeNotAllowed,
             $"Closed generic binding '{key}' is not registered.");
     }
 
     /// <summary>Returns a deterministic snapshot of registered exact bindings.</summary>
-    public ImmutableArray<LuaClrTypeBinding> GetBindings()
-    {
-        lock (_gate)
-        {
-            return [.. _types.Values.OrderBy(static binding => binding.TypeName, StringComparer.Ordinal)];
-        }
-    }
+    public ImmutableArray<LuaClrTypeBinding> GetBindings() =>
+        [.. _types.Values.OrderBy(static binding => binding.TypeName, StringComparer.Ordinal)];
 
     /// <summary>Creates a Unity-compatible linker descriptor for the registered exact types.</summary>
     public string CreateUnityLinkXml()

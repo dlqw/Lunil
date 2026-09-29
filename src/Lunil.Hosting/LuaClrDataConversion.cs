@@ -293,8 +293,8 @@ public sealed partial class LuaClrBridge
             valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(ValueTask<>))
         {
             EnsureReflectionFallback(valueType);
-            var asTask = valueType.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance);
-            if (asTask?.Invoke(value, null) is Task task)
+            var task = ValueTaskAsTask(value, valueType);
+            if (task is not null)
             {
                 return LuaValue.FromUserdata(_state.CreateUserdata(new LuaClrTask(task, this), 1, 64));
             }
@@ -322,7 +322,7 @@ public sealed partial class LuaClrBridge
 
     private LuaValue EnumToLua(Enum enumeration)
     {
-        var integer = EnumToInt64(enumeration);
+        var integer = EnumToInteger(enumeration);
         var name = enumeration.ToString();
         return _options.EnumRepresentation switch
         {
@@ -339,30 +339,6 @@ public sealed partial class LuaClrBridge
         table.Set(StringValue("name"), StringValue(name));
         table.Set(StringValue("value"), LuaValue.FromInteger(integer));
         return LuaValue.FromTable(table);
-    }
-
-    private static long EnumToInt64(Enum value)
-    {
-        var underlying = Enum.GetUnderlyingType(value.GetType());
-        try
-        {
-            if (underlying == typeof(ulong))
-            {
-                var unsigned = Convert.ToUInt64(value, CultureInfo.InvariantCulture);
-                if (unsigned > long.MaxValue)
-                {
-                    throw new LuaClrException(LuaClrErrorCode.ConversionFailed,
-                        "The CLR enum value exceeds the Lua integer range.");
-                }
-                return (long)unsigned;
-            }
-            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
-        }
-        catch (OverflowException exception)
-        {
-            throw new LuaClrException(LuaClrErrorCode.ConversionFailed,
-                "The CLR enum value exceeds the Lua integer range.", exception);
-        }
     }
 
     private LuaValue ToLuaArray(Array array, ConversionContext context, int depth)
@@ -718,25 +694,23 @@ public sealed partial class LuaClrBridge
         if (value.Kind == LuaValueKind.String)
         {
             var name = value.AsString().ToString();
-            try
+            var parsed = TryLookupEnumName(enumType, name);
+            if (parsed is not null)
             {
-                var parsed = Enum.Parse(enumType, name, ignoreCase: false);
-                if (string.Equals(parsed.ToString(), name, StringComparison.Ordinal))
-                {
-                    converted = parsed;
-                    return true;
-                }
-            }
-            catch (ArgumentException)
-            {
+                converted = parsed;
+                return true;
             }
         }
         if (value.TryGetInteger(out var integer))
         {
             try
             {
-                var underlying = Convert.ChangeType(integer, Enum.GetUnderlyingType(enumType),
-                    CultureInfo.InvariantCulture);
+                var isUnsigned = _unsignedEnumTypes.GetOrAdd(
+                    enumType,
+                    static type => Enum.GetUnderlyingType(type) == typeof(ulong));
+                var underlying = isUnsigned
+                    ? Convert.ChangeType(integer, typeof(ulong), CultureInfo.InvariantCulture)
+                    : Convert.ChangeType(integer, typeof(long), CultureInfo.InvariantCulture);
                 converted = Enum.ToObject(enumType, underlying!);
                 score = 2;
                 return true;
@@ -761,7 +735,7 @@ public sealed partial class LuaClrBridge
         context.Enter(table, depth);
         try
         {
-            var elementType = arrayType.GetElementType()!;
+            var elementType = GetArrayElementType(arrayType)!;
             var length = table.ArrayLength;
             context.Charge(length, checked(length * 24L));
             var array = Array.CreateInstance(elementType, length);
@@ -856,16 +830,12 @@ public sealed partial class LuaClrBridge
             score = 0;
             return false;
         }
-        var dictionaryInterface = FindGenericInterface(targetType, typeof(IDictionary<,>)) ??
-            FindGenericInterface(targetType, typeof(IReadOnlyDictionary<,>));
+        var (dictionaryInterface, sequenceInterface) = GetCollectionInterfaceShape(targetType);
         if (dictionaryInterface is not null)
         {
             return TryConvertDictionary(table, targetType, dictionaryInterface.GetGenericArguments(),
                 context, depth, out converted, out score);
         }
-        var sequenceInterface = FindGenericInterface(targetType, typeof(IList<>)) ??
-            FindGenericInterface(targetType, typeof(IReadOnlyList<>)) ??
-            FindGenericInterface(targetType, typeof(IEnumerable<>));
         if (sequenceInterface is null)
         {
             converted = null;

@@ -299,14 +299,14 @@ public sealed class LuaClrInvocationResult
 public sealed class LuaClrTask : IDisposable
 {
     private readonly Task _task;
-    private readonly PropertyInfo? _resultProperty;
+    private readonly Func<Task, object?> _getResult;
     private readonly LuaClrTaskRegistration _registration;
     private int _disposed;
 
     internal LuaClrTask(Task task, LuaClrBridge bridge)
     {
         _task = task;
-        _resultProperty = FindResultProperty(task.GetType());
+        _getResult = bridge.GetTaskResultAccessor(task.GetType());
         Bridge = bridge;
         _registration = bridge.CreateTaskRegistration();
     }
@@ -344,45 +344,10 @@ public sealed class LuaClrTask : IDisposable
         EnsureConsumable();
         _task.GetAwaiter().GetResult();
         EnsureConsumable();
-        if (_resultProperty is null)
-        {
-            if (FindGenericTaskType(_task.GetType()) is not null)
-            {
-                throw new LuaClrException(
-                    LuaClrErrorCode.AsyncFailed,
-                    "The CLR task result metadata is unavailable.");
-            }
-
-            return null;
-        }
-
-        return _resultProperty.GetValue(_task);
+        return _getResult(_task);
     }
 
     internal void EnsureConsumable() => Bridge.EnsureTaskConsumable(_registration);
-
-    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Task<>))]
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2075",
-        Justification = "Task<TResult>.Result metadata is rooted for every closed Task<TResult> instance.")]
-    private static PropertyInfo? FindResultProperty(Type taskType) =>
-        FindGenericTaskType(taskType)?.GetProperty(
-            nameof(Task<int>.Result),
-            BindingFlags.Public | BindingFlags.Instance);
-
-    private static Type? FindGenericTaskType(Type taskType)
-    {
-        for (var current = taskType; current is not null; current = current.BaseType)
-        {
-            if (current.IsGenericType && current.GetGenericTypeDefinition() == typeof(Task<>))
-            {
-                return current;
-            }
-        }
-
-        return null;
-    }
 }
 
 /// <summary>Bridge-owned cancellation source passed to allowlisted CLR calls.</summary>
@@ -2608,8 +2573,6 @@ public sealed partial class LuaClrBridge
         "Trimming",
         "IL2067",
         Justification = "The embedding application must preserve public constructors for each exact-allowlist type.")]
-    private static object CreateDefaultValueType(Type type) => Activator.CreateInstance(type)!;
-
     private void RequireCapability(LuaClrCapabilities capability)
     {
         if ((_options.Capabilities & capability) != capability)
