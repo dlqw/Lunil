@@ -1,3 +1,4 @@
+using Lunil.CodeGen.Cil.Analysis;
 using Lunil.IR.Canonical;
 using Lunil.IR.Lua54;
 using Lunil.Runtime;
@@ -54,17 +55,17 @@ public sealed class LuaJitExecutor : IDisposable
         Options = options;
         IsDynamicCodeAvailable = capabilities.IsDynamicCodeSupported &&
             capabilities.IsDynamicCodeCompiled;
-        if (IsDynamicCodeAvailable && compiler is ReflectionEmitLuaTier1Compiler)
+        if (IsDynamicCodeAvailable && compiler is ReflectionEmitLuaTier1Compiler tier1Compiler)
         {
-            ReflectionEmitLuaTier1Compiler.PrepareCompiler();
+            tier1Compiler.PrepareCompiler();
         }
 
         var selectedTier2Compiler = tier2Compiler ?? ProfileGuidedLuaTier2Compiler.Instance;
         if (IsDynamicCodeAvailable &&
             options.EnableTier2 &&
-            selectedTier2Compiler is ProfileGuidedLuaTier2Compiler)
+            selectedTier2Compiler is ProfileGuidedLuaTier2Compiler profileGuidedTier2Compiler)
         {
-            ProfileGuidedLuaTier2Compiler.PrepareCompiler();
+            profileGuidedTier2Compiler.PrepareCompiler();
         }
 
         var selectedLoopOsrCompiler = loopOsrCompiler ?? CanonicalLuaLoopOsrCompiler.Instance;
@@ -94,6 +95,7 @@ public sealed class LuaJitExecutor : IDisposable
         }
 
         return LuaTier1EligibilityEvaluator.Evaluate(
+            new LuaCilPlanCache(),
             module,
             functionId,
             includeInstructionObservation);
@@ -107,6 +109,7 @@ public sealed class LuaJitExecutor : IDisposable
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(profile);
         return ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+            new LuaRegisterLivenessCache(),
             module,
             functionId,
             profile,

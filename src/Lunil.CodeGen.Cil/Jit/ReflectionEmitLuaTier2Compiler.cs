@@ -397,6 +397,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized,
         ImmutableHashSet<int> numericRegionProgramCounters,
         IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
         [NotNullWhen(true)] out LuaTier2RuntimeSites? runtimeSites,
@@ -557,7 +558,8 @@ internal static class ReflectionEmitLuaTier2Compiler
             typeof(LuaCompiledMethodWithSites));
         var createdRuntimeSites = new LuaTier2RuntimeSites(
             function.Instructions.Length,
-            boundDirectCalls);
+            boundDirectCalls,
+            moduleIdentity);
         runtimeSites = createdRuntimeSites;
         method = (context, thread, frame) =>
             compiledWithSites(context, thread, frame, createdRuntimeSites);

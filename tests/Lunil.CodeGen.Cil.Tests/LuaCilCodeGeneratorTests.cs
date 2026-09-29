@@ -118,16 +118,17 @@ public sealed class LuaCilCodeGeneratorTests
     [Fact]
     public void ReusesTheOwnerScopedPlanAndClearsCacheHitMetrics()
     {
+        var plans = new LuaCilPlanCache();
         var module = CreateModule(
             registerCount: 1,
             constants: [],
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
 
-        var first = LuaCilCodeGenerator.PlanFunction(
+        var first = plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false);
-        var cached = LuaCilCodeGenerator.PlanFunction(
+        var cached = plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false);
@@ -140,6 +141,7 @@ public sealed class LuaCilCodeGeneratorTests
     [Fact]
     public void CanceledPlanningDoesNotPopulateTheOwnerScopedPlanCache()
     {
+        var plans = new LuaCilPlanCache();
         var module = CreateModule(
             registerCount: 1,
             constants: [],
@@ -147,17 +149,17 @@ public sealed class LuaCilCodeGeneratorTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        Assert.Throws<OperationCanceledException>(() => LuaCilCodeGenerator.PlanFunction(
+        Assert.Throws<OperationCanceledException>(() => plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false,
             cancellationToken: cancellation.Token));
 
-        var first = LuaCilCodeGenerator.PlanFunction(
+        var first = plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false);
-        var cached = LuaCilCodeGenerator.PlanFunction(
+        var cached = plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false);
@@ -171,6 +173,7 @@ public sealed class LuaCilCodeGeneratorTests
     [Fact]
     public async Task ConcurrentFirstUseBuildsTheOwnerScopedPlanOnlyOnce()
     {
+        var plans = new LuaCilPlanCache();
         var module = CreateModule(
             registerCount: 1,
             constants: [],
@@ -180,7 +183,7 @@ public sealed class LuaCilCodeGeneratorTests
             .Select(_ => Task.Run(() =>
             {
                 start.Wait();
-                return LuaCilCodeGenerator.PlanFunction(
+                return plans.PlanFunction(
                     module,
                     0,
                     includeInstructionObservation: false);
@@ -197,7 +200,8 @@ public sealed class LuaCilCodeGeneratorTests
     [Fact]
     public void OwnerScopedPlanCacheDoesNotKeepTheModuleAlive()
     {
-        var moduleReference = CreateCachedModuleWeakReference();
+        var plans = new LuaCilPlanCache();
+        var moduleReference = CreateCachedModuleWeakReference(plans);
 
         for (var attempt = 0; attempt < 10 && moduleReference.IsAlive; attempt++)
         {
@@ -232,16 +236,17 @@ public sealed class LuaCilCodeGeneratorTests
     [Fact]
     public void OwnerScopedLivenessCacheReusesAnalysisWithoutKeepingModuleAlive()
     {
+        var liveness = new LuaRegisterLivenessCache();
         var module = CreateModule(
             registerCount: 1,
             constants: [],
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
 
-        var first = LuaRegisterLiveness.AnalyzeCached(
+        var first = liveness.AnalyzeCached(
             module,
             module.Functions[0],
             out var firstHit);
-        var second = LuaRegisterLiveness.AnalyzeCached(
+        var second = liveness.AnalyzeCached(
             module,
             module.Functions[0],
             out var secondHit);
@@ -250,7 +255,7 @@ public sealed class LuaCilCodeGeneratorTests
         Assert.True(secondHit);
         Assert.Same(first, second);
 
-        var moduleReference = CreateLivenessCachedModuleWeakReference();
+        var moduleReference = CreateLivenessCachedModuleWeakReference(liveness);
         for (var attempt = 0; attempt < 10 && moduleReference.IsAlive; attempt++)
         {
             GC.Collect();
@@ -742,13 +747,13 @@ public sealed class LuaCilCodeGeneratorTests
     };
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static WeakReference CreateCachedModuleWeakReference()
+    private static WeakReference CreateCachedModuleWeakReference(LuaCilPlanCache plans)
     {
         var module = CreateModule(
             registerCount: 1,
             constants: [],
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
-        var result = LuaCilCodeGenerator.PlanFunction(
+        var result = plans.PlanFunction(
             module,
             0,
             includeInstructionObservation: false);
@@ -757,13 +762,14 @@ public sealed class LuaCilCodeGeneratorTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static WeakReference CreateLivenessCachedModuleWeakReference()
+    private static WeakReference CreateLivenessCachedModuleWeakReference(
+        LuaRegisterLivenessCache liveness)
     {
         var module = CreateModule(
             registerCount: 1,
             constants: [],
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
-        _ = LuaRegisterLiveness.AnalyzeCached(
+        _ = liveness.AnalyzeCached(
             module,
             module.Functions[0],
             out _);

@@ -490,12 +490,14 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaIrFunction function,
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledNumericRegion? result) => TryCompile(
             function,
             plan,
             mode,
             boundDirectCalls: null,
+            moduleIdentity,
             cancellationToken,
             out result);
 
@@ -504,6 +506,7 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         LuaNumericRegionPlan plan,
         LuaNumericRegionEmissionMode mode,
         IReadOnlyDictionary<int, LuaBoundDirectCall>? boundDirectCalls,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledNumericRegion? result)
     {
@@ -532,7 +535,8 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
             typeof(LuaCompiledNumericRegionMethodWithSites));
         var runtimeSites = new LuaTier2RuntimeSites(
             function.Instructions.Length,
-            boundDirectCalls);
+            boundDirectCalls,
+            moduleIdentity);
         LuaCompiledMethod method = (context, thread, frame) =>
             compiledWithSites(context, thread, frame, runtimeSites);
         var delegateCreationDuration = Stopwatch.GetElapsedTime(delegateStarted);

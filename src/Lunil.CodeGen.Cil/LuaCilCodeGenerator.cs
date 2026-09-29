@@ -28,9 +28,35 @@ public readonly record struct LuaCilPlanningMetrics(
 
 public static class LuaCilCodeGenerator
 {
-    private static readonly ConditionalWeakTable<LuaIrModule, ModulePlanCache> PlanCaches = new();
-
     public static LuaCilPlanningResult PlanFunction(
+        LuaIrModule module,
+        int functionId,
+        CilPlanLimits? limits = null,
+        bool includeInstructionObservation = true,
+        CancellationToken cancellationToken = default) =>
+        // The parameterless entry point stays stateless: a transient cache owner makes every
+        // call an independent, deterministic planning pass. Long-lived JIT owners hold their
+        // own LuaCilPlanCache instance to memoize plans across compilations.
+        new LuaCilPlanCache().PlanFunction(
+            module,
+            functionId,
+            limits,
+            includeInstructionObservation,
+            cancellationToken);
+}
+
+/// <summary>
+/// Owner-scoped memo for canonical CIL method planning. Each owner (tier compilers, the tiered
+/// registry) holds one instance; plans are deterministic, module-keyed, and weakly held, so a
+/// cache owner never keeps a module alive.
+/// </summary>
+internal sealed class LuaCilPlanCache
+{
+    private readonly LuaIrVerificationCache _verification = new();
+    private readonly LuaRegisterLivenessCache _liveness = new();
+    private readonly ConditionalWeakTable<LuaIrModule, ModulePlanCache> _planCaches = new();
+
+    public LuaCilPlanningResult PlanFunction(
         LuaIrModule module,
         int functionId,
         CilPlanLimits? limits = null,
@@ -49,13 +75,14 @@ public static class LuaCilCodeGenerator
                 cancellationToken);
         }
 
-        return PlanCaches.GetValue(module, static _ => new ModulePlanCache()).GetOrAdd(
+        return _planCaches.GetValue(module, static _ => new ModulePlanCache()).GetOrAdd(
             module,
             new PlanCacheKey(functionId, includeInstructionObservation),
+            this,
             cancellationToken);
     }
 
-    private static LuaCilPlanningResult PlanFunctionCore(
+    private LuaCilPlanningResult PlanFunctionCore(
         LuaIrModule module,
         int functionId,
         CilPlanLimits? limits,
@@ -65,7 +92,7 @@ public static class LuaCilCodeGenerator
         ArgumentNullException.ThrowIfNull(module);
         cancellationToken.ThrowIfCancellationRequested();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var irErrors = LuaIrVerificationCache.Verify(module);
+        var irErrors = _verification.Verify(module);
         cancellationToken.ThrowIfCancellationRequested();
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!irErrors.IsEmpty)
@@ -120,7 +147,7 @@ public static class LuaCilCodeGenerator
 
         var analysisStarted = Stopwatch.GetTimestamp();
         var blockLayout = CilBlockLayout.Build(function, cancellationToken);
-        var liveness = LuaRegisterLiveness.AnalyzeCached(
+        var liveness = _liveness.AnalyzeCached(
             module,
             function,
             out _,
@@ -162,6 +189,7 @@ public static class LuaCilCodeGenerator
         public LuaCilPlanningResult GetOrAdd(
             LuaIrModule module,
             PlanCacheKey key,
+            LuaCilPlanCache owner,
             CancellationToken cancellationToken)
         {
             lock (_gate)
@@ -172,7 +200,7 @@ public static class LuaCilCodeGenerator
                     return cached with { Metrics = default };
                 }
 
-                var result = PlanFunctionCore(
+                var result = owner.PlanFunctionCore(
                     module,
                     key.FunctionId,
                     limits: null,

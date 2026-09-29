@@ -58,8 +58,8 @@ internal sealed partial class LuaTieredJitRegistry
     {
         var cache = _moduleRoutes.GetValue(
             module,
-            static module => new ModuleRouteCache(
-                LuaJitModuleIdentity.Create(module),
+            module => new ModuleRouteCache(
+                GetModuleContentId(module),
                 module.Functions.Length));
         return cache.GetFunctionRoute(functionId);
     }
@@ -755,7 +755,7 @@ internal sealed partial class LuaTieredJitRegistry
                 return;
             }
 
-            foreach (var plan in LuaLoopOsrAnalyzer.Analyze(module, entry.Key.FunctionId))
+            foreach (var plan in _loopOsrAnalyzer.Analyze(module, entry.Key.FunctionId))
             {
                 var key = new LoopKey(
                     plan.HeaderProgramCounter,
@@ -967,7 +967,7 @@ internal sealed partial class LuaTieredJitRegistry
 
     private void EnsureLoopOsrCompilerPrepared(FunctionEntry entry)
     {
-        if (_loopOsrCompiler is not CanonicalLuaLoopOsrCompiler ||
+        if (_loopOsrCompiler is not CanonicalLuaLoopOsrCompiler loopOsrCompiler ||
             Volatile.Read(ref _loopOsrCompilerPreparationState) == 2)
         {
             return;
@@ -978,14 +978,14 @@ internal sealed partial class LuaTieredJitRegistry
                 1,
                 0) != 0)
         {
-            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+            loopOsrCompiler.PrepareCompiler();
             return;
         }
 
         var started = Stopwatch.GetTimestamp();
         try
         {
-            CanonicalLuaLoopOsrCompiler.PrepareCompiler();
+            loopOsrCompiler.PrepareCompiler();
         }
         catch
         {
@@ -1030,6 +1030,7 @@ internal sealed partial class LuaTieredJitRegistry
             }
 
             eligibility = LuaTier1EligibilityEvaluator.Evaluate(
+                _plans,
                 module,
                 entry.Key.FunctionId,
                 IsTier2Enabled || IsLoopOsrEnabled,
@@ -1270,6 +1271,7 @@ internal sealed partial class LuaTieredJitRegistry
             try
             {
                 eligibility = ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+                    _liveness,
                     module,
                     entry.Key.FunctionId,
                     profile,

@@ -134,12 +134,21 @@ internal sealed record LuaNumericRegionPlan(
 /// <summary>
 /// Shared reducible-CFG discovery used by whole-function Tier 2 and loop OSR. A backedge is
 /// admitted only when its target is a basic-block leader that dominates the source block.
+/// Each owner (tier compiler, registry) holds one instance; region results are weak module-keyed
+/// memos recomputed deterministically per owner.
 /// </summary>
-internal static class LuaNumericRegionAnalyzer
+internal sealed class LuaNumericRegionAnalyzer
 {
-    private static readonly ConditionalWeakTable<LuaIrModule, ModuleCache> Caches = new();
+    private readonly LuaRegisterLivenessCache _liveness;
+    private readonly ConditionalWeakTable<LuaIrModule, ModuleCache> _caches = new();
 
-    public static ImmutableArray<LuaNaturalLoopRegion> AnalyzeNaturalLoops(
+    public LuaNumericRegionAnalyzer(LuaRegisterLivenessCache liveness)
+    {
+        ArgumentNullException.ThrowIfNull(liveness);
+        _liveness = liveness;
+    }
+
+    public ImmutableArray<LuaNaturalLoopRegion> AnalyzeNaturalLoops(
         LuaIrModule module,
         int functionId,
         out bool livenessCacheHit,
@@ -152,9 +161,10 @@ internal static class LuaNumericRegionAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return Caches.GetValue(module, static _ => new ModuleCache()).GetOrAdd(
+        return _caches.GetValue(module, static _ => new ModuleCache()).GetOrAdd(
             module,
             functionId,
+            _liveness,
             out livenessCacheHit,
             cancellationToken);
     }
@@ -162,6 +172,7 @@ internal static class LuaNumericRegionAnalyzer
     private static ImmutableArray<LuaNaturalLoopRegion> AnalyzeNaturalLoopsCore(
         LuaIrModule module,
         int functionId,
+        LuaRegisterLivenessCache liveness,
         out bool livenessCacheHit,
         CancellationToken cancellationToken)
     {
@@ -191,7 +202,7 @@ internal static class LuaNumericRegionAnalyzer
         }
 
         var dominators = ComputeDominators(blocks, predecessors, cancellationToken);
-        var liveness = LuaRegisterLiveness.AnalyzeCached(
+        var livenessResult = liveness.AnalyzeCached(
             module,
             function,
             out livenessCacheHit,
@@ -236,7 +247,7 @@ internal static class LuaNumericRegionAnalyzer
                 loop.Header,
                 loop.Backedge,
                 programCounters,
-                liveness));
+                livenessResult));
         }
 
         return regions
@@ -253,6 +264,7 @@ internal static class LuaNumericRegionAnalyzer
         public ImmutableArray<LuaNaturalLoopRegion> GetOrAdd(
             LuaIrModule module,
             int functionId,
+            LuaRegisterLivenessCache liveness,
             out bool cacheHit,
             CancellationToken cancellationToken)
         {
@@ -268,6 +280,7 @@ internal static class LuaNumericRegionAnalyzer
                 var regions = AnalyzeNaturalLoopsCore(
                     module,
                     functionId,
+                    liveness,
                     out cacheHit,
                     cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();

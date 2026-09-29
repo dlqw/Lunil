@@ -4,16 +4,21 @@ using Lunil.IR.Canonical;
 
 namespace Lunil.CodeGen.Cil.Analysis;
 
-internal static class LuaIrVerificationCache
+/// <summary>
+/// Owner-scoped memo for canonical module verification. Each owner (tier compiler, plan cache,
+/// test) holds one instance; verification is deterministic over the immutable module, so every
+/// owner verifies a module at most once while it holds the instance.
+/// </summary>
+internal sealed class LuaIrVerificationCache
 {
-    private static readonly ConditionalWeakTable<
+    private readonly ConditionalWeakTable<
         LuaIrModule,
-        Lazy<ImmutableArray<LuaIrVerificationError>>> Results = new();
+        Lazy<ImmutableArray<LuaIrVerificationError>>> _results = new();
 
-    public static ImmutableArray<LuaIrVerificationError> Verify(LuaIrModule module)
+    public ImmutableArray<LuaIrVerificationError> Verify(LuaIrModule module)
     {
         ArgumentNullException.ThrowIfNull(module);
-        return Results.GetValue(
+        return _results.GetValue(
             module,
             static value => new Lazy<ImmutableArray<LuaIrVerificationError>>(
                 () => LuaIrVerifier.Verify(value),

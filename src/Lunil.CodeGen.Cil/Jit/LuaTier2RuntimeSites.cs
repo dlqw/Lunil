@@ -10,6 +10,7 @@ namespace Lunil.CodeGen.Cil.Jit;
 /// </summary>
 internal sealed class LuaTier2RuntimeSites
 {
+    private readonly LuaJitModuleIdentity _moduleIdentity;
     private readonly LuaCodegenTableSiteCache?[] _tableSites;
     private readonly LuaCodegenCallSiteCache?[] _callSites;
     private readonly LuaDirectCompiledMethod?[] _directCallSites;
@@ -19,9 +20,12 @@ internal sealed class LuaTier2RuntimeSites
 
     public LuaTier2RuntimeSites(
         int instructionCount,
-        IReadOnlyDictionary<int, LuaBoundDirectCall>? directCallSites = null)
+        IReadOnlyDictionary<int, LuaBoundDirectCall>? directCallSites,
+        LuaJitModuleIdentity moduleIdentity)
     {
+        ArgumentNullException.ThrowIfNull(moduleIdentity);
         ArgumentOutOfRangeException.ThrowIfNegative(instructionCount);
+        _moduleIdentity = moduleIdentity;
         _tableSites = new LuaCodegenTableSiteCache?[instructionCount];
         _callSites = new LuaCodegenCallSiteCache?[instructionCount];
         _directCallSites = new LuaDirectCompiledMethod?[instructionCount];
@@ -159,7 +163,7 @@ internal sealed class LuaTier2RuntimeSites
 
         var created = new LuaCodegenCallSiteCache(
             expectedModuleContentId,
-            LuaJitModuleIdentity.Create);
+            _moduleIdentity.Create);
         return Interlocked.CompareExchange(
             ref _callSites[programCounter],
             created,
@@ -201,15 +205,15 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
         public long Invalidations;
     }
 
-    private static int s_nextId;
-
+    // The thread cache stores the owning sink beside its shard: the fast path validates the
+    // cached pair with one reference comparison before recording, and only falls back to the
+    // sink's own synchronization when the most recent sink on this thread differs.
     [ThreadStatic]
-    private static int t_cachedId;
+    private static LuaDirectCallCounterSink? t_cachedSink;
 
     [ThreadStatic]
     private static CounterShard? t_cachedShard;
 
-    private readonly int _id = Interlocked.Increment(ref s_nextId);
     private ThreadLocal<CounterShard>? _shards;
     private long _finalCompletions;
     private long _finalFallbacks;
@@ -285,11 +289,21 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private CounterShard CurrentShard()
     {
-        if (t_cachedId == _id && t_cachedShard is { } cached)
+        if (ReferenceEquals(t_cachedSink, this) && t_cachedShard is { } cached)
         {
             return cached;
         }
 
+        var shard = ResolveShard();
+        // Publish the shard before the owner so this thread never observes its own sink with a
+        // stale shard; another thread's cache is untouched by these thread-local writes.
+        t_cachedShard = shard;
+        t_cachedSink = this;
+        return shard;
+    }
+
+    private CounterShard ResolveShard()
+    {
         var shards = Volatile.Read(ref _shards);
         if (shards is null)
         {
@@ -307,10 +321,7 @@ internal sealed class LuaDirectCallCounterSink : IDisposable
             }
         }
 
-        var shard = shards.Value!;
-        t_cachedId = _id;
-        t_cachedShard = shard;
-        return shard;
+        return shards.Value!;
     }
 
     private long Sum(Func<CounterShard, long> selector, ref long finalValue)

@@ -58,12 +58,14 @@ internal static class LuaTier1EligibilityEvaluator
     private const long MaximumEstimatedCodeBytes = 512 * 1024;
 
     public static LuaJitFunctionEligibility Evaluate(
+        LuaCilPlanCache plans,
         LuaIrModule module,
         int functionId,
         bool includeInstructionObservation,
         bool repeatedInvocationObserved = false)
     {
-        var planning = LuaCilCodeGenerator.PlanFunction(
+        ArgumentNullException.ThrowIfNull(plans);
+        var planning = plans.PlanFunction(
             module,
             functionId,
             includeInstructionObservation: includeInstructionObservation);

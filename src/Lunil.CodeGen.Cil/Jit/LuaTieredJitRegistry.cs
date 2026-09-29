@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
+using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Emission;
 using Lunil.IR.Canonical;
 using Lunil.Runtime;
@@ -25,6 +26,10 @@ internal sealed partial class LuaTieredJitRegistry :
     private readonly ILuaTier1Compiler _compiler;
     private readonly ILuaTier2Compiler _tier2Compiler;
     private readonly ILuaLoopOsrCompiler _loopOsrCompiler;
+    private readonly LuaJitModuleIdentity _moduleIdentity = new();
+    private readonly LuaRegisterLivenessCache _liveness;
+    private readonly LuaCilPlanCache _plans;
+    private readonly LuaLoopOsrAnalyzer _loopOsrAnalyzer;
     private readonly LuaDirectCallCounterSink _boundDirectCallCounters = new();
     private readonly LuaTablePicCounterSink _tablePicCounters = new();
     private readonly ConcurrentDictionary<FunctionKey, FunctionEntry> _entries = [];
@@ -142,6 +147,18 @@ internal sealed partial class LuaTieredJitRegistry :
         _compiler = compiler;
         _tier2Compiler = tier2Compiler;
         _loopOsrCompiler = loopOsrCompiler;
+        // Adopt the well-known compilers' analysis memos so this backend's eligibility passes
+        // warm the exact caches its compilations read; custom compilers get private memos.
+        _plans = compiler is ReflectionEmitLuaTier1Compiler tier1Compiler
+            ? tier1Compiler.Plans
+            : new LuaCilPlanCache();
+        _liveness = tier2Compiler is ProfileGuidedLuaTier2Compiler profileGuidedTier2Compiler
+            ? profileGuidedTier2Compiler.Liveness
+            : new LuaRegisterLivenessCache();
+        _loopOsrAnalyzer = new LuaLoopOsrAnalyzer(
+            loopOsrCompiler is CanonicalLuaLoopOsrCompiler canonicalLoopOsrCompiler
+                ? canonicalLoopOsrCompiler.Regions
+                : new LuaNumericRegionAnalyzer(_liveness));
         _maximumTrackedFunctionEntries = maximumTrackedFunctionEntries;
         _queue = Channel.CreateBounded<CompilationRequest>(new BoundedChannelOptions(
             options.CompilationQueueCapacity)

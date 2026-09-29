@@ -67,7 +67,7 @@ public static class LuaJitProfileRemapper
             StringComparer.Ordinal);
         var sourceProfiles = sourceProfile.Functions.ToDictionary(
             static entry => entry.FunctionId);
-        var targetContentId = LuaJitModuleIdentity.Create(targetModule);
+        var targetContentId = LuaJitModuleIdentity.Compute(targetModule);
         var selfTargetMap = sourceByKey.Values
             .Where(source => targetByKey.ContainsKey(LuaFunctionIdentity.GetLogicalKey(
                 sourceModule,

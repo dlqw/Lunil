@@ -79,9 +79,17 @@ internal interface ILuaLoopOsrCompiler
         CancellationToken cancellationToken);
 }
 
-internal static class LuaLoopOsrAnalyzer
+internal sealed class LuaLoopOsrAnalyzer
 {
-    public static ImmutableArray<LuaJitLoopOsrPlan> Analyze(
+    private readonly LuaNumericRegionAnalyzer _regions;
+
+    public LuaLoopOsrAnalyzer(LuaNumericRegionAnalyzer regions)
+    {
+        ArgumentNullException.ThrowIfNull(regions);
+        _regions = regions;
+    }
+
+    public ImmutableArray<LuaJitLoopOsrPlan> Analyze(
         LuaIrModule module,
         int functionId) => Analyze(
             module,
@@ -89,7 +97,7 @@ internal static class LuaLoopOsrAnalyzer
             out _,
             CancellationToken.None);
 
-    internal static ImmutableArray<LuaJitLoopOsrPlan> Analyze(
+    internal ImmutableArray<LuaJitLoopOsrPlan> Analyze(
         LuaIrModule module,
         int functionId,
         out bool livenessCacheHit,
@@ -102,11 +110,11 @@ internal static class LuaLoopOsrAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
-            module,
-            functionId,
-            out livenessCacheHit,
-            cancellationToken)
+        return _regions.AnalyzeNaturalLoops(
+                module,
+                functionId,
+                out livenessCacheHit,
+                cancellationToken)
             .Select(CreatePlan)
             .OrderBy(static plan => plan.HeaderProgramCounter)
             .ThenBy(static plan => plan.BackedgeProgramCounter)
@@ -353,15 +361,28 @@ internal static class LuaLoopOsrRuntimeEligibilityEvaluator
 internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
 {
     public static CanonicalLuaLoopOsrCompiler Instance { get; } = new();
-    [UnconditionalSuppressMessage(
-        "AOT",
-        "IL3050",
-        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
-    private static readonly Lazy<bool> CompilerPrepared = new(
+
+    /// <summary>
+    /// The owner-scoped loop-analysis memos this compiler verifies requests against. The tiered
+    /// registry adopts them for its OSR eligibility passes so one backend analyzes and then
+    /// compiles a loop through the same memo.
+    /// </summary>
+    internal LuaNumericRegionAnalyzer Regions => _regions;
+
+    private readonly LuaIrVerificationCache _verification = new();
+
+    private readonly LuaNumericRegionAnalyzer _regions =
+        new(new LuaRegisterLivenessCache());
+
+    private readonly LuaJitModuleIdentity _identity = new();
+
+    private readonly Lazy<bool> _compilerPrepared;
+
+    public CanonicalLuaLoopOsrCompiler() => _compilerPrepared = new(
         PrepareCompilerCore,
         LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
+    public void PrepareCompiler() => _ = _compilerPrepared.Value;
 
     public LuaLoopOsrCompilationResult Compile(
         LuaIrModule module,
@@ -372,7 +393,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         cancellationToken.ThrowIfCancellationRequested();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var errors = LuaIrVerificationCache.Verify(module);
+        var errors = _verification.Verify(module);
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || (uint)plan.FunctionId >= (uint)module.Functions.Length)
         {
@@ -399,7 +420,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         }
 
         var analysisStarted = Stopwatch.GetTimestamp();
-        var verifiedRegion = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var verifiedRegion = _regions.AnalyzeNaturalLoops(
                 module,
                 plan.FunctionId,
                 out var livenessCacheHit,
@@ -551,7 +572,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
         "AOT",
         "IL3050",
         Justification = "Loop OSR compilation is reached only after the dynamic-code capability check.")]
-    private static bool TryCompileNumericRegion(
+    private bool TryCompileNumericRegion(
         LuaIrFunction function,
         LuaNumericRegionPlan plan,
         CancellationToken cancellationToken,
@@ -562,6 +583,7 @@ internal sealed class CanonicalLuaLoopOsrCompiler : ILuaLoopOsrCompiler
             new LuaNumericRegionEmissionMode(
                 RequireLoopOsrEntry: true,
                 ObserveLoopOsrBackedge: true),
+            _identity,
             cancellationToken,
             out region);
 
