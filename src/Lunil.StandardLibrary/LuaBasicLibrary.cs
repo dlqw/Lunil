@@ -16,19 +16,23 @@ using Lunil.Syntax.Parsing;
 
 namespace Lunil.StandardLibrary;
 
-internal static class LuaBasicLibrary
+internal sealed class LuaBasicLibrary
 {
     private static readonly byte[] PrintSeparator = [(byte)'\t'];
     private static readonly LuaNativeFunction NextDescriptor = new("next", Next);
     private static readonly LuaNativeFunction IPairsIteratorDescriptor =
         new("ipairs iterator", IPairsIterator);
+    private static readonly LuaNativeFunction DoFileDescriptor = new("dofile", DoFile);
 
-    public static LuaTable Install(LuaState state, LuaStandardLibraryOptions? options)
+    private readonly LuaStandardLibraryContext _context;
+
+    internal LuaBasicLibrary(LuaStandardLibraryContext context) => _context = context;
+
+    public LuaTable Install(LuaState state)
     {
-        LuaStandardLibraryContext.Configure(state, options);
         SetFunction(state, "assert", Assert);
         SetStepFunction(state, "collectgarbage", CollectGarbageStep);
-        SetStepFunction(state, "dofile", DoFile);
+        state.SetGlobal("dofile", SelfStep(state, DoFileDescriptor));
         SetFunction(state, "error", Error);
         SetFunction(state, "getmetatable", GetMetatable);
         SetFunction(state, "ipairs", IPairs);
@@ -92,6 +96,18 @@ internal static class LuaBasicLibrary
         string name,
         LuaNativeFunctionStepBody body) =>
         state.SetGlobal(name, LuaValue.FromFunction(new LuaNativeFunction(name, body)));
+
+    /// <summary>
+    /// Registers a resumable body as a native closure carrying this module as a light
+    /// userdata capture; resumable descriptors must stay capture-free method groups.
+    /// </summary>
+    private LuaValue SelfStep(LuaState state, LuaNativeFunction descriptor) =>
+        LuaValue.FromFunction(state.CreateNativeClosure(
+            descriptor,
+            [LuaValue.FromLightUserdata(new LuaLightUserdata(this))]));
+
+    private static LuaBasicLibrary Self(LuaNativeCallContext context) =>
+        (LuaBasicLibrary)context.Captures[0].AsLightUserdata().Identity;
 
     private static LuaValue[] Assert(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
@@ -547,6 +563,9 @@ internal static class LuaBasicLibrary
                 callIsYieldable: false);
     }
 
+    // The official corpus asserts getinfo(print, "u").nups == 0, so print must remain a
+    // capture-free descriptor and cannot carry this module as a closure capture; it
+    // keeps resolving the console through the per-state context on each call.
     private static LuaNativeStep Print(
         LuaNativeCallContext context,
         int continuationId,
@@ -631,22 +650,21 @@ internal static class LuaBasicLibrary
         console.Write(bytes);
     }
 
-    private static LuaValue[] Warn(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] Warn(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         _ = LuaLibraryHelpers.Required(arguments, 0, "warn");
-        var context = LuaStandardLibraryContext.Get(state);
         if (arguments.Length == 1 && arguments[0].Kind == LuaValueKind.String)
         {
             var control = arguments[0].AsString().AsSpan();
             if (control.SequenceEqual("@on"u8))
             {
-                context.WarningsEnabled = true;
+                _context.WarningsEnabled = true;
                 return [];
             }
 
             if (control.SequenceEqual("@off"u8))
             {
-                context.WarningsEnabled = false;
+                _context.WarningsEnabled = false;
                 return [];
             }
 
@@ -663,7 +681,7 @@ internal static class LuaBasicLibrary
             buffer.Write(bytes);
         }
 
-        if (context.WarningsEnabled)
+        if (_context.WarningsEnabled)
         {
             state.RaiseWarning(LuaValue.FromString(state.Strings.GetOrCreate(buffer.ToArray())));
         }
@@ -953,7 +971,7 @@ internal static class LuaBasicLibrary
             callIsProtected: true);
     }
 
-    private static LuaValue[] LoadFile(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] LoadFile(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var path = arguments.Length == 0 || arguments[0].IsNil
             ? null
@@ -966,8 +984,8 @@ internal static class LuaBasicLibrary
         try
         {
             var bytes = path is null
-                ? LuaStandardLibraryContext.Get(state).Options.Console.ReadStandardInput()
-                : LuaStandardLibraryContext.Get(state).Options.FileSystem.ReadAllBytes(path);
+                ? _context.Options.Console.ReadStandardInput()
+                : _context.Options.FileSystem.ReadAllBytes(path);
             bytes = PrepareFileChunk(bytes);
             var step = FinishLoad(
                 state,
@@ -1028,8 +1046,9 @@ internal static class LuaBasicLibrary
             return LuaNativeStep.Completed(values.ToArray());
         }
 
+        var self = Self(context);
         var fileArguments = values.Length == 0 ? [] : new[] { values[0] };
-        var loaded = LoadFile(context.State, fileArguments);
+        var loaded = self.LoadFile(context.State, fileArguments);
         if (loaded.Length != 1 || loaded[0].Kind != LuaValueKind.Function)
         {
             throw new LuaRuntimeException(loaded.Length > 1 ? loaded[1] : LuaValue.Nil);
