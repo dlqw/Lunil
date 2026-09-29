@@ -19,9 +19,7 @@ internal sealed partial class LuaExecutionEngine
 {
     private const int MaximumCStackDepth = 120;
 
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<LuaIrModule, object> VerifiedModules = new();
-
-    private static readonly object VerifiedMarker = new();
+    private readonly ConditionalWeakTable<LuaIrModule, object> _verifiedModules = new();
 
     private readonly LuaInterpreterOptions _options;
     private readonly ILuaInstructionExecutor _instructionExecutor;
@@ -51,7 +49,7 @@ internal sealed partial class LuaExecutionEngine
             state.Heap.ValidateValue(LuaValue.FromFunction(closure));
             // Verification is deterministic over the immutable module, so repeated
             // Execute calls (REPL loops, game scripts) verify only once per module.
-            if (!VerifiedModules.TryGetValue(closure.Module, out _))
+            if (!_verifiedModules.TryGetValue(closure.Module, out _))
             {
                 var verificationErrors = LuaIrVerifier.Verify(closure.Module);
                 if (!verificationErrors.IsEmpty)
@@ -63,7 +61,7 @@ internal sealed partial class LuaExecutionEngine
                 // A racing Execute may have verified and marked it first; GetValue
                 // keeps that benign race from throwing and is available on
                 // netstandard2.1, where ConditionalWeakTable has no TryAdd.
-                VerifiedModules.GetValue(closure.Module, static _ => VerifiedMarker);
+                _verifiedModules.GetValue(closure.Module, static _ => new object());
             }
 
             var thread = state.MainThread;

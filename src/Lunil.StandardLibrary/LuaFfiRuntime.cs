@@ -46,7 +46,6 @@ internal static class LuaFfiLibrary
 
 internal sealed class LuaFfiContext : IDisposable
 {
-    private static long _nextMetatableId;
     private readonly LuaState _state;
     private readonly LuaFfiOptions _options;
     private readonly ImmutableHashSet<string> _allowedLibraries;
@@ -152,7 +151,7 @@ internal sealed class LuaFfiContext : IDisposable
             CloseBufferMetamethod,
             "ffi.buffer.__close");
 
-        var metatableRoot = $"_LUNIL_FFI_METATABLE_{Interlocked.Increment(ref _nextMetatableId)}";
+        var metatableRoot = $"_LUNIL_FFI_METATABLE_{state.NextUniqueId()}";
         LuaLibraryHelpers.Set(
             state,
             state.Registry,

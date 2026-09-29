@@ -10,8 +10,6 @@ namespace Lunil.Runtime.Memory;
 /// </summary>
 public sealed class LuaHeap
 {
-    private static long s_nextHeapIdentity;
-
     private readonly LuaHeapOptions _options;
     private readonly List<LuaGcObject> _objects = [];
     private readonly HashSet<LuaGcObject> _youngObjects =
@@ -42,8 +40,14 @@ public sealed class LuaHeap
     private bool _finalizersSeparated;
 
     public LuaHeap(LuaHeapOptions? options = null)
+        : this(options, LuaHeapIdentitySource.Process)
     {
-        Identity = Interlocked.Increment(ref s_nextHeapIdentity);
+    }
+
+    internal LuaHeap(LuaHeapOptions? options, LuaHeapIdentitySource identitySource)
+    {
+        LunilGuard.NotNull(identitySource);
+        Identity = identitySource.Allocate();
         _options = options ?? LuaHeapOptions.Default;
         LunilGuard.Positive(_options.MaximumLogicalBytes);
         LunilGuard.Positive(_options.StepSizeBytes);

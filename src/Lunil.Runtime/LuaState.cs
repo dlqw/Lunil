@@ -23,6 +23,7 @@ public sealed class LuaState
     private readonly Dictionary<LuaValueKind, LuaTable> _typeMetatables = [];
     private readonly Dictionary<string, LoadedModuleRegistration> _loadedModules =
         new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, object> _services = new();
     private LuaTable? _loadedModuleCache;
     private LuaString? _debugHookCallString;
     private LuaString? _debugHookTailCallString;
@@ -30,6 +31,7 @@ public sealed class LuaState
     private LuaString? _debugHookLineString;
     private LuaString? _debugHookCountString;
     private long _nextModuleRevision;
+    private long _nextUniqueId;
 
     public LuaState(LuaStateOptions? options = null)
     {
@@ -124,6 +126,24 @@ public sealed class LuaState
             hashCapacity,
             Math.Max(arrayCapacity, allocationHint.ArrayCapacity),
             allocationHint);
+
+    /// <summary>
+    /// Retrieves a per-state service, creating it with <paramref name="factory"/> on first use.
+    /// This instance-owned registry replaces attachable static caches as the composition point
+    /// for state-scoped components such as the standard library context.
+    /// </summary>
+    internal T GetOrCreateService<T>(Func<T> factory) where T : class =>
+        (T)_services.GetOrAdd(typeof(T), _ => factory());
+
+    /// <summary>Replaces a per-state service, keeping reconfiguration semantics explicit.</summary>
+    internal void SetService<T>(T service) where T : class
+    {
+        LunilGuard.NotNull(service);
+        _services[typeof(T)] = service;
+    }
+
+    /// <summary>Allocates a state-unique id for registry keys and other named state entries.</summary>
+    internal long NextUniqueId() => Interlocked.Increment(ref _nextUniqueId);
 
     public LuaThread CreateThread(int initialStackCapacity = 128) =>
         new(Heap, initialStackCapacity);
