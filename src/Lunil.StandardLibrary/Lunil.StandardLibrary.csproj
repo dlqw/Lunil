@@ -1,10 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\Lunil.StandardLibrary.Generators\Lunil.StandardLibrary.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;TrimMode;RuntimeIdentifier;SelfContained;LunilNativeAotPublish;LunilReadyToRunPublish" />
     <ProjectReference Include="..\Lunil.Core\Lunil.Core.csproj" />
     <ProjectReference Include="..\Lunil.Runtime\Lunil.Runtime.csproj" />
     <ProjectReference Include="..\Lunil.Semantics\Lunil.Semantics.csproj" />
     <ProjectReference Include="..\Lunil.Syntax\Lunil.Syntax.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\Lunil.StandardLibrary.Generators\bin\$(Configuration)\netstandard2.0\Lunil.StandardLibrary.Generators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
   </ItemGroup>
 
   <PropertyGroup>

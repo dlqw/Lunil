@@ -19,6 +19,11 @@ namespace Lunil.StandardLibrary
         string? GetEnvironmentVariable(string name);
     }
 
+    public interface ILuaFfiBindingProvider
+    {
+        void RegisterBindings(Lunil.StandardLibrary.LuaFfiBindingRegistry registry);
+    }
+
     public interface ILuaFfiLibraryLoader
     {
         nint Load(string libraryName);
@@ -68,6 +73,8 @@ namespace Lunil.StandardLibrary
         public void Deconstruct(out bool Started, out string Kind, out int Status) => throw null;
     }
 
+    public delegate object? LuaFfiAddressedNativeInvoker(nint address, System.ReadOnlySpan<object?> arguments);
+
     public sealed class LuaFfiBindingRegistry
     {
         public void Register(Lunil.StandardLibrary.LuaFfiNativeBinding binding) { }
@@ -110,13 +117,25 @@ namespace Lunil.StandardLibrary
         public LuaFfiException(Lunil.StandardLibrary.LuaFfiErrorCode code, string message, System.Exception innerException) { }
     }
 
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple = true)]
+    public sealed class LuaFfiGenerateBindingAttribute : System.Attribute
+    {
+        public string LibraryName { get => throw null; }
+        public string SymbolName { get => throw null; }
+        public string Signature { get => throw null; }
+        public string CallingConvention { get => throw null; }
+        public LuaFfiGenerateBindingAttribute(string libraryName, string symbolName, string signature, string callingConvention = "platform") { }
+    }
+
     public sealed class LuaFfiNativeBinding : System.IEquatable<Lunil.StandardLibrary.LuaFfiNativeBinding>
     {
         public string LibraryName { get => throw null; init { } }
         public string SymbolName { get => throw null; init { } }
         public Lunil.StandardLibrary.LuaFfiSignature Signature { get => throw null; init { } }
         public Lunil.StandardLibrary.LuaFfiNativeInvoker Invoker { get => throw null; init { } }
+        public Lunil.StandardLibrary.LuaFfiAddressedNativeInvoker? AddressedInvoker { get => throw null; init { } }
         public LuaFfiNativeBinding(string LibraryName, string SymbolName, Lunil.StandardLibrary.LuaFfiSignature Signature, Lunil.StandardLibrary.LuaFfiNativeInvoker Invoker) { }
+        public LuaFfiNativeBinding(string libraryName, string symbolName, Lunil.StandardLibrary.LuaFfiSignature signature, Lunil.StandardLibrary.LuaFfiAddressedNativeInvoker addressedInvoker) { }
         public override string ToString() => throw null;
         public static bool operator !=(Lunil.StandardLibrary.LuaFfiNativeBinding? left, Lunil.StandardLibrary.LuaFfiNativeBinding? right) => throw null;
         public static bool operator ==(Lunil.StandardLibrary.LuaFfiNativeBinding? left, Lunil.StandardLibrary.LuaFfiNativeBinding? right) => throw null;
