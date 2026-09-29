@@ -255,7 +255,7 @@ internal sealed class LuaBasicLibrary
         var target = LuaLibraryHelpers.Required(values, 0, "ipairs iterator");
         var current = LuaLibraryHelpers.CheckInteger(values, 1, "ipairs iterator");
         var indexValue = LuaValue.FromInteger(unchecked(current + 1));
-        var resolution = LuaRuntimeOperations.GetIndex(context.State, target, indexValue);
+        var resolution = context.State.Operations.GetIndex(target, indexValue);
         if (resolution.RequiresCall)
         {
             return LuaNativeStep.CallLua(

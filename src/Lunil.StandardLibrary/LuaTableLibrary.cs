@@ -107,9 +107,7 @@ internal static class LuaTableLibrary
 
         while (index <= last)
         {
-            var resolution = LuaRuntimeOperations.GetIndex(
-                context.State,
-                target,
+            var resolution = context.State.Operations.GetIndex(target,
                 LuaValue.FromInteger(index));
             if (resolution.RequiresCall)
             {
@@ -209,9 +207,7 @@ internal static class LuaTableLibrary
         {
             if (continuationId != 2)
             {
-                var get = LuaRuntimeOperations.GetIndex(
-                    context.State,
-                    table,
+                var get = context.State.Operations.GetIndex(table,
                     LuaValue.FromInteger(index - 1));
                 if (get.RequiresCall)
                 {
@@ -226,9 +222,7 @@ internal static class LuaTableLibrary
                 moved = get.Value;
             }
 
-            var set = LuaRuntimeOperations.SetIndex(
-                context.State,
-                table,
+            var set = context.State.Operations.SetIndex(table,
                 LuaValue.FromInteger(index),
                 moved);
             if (set.RequiresCall)
@@ -245,9 +239,7 @@ internal static class LuaTableLibrary
             index--;
         }
 
-        var finalSet = LuaRuntimeOperations.SetIndex(
-            context.State,
-            table,
+        var finalSet = context.State.Operations.SetIndex(table,
             LuaValue.FromInteger(positionValue),
             itemValue);
         return finalSet.RequiresCall
@@ -308,7 +300,7 @@ internal static class LuaTableLibrary
                 throw LuaLibraryHelpers.BadArgument("remove", 1, "position out of bounds");
             }
 
-            var get = LuaRuntimeOperations.GetIndex(context.State, table, LuaValue.FromInteger(position));
+            var get = context.State.Operations.GetIndex(table, LuaValue.FromInteger(position));
             if (get.RequiresCall)
             {
                 return LuaNativeStep.CallLua(
@@ -342,9 +334,7 @@ internal static class LuaTableLibrary
         {
             if (continuationId != 3)
             {
-                var get = LuaRuntimeOperations.GetIndex(
-                    context.State,
-                    table,
+                var get = context.State.Operations.GetIndex(table,
                     LuaValue.FromInteger(index + 1));
                 if (get.RequiresCall)
                 {
@@ -359,9 +349,7 @@ internal static class LuaTableLibrary
                 moved = get.Value;
             }
 
-            var set = LuaRuntimeOperations.SetIndex(
-                context.State,
-                table,
+            var set = context.State.Operations.SetIndex(table,
                 LuaValue.FromInteger(index),
                 moved);
             if (set.RequiresCall)
@@ -378,9 +366,7 @@ internal static class LuaTableLibrary
             index++;
         }
 
-        var clear = LuaRuntimeOperations.SetIndex(
-            context.State,
-            table,
+        var clear = context.State.Operations.SetIndex(table,
             LuaValue.FromInteger(index),
             LuaValue.Nil);
         return clear.RequiresCall
@@ -440,9 +426,7 @@ internal static class LuaTableLibrary
             }
             else
             {
-                var equality = LuaRuntimeOperations.Binary(
-                    context.State,
-                    LuaIrBinaryOperator.Equal,
+                var equality = context.State.Operations.Binary(LuaIrBinaryOperator.Equal,
                     source,
                     destination);
                 if (equality.RequiresCall)
@@ -499,9 +483,7 @@ internal static class LuaTableLibrary
         {
             if (continuationId != 1)
             {
-                var get = LuaRuntimeOperations.GetIndex(
-                    context.State,
-                    source,
+                var get = context.State.Operations.GetIndex(source,
                     LuaValue.FromInteger(unchecked(first + offset)));
                 if (get.RequiresCall)
                 {
@@ -516,9 +498,7 @@ internal static class LuaTableLibrary
                 moved = get.Value;
             }
 
-            var set = LuaRuntimeOperations.SetIndex(
-                context.State,
-                destination,
+            var set = context.State.Operations.SetIndex(destination,
                 LuaValue.FromInteger(unchecked(target + offset)),
                 moved);
             if (set.RequiresCall)
@@ -620,9 +600,7 @@ internal static class LuaTableLibrary
 
         while (index <= last)
         {
-            var get = LuaRuntimeOperations.GetIndex(
-                context.State,
-                target,
+            var get = context.State.Operations.GetIndex(target,
                 LuaValue.FromInteger(index));
             if (get.RequiresCall)
             {
@@ -1521,9 +1499,7 @@ internal static class LuaTableLibrary
         long index,
         SortProgramCounter continuation)
     {
-        var get = LuaRuntimeOperations.GetIndex(
-            context.State,
-            machine.Table,
+        var get = context.State.Operations.GetIndex(machine.Table,
             LuaValue.FromInteger(index));
         machine.ProgramCounter = continuation;
         if (get.RequiresCall)
@@ -1547,9 +1523,7 @@ internal static class LuaTableLibrary
         LuaValue value,
         SortProgramCounter continuation)
     {
-        var set = LuaRuntimeOperations.SetIndex(
-            context.State,
-            machine.Table,
+        var set = context.State.Operations.SetIndex(machine.Table,
             LuaValue.FromInteger(index),
             value);
         machine.ProgramCounter = continuation;
@@ -1584,9 +1558,7 @@ internal static class LuaTableLibrary
                 callIsYieldable: false);
         }
 
-        var comparison = LuaRuntimeOperations.Binary(
-            context.State,
-            LuaIrBinaryOperator.LessThan,
+        var comparison = context.State.Operations.Binary(LuaIrBinaryOperator.LessThan,
             left,
             right);
         if (comparison.RequiresCall)
@@ -1638,9 +1610,7 @@ internal static class LuaTableLibrary
         LuaValue[] state,
         LengthContinuation targetContinuation)
     {
-        var resolution = LuaRuntimeOperations.Unary(
-            context.State,
-            LuaIrUnaryOperator.Length,
+        var resolution = context.State.Operations.Unary(LuaIrUnaryOperator.Length,
             target);
         return resolution.RequiresCall
             ? LuaNativeStep.CallLua(

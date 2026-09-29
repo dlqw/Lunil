@@ -41,9 +41,7 @@ internal sealed partial class LuaExecutionEngine
         var callable = resolution.Callable;
         if (callable.Kind != LuaValueKind.Function)
         {
-            var resolved = LuaRuntimeOperations.ResolveCall(
-                state,
-                callable,
+            var resolved = state.Operations.ResolveCall(callable,
                 thread.Stack.AsReadOnlySpan(argumentStart, argumentCount));
             callable = resolved.Callable;
             argumentCount = resolved.ArgumentCount;
@@ -168,7 +166,7 @@ internal sealed partial class LuaExecutionEngine
         LuaOperationResolution resolved;
         try
         {
-            resolved = LuaRuntimeOperations.ResolveCall(state, target, targetArguments);
+            resolved = state.Operations.ResolveCall(target, targetArguments);
         }
         catch (LuaRuntimeException exception)
         {
@@ -502,9 +500,7 @@ internal sealed partial class LuaExecutionEngine
         LuaOperationResolution resolved;
         try
         {
-            resolved = LuaRuntimeOperations.ResolveCall(
-                state,
-                unwind.ErrorHandler,
+            resolved = state.Operations.ResolveCall(unwind.ErrorHandler,
                 [unwind.Error]);
         }
         catch (LuaRuntimeException)
@@ -852,9 +848,7 @@ internal sealed partial class LuaExecutionEngine
             LuaOperationResolution resolved;
             try
             {
-                resolved = LuaRuntimeOperations.ResolveCall(
-                    state,
-                    finalizer,
+                resolved = state.Operations.ResolveCall(finalizer,
                     [targetValue]);
             }
             catch (LuaRuntimeException exception)
@@ -909,7 +903,7 @@ internal sealed partial class LuaExecutionEngine
         LuaOperationResolution resolved;
         try
         {
-            resolved = LuaRuntimeOperations.ResolveCall(state, handler, [error]);
+            resolved = state.Operations.ResolveCall(handler, [error]);
         }
         catch (LuaRuntimeException)
         {
@@ -2062,9 +2056,7 @@ internal sealed partial class LuaExecutionEngine
                 continue;
             }
 
-            var metamethod = LuaRuntimeOperations.GetMetamethod(
-                state,
-                value,
+            var metamethod = state.Operations.GetMetamethod(value,
                 LuaMetamethod.Close);
             if (metamethod.IsNil)
             {
@@ -2075,7 +2067,7 @@ internal sealed partial class LuaExecutionEngine
             LuaOperationResolution resolved;
             try
             {
-                resolved = LuaRuntimeOperations.ResolveCall(state, metamethod, [value, error]);
+                resolved = state.Operations.ResolveCall(metamethod, [value, error]);
             }
             catch (LuaRuntimeException)
             {

@@ -59,6 +59,7 @@ public sealed class LuaState
         AllowsLessThanOrEqualFallback = LanguageVersion is
             LuaLanguageVersion.Lua51 or LuaLanguageVersion.Lua52 or LuaLanguageVersion.Lua53;
         OrderingRequiresSameType = LanguageVersion == LuaLanguageVersion.Lua51;
+        Operations = new Operations.LuaRuntimeOperations(this);
         Heap = new LuaHeap(options.Heap);
         Heap.PreservesDeadThreadOpenUpvalues = features.PreservesDeadThreadOpenUpvalues;
         Strings = new LuaStringPool(Heap);
@@ -81,6 +82,10 @@ public sealed class LuaState
     internal bool AllowsLessThanOrEqualFallback { get; }
 
     internal bool OrderingRequiresSameType { get; }
+
+    /// <summary>Semantic operations (indexing, arithmetic, comparison, call resolution)
+    /// for this state, including its version profile.</summary>
+    public Operations.LuaRuntimeOperations Operations { get; }
 
     public LuaHeap Heap { get; }
 

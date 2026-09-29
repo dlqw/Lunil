@@ -109,6 +109,7 @@ namespace Lunil.Runtime
     public sealed class LuaState
     {
         public Lunil.Core.LuaLanguageVersion LanguageVersion { get => throw null; }
+        public Lunil.Runtime.Operations.LuaRuntimeOperations Operations { get => throw null; }
         public Lunil.Runtime.Memory.LuaHeap Heap { get => throw null; }
         public Lunil.Runtime.Values.LuaStringPool Strings { get => throw null; }
         public Lunil.Runtime.Values.LuaTable Globals { get => throw null; }
@@ -714,13 +715,13 @@ namespace Lunil.Runtime.Operations
         LogicalNot = 1
     }
 
-    public static class LuaRuntimeOperations
+    public sealed class LuaRuntimeOperations
     {
-        public static Lunil.Runtime.Operations.LuaOperationResolution GetIndex(Lunil.Runtime.LuaState state, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.Values.LuaValue key) => throw null;
-        public static Lunil.Runtime.Operations.LuaOperationResolution SetIndex(Lunil.Runtime.LuaState state, Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.Values.LuaValue key, Lunil.Runtime.Values.LuaValue value) => throw null;
-        public static Lunil.Runtime.Operations.LuaOperationResolution Unary(Lunil.Runtime.LuaState state, Lunil.IR.Canonical.LuaIrUnaryOperator operation, Lunil.Runtime.Values.LuaValue operand) => throw null;
-        public static Lunil.Runtime.Operations.LuaOperationResolution Binary(Lunil.Runtime.LuaState state, Lunil.IR.Canonical.LuaIrBinaryOperator operation, Lunil.Runtime.Values.LuaValue left, Lunil.Runtime.Values.LuaValue right) => throw null;
-        public static Lunil.Runtime.Operations.LuaOperationResolution ResolveCall(Lunil.Runtime.LuaState state, Lunil.Runtime.Values.LuaValue callable, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments) => throw null;
+        public Lunil.Runtime.Operations.LuaOperationResolution GetIndex(Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.Values.LuaValue key) => throw null;
+        public Lunil.Runtime.Operations.LuaOperationResolution SetIndex(Lunil.Runtime.Values.LuaValue target, Lunil.Runtime.Values.LuaValue key, Lunil.Runtime.Values.LuaValue value) => throw null;
+        public Lunil.Runtime.Operations.LuaOperationResolution Unary(Lunil.IR.Canonical.LuaIrUnaryOperator operation, Lunil.Runtime.Values.LuaValue operand) => throw null;
+        public Lunil.Runtime.Operations.LuaOperationResolution Binary(Lunil.IR.Canonical.LuaIrBinaryOperator operation, Lunil.Runtime.Values.LuaValue left, Lunil.Runtime.Values.LuaValue right) => throw null;
+        public Lunil.Runtime.Operations.LuaOperationResolution ResolveCall(Lunil.Runtime.Values.LuaValue callable, System.ReadOnlySpan<Lunil.Runtime.Values.LuaValue> arguments) => throw null;
     }
 }
 namespace Lunil.Runtime.Values

@@ -288,9 +288,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         break;
                     }
 
-                    var getIndexResolution = LuaRuntimeOperations.GetIndex(
-                        state,
-                        target,
+                    var getIndexResolution = state.Operations.GetIndex(target,
                         ReadRegister(stack, frameBase, instruction.C));
                     if (!getIndexResolution.RequiresCall)
                     {
@@ -338,7 +336,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         break;
                     }
 
-                    var setIndexResolution = LuaRuntimeOperations.SetIndex(state, target, key, value);
+                    var setIndexResolution = state.Operations.SetIndex(target, key, value);
                     if (!setIndexResolution.RequiresCall)
                     {
                         frame.ProgramCounter++;
@@ -399,9 +397,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         break;
                     }
 
-                    var unaryResolution = LuaRuntimeOperations.Unary(
-                        state,
-                        (LuaIrUnaryOperator)instruction.C,
+                    var unaryResolution = state.Operations.Unary((LuaIrUnaryOperator)instruction.C,
                         operand);
                     if (!unaryResolution.RequiresCall)
                     {
@@ -436,9 +432,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                         break;
                     }
 
-                    var binaryResolution = LuaRuntimeOperations.Binary(
-                        state,
-                        (LuaIrBinaryOperator)instruction.D,
+                    var binaryResolution = state.Operations.Binary((LuaIrBinaryOperator)instruction.D,
                         left,
                         right);
                     if (!binaryResolution.RequiresCall)
@@ -509,9 +503,7 @@ internal sealed class LuaInterpreterInstructionExecutor : ILuaInstructionExecuto
                     var value = ReadRegister(stack, frameBase, instruction.A);
                     if (value.IsTruthy)
                     {
-                        var close = LuaRuntimeOperations.GetMetamethod(
-                            state,
-                            value,
+                        var close = state.Operations.GetMetamethod(value,
                             LuaMetamethod.Close);
                         if (close.IsNil)
                         {

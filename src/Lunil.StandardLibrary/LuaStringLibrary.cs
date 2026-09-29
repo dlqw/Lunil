@@ -391,7 +391,7 @@ internal static class LuaStringLibrary
             if (replacement.Kind == LuaValueKind.Table)
             {
                 var key = match.Captures[0].ToLuaValue(context.State, source);
-                var get = LuaRuntimeOperations.GetIndex(context.State, replacement, key);
+                var get = context.State.Operations.GetIndex(replacement, key);
                 if (get.RequiresCall)
                 {
                     return LuaNativeStep.CallLuaWithByteBuffer(

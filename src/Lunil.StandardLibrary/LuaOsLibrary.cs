@@ -247,9 +247,7 @@ internal sealed class LuaOsLibrary
 
         while (fieldIndex < TimeReadFields.Length)
         {
-            var get = LuaRuntimeOperations.GetIndex(
-                context.State,
-                tableValue,
+            var get = context.State.Operations.GetIndex(tableValue,
                 LuaLibraryHelpers.String(context.State, TimeReadFields[fieldIndex]));
             fieldIndex++;
             if (get.RequiresCall)
@@ -310,9 +308,7 @@ internal sealed class LuaOsLibrary
         var writeValues = state.Skip(3).ToArray();
         while (index < TimeWriteFields.Length)
         {
-            var set = LuaRuntimeOperations.SetIndex(
-                context.State,
-                table,
+            var set = context.State.Operations.SetIndex(table,
                 LuaLibraryHelpers.String(context.State, TimeWriteFields[index]),
                 writeValues[index]);
             index++;

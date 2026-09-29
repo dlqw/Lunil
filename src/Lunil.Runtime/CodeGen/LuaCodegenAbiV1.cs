@@ -90,27 +90,27 @@ public static class LuaCodegenAbiV1
         LuaExecutionContext context,
         LuaValue target,
         LuaValue key) =>
-        LuaRuntimeOperations.GetIndex(context.State, target, key);
+        context.State.Operations.GetIndex(target, key);
 
     public static LuaOperationResolution SetIndex(
         LuaExecutionContext context,
         LuaValue target,
         LuaValue key,
         LuaValue value) =>
-        LuaRuntimeOperations.SetIndex(context.State, target, key, value);
+        context.State.Operations.SetIndex(target, key, value);
 
     public static LuaOperationResolution Unary(
         LuaExecutionContext context,
         LuaIrUnaryOperator operation,
         LuaValue operand) =>
-        LuaRuntimeOperations.Unary(context.State, operation, operand);
+        context.State.Operations.Unary(operation, operand);
 
     public static LuaOperationResolution Binary(
         LuaExecutionContext context,
         LuaIrBinaryOperator operation,
         LuaValue left,
         LuaValue right) =>
-        LuaRuntimeOperations.Binary(context.State, operation, left, right);
+        context.State.Operations.Binary(operation, left, right);
 
     public static bool IsTruthy(LuaValue value) => value.IsTruthy;
 
