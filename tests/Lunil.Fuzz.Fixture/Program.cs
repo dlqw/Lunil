@@ -220,7 +220,6 @@ internal sealed class ReleaseFuzzRunner
                     typeName + "." + nameof(FuzzBindingTarget.Echo),
                 ],
                 BindingRegistry = registry,
-                BindingMode = LuaClrBindingMode.RegistryOnly,
             },
         });
 

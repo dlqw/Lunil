@@ -5,18 +5,6 @@ namespace Lunil.Hosting;
 
 public sealed partial class LuaClrBridge
 {
-    private bool ReflectionFallbackAllowed =>
-        _options.BindingMode == LuaClrBindingMode.RegistryThenReflection;
-
-    private void EnsureReflectionFallback(Type type)
-    {
-        if (!ReflectionFallbackAllowed)
-        {
-            throw new LuaClrException(LuaClrErrorCode.TypeNotAllowed,
-                $"CLR type '{type.FullName}' has no registered static binding.");
-        }
-    }
-
     private static LuaClrTypeInfo Describe(LuaClrTypeBinding binding)
     {
         var constructors = binding.Constructors.Select(static constructor =>

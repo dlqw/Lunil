@@ -199,19 +199,7 @@ internal static class LunilCli
         return CliDiagnosticFormat.Text;
     }
 
-    private static string GetVersion()
-    {
-        var informational = typeof(LunilCli).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion;
-        if (string.IsNullOrWhiteSpace(informational))
-        {
-            return typeof(LunilCli).Assembly.GetName().Version?.ToString() ?? "unknown";
-        }
-
-        var metadata = informational.IndexOf('+');
-        return metadata < 0 ? informational : informational[..metadata];
-    }
+    private static string GetVersion() => LunilProductVersion.InformationalVersion;
 
     private static string GetHelp(CliCommand command)
     {

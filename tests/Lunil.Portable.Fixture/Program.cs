@@ -117,7 +117,6 @@ using (var interopHost = new LuaHost(new LuaHostOptions
         AllowedTypeNames = [portableClrType],
         AllowedMemberNames = [portableClrType + "." + nameof(PortableClrFixture.Add)],
         BindingRegistry = bindingRegistry,
-        BindingMode = LuaClrBindingMode.RegistryOnly,
     },
 }))
 {

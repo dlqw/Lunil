@@ -42,16 +42,6 @@ public enum LuaClrCollectionProjection : byte
     TablesAndIterators,
 }
 
-/// <summary>Controls whether reflection may be used when no static binding exists.</summary>
-public enum LuaClrBindingMode : byte
-{
-    /// <summary>Require a registered binding for every construction, member, delegate, and event operation.</summary>
-    RegistryOnly,
-
-    /// <summary>Prefer registered bindings and retain the 0.12 exact-allowlist reflection fallback.</summary>
-    RegistryThenReflection,
-}
-
 /// <summary>Controls how ref/out values are returned by the Lua <c>clr.call</c> function.</summary>
 public enum LuaClrRefOutRepresentation : byte
 {

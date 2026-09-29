@@ -276,7 +276,6 @@ public static class Program
                 ],
                 AllowedDelegateTypeNames = [delegateName],
                 BindingRegistry = registry,
-                BindingMode = LuaClrBindingMode.RegistryOnly,
                 InstallGlobalModule = true,
             },
         });

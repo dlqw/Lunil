@@ -42,4 +42,30 @@
     <InternalsVisibleTo Include="Lunil.LanguageServer.Tests" />
   </ItemGroup>
 
+
+  <!-- The product version is baked in at compile time from $(Version) so no runtime
+       reflection over assembly metadata is needed to report it. -->
+  <Target Name="GenerateLunilProductVersion" BeforeTargets="BeforeCompile">
+    <PropertyGroup>
+      <LunilProductVersionBare Condition="'$(Version)' != ''">$(Version)</LunilProductVersionBare>
+      <LunilProductVersionBare Condition="'$(Version)' == ''">0.0.0</LunilProductVersionBare>
+    </PropertyGroup>
+    <ItemGroup>
+      <LunilProductVersionLines Include="// &lt;auto-generated /&gt;" />
+      <LunilProductVersionLines Include="namespace Lunil.LanguageServer%3B" />
+      <LunilProductVersionLines Include=" " />
+      <LunilProductVersionLines Include="internal static class LunilProductVersion" />
+      <LunilProductVersionLines Include="{" />
+      <LunilProductVersionLines Include="    public const string InformationalVersion = &quot;$(LunilProductVersionBare)&quot;%3B" />
+      <LunilProductVersionLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile
+        File="$(IntermediateOutputPath)LunilProductVersion.g.cs"
+        Lines="@(LunilProductVersionLines)"
+        Overwrite="true"
+        Encoding="UTF-8" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)LunilProductVersion.g.cs" />
+    </ItemGroup>
+  </Target>
 </Project>

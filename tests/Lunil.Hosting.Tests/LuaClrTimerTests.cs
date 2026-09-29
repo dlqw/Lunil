@@ -319,6 +319,7 @@ public sealed class LuaClrTimerTests
             Clr = new LuaClrOptions
             {
                 Capabilities = LuaClrCapabilities.Timers,
+                BindingRegistry = new LuaClrBindingRegistry(),
                 InstallGlobalModule = true,
                 TimeProvider = timeProvider,
                 MaximumTimerCount = maximumTimers,

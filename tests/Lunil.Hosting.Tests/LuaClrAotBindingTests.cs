@@ -43,9 +43,9 @@ public sealed class LuaClrAotBindingTests
         var contract = registry.CreateAnalysisContract("generated-fixture");
         var roundTrip = LuaHostAnalysisContract.ParseJson(contract.ToJson());
         var add = Assert.Single(roundTrip.Functions.Values, static function =>
-            function.Path.EndsWith(".Add", StringComparison.Ordinal));
+            function.Path.EndsWith("AotBindingFixture.Add", StringComparison.Ordinal));
         var changed = Assert.Single(roundTrip.Functions.Values, static function =>
-            function.Path.EndsWith(".Changed", StringComparison.Ordinal));
+            function.Path.EndsWith("AotBindingFixture.Changed", StringComparison.Ordinal));
 
         Assert.Equal(LuaHostTypeKind.Integer, add.Returns[0].Kind);
         Assert.StartsWith("dotnet://", add.Source!.Uri, StringComparison.Ordinal);
@@ -185,7 +185,6 @@ public sealed class LuaClrAotBindingTests
                     typeName + "." + nameof(AotBindingFixture.Value),
                 ],
                 BindingRegistry = registry,
-                BindingMode = LuaClrBindingMode.RegistryOnly,
             },
         }));
         Assert.Equal(LuaClrErrorCode.BindingConflict, conflict.Code);
@@ -233,7 +232,6 @@ public sealed class LuaClrAotBindingTests
                 AllowedAssemblyNames = [typeof(List<int>).Assembly.GetName().Name!],
                 AllowedTypeNames = [listName],
                 BindingRegistry = registry,
-                BindingMode = LuaClrBindingMode.RegistryOnly,
             },
         });
         var genericName = "System.Collections.Generic.List" + (char)96 + "1";
@@ -275,7 +273,7 @@ public sealed class LuaClrAotBindingTests
         Assert.Equal(LuaClrErrorCode.IteratorClosed, cancelled.Code);
 
         var refLikeName = typeof(RefLikeFixture).FullName!;
-        using var reflectionHost = new LuaHost(new LuaHostOptions
+        using var unboundHost = new LuaHost(new LuaHostOptions
         {
             InstallStandardLibrary = false,
             Clr = new LuaClrOptions
@@ -284,11 +282,15 @@ public sealed class LuaClrAotBindingTests
                 AllowedAssemblyNames = [typeof(RefLikeFixture).Assembly.GetName().Name!],
                 AllowedTypeNames = [refLikeName],
                 AllowedMemberNames = [refLikeName + "." + nameof(RefLikeFixture.Touch)],
+                // Ref-like parameters can never be statically bound, so the type
+                // intentionally stays unregistered and dispatch must fail closed.
+                BindingRegistry = new LuaClrBindingRegistry(),
             },
         });
-        var invalid = Assert.Throws<LuaClrException>(() => reflectionHost.ClrBridge.InvokeStatic(
+        var unbound = Assert.Throws<LuaClrException>(() => unboundHost.ClrBridge.InvokeStatic(
             refLikeName, nameof(RefLikeFixture.Touch)));
-        Assert.Equal(LuaClrErrorCode.InvalidRefOut, invalid.Code);
+        Assert.Equal(LuaClrErrorCode.TypeNotFound, unbound.Code);
+        Assert.Contains("no registered static binding", unbound.Message, StringComparison.Ordinal);
     }
 
     private static LuaClrBindingRegistry CreateRegistry()
@@ -332,7 +334,6 @@ public sealed class LuaClrAotBindingTests
             AllowedDelegateTypeNames = [signal],
             AllowedEventNames = [fixture + "." + nameof(AotBindingFixture.Changed)],
             BindingRegistry = registry,
-            BindingMode = LuaClrBindingMode.RegistryOnly,
             InstallGlobalModule = installGlobalModule,
         };
         return new LuaHost(new LuaHostOptions

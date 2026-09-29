@@ -232,7 +232,6 @@ namespace Lunil.Unity.Fixture
                         AllowedEventNames = ImmutableArray.Create(
                             targetName + "." + nameof(UnityBindingTarget.Changed)),
                         BindingRegistry = registry,
-                        BindingMode = LuaClrBindingMode.RegistryOnly,
                         InstallGlobalModule = true
                     }
                 }

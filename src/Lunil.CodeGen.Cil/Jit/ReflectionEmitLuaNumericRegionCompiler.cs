@@ -162,223 +162,117 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
         typeof(LuaTier2RuntimeSites),
     ];
 
-    private static readonly MethodInfo CanExecuteCompiledFrame = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanExecuteCompiledFrame),
-        [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo CanExecuteKnownClosureValue = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.CanExecuteKnownClosureValue),
-        [typeof(LuaValue), typeof(LuaCodegenCallSiteCache), typeof(int)]);
-    private static readonly MethodInfo TryGetClosure = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.TryGetClosure),
-        []);
-    private static readonly MethodInfo GetCallSite = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.GetCallSite),
-        [typeof(int), typeof(string)]);
-    private static readonly MethodInfo GetTableSite = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.GetTableSite),
-        [typeof(int)]);
-    private static readonly MethodInfo TryGetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TryGetCompilerProvenIntegerTableValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(LuaValue).MakeByRefType(),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenIntegerTableValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(LuaValue),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenIntegerTableIntegerValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableIntegerValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(long),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenIntegerTableFloatValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableFloatValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(double),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenIntegerTableBooleanValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableBooleanValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(bool),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenIntegerTableStringValue = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.TrySetCompilerProvenIntegerTableStringValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(long),
-            typeof(LuaString),
-        ]);
-    private static readonly MethodInfo TrySetBoundIntegerTableIntegerValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableIntegerValue),
-        [typeof(LuaTable), typeof(long), typeof(long)]);
-    private static readonly MethodInfo TrySetBoundIntegerTableFloatValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableFloatValue),
-        [typeof(LuaTable), typeof(long), typeof(double)]);
-    private static readonly MethodInfo TrySetBoundIntegerTableBooleanValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundIntegerTableBooleanValue),
-        [typeof(LuaTable), typeof(long), typeof(bool)]);
-    private static readonly MethodInfo TrySetBoundIntegerTableStringValue = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.TrySetBoundIntegerTableStringValue),
-        [typeof(LuaTable), typeof(long), typeof(LuaString)]);
-    private static readonly MethodInfo TryGetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaValue).MakeByRefType(),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenStringTableValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaValue),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenStringTableIntegerValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableIntegerValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(long),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenStringTableFloatValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableFloatValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(double),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenStringTableBooleanValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetCompilerProvenStringTableBooleanValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(bool),
-        ]);
-    private static readonly MethodInfo TrySetCompilerProvenStringTableStringValue = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.TrySetCompilerProvenStringTableStringValue),
-        [
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(LuaCodegenTableRegionSite).MakeByRefType(),
-            typeof(LuaValue),
-            typeof(LuaString),
-        ]);
-    private static readonly MethodInfo TrySetBoundStringTableIntegerValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundStringTableIntegerValue),
-        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(long)]);
-    private static readonly MethodInfo TrySetBoundStringTableFloatValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundStringTableFloatValue),
-        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(double)]);
-    private static readonly MethodInfo TrySetBoundStringTableBooleanValue = Method(
-        typeof(LuaCodegenAbiV5),
-        nameof(LuaCodegenAbiV5.TrySetBoundStringTableBooleanValue),
-        [typeof(LuaTable), typeof(LuaCodegenTableRegionSite).MakeByRefType(), typeof(bool)]);
-    private static readonly MethodInfo RecordInlineDirectCallCompletion = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallCompletion),
-        []);
-    private static readonly MethodInfo RecordInlineDirectCallFallback = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallFallback),
-        []);
-    private static readonly MethodInfo CanEnterLoopOsr = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanEnterLoopOsr),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo CheckLoopHeader = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CheckLoopOsrHeader),
-        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]);
-    private static readonly MethodInfo ReadRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo MaterializeConstant = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.MaterializeConstant),
-        [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo WriteRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.WriteRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]);
-    private static readonly MethodInfo SetFrameTop = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo ObserveLoopOsrBackedges = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.ObserveLoopOsrBackedges),
-        [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]);
+    // Method tokens are obtained by creating a delegate of the exact signature and reading its
+    // Method property, so overload selection happens at compile time and no reflection lookup is
+    // required. Instance-method tokens bind through a method group over a receiver; LuaValue
+    // instance methods use a default receiver, and LuaTier2RuntimeSites instance methods use a
+    // permanent zero-capacity binding instance whose delegates are never invoked.
+    private delegate bool GetIntegerTableValueSignature(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        out LuaValue value);
+
+    private delegate bool GetStringTableValueSignature(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        out LuaValue value);
+
+    private delegate bool SetIntegerTableValueSignature<in TValue>(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        long key,
+        TValue value);
+
+    private delegate bool SetStringTableValueSignature<in TValue>(
+        ref LuaTable? cachedTable,
+        LuaValue target,
+        LuaCodegenTableSiteCache cache,
+        ref LuaCodegenTableRegionSite regionSite,
+        LuaValue key,
+        TValue value);
+
+    private delegate bool SetBoundStringTableValueSignature<in TValue>(
+        LuaTable table,
+        ref LuaCodegenTableRegionSite regionSite,
+        TValue value);
+
+    private static readonly LuaTier2RuntimeSites TokenBindingSites =
+        new(0, null, new LuaJitModuleIdentity());
+
+    private static readonly MethodInfo CanExecuteCompiledFrame =
+        ((Func<LuaExecutionContext, LuaFrame, int, int, bool>)LuaCodegenAbiV2.CanExecuteCompiledFrame).Method;
+    private static readonly MethodInfo CanExecuteKnownClosureValue =
+        ((Func<LuaValue, LuaCodegenCallSiteCache, int, bool>)LuaCodegenAbiV4.CanExecuteKnownClosureValue).Method;
+    private static readonly MethodInfo TryGetClosure =
+        ((Func<LuaClosure?>)default(LuaValue).TryGetClosure).Method;
+    private static readonly MethodInfo GetCallSite =
+        ((Func<int, string, LuaCodegenCallSiteCache>)TokenBindingSites.GetCallSite).Method;
+    private static readonly MethodInfo GetTableSite =
+        ((Func<int, LuaCodegenTableSiteCache>)TokenBindingSites.GetTableSite).Method;
+    private static readonly MethodInfo TryGetCompilerProvenIntegerTableValue =
+        ((GetIntegerTableValueSignature)LuaCodegenAbiV5.TryGetCompilerProvenIntegerTableValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableValue =
+        ((SetIntegerTableValueSignature<LuaValue>)LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableIntegerValue =
+        ((SetIntegerTableValueSignature<long>)LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableIntegerValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableFloatValue =
+        ((SetIntegerTableValueSignature<double>)LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableFloatValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableBooleanValue =
+        ((SetIntegerTableValueSignature<bool>)LuaCodegenAbiV5.TrySetCompilerProvenIntegerTableBooleanValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenIntegerTableStringValue =
+        ((SetIntegerTableValueSignature<LuaString>)LuaNumericRegionRuntime.TrySetCompilerProvenIntegerTableStringValue).Method;
+    private static readonly MethodInfo TrySetBoundIntegerTableIntegerValue =
+        ((Func<LuaTable, long, long, bool>)LuaCodegenAbiV5.TrySetBoundIntegerTableIntegerValue).Method;
+    private static readonly MethodInfo TrySetBoundIntegerTableFloatValue =
+        ((Func<LuaTable, long, double, bool>)LuaCodegenAbiV5.TrySetBoundIntegerTableFloatValue).Method;
+    private static readonly MethodInfo TrySetBoundIntegerTableBooleanValue =
+        ((Func<LuaTable, long, bool, bool>)LuaCodegenAbiV5.TrySetBoundIntegerTableBooleanValue).Method;
+    private static readonly MethodInfo TrySetBoundIntegerTableStringValue =
+        ((Func<LuaTable, long, LuaString, bool>)LuaNumericRegionRuntime.TrySetBoundIntegerTableStringValue).Method;
+    private static readonly MethodInfo TryGetCompilerProvenStringTableValue =
+        ((GetStringTableValueSignature)LuaCodegenAbiV5.TryGetCompilerProvenStringTableValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenStringTableValue =
+        ((SetStringTableValueSignature<LuaValue>)LuaCodegenAbiV5.TrySetCompilerProvenStringTableValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenStringTableIntegerValue =
+        ((SetStringTableValueSignature<long>)LuaCodegenAbiV5.TrySetCompilerProvenStringTableIntegerValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenStringTableFloatValue =
+        ((SetStringTableValueSignature<double>)LuaCodegenAbiV5.TrySetCompilerProvenStringTableFloatValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenStringTableBooleanValue =
+        ((SetStringTableValueSignature<bool>)LuaCodegenAbiV5.TrySetCompilerProvenStringTableBooleanValue).Method;
+    private static readonly MethodInfo TrySetCompilerProvenStringTableStringValue =
+        ((SetStringTableValueSignature<LuaString>)LuaNumericRegionRuntime.TrySetCompilerProvenStringTableStringValue).Method;
+    private static readonly MethodInfo TrySetBoundStringTableIntegerValue =
+        ((SetBoundStringTableValueSignature<long>)LuaCodegenAbiV5.TrySetBoundStringTableIntegerValue).Method;
+    private static readonly MethodInfo TrySetBoundStringTableFloatValue =
+        ((SetBoundStringTableValueSignature<double>)LuaCodegenAbiV5.TrySetBoundStringTableFloatValue).Method;
+    private static readonly MethodInfo TrySetBoundStringTableBooleanValue =
+        ((SetBoundStringTableValueSignature<bool>)LuaCodegenAbiV5.TrySetBoundStringTableBooleanValue).Method;
+    private static readonly MethodInfo RecordInlineDirectCallCompletion =
+        ((Action)TokenBindingSites.RecordInlineDirectCallCompletion).Method;
+    private static readonly MethodInfo RecordInlineDirectCallFallback =
+        ((Action)TokenBindingSites.RecordInlineDirectCallFallback).Method;
+    private static readonly MethodInfo CanEnterLoopOsr =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, int, int, int, bool>)LuaCodegenAbiV2.CanEnterLoopOsr).Method;
+    private static readonly MethodInfo CheckLoopHeader =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, LuaCompiledExitReason>)LuaCodegenAbiV2.CheckLoopOsrHeader).Method;
+    private static readonly MethodInfo ReadRegister =
+        ((Func<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.ReadRegisterUnchecked).Method;
+    private static readonly MethodInfo MaterializeConstant =
+        ((Func<LuaExecutionContext, LuaFrame, int, LuaValue>)LuaCodegenAbiV1.MaterializeConstant).Method;
+    private static readonly MethodInfo WriteRegister =
+        ((Action<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.WriteRegisterUnchecked).Method;
+    private static readonly MethodInfo SetFrameTop =
+        ((Action<LuaThread, LuaFrame, int>)LuaCodegenAbiV2.SetFrameTopUnchecked).Method;
+    private static readonly MethodInfo ObserveLoopOsrBackedges =
+        ((Action<LuaExecutionContext, LuaFrame, int, int>)LuaCodegenAbiV1.ObserveLoopOsrBackedges).Method;
+    // Instance method on LuaExecutionContext: the context constructor needs a live LuaState and
+    // LuaThread, so no receiver exists at type-initialization time. Keep the reflection lookup.
     private static readonly MethodInfo TryReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
@@ -386,95 +280,56 @@ internal static class ReflectionEmitLuaNumericRegionCompiler
     private static readonly MethodInfo GetRemainingInstructionCount = PropertyGetter(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.RemainingInstructionCount));
-    private static readonly MethodInfo GetInstructionsConsumed = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.GetInstructionsConsumed),
-        [typeof(LuaExecutionContext)]);
+    private static readonly MethodInfo GetInstructionsConsumed =
+        ((Func<LuaExecutionContext, long>)LuaCodegenAbiV4.GetInstructionsConsumed).Method;
     private static readonly MethodInfo GetProgramCounter = PropertyGetter(
         typeof(LuaFrame),
         nameof(LuaFrame.ProgramCounter));
-    private static readonly MethodInfo SetProgramCounter = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.SetProgramCounter),
-        [typeof(LuaFrame), typeof(int)]);
+    private static readonly MethodInfo SetProgramCounter =
+        ((Action<LuaFrame, int>)LuaCodegenAbiV4.SetProgramCounter).Method;
     private static readonly MethodInfo GetKind = PropertyGetter(
         typeof(LuaValue),
         nameof(LuaValue.Kind));
-    private static readonly MethodInfo AsInteger = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsInteger),
-        []);
-    private static readonly MethodInfo AsFloat = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsFloat),
-        []);
-    private static readonly MethodInfo AsBoolean = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsBoolean),
-        []);
-    private static readonly MethodInfo AsString = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsString),
-        []);
+    private static readonly MethodInfo AsInteger =
+        ((Func<long>)default(LuaValue).AsInteger).Method;
+    private static readonly MethodInfo AsFloat =
+        ((Func<double>)default(LuaValue).AsFloat).Method;
+    private static readonly MethodInfo AsBoolean =
+        ((Func<bool>)default(LuaValue).AsBoolean).Method;
+    private static readonly MethodInfo AsString =
+        ((Func<LuaString>)default(LuaValue).AsString).Method;
     private static readonly MethodInfo GetStringLength = PropertyGetter(
         typeof(LuaString),
         nameof(LuaString.Length));
-    private static readonly MethodInfo FromInteger = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromInteger),
-        [typeof(long)]);
-    private static readonly MethodInfo FromFloat = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromFloat),
-        [typeof(double)]);
-    private static readonly MethodInfo FromBoolean = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromBoolean),
-        [typeof(bool)]);
-    private static readonly MethodInfo FromString = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromString),
-        [typeof(LuaString)]);
-    private static readonly MethodInfo MathFloor = Method(
-        typeof(Math),
-        nameof(Math.Floor),
-        [typeof(double)]);
-    private static readonly MethodInfo MathPow = Method(
-        typeof(Math),
-        nameof(Math.Pow),
-        [typeof(double), typeof(double)]);
-    private static readonly MethodInfo Shift = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.Shift),
-        [typeof(long), typeof(long), typeof(bool)]);
-    private static readonly MethodInfo FloatingModulo = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.FloatingModulo),
-        [typeof(double), typeof(double)]);
-    private static readonly MethodInfo CompareMixed = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.CompareMixed),
-        [typeof(long), typeof(double), typeof(bool), typeof(int)]);
-    private static readonly MethodInfo ConcatenateStringInteger = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.ConcatenateStringInteger),
-        [typeof(LuaExecutionContext), typeof(LuaString), typeof(long), typeof(bool)]);
-    private static readonly MethodInfo ConcatenateStringFloat = Method(
-        typeof(LuaNumericRegionRuntime),
-        nameof(LuaNumericRegionRuntime.ConcatenateStringFloat),
-        [typeof(LuaExecutionContext), typeof(LuaString), typeof(double), typeof(bool)]);
-    private static readonly MethodInfo ContinueExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(long)]);
-    private static readonly MethodInfo PollExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Poll),
-        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
-    private static readonly MethodInfo DeoptExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Deopt),
-        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
+    private static readonly MethodInfo FromInteger =
+        ((Func<long, LuaValue>)LuaValue.FromInteger).Method;
+    private static readonly MethodInfo FromFloat =
+        ((Func<double, LuaValue>)LuaValue.FromFloat).Method;
+    private static readonly MethodInfo FromBoolean =
+        ((Func<bool, LuaValue>)LuaValue.FromBoolean).Method;
+    private static readonly MethodInfo FromString =
+        ((Func<LuaString, LuaValue>)LuaValue.FromString).Method;
+    private static readonly MethodInfo MathFloor =
+        ((Func<double, double>)Math.Floor).Method;
+    private static readonly MethodInfo MathPow =
+        ((Func<double, double, double>)Math.Pow).Method;
+    private static readonly MethodInfo Shift =
+        ((Func<long, long, bool, long>)LuaCodegenAbiV4.Shift).Method;
+    private static readonly MethodInfo FloatingModulo =
+        ((Func<double, double, double>)LuaCodegenAbiV4.FloatingModulo).Method;
+    private static readonly MethodInfo CompareMixed =
+        ((Func<long, double, bool, int, bool>)LuaCodegenAbiV4.CompareMixed).Method;
+    private static readonly MethodInfo ConcatenateStringInteger =
+        ((Func<LuaExecutionContext, LuaString, long, bool, LuaString>)LuaNumericRegionRuntime.ConcatenateStringInteger).Method;
+    private static readonly MethodInfo ConcatenateStringFloat =
+        ((Func<LuaExecutionContext, LuaString, double, bool, LuaString>)LuaNumericRegionRuntime.ConcatenateStringFloat).Method;
+    private static readonly MethodInfo ContinueExit =
+        ((Func<int, long, LuaCompiledExit>)LuaCompiledExit.Continue).Method;
+    private static readonly MethodInfo PollExit =
+        ((Func<int, long, LuaCompiledExitReason, LuaCompiledExit>)LuaCompiledExit.Poll).Method;
+    private static readonly MethodInfo DeoptExit =
+        ((Func<int, long, LuaCompiledExitReason, LuaCompiledExit>)LuaCompiledExit.Deopt).Method;
+    // Constructors have no method group form; keep the reflection lookup for this token only.
     private static readonly ConstructorInfo InvalidOperationExceptionConstructor =
         typeof(InvalidOperationException).GetConstructor([typeof(string)]) ??
         throw new MissingMethodException(

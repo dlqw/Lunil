@@ -39,12 +39,6 @@
   </Suppression>
   <Suppression>
     <DiagnosticId>CP0008</DiagnosticId>
-    <Target>T:Lunil.Hosting.LuaClrBindingMode</Target>
-    <Left>lib/netstandard2.1/Lunil.Hosting.dll</Left>
-    <Right>lib/net10.0/Lunil.Hosting.dll</Right>
-  </Suppression>
-  <Suppression>
-    <DiagnosticId>CP0008</DiagnosticId>
     <Target>T:Lunil.Hosting.LuaClrCollectionProjection</Target>
     <Left>lib/netstandard2.1/Lunil.Hosting.dll</Left>
     <Right>lib/net10.0/Lunil.Hosting.dll</Right>

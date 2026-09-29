@@ -139,12 +139,6 @@ namespace Lunil.Hosting
         public void Clear() { }
     }
 
-    public enum LuaClrBindingMode
-    {
-        RegistryOnly = 0,
-        RegistryThenReflection = 1
-    }
-
     public sealed class LuaClrBindingRegistry
     {
         public void Register(Lunil.Hosting.LuaClrTypeBinding binding) { }
@@ -469,7 +463,6 @@ namespace Lunil.Hosting
         public int MaximumTimerCount { get => throw null; init { } }
         public int MaximumTimerDispatchCount { get => throw null; init { } }
         public Lunil.Hosting.LuaClrBindingRegistry? BindingRegistry { get => throw null; init { } }
-        public Lunil.Hosting.LuaClrBindingMode BindingMode { get => throw null; init { } }
         public Lunil.Hosting.LuaClrEnumRepresentation EnumRepresentation { get => throw null; init { } }
         public Lunil.Hosting.LuaClrDecimalRepresentation DecimalRepresentation { get => throw null; init { } }
         public Lunil.Hosting.LuaClrCollectionProjection CollectionProjection { get => throw null; init { } }

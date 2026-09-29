@@ -1964,6 +1964,7 @@ public sealed class LuaPatchMigrationTests
                 : new LuaClrOptions
                 {
                     Capabilities = LuaClrCapabilities.Timers,
+                    BindingRegistry = new LuaClrBindingRegistry(),
                     InstallGlobalModule = true,
                     TimeProvider = timeProvider,
                 },

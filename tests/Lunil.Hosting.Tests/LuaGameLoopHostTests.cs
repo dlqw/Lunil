@@ -1,6 +1,12 @@
 using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(System.Action<int>))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(System.Action))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaGameLoopHostTests),
+    nameof(Lunil.Hosting.Tests.LuaGameLoopHostTests.GetPendingTask))]
+
 namespace Lunil.Hosting.Tests;
 
 public sealed class LuaGameLoopHostTests
@@ -73,6 +79,7 @@ public sealed class LuaGameLoopHostTests
             Clr = new LuaClrOptions
             {
                 Capabilities = LuaClrCapabilities.Timers,
+                BindingRegistry = new LuaClrBindingRegistry(),
                 TimeProvider = timerClock,
             },
         });
@@ -382,6 +389,7 @@ public sealed class LuaGameLoopHostTests
                 AllowedTypeNames = [delegateName],
                 AllowedDelegateTypeNames = [delegateName],
                 ThreadPolicy = LuaClrThreadPolicy.OwnerThreadOnly,
+                BindingRegistry = CreateClrRegistry(),
             },
         });
         using var game = new LuaGameLoopHost(host, new LuaGameLoopHostOptions
@@ -421,6 +429,7 @@ public sealed class LuaGameLoopHostTests
                 AllowedAssemblyNames = [typeof(LuaGameLoopHostTests).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
                 AllowedMemberNames = [$"{typeName}.{nameof(GetPendingTask)}"],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
         using var game = new LuaGameLoopHost(host, new LuaGameLoopHostOptions
@@ -573,6 +582,7 @@ public sealed class LuaGameLoopHostTests
                 AllowedAssemblyNames = [typeof(Action).Assembly.GetName().Name!],
                 AllowedTypeNames = [delegateName],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = CreateClrRegistry(),
                 TimeProvider = time,
             },
         });
@@ -605,6 +615,13 @@ public sealed class LuaGameLoopHostTests
 
     public static Task<int> GetPendingTask() => _pendingTask!.Task;
 
+    private static LuaClrBindingRegistry CreateClrRegistry()
+    {
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+        return registry;
+    }
+
     private static LuaHost CreateAsyncHost(string typeName) => new(new LuaHostOptions
     {
         ExecutionBackend = LuaHostExecutionBackend.Interpreter,
@@ -614,6 +631,7 @@ public sealed class LuaGameLoopHostTests
             AllowedAssemblyNames = [typeof(LuaGameLoopHostTests).Assembly.GetName().Name!],
             AllowedTypeNames = [typeName],
             AllowedMemberNames = [$"{typeName}.{nameof(GetPendingTask)}"],
+            BindingRegistry = CreateClrRegistry(),
         },
     });
 
@@ -640,6 +658,7 @@ public sealed class LuaGameLoopHostTests
                 Clr = new LuaClrOptions
                 {
                     Capabilities = capabilities,
+                    BindingRegistry = new LuaClrBindingRegistry(),
                     InstallGlobalModule = installClrModule,
                     TimeProvider = timeProvider,
                     MaximumTimerDispatchCount = maximumCallbacks,

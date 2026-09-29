@@ -292,7 +292,6 @@ public sealed partial class LuaClrBridge
         if (valueType == typeof(ValueTask) ||
             valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(ValueTask<>))
         {
-            EnsureReflectionFallback(valueType);
             var task = ValueTaskAsTask(value, valueType);
             if (task is not null)
             {
@@ -790,23 +789,21 @@ public sealed partial class LuaClrBridge
                 }
             }
             var binding = GetRegisteredBinding(tupleType.FullName ?? tupleType.Name);
-            if (binding is not null)
+            if (binding is null)
             {
-                var constructor = binding.Constructors.SingleOrDefault(candidate =>
-                    candidate.Parameters.Length == values.Length);
-                if (constructor is null)
-                {
-                    converted = null;
-                    score = 0;
-                    return false;
-                }
-                converted = constructor.Invoker(values);
+                converted = null;
+                score = 0;
+                return false;
             }
-            else
+            var constructor = binding.Constructors.SingleOrDefault(candidate =>
+                candidate.Parameters.Length == values.Length);
+            if (constructor is null)
             {
-                EnsureReflectionFallback(tupleType);
-                converted = Activator.CreateInstance(tupleType, values);
+                converted = null;
+                score = 0;
+                return false;
             }
+            converted = constructor.Invoker(values);
             score = 4;
             return converted is not null;
         }
@@ -939,15 +936,7 @@ public sealed partial class LuaClrBridge
     {
         var binding = GetRegisteredBinding(targetType.FullName ?? targetType.Name);
         var constructor = binding?.Constructors.FirstOrDefault(static item => item.Parameters.Length == 0);
-        if (constructor is not null)
-        {
-            return constructor.Invoker([]);
-        }
-        if (!targetType.IsInterface && !targetType.IsAbstract && ReflectionFallbackAllowed)
-        {
-            return Activator.CreateInstance(targetType);
-        }
-        return null;
+        return constructor is not null ? constructor.Invoker([]) : null;
     }
 
     private static Type? FindGenericInterface(Type type, Type definition)
