@@ -1,44 +1,50 @@
 namespace Lunil.Godot;
 
 /// <summary>Tracks active Godot Node adapters for scene reload and test diagnostics.</summary>
-public static class LuaGodotRuntimeRegistry
+public sealed class LuaGodotRuntimeRegistry
 {
-    private static readonly object Gate = new();
-    private static readonly HashSet<LuaGodotGameLoop> Hosts = [];
+    /// <summary>
+    /// Process-wide registry shared by engine-driven scene reloads. Hosts that isolate
+    /// their loops can create a dedicated registry and assign it to each loop instead.
+    /// </summary>
+    public static readonly LuaGodotRuntimeRegistry Process = new();
 
-    public static int ActiveHostCount
+    private readonly object _gate = new();
+    private readonly HashSet<LuaGodotGameLoop> _hosts = [];
+
+    public int ActiveHostCount
     {
         get
         {
-            lock (Gate)
+            lock (_gate)
             {
-                return Hosts.Count;
+                return _hosts.Count;
             }
         }
     }
 
-    internal static void Register(LuaGodotGameLoop host)
+    internal void Register(LuaGodotGameLoop host)
     {
-        lock (Gate)
+        lock (_gate)
         {
-            Hosts.Add(host);
+            _hosts.Add(host);
         }
     }
 
-    internal static void Unregister(LuaGodotGameLoop host)
+    internal void Unregister(LuaGodotGameLoop host)
     {
-        lock (Gate)
+        lock (_gate)
         {
-            Hosts.Remove(host);
+            _hosts.Remove(host);
         }
     }
 
-    public static void DisposeAll()
+    public void DisposeAll()
     {
         LuaGodotGameLoop[] snapshot;
-        lock (Gate)
+        lock (_gate)
         {
-            snapshot = [.. Hosts];
+            snapshot = [.. _hosts];
         }
 
         foreach (var host in snapshot)
@@ -46,9 +52,9 @@ public static class LuaGodotRuntimeRegistry
             host.Shutdown();
         }
 
-        lock (Gate)
+        lock (_gate)
         {
-            Hosts.RemoveWhere(static host => !host.IsInitialized);
+            _hosts.RemoveWhere(static host => !host.IsInitialized);
         }
     }
 }

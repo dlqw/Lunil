@@ -44,6 +44,10 @@ namespace Lunil.Unity
             get { return _gameLoop != null; }
         }
 
+        /// <summary>Registry tracking this loop for play-mode resets and editor shutdowns;
+        /// defaults to the process registry.</summary>
+        public LuaUnityRuntimeRegistry Registry { get; set; } = LuaUnityRuntimeRegistry.Process;
+
         public LuaGameLoopHost GameLoop
         {
             get
@@ -107,7 +111,7 @@ namespace Lunil.Unity
                     throw new InvalidOperationException("The Unity host options callback returned null.");
             }
             _gameLoop = new LuaGameLoopHost(gameLoopOptions);
-            LuaUnityRuntimeRegistry.Register(this);
+            Registry.Register(this);
 
             if (_entryScript != null)
             {
@@ -184,7 +188,7 @@ namespace Lunil.Unity
             var gameLoop = _gameLoop;
             _gameLoop = null;
             _entryOperation = null;
-            LuaUnityRuntimeRegistry.Unregister(this);
+            Registry.Unregister(this);
             if (_dispatcher != null)
             {
                 _dispatcher.Close();

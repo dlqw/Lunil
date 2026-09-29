@@ -40,6 +40,7 @@ namespace Lunil.Godot
         public Lunil.Hosting.LuaGameLoopHost GameLoop { get => throw null; }
         public Lunil.Hosting.LuaGameLoopOperation? EntryOperation { get => throw null; }
         public System.Func<Lunil.Hosting.LuaGameLoopHostOptions, Lunil.Hosting.LuaGameLoopHostOptions>? ConfigureHostOptions { get => throw null; set { } }
+        public Lunil.Godot.LuaGodotRuntimeRegistry Registry { get => throw null; set { } }
         public event System.Action<Lunil.Hosting.LuaGameLoopTickResult>? TickCompleted;
         public event System.Action<System.Exception>? HostFailed;
         public override void _Ready() { }
@@ -90,10 +91,11 @@ namespace Lunil.Godot
         public System.Threading.Tasks.ValueTask WriteAsync(string key, System.ReadOnlyMemory<byte> value, System.Threading.CancellationToken cancellationToken = null) => throw null;
     }
 
-    public static class LuaGodotRuntimeRegistry
+    public sealed class LuaGodotRuntimeRegistry
     {
-        public static int ActiveHostCount { get => throw null; }
-        public static void DisposeAll() { }
+        public static readonly Lunil.Godot.LuaGodotRuntimeRegistry Process;
+        public int ActiveHostCount { get => throw null; }
+        public void DisposeAll() { }
     }
 
     public class LuaGodotScriptResource : global::Godot.Resource

@@ -42,6 +42,10 @@ public partial class LuaGodotGameLoop : Node
     /// <summary>Applies host capabilities and generated bindings before initialization.</summary>
     public Func<LuaGameLoopHostOptions, LuaGameLoopHostOptions>? ConfigureHostOptions { get; set; }
 
+    /// <summary>Registry tracking this loop for engine-driven shutdown; defaults to the
+    /// process registry shared by scene reloads.</summary>
+    public LuaGodotRuntimeRegistry Registry { get; set; } = LuaGodotRuntimeRegistry.Process;
+
     public override void _Ready()
     {
         if (!Engine.IsEditorHint() && StartOnReady)
@@ -132,7 +136,7 @@ public partial class LuaGodotGameLoop : Node
         try
         {
             _gameLoop = new LuaGameLoopHost(gameLoopOptions);
-            LuaGodotRuntimeRegistry.Register(this);
+            Registry.Register(this);
             if (EntryScript is not null)
             {
                 var source = LuaSourceDocument.FromBytes(
@@ -165,7 +169,7 @@ public partial class LuaGodotGameLoop : Node
         var gameLoop = _gameLoop;
         _gameLoop = null;
         _entryOperation = null;
-        LuaGodotRuntimeRegistry.Unregister(this);
+        Registry.Unregister(this);
         _dispatcher?.Dispose();
         _dispatcher = null;
         gameLoop?.Dispose();

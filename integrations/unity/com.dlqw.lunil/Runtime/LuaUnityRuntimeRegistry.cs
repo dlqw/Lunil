@@ -5,41 +5,48 @@ using UnityEngine;
 namespace Lunil.Unity
 {
     /// <summary>Tracks active Unity adapters across disabled-domain-reload play sessions.</summary>
-    public static class LuaUnityRuntimeRegistry
+    public sealed class LuaUnityRuntimeRegistry
     {
-        private static readonly object Gate = new object();
-        private static readonly HashSet<LuaUnityGameLoop> Hosts = new HashSet<LuaUnityGameLoop>();
+        /// <summary>
+        /// Process-wide registry shared by play-mode resets and editor lifecycle shutdowns.
+        /// Hosts that isolate their loops can create a dedicated registry and assign it to
+        /// each loop instead.
+        /// </summary>
+        public static readonly LuaUnityRuntimeRegistry Process = new LuaUnityRuntimeRegistry();
 
-        public static int ActiveHostCount
+        private readonly object _gate = new object();
+        private readonly HashSet<LuaUnityGameLoop> _hosts = new HashSet<LuaUnityGameLoop>();
+
+        public int ActiveHostCount
         {
-            get { lock (Gate) return Hosts.Count; }
+            get { lock (_gate) return _hosts.Count; }
         }
 
-        internal static void Register(LuaUnityGameLoop host)
+        internal void Register(LuaUnityGameLoop host)
         {
-            lock (Gate) Hosts.Add(host);
+            lock (_gate) _hosts.Add(host);
         }
 
-        internal static void Unregister(LuaUnityGameLoop host)
+        internal void Unregister(LuaUnityGameLoop host)
         {
-            lock (Gate) Hosts.Remove(host);
+            lock (_gate) _hosts.Remove(host);
         }
 
-        public static void DisposeAll()
+        public void DisposeAll()
         {
             LuaUnityGameLoop[] snapshot;
-            lock (Gate) snapshot = new List<LuaUnityGameLoop>(Hosts).ToArray();
+            lock (_gate) snapshot = new List<LuaUnityGameLoop>(_hosts).ToArray();
             foreach (var host in snapshot)
             {
                 if (host != null) host.Shutdown();
             }
-            lock (Gate) Hosts.RemoveWhere(item => item == null || !item.IsInitialized);
+            lock (_gate) _hosts.RemoveWhere(item => item == null || !item.IsInitialized);
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetForPlayMode()
         {
-            DisposeAll();
+            Process.DisposeAll();
         }
     }
 }

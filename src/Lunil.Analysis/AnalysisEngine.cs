@@ -60,16 +60,12 @@ internal sealed partial class AnalysisEngine
     private readonly HashSet<LuaType> _publishedGlobalTypeNodes = new(LunilReferenceEqualityComparer.Instance);
 
     /// <summary>Seed dictionaries installed by <see cref="InstallBuiltIns"/>; their node
-    /// closures are cached per dictionary identity so concurrent document analyses
-    /// walk a shared library universe at most once per generation.</summary>
+    /// closures are memoized by the shared seed-node cache so concurrent document
+    /// analyses walk a shared library universe at most once per generation.</summary>
     private ImmutableArray<ImmutableDictionary<string, LuaType>> _globalSeedDictionaries;
     private HashSet<LuaType>[]? _globalSeedNodeSets;
 
-    private static readonly ConditionalWeakTable<
-        ImmutableDictionary<string, LuaType>,
-        HashSet<LuaType>> GlobalSeedNodeCache = new();
-
-    private static readonly HashSet<LuaType> EmptyGlobalSeedNodes = new(LunilReferenceEqualityComparer.Instance);
+    private readonly LuaGlobalSeedNodeCache _globalSeedNodeCache;
 
     private FunctionAnalysisContext? _currentFunction;
 
@@ -80,7 +76,21 @@ internal sealed partial class AnalysisEngine
         AnnotationTypeEnvironment types,
         ImmutableArray<LuaControlFlowGraph> graphs,
         LuaAnalysisContext context)
+        : this(semantics, annotations, environment, types, graphs, context, LuaGlobalSeedNodeCache.Process)
     {
+    }
+
+    internal AnalysisEngine(
+        LuaSemanticModel semantics,
+        LuaAnnotationDocument annotations,
+        LuaAnalysisEnvironment environment,
+        AnnotationTypeEnvironment types,
+        ImmutableArray<LuaControlFlowGraph> graphs,
+        LuaAnalysisContext context,
+        LuaGlobalSeedNodeCache globalSeedNodeCache)
+    {
+        LunilGuard.NotNull(globalSeedNodeCache);
+        _globalSeedNodeCache = globalSeedNodeCache;
         _semantics = semantics;
         _annotations = annotations;
         _environment = environment;
@@ -167,7 +177,7 @@ internal sealed partial class AnalysisEngine
     private void SetGlobalType(string name, LuaType type)
     {
         _globalTypes.Set(name, type);
-        CollectTypeNodesInto(type, _publishedGlobalTypeNodes);
+        LuaGlobalSeedNodeCache.CollectTypeNodesInto(type, _publishedGlobalTypeNodes);
     }
 
     /// <summary>
@@ -205,104 +215,9 @@ internal sealed partial class AnalysisEngine
         return false;
     }
 
-    private static HashSet<LuaType> GetGlobalSeedNodes(ImmutableDictionary<string, LuaType> dictionary)
-    {
-        if (dictionary.IsEmpty)
-        {
-            return EmptyGlobalSeedNodes;
-        }
+    private HashSet<LuaType> GetGlobalSeedNodes(ImmutableDictionary<string, LuaType> dictionary) =>
+        _globalSeedNodeCache.GetOrCreate(dictionary);
 
-        lock (dictionary)
-        {
-            if (!GlobalSeedNodeCache.TryGetValue(dictionary, out var nodes))
-            {
-                nodes = new HashSet<LuaType>(LunilReferenceEqualityComparer.Instance);
-                foreach (var pair in dictionary)
-                {
-                    CollectTypeNodesInto(pair.Value, nodes);
-                }
-
-                GlobalSeedNodeCache.AddOrUpdate(dictionary, nodes);
-            }
-
-            return nodes;
-        }
-    }
-
-    /// <summary>
-    /// Adds every composite node reachable through the edges table-mutation
-    /// propagation descends. The persistent set doubles as the visited set, so
-    /// repeated commits of shared graphs only touch newly published nodes.
-    /// </summary>
-    private static void CollectTypeNodesInto(LuaType type, HashSet<LuaType> nodes)
-    {
-        if (!nodes.Add(type))
-        {
-            return;
-        }
-
-        switch (type)
-        {
-            case LuaMetatableType metatable:
-                CollectTypeNodesInto(metatable.BaseType, nodes);
-                CollectTypeNodesInto(metatable.MetatableType, nodes);
-                break;
-            case LuaPrototypeType prototype:
-                CollectTypeNodesInto(prototype.Shape, nodes);
-                foreach (var baseType in prototype.BaseTypes)
-                {
-                    CollectTypeNodesInto(baseType, nodes);
-                }
-
-                break;
-            case LuaUnionType union:
-                foreach (var member in union.Types)
-                {
-                    CollectTypeNodesInto(member, nodes);
-                }
-
-                break;
-            case LuaStructuralTableType table:
-                foreach (var field in table.Fields)
-                {
-                    if (field.KeyType is not null)
-                    {
-                        CollectTypeNodesInto(field.KeyType, nodes);
-                    }
-
-                    CollectTypeNodesInto(field.ValueType, nodes);
-                }
-
-                break;
-            case LuaFunctionType function:
-                foreach (var parameter in function.Parameters)
-                {
-                    CollectTypeNodesInto(parameter.Type, nodes);
-                }
-
-                CollectTypeNodesInto(function.Returns, nodes);
-                break;
-            case LuaTypePack pack:
-                foreach (var item in pack.Head)
-                {
-                    CollectTypeNodesInto(item, nodes);
-                }
-
-                if (pack.VariadicType is not null)
-                {
-                    CollectTypeNodesInto(pack.VariadicType, nodes);
-                }
-
-                break;
-            case LuaOverloadType overload:
-                foreach (var signature in overload.Signatures)
-                {
-                    CollectTypeNodesInto(signature, nodes);
-                }
-
-                break;
-        }
-    }
 
     /// <summary>
     /// Append-only global environment. Each write records the table version it became
