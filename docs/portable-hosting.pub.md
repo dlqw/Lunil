@@ -8,12 +8,12 @@ The portable asset always uses the interpreter and never loads or probes `Reflec
 ## Prerequisites
 
 - A project targeting .NET 8+ or a `netstandard2.1`-compatible runtime.
-- `Lunil.Hosting` version `0.14.0` from the release package source.
+- `Lunil.Hosting` version `0.22.0` from the release package source.
 
 ## 1. Reference the host
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.14.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.22.0" />
 ```
 
 Do not reference `Lunil.CodeGen.Cil` from a portable application. It is the .NET 10 dynamic-code
@@ -78,8 +78,10 @@ The sample reports two frames and result `2`.
 ## Portable limitations
 
 - `LuaHostExecutionBackend.Jit` fails because the JIT asset is not present.
-- CLR interoperation is disabled until exact capabilities and allowlists are supplied.
-- For AOT or IL2CPP, use `LuaClrBindingMode.RegistryOnly` with generated bindings.
+- CLR interoperation is disabled until exact capabilities, allowlists, and a binding registry
+  are supplied.
+- CLR dispatch resolves through generated bindings and a registry on every runtime, including
+  AOT and IL2CPP.
 - Native module loading is unavailable unless the host supplies an implementation.
 
 Next: [engine-neutral game-loop hosting](game-engine-hosting.pub.md) and

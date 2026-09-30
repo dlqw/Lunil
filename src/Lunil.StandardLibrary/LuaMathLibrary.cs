@@ -288,9 +288,7 @@ internal static class LuaMathLibrary
         {
             var left = findMaximum ? arguments[best] : arguments[index];
             var right = findMaximum ? arguments[index] : arguments[best];
-            var comparison = LuaRuntimeOperations.Binary(
-                context.State,
-                LuaIrBinaryOperator.LessThan,
+            var comparison = context.State.Operations.Binary(LuaIrBinaryOperator.LessThan,
                 left,
                 right);
             if (comparison.RequiresCall)

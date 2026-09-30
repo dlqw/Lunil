@@ -24,7 +24,7 @@ namespace Lunil.Unity.Fixture.Tests
         [TearDown]
         public void TearDown()
         {
-            LuaUnityRuntimeRegistry.DisposeAll();
+            LuaUnityRuntimeRegistry.Process.DisposeAll();
             AssetDatabase.DeleteAsset(TemporaryRoot);
         }
 
@@ -80,7 +80,7 @@ namespace Lunil.Unity.Fixture.Tests
                 component.Shutdown();
                 UnityEngine.Object.DestroyImmediate(gameObject);
                 UnityEngine.Object.DestroyImmediate(entry);
-                Assert.That(LuaUnityRuntimeRegistry.ActiveHostCount, Is.Zero);
+                Assert.That(LuaUnityRuntimeRegistry.Process.ActiveHostCount, Is.Zero);
             }
         }
 
@@ -236,7 +236,7 @@ namespace Lunil.Unity.Fixture.Tests
                 UnityEngine.Object.DestroyImmediate(gameplayRules);
             }
 
-            Assert.That(LuaUnityRuntimeRegistry.ActiveHostCount, Is.Zero);
+            Assert.That(LuaUnityRuntimeRegistry.Process.ActiveHostCount, Is.Zero);
         }
 
         [UnityTest]
@@ -261,17 +261,17 @@ namespace Lunil.Unity.Fixture.Tests
                     component.EntryScript = entry;
                     gameObject.SetActive(true);
                     component.Initialize();
-                    Assert.That(LuaUnityRuntimeRegistry.ActiveHostCount, Is.EqualTo(1));
+                    Assert.That(LuaUnityRuntimeRegistry.Process.ActiveHostCount, Is.EqualTo(1));
 
                     yield return new ExitPlayMode();
-                    Assert.That(LuaUnityRuntimeRegistry.ActiveHostCount, Is.Zero);
+                    Assert.That(LuaUnityRuntimeRegistry.Process.ActiveHostCount, Is.Zero);
                     UnityEngine.Object.DestroyImmediate(gameObject);
                     UnityEngine.Object.DestroyImmediate(entry);
                 }
             }
             finally
             {
-                LuaUnityRuntimeRegistry.DisposeAll();
+                LuaUnityRuntimeRegistry.Process.DisposeAll();
                 EditorSettings.enterPlayModeOptions = previousOptions;
                 EditorSettings.enterPlayModeOptionsEnabled = previousEnabled;
             }

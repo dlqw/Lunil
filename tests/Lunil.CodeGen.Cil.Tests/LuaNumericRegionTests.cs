@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using Lunil.CodeGen.Cil.Analysis;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Core.Text;
 using Lunil.IR.Canonical;
@@ -19,14 +20,15 @@ public sealed class LuaNumericRegionTests
     [Fact]
     public void NaturalLoopAnalysisReusesImmutableModuleResultsAndHonorsCancellation()
     {
+        var analyzer = new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache());
         var module = Compile("local total = 0; for i = 1, 10 do total = total + i end; return total");
 
-        var first = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var first = analyzer.AnalyzeNaturalLoops(
             module,
             0,
             out var firstCacheHit,
             CancellationToken.None);
-        var second = LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var second = analyzer.AnalyzeNaturalLoops(
             module,
             0,
             out var secondCacheHit,
@@ -39,7 +41,7 @@ public sealed class LuaNumericRegionTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         Assert.Throws<OperationCanceledException>(() =>
-            LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+            analyzer.AnalyzeNaturalLoops(
                 module,
                 0,
                 out _,
@@ -451,7 +453,7 @@ public sealed class LuaNumericRegionTests
             Functions = [function],
         };
 
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -486,7 +488,7 @@ public sealed class LuaNumericRegionTests
             MainFunctionId = 0,
             Functions = [function],
         };
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -523,7 +525,7 @@ public sealed class LuaNumericRegionTests
             MainFunctionId = 0,
             Functions = [function],
         };
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -549,7 +551,7 @@ public sealed class LuaNumericRegionTests
     {
         var module = CreateBudgetLoopModule();
         var function = module.Functions[0];
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -584,7 +586,7 @@ public sealed class LuaNumericRegionTests
 
         var module = CreateBudgetLoopModule();
         var function = module.Functions[0];
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -609,6 +611,7 @@ public sealed class LuaNumericRegionTests
             new LuaNumericRegionEmissionMode(
                 RequireLoopOsrEntry: false,
                 ObserveLoopOsrBackedge: false),
+            new LuaJitModuleIdentity(),
             CancellationToken.None,
             out var compiled));
 
@@ -662,7 +665,7 @@ public sealed class LuaNumericRegionTests
 
         var module = CreateBudgetLoopModule();
         var function = module.Functions[0];
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -678,6 +681,7 @@ public sealed class LuaNumericRegionTests
             function,
             plan,
             new LuaNumericRegionEmissionMode(false, false),
+            new LuaJitModuleIdentity(),
             CancellationToken.None,
             out var compiled));
 
@@ -720,7 +724,7 @@ public sealed class LuaNumericRegionTests
 
         var module = CreateZeroDivisorLoopModule(operation);
         var function = module.Functions[0];
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -749,6 +753,7 @@ public sealed class LuaNumericRegionTests
             new LuaNumericRegionEmissionMode(
                 RequireLoopOsrEntry: false,
                 ObserveLoopOsrBackedge: false),
+            new LuaJitModuleIdentity(),
             CancellationToken.None,
             out var compiled));
         var state = new LuaState();
@@ -814,7 +819,7 @@ public sealed class LuaNumericRegionTests
 
         var module = CreateBudgetLoopModule();
         var function = module.Functions[0];
-        var region = Assert.Single(LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        var region = Assert.Single(new LuaNumericRegionAnalyzer(new LuaRegisterLivenessCache()).AnalyzeNaturalLoops(
             module,
             0,
             out _,
@@ -830,6 +835,7 @@ public sealed class LuaNumericRegionTests
             function,
             plan,
             new LuaNumericRegionEmissionMode(false, false),
+            new LuaJitModuleIdentity(),
             CancellationToken.None,
             out var compiled));
         var state = new LuaState(new LuaStateOptions

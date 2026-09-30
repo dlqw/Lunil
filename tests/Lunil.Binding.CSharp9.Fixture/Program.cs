@@ -27,7 +27,6 @@ namespace Lunil.Binding.CSharp9.Fixture
                     AllowedMemberNames = System.Collections.Immutable.ImmutableArray.Create(
                         typeName + "." + nameof(CSharp9Target.Add)),
                     BindingRegistry = registry,
-                    BindingMode = LuaClrBindingMode.RegistryOnly,
                 },
             }))
             {

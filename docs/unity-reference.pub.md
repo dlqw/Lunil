@@ -7,10 +7,10 @@
 | Field | Value |
 | --- | --- |
 | Package ID | `com.dlqw.lunil` |
-| Version | `0.14.0` |
+| Version | `0.22.0` |
 | Minimum Unity | `2022.3` |
 | Runtime backend | Portable interpreter |
-| Default CLR mode | Disabled; generated `RegistryOnly` is recommended |
+| Default CLR interop | Disabled; enabling it requires a binding registry |
 
 ## Verified matrix
 
@@ -34,6 +34,7 @@ Final iOS signing and device execution require the Apple toolchain.
 | `GameLoop` | Active `LuaGameLoopHost`; throws before initialization |
 | `EntryOperation` | Scheduled entry operation or `null` |
 | `ConfigureHostOptions` | Last pre-initialization options transform; returning `null` fails |
+| `Registry` | `LuaUnityRuntimeRegistry` tracking this loop; defaults to `Process`, or a dedicated instance to isolate play-mode shutdowns |
 | `TickCompleted` | Raised after a successful Update or FixedUpdate tick |
 | `HostFailed` | Raised when ticking throws; otherwise Unity logs the exception |
 | `Initialize()` | Idempotently creates and registers the host |
@@ -51,7 +52,7 @@ domain reload disabled.
 - `LuaUnityConsole`: routes standard output and errors to the Unity Console.
 - `LuaUnityAssetResolver`: asset, module, and file-system resolution for imported Lua scripts.
 - `LuaUnityPersistentStore`: exact-byte storage below `Application.persistentDataPath/Lunil` by default.
-- `LuaUnityRuntimeRegistry`: tracks active components for lifecycle shutdown.
+- `LuaUnityRuntimeRegistry.Process`: tracks active components for lifecycle shutdown; each component can also point its `Registry` property at a dedicated instance.
 
 ## Unity 6 isolation
 

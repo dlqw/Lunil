@@ -30,9 +30,7 @@ public sealed class LuaMetamethodTests
         var shape = table.ShapeVersion;
         var content = table.ContentVersion;
 
-        var resolved = LuaRuntimeOperations.SetIndex(
-            state,
-            LuaValue.FromTable(table),
+        var resolved = state.Operations.SetIndex(LuaValue.FromTable(table),
             key,
             LuaValue.FromInteger(2));
 
@@ -41,9 +39,7 @@ public sealed class LuaMetamethodTests
         Assert.Equal(shape, table.ShapeVersion);
         Assert.True(table.ContentVersion > content);
 
-        var absent = LuaRuntimeOperations.SetIndex(
-            state,
-            LuaValue.FromTable(table),
+        var absent = state.Operations.SetIndex(LuaValue.FromTable(table),
             String(state, "absent"),
             LuaValue.FromInteger(3));
         Assert.True(absent.RequiresCall);

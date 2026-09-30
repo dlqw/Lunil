@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using Lunil.CodeGen.Cil.Planning;
@@ -36,9 +34,8 @@ public readonly record struct ReflectionEmitMetrics(
 public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
 {
     private readonly Dictionary<int, Label> _labels = [];
+    private readonly ReflectionEmitRuntimeAbiCache _runtimeAbi;
     private readonly CancellationToken _cancellationToken;
-    private static readonly ConcurrentDictionary<string, MethodInfo> ResolvedCalls =
-        new(StringComparer.Ordinal);
     private DynamicMethod? _method;
     private ILGenerator? _generator;
     private long _emissionStarted;
@@ -52,20 +49,17 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
     public LuaCompiledMethod? CompiledMethod { get; private set; }
 
     public ReflectionEmitCilPlanSink()
+        : this(new ReflectionEmitRuntimeAbiCache(), CancellationToken.None)
     {
     }
 
-    private ReflectionEmitCilPlanSink(CancellationToken cancellationToken)
+    internal ReflectionEmitCilPlanSink(
+        ReflectionEmitRuntimeAbiCache runtimeAbi,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(runtimeAbi);
+        _runtimeAbi = runtimeAbi;
         _cancellationToken = cancellationToken;
-    }
-
-    internal static void PrepareRuntimeAbi()
-    {
-        foreach (var target in CilWellKnownCalls.All)
-        {
-            _ = ResolveCall(target);
-        }
     }
 
     [RequiresDynamicCode("Reflection.Emit requires dynamic code support.")]
@@ -84,7 +78,9 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
                 0);
         }
 
-        var sink = new ReflectionEmitCilPlanSink(cancellationToken);
+        var sink = new ReflectionEmitCilPlanSink(
+            new ReflectionEmitRuntimeAbiCache(),
+            cancellationToken);
         var started = Stopwatch.GetTimestamp();
         var verification = CilPlanEmitter.Emit(plan, sink, limits, cancellationToken);
         var totalDuration = Stopwatch.GetElapsedTime(started);
@@ -109,10 +105,23 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
     public static ReflectionEmitResult Compile(
         CilMethodPlan plan,
         CilPlanVerificationResult verification,
+        CancellationToken cancellationToken = default) =>
+        Compile(
+            plan,
+            verification,
+            new ReflectionEmitRuntimeAbiCache(),
+            cancellationToken);
+
+    [RequiresDynamicCode("Reflection.Emit requires dynamic code support.")]
+    internal static ReflectionEmitResult Compile(
+        CilMethodPlan plan,
+        CilPlanVerificationResult verification,
+        ReflectionEmitRuntimeAbiCache runtimeAbi,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(verification);
+        ArgumentNullException.ThrowIfNull(runtimeAbi);
         cancellationToken.ThrowIfCancellationRequested();
         if (!verification.Succeeded)
         {
@@ -130,7 +139,7 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
                 0);
         }
 
-        var sink = new ReflectionEmitCilPlanSink(cancellationToken);
+        var sink = new ReflectionEmitCilPlanSink(runtimeAbi, cancellationToken);
         CilPlanEmitter.EmitVerified(plan, sink, verification, cancellationToken);
         return new ReflectionEmitResult(
             sink.CompiledMethod,
@@ -234,7 +243,7 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
                 generator.Emit(OpCodes.Sub);
                 break;
             case CilPlanOpCode.Call:
-                generator.Emit(OpCodes.Call, ResolveCall(instruction.CallTarget!));
+                generator.Emit(OpCodes.Call, _runtimeAbi.ResolveCall(instruction.CallTarget!));
                 break;
             case CilPlanOpCode.Branch:
                 generator.Emit(OpCodes.Br, _labels[instruction.Label.Id]);
@@ -288,244 +297,6 @@ public sealed class ReflectionEmitCilPlanSink : ICilInstructionSink
         CilStackValueKind.CompiledExit => typeof(LuaCompiledExit),
         _ => throw new InvalidOperationException($"No CLR type exists for {kind}."),
     };
-
-    private static MethodInfo ResolveCall(CilCallTarget target) => ResolvedCalls.GetOrAdd(
-        target.Id,
-        static (_, callTarget) => ResolveCallCore(callTarget),
-        target);
-
-    private static MethodInfo ResolveCallCore(CilCallTarget target) => target.Id switch
-    {
-        "LuaExecutionContext.TryReserveInstructions" => Method(
-            typeof(LuaExecutionContext),
-            nameof(LuaExecutionContext.TryReserveInstructions),
-            [typeof(int)]),
-        "LuaFrame.get_ProgramCounter" => typeof(LuaFrame)
-            .GetProperty(nameof(LuaFrame.ProgramCounter))!.GetMethod!,
-        "LuaCodegenAbiV1.CommitProgramCounter" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.CommitProgramCounter),
-            [typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.MaterializeConstant" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.MaterializeConstant),
-            [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.ReadRegister" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.ReadRegister),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.WriteRegister" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.WriteRegister),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
-        "LuaCodegenAbiV1.ReadUpvalue" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.ReadUpvalue),
-            [typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.WriteUpvalue" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.WriteUpvalue),
-            [typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
-        "LuaCodegenAbiV1.ClearRegisters" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.ClearRegisters),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV1.SetFrameTop" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.SetFrameTop),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.IsTruthy" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.IsTruthy),
-            [typeof(LuaValue)]),
-        "LuaCodegenAbiV1.CanExecuteCompiled" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.CanExecuteCompiled),
-            [typeof(LuaExecutionContext)]),
-        "LuaCodegenAbiV2.CanExecuteCompiledFrame" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.CanExecuteCompiledFrame),
-            [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.ReadRegisterUnchecked" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV2.WriteRegisterUnchecked" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.WriteRegisterUnchecked),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]),
-        "LuaCodegenAbiV2.ClearRegistersUnchecked" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ClearRegistersUnchecked),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.SetFrameTopUnchecked" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.CanSkipClose" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.CanSkipClose),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int)]),
-        "LuaCodegenAbiV1.ObserveCanonicalInstruction" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.ObserveCanonicalInstruction),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV1.ExecuteCanonicalInstruction" => Method(
-            typeof(LuaCodegenAbiV1),
-            nameof(LuaCodegenAbiV1.ExecuteCanonicalInstruction),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV2.CanExecuteUnaryPrimitive" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.CanExecuteUnaryPrimitive),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.ExecuteUnaryPrimitive" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ExecuteUnaryPrimitive),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV2.CanExecuteBinaryPrimitive" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.CanExecuteBinaryPrimitive),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.ExecuteBinaryPrimitive" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ExecuteBinaryPrimitive),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV2.ExecuteNumericForPrepare" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ExecuteNumericForPrepare),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV2.ExecuteNumericForLoop" => Method(
-            typeof(LuaCodegenAbiV2),
-            nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV3.ExecuteNewTable" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteNewTable),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV3.ExecuteGetTable" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteGetTable),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV3.ExecuteSetTable" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteSetTable),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV3.ExecuteSetList" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteSetList),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV3.ExecuteClosure" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteClosure),
-            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV3.ExecuteVarArg" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.ExecuteVarArg),
-            [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]),
-        "LuaCodegenAbiV3.TryExecuteFramelessCall" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.TryExecuteFramelessCall),
-            [
-                typeof(LuaExecutionContext),
-                typeof(LuaThread),
-                typeof(LuaFrame),
-                typeof(int),
-                typeof(int),
-                typeof(int),
-            ]),
-        "LuaCodegenAbiV3.CanContinueAfterFramelessCall" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.CanContinueAfterFramelessCall),
-            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
-        "LuaCodegenAbiV3.PollGcSafepoint" => Method(
-            typeof(LuaCodegenAbiV3),
-            nameof(LuaCodegenAbiV3.PollGcSafepoint),
-            [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]),
-        "LuaCompiledExit.Poll" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.Poll),
-            [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]),
-        "LuaCompiledExit.Continue" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.Continue),
-            [typeof(int), typeof(long)]),
-        "LuaCompiledExit.Return" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.Return),
-            [typeof(int), typeof(long)]),
-        "LuaCompiledExit.Call" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.Call),
-            [typeof(int), typeof(long)]),
-        "LuaCompiledExit.TailCall" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.TailCall),
-            [typeof(int), typeof(long)]),
-        "LuaCompiledExit.Deopt" => Method(
-            typeof(LuaCompiledExit),
-            nameof(LuaCompiledExit.Deopt),
-            [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]),
-        _ => throw new InvalidOperationException($"Unknown Runtime ABI call target {target.Id}."),
-    };
-
-    private static MethodInfo Method(
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type,
-        string name,
-        Type[] parameters) =>
-        type.GetMethod(
-            name,
-            BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static,
-            parameters) ?? throw new InvalidOperationException($"Cannot resolve {type.FullName}.{name}.");
 
     private static void EmitLoadArgument(ILGenerator generator, int argument)
     {

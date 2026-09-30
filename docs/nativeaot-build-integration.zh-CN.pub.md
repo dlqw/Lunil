@@ -22,8 +22,8 @@ NativeAOT 中抛出 `PlatformNotSupportedException`。`RequireJit` JIT 策略在
 
 ## 2. 生成 CLR binding
 
-Reflection-based discovery 不是 AOT 契约。请求准确 binding，并使用
-`LuaClrBindingMode.RegistryOnly` 配置 bridge：
+reflection discovery 在任何运行时都不属于 interop 契约。请求准确 binding，并用其 registry
+配置 bridge：
 
 ```csharp
 using Lunil.Hosting;
@@ -49,7 +49,6 @@ using var host = new LuaHost(LuaHostOptions.Restricted with
         AllowedTypeNames = [typeName],
         AllowedMemberNames = [$"{typeName}.Add"],
         BindingRegistry = registry,
-        BindingMode = LuaClrBindingMode.RegistryOnly,
         InstallGlobalModule = true,
     },
 });

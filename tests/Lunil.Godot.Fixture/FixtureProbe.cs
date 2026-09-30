@@ -30,7 +30,7 @@ public partial class FixtureProbe : Node
         {
             (_entry, _module, _gameplayRules) = CreateAndReloadResources();
             VerifyPersistentStore();
-            _initialRegistryCount = LuaGodotRuntimeRegistry.ActiveHostCount;
+            _initialRegistryCount = LuaGodotRuntimeRegistry.Process.ActiveHostCount;
             CreateHost();
             var soakSeconds = ReadDoubleArgument("--lunil-soak-seconds=");
             if (soakSeconds > 0.0)
@@ -112,7 +112,7 @@ public partial class FixtureProbe : Node
         if (result is null) return;
         GD.Print(result.ToMarker());
         _host!.Shutdown();
-        Require(LuaGodotRuntimeRegistry.ActiveHostCount == _initialRegistryCount,
+        Require(LuaGodotRuntimeRegistry.Process.ActiveHostCount == _initialRegistryCount,
             "The Godot soak host remained registered after shutdown.");
         GetTree().Quit(0);
         _host = null;
@@ -231,13 +231,13 @@ public partial class FixtureProbe : Node
             return;
         }
 
-        Require(LuaGodotRuntimeRegistry.ActiveHostCount == _initialRegistryCount,
+        Require(LuaGodotRuntimeRegistry.Process.ActiveHostCount == _initialRegistryCount,
             "QueueFree did not dispose the Godot Lunil host.");
         Require(!_typedSignalSubscription!.IsConnected,
             "Tree exit did not disconnect the typed Godot signal.");
         _host = null;
         CreateHost();
-        Require(LuaGodotRuntimeRegistry.ActiveHostCount == _initialRegistryCount + 1,
+        Require(LuaGodotRuntimeRegistry.Process.ActiveHostCount == _initialRegistryCount + 1,
             "Scene-style host reload did not register a fresh Godot host.");
         _host!.TickUpdate();
         var gameplay = SharedGameplayFixture.Run(
@@ -258,7 +258,7 @@ public partial class FixtureProbe : Node
             return;
         }
 
-        Require(LuaGodotRuntimeRegistry.ActiveHostCount == _initialRegistryCount,
+        Require(LuaGodotRuntimeRegistry.Process.ActiveHostCount == _initialRegistryCount,
             "The reloaded Godot host survived QueueFree.");
         Require(!_typedSignalSubscription!.IsConnected,
             "The reloaded host left its typed Godot signal connected.");

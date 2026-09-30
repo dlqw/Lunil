@@ -73,9 +73,7 @@ public static class LuaCodegenAbiV3
                 "The compiled scheduler is unavailable."),
             thread,
             frame,
-            LuaRuntimeOperations.GetIndex(
-                context.State,
-                target,
+            context.State.Operations.GetIndex(target,
                 key),
             frame.Base + destinationRegister,
             expectedResults: 1);
@@ -112,9 +110,7 @@ public static class LuaCodegenAbiV3
                 "The compiled scheduler is unavailable."),
             thread,
             frame,
-            LuaRuntimeOperations.SetIndex(
-                context.State,
-                target,
+            context.State.Operations.SetIndex(target,
                 key,
                 value),
             frame.Top,

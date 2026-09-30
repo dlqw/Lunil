@@ -172,9 +172,7 @@ public static class LuaCodegenAbiV2
         int operandRegister)
     {
         LunilGuard.NotNull(context);
-        var resolution = LuaRuntimeOperations.Unary(
-            context.State,
-            (LuaIrUnaryOperator)operation,
+        var resolution = context.State.Operations.Unary((LuaIrUnaryOperator)operation,
             ReadRegisterUnchecked(thread, frame, operandRegister));
         if (resolution.RequiresCall)
         {
@@ -269,10 +267,8 @@ public static class LuaCodegenAbiV2
 
             // Keep the JIT result identical to the interpreter: Lua 5.3 coerces
             // integer-valued arithmetic strings to floats.
-            numericLeft = LuaRuntimeOperations.NormalizeArithmeticOperand(
-                context.State, left, numericLeft);
-            numericRight = LuaRuntimeOperations.NormalizeArithmeticOperand(
-                context.State, right, numericRight);
+            numericLeft = context.State.Operations.NormalizeArithmeticOperand(left, numericLeft);
+            numericRight = context.State.Operations.NormalizeArithmeticOperand(right, numericRight);
 
             result = numericLeft.Kind == LuaValueKind.Integer &&
                 numericRight.Kind == LuaValueKind.Integer

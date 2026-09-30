@@ -233,40 +233,40 @@ internal sealed class LuaSemanticReferenceIndex
     }
 }
 
-internal static class LuaSemanticReferenceIndexCache
-{
-    private static readonly ConditionalWeakTable<LuaSemanticModel, LuaSemanticReferenceIndex> Cache = new();
-
-    public static LuaSemanticReferenceIndex Get(LuaSemanticModel model) =>
-        Cache.GetValue(model, static candidate => new LuaSemanticReferenceIndex(candidate));
-}
-
 public partial record LuaSemanticModel
 {
+    /// <summary>Unified reference index derived from this immutable snapshot. Computed lazily
+    /// on the model itself so derived state follows the snapshot's lifetime instead of a
+    /// process-wide attachable table.</summary>
+    private LuaSemanticReferenceIndex? _referenceIndex;
+
+    private LuaSemanticReferenceIndex ReferenceIndex =>
+        _referenceIndex ??= new LuaSemanticReferenceIndex(this);
+
     /// <summary>Finds all reads and writes bound to a symbol in this semantic snapshot.</summary>
     public ImmutableArray<LuaNameReference> FindReferences(LuaSymbol symbol) =>
-        LuaSemanticReferenceIndexCache.Get(this).FindReferences(symbol);
+        ReferenceIndex.FindReferences(symbol);
 
     /// <summary>Finds all references to a global name, including implicit _ENV-backed references.</summary>
     public ImmutableArray<LuaNameReference> FindGlobalReferences(string name)
     {
         LunilGuard.NotNullOrWhiteSpace(name);
-        return LuaSemanticReferenceIndexCache.Get(this).FindGlobalReferences(name);
+        return ReferenceIndex.FindGlobalReferences(name);
     }
 
     /// <summary>Finds unified lexical references bound to a symbol.</summary>
     public ImmutableArray<LuaCodeReference> FindCodeReferences(LuaSymbol symbol) =>
-        LuaSemanticReferenceIndexCache.Get(this).FindCodeReferences(symbol);
+        ReferenceIndex.FindCodeReferences(symbol);
 
     /// <summary>Finds unified references with an exact source span.</summary>
     public ImmutableArray<LuaCodeReference> FindCodeReferences(TextSpan span) =>
-        LuaSemanticReferenceIndexCache.Get(this).FindCodeReferences(span);
+        ReferenceIndex.FindCodeReferences(span);
 
     /// <summary>Finds the narrowest unified reference containing a UTF-8 byte position.</summary>
     public LuaCodeReference? FindCodeReferenceAt(int bytePosition) =>
-        LuaSemanticReferenceIndexCache.Get(this).FindCodeReferenceAt(bytePosition);
+        ReferenceIndex.FindCodeReferenceAt(bytePosition);
 
     /// <summary>Finds the innermost function containing a source span.</summary>
     public LuaFunctionInfo GetContainingFunction(TextSpan span) =>
-        LuaSemanticReferenceIndexCache.Get(this).GetContainingFunction(span);
+        ReferenceIndex.GetContainingFunction(span);
 }

@@ -8,6 +8,25 @@ using Lunil.Runtime.Values;
 using Lunil.StandardLibrary;
 using Lunil.Workspace;
 
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.SampleValue))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.SampleStruct))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.NumericChoice))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.ThrowingConstructor))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.CountingDisposable))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaHostTests.MemberValue),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Value),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Add),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Compute),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Async),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.WasCancelled),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Changed),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.MemberValue.Raise))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Lunil.Hosting.Tests.LuaHostTests.IntCallback))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaHostTests.LeaseAwareResource),
+    nameof(Lunil.Hosting.Tests.LuaHostTests.LeaseAwareResource.DisposeOwnerAndReadCount))]
+
 namespace Lunil.Hosting.Tests;
 
 public sealed class LuaHostTests
@@ -37,6 +56,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
                 AllowedAssemblyNames = [assemblyName],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -74,6 +94,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery,
                 AllowedAssemblyNames = [assemblyName],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = new LuaClrBindingRegistry(),
             },
         });
 
@@ -87,6 +108,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery,
                 AllowedAssemblyNames = ["System.Private.CoreLib"],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = new LuaClrBindingRegistry(),
             }).ResolveType(typeName));
         Assert.Equal(LuaClrErrorCode.TypeNotFound, notLoaded.Code);
     }
@@ -100,6 +122,7 @@ public sealed class LuaHostTests
             Capabilities = LuaClrCapabilities.Construction,
             AllowedAssemblyNames = [typeof(LuaValueChoice).Assembly.GetName().Name!],
             AllowedTypeNames = [typeName],
+            BindingRegistry = new LuaClrBindingRegistry(),
         };
         using var first = new LuaHost(new LuaHostOptions { Clr = options });
         using var second = new LuaHost(new LuaHostOptions { Clr = options });
@@ -121,6 +144,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery,
                 AllowedAssemblyNames = [typeof(SampleValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = new LuaClrBindingRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -156,6 +180,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery | LuaClrCapabilities.Construction,
                 AllowedAssemblyNames = [typeof(SampleValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -179,6 +204,7 @@ public sealed class LuaHostTests
             Capabilities = LuaClrCapabilities.Construction,
             AllowedAssemblyNames = [typeof(CountingDisposable).Assembly.GetName().Name!],
             AllowedTypeNames = [typeName],
+            BindingRegistry = CreateClrRegistry(),
             OwnConstructedObjects = true,
         };
         using var host = new LuaHost(new LuaHostOptions
@@ -209,6 +235,7 @@ public sealed class LuaHostTests
                 AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
                 AllowedMemberNames = ["Value", "Add"],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
         var resource = new MemberValue(40);
@@ -258,6 +285,7 @@ public sealed class LuaHostTests
                 AllowedAssemblyNames = [typeof(LeaseAwareResource).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
                 AllowedMemberNames = ["DisposeOwnerAndReadCount"],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
         var resource = new LeaseAwareResource();
@@ -296,6 +324,7 @@ public sealed class LuaHostTests
                 AllowedMemberNames = ["Changed"],
                 AllowedEventNames = ["Changed"],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -337,6 +366,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.Construction,
                 AllowedAssemblyNames = [typeof(SampleStruct).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
 
@@ -358,6 +388,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.Construction,
                 AllowedAssemblyNames = [typeof(NumericChoice).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
 
@@ -382,6 +413,7 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.Construction,
                 AllowedAssemblyNames = [typeof(ThrowingConstructor).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
 
@@ -420,6 +452,11 @@ public sealed class LuaHostTests
     public void ClrBridgeRejectsPublicTypesNestedInAnInternalType()
     {
         var typeName = typeof(InternalContainer.PublicValue).FullName!;
+        var visibilityRegistry = new LuaClrBindingRegistry();
+        visibilityRegistry.Register(new LuaClrTypeBinding(
+            typeof(InternalContainer.PublicValue),
+            Array.Empty<LuaClrConstructorBinding>(),
+            Array.Empty<LuaClrMemberBinding>()));
         using var host = new LuaHost(new LuaHostOptions
         {
             InstallStandardLibrary = false,
@@ -428,17 +465,35 @@ public sealed class LuaHostTests
                 Capabilities = LuaClrCapabilities.TypeDiscovery,
                 AllowedAssemblyNames = [typeof(InternalContainer).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
+                BindingRegistry = visibilityRegistry,
             },
         });
 
-        var exception = Assert.Throws<LuaClrException>(
+        // A binding outside the exact visibility boundary fails closed even when
+        // one is registered for the allowlisted type.
+        var conflict = Assert.Throws<LuaClrException>(
             () => host.ClrBridge.ResolveType(typeName));
+        Assert.Equal(LuaClrErrorCode.BindingConflict, conflict.Code);
 
-        Assert.Equal(LuaClrErrorCode.TypeNotAllowed, exception.Code);
+        using var unboundHost = new LuaHost(new LuaHostOptions
+        {
+            InstallStandardLibrary = false,
+            Clr = new LuaClrOptions
+            {
+                Capabilities = LuaClrCapabilities.TypeDiscovery,
+                AllowedAssemblyNames = [typeof(InternalContainer).Assembly.GetName().Name!],
+                AllowedTypeNames = [typeName],
+                BindingRegistry = new LuaClrBindingRegistry(),
+            },
+        });
+        var missing = Assert.Throws<LuaClrException>(
+            () => unboundHost.ClrBridge.ResolveType(typeName));
+        Assert.Equal(LuaClrErrorCode.TypeNotFound, missing.Code);
+        Assert.Contains("no registered static binding", missing.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ClrBridgeAllowsAllowlistedMembersAndIndexers()
+    public void ClrBridgeAllowsAllowlistedMembersAndFailsClosedOnUnboundIndexers()
     {
         var typeName = typeof(MemberValue).FullName!;
         using var host = new LuaHost(new LuaHostOptions
@@ -450,15 +505,23 @@ public sealed class LuaHostTests
                 AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
                 AllowedMemberNames = ["Value", "Add", "Item"],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
 
-        var result = host.RunUtf8($"local value=clr.new('{typeName}', 4); return value.Value,value:Add(3),value[1]");
+        var result = host.RunUtf8($"local value=clr.new('{typeName}', 4); return value.Value,value:Add(3)");
         Assert.True(result.Succeeded, result.Execution?.ToString());
         Assert.Equal(4, result.Execution!.Values[0].AsInteger());
         Assert.Equal(7, result.Execution.Values[1].AsInteger());
-        Assert.Equal(8, result.Execution.Values[2].AsInteger());
+
+        // Indexers cannot be statically bound, so allowlisted indexer access on a
+        // bound userdata fails closed instead of using runtime reflection.
+        var target = LuaValue.FromUserdata(
+            host.ClrBridge.CreateInstance(typeName, [LuaValue.FromInteger(4)]));
+        var failure = Assert.Throws<LuaClrException>(() =>
+            host.ClrBridge.GetMember(target, "Item", [LuaValue.FromInteger(1)]));
+        Assert.Equal(LuaClrErrorCode.MemberNotFound, failure.Code);
     }
 
     [Theory]
@@ -480,6 +543,7 @@ public sealed class LuaHostTests
                 AllowedAssemblyNames = [typeof(MemberValue).Assembly.GetName().Name!],
                 AllowedTypeNames = [typeName],
                 AllowedMemberNames = ["Value", "Add"],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -503,6 +567,7 @@ public sealed class LuaHostTests
                 AllowedAssemblyNames = [typeof(Func<int, int>).Assembly.GetName().Name!],
                 AllowedTypeNames = [delegateName],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
 
@@ -529,6 +594,7 @@ public sealed class LuaHostTests
                 AllowedMemberNames = ["Compute", "Async", "Raise", "Changed", "WasCancelled"],
                 AllowedEventNames = ["Changed"],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -1145,6 +1211,13 @@ public sealed class LuaHostTests
 
         public void Set(string path, string source) =>
             _files[path] = Encoding.UTF8.GetBytes(source);
+    }
+
+    private static LuaClrBindingRegistry CreateClrRegistry()
+    {
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+        return registry;
     }
 
     public sealed class SampleValue

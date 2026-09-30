@@ -43,279 +43,103 @@ internal static class ReflectionEmitLuaTier2Compiler
         typeof(LuaTier2RuntimeSites),
     ];
 
-    private static readonly MethodInfo CanExecuteCompiledFrame = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanExecuteCompiledFrame),
-        [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ReadRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo WriteRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.WriteRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]);
-    private static readonly MethodInfo ClearRegisters = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ClearRegistersUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo SetFrameTop = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo ReadTruthyAndSetFrameTop = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteNumericForPrepare = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ExecuteNumericForPrepare),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteNumericForLoop = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ExecuteNumericForLoop),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo MaterializeConstant = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.MaterializeConstant),
-        [typeof(LuaExecutionContext), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo ReadUpvalue = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.ReadUpvalue),
-        [typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo WriteUpvalue = Method(
-        typeof(LuaCodegenAbiV1),
-        nameof(LuaCodegenAbiV1.WriteUpvalue),
-        [typeof(LuaFrame), typeof(int), typeof(LuaValue)]);
-    private static readonly MethodInfo ExecuteNewTable = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteNewTable),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo ExecuteGetTable = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteGetTable),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo ExecuteSetTable = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteSetTable),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo ExecuteSetList = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteSetList),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteClosure = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteClosure),
-        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteVarArg = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteVarArg),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo TryExecuteTableGetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.TryExecuteTableGetPic),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteTableSetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.TryExecuteTableSetPic),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteCompilerProvenTableGetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryExecuteCompilerProvenTableGetPic",
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteCompilerProvenTableSetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryExecuteCompilerProvenTableSetPic",
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteCompilerProvenIntegerTableGetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryExecuteCompilerProvenIntegerTableGetPic",
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteCompilerProvenIntegerTableSetPic = Method(
-        typeof(LuaCodegenAbiV3),
-        "TryExecuteCompilerProvenIntegerTableSetPic",
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaTable).MakeByRefType(),
-            typeof(LuaCodegenTableSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo CanExecuteKnownClosureCall = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.CanExecuteKnownClosureCall),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(LuaCodegenCallSiteCache), typeof(int), typeof(int)]);
-    private static readonly MethodInfo TryExecuteDirectCompiledCall = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.TryExecuteDirectCompiledCall),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(LuaCodegenCallSiteCache),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo TryExecuteFramelessCall = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.TryExecuteFramelessCall),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo CanContinueAfterFramelessCall = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.CanContinueAfterFramelessCall),
-        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]);
-    private static readonly MethodInfo PollGcSafepoint = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.PollGcSafepoint),
-        [typeof(LuaExecutionContext), typeof(LuaThread), typeof(LuaFrame)]);
-    private static readonly MethodInfo ExecuteKnownClosureCall = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteKnownClosureCall),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo ExecuteKnownClosureTailCall = Method(
-        typeof(LuaCodegenAbiV3),
-        nameof(LuaCodegenAbiV3.ExecuteKnownClosureTailCall),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo GetTableSite = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.GetTableSite),
-        [typeof(int)]);
-    private static readonly MethodInfo GetCallSite = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.GetCallSite),
-        [typeof(int), typeof(string)]);
-    private static readonly MethodInfo RecordInlineDirectCallCompletion = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallCompletion),
-        []);
-    private static readonly MethodInfo RecordInlineDirectCallFallback = Method(
-        typeof(LuaTier2RuntimeSites),
-        nameof(LuaTier2RuntimeSites.RecordInlineDirectCallFallback),
-        []);
-    private static readonly MethodInfo CanSkipClose = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanSkipClose),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo CanExecuteUnaryPrimitive = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanExecuteUnaryPrimitive),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteUnaryPrimitive = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ExecuteUnaryPrimitive),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
-    private static readonly MethodInfo CanExecuteBinaryPrimitive = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.CanExecuteBinaryPrimitive),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(int), typeof(int)]);
-    private static readonly MethodInfo ExecuteBinaryPrimitive = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ExecuteBinaryPrimitive),
-        [
-            typeof(LuaExecutionContext),
-            typeof(LuaThread),
-            typeof(LuaFrame),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-            typeof(int),
-        ]);
+    // Method tokens are obtained by creating a delegate of the exact signature and reading its
+    // Method property, so overload selection happens at compile time and no reflection lookup is
+    // required. LuaTier2RuntimeSites instance-method tokens bind through a method group over a
+    // permanent zero-capacity binding instance whose delegates are never invoked.
+    private delegate LuaCodegenPicExecutionResult CompilerProvenTablePicSignature(
+        LuaExecutionContext context,
+        LuaThread thread,
+        LuaFrame frame,
+        ref LuaTable? cachedTable,
+        LuaCodegenTableSiteCache cache,
+        int targetRegister,
+        int keyRegister,
+        int valueRegister);
+
+    private static readonly LuaTier2RuntimeSites TokenBindingSites =
+        new(0, null, new LuaJitModuleIdentity());
+
+    private static readonly MethodInfo CanExecuteCompiledFrame =
+        ((Func<LuaExecutionContext, LuaFrame, int, int, bool>)LuaCodegenAbiV2.CanExecuteCompiledFrame).Method;
+    private static readonly MethodInfo ReadRegister =
+        ((Func<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.ReadRegisterUnchecked).Method;
+    private static readonly MethodInfo WriteRegister =
+        ((Action<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.WriteRegisterUnchecked).Method;
+    private static readonly MethodInfo ClearRegisters =
+        ((Action<LuaThread, LuaFrame, int, int>)LuaCodegenAbiV2.ClearRegistersUnchecked).Method;
+    private static readonly MethodInfo SetFrameTop =
+        ((Action<LuaThread, LuaFrame, int>)LuaCodegenAbiV2.SetFrameTopUnchecked).Method;
+    private static readonly MethodInfo ReadTruthyAndSetFrameTop =
+        ((Func<LuaThread, LuaFrame, int, int, bool>)LuaCodegenAbiV2.ReadTruthyAndSetFrameTopUnchecked).Method;
+    private static readonly MethodInfo ExecuteNumericForPrepare =
+        ((Action<LuaThread, LuaFrame, int, int>)LuaCodegenAbiV2.ExecuteNumericForPrepare).Method;
+    private static readonly MethodInfo ExecuteNumericForLoop =
+        ((Action<LuaThread, LuaFrame, int, int>)LuaCodegenAbiV2.ExecuteNumericForLoop).Method;
+    private static readonly MethodInfo MaterializeConstant =
+        ((Func<LuaExecutionContext, LuaFrame, int, LuaValue>)LuaCodegenAbiV1.MaterializeConstant).Method;
+    private static readonly MethodInfo ReadUpvalue =
+        ((Func<LuaFrame, int, LuaValue>)LuaCodegenAbiV1.ReadUpvalue).Method;
+    private static readonly MethodInfo WriteUpvalue =
+        ((Action<LuaFrame, int, LuaValue>)LuaCodegenAbiV1.WriteUpvalue).Method;
+    private static readonly MethodInfo ExecuteNewTable =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int, int>)LuaCodegenAbiV3.ExecuteNewTable).Method;
+    private static readonly MethodInfo ExecuteGetTable =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, int, int, int, bool>)LuaCodegenAbiV3.ExecuteGetTable).Method;
+    private static readonly MethodInfo ExecuteSetTable =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, int, int, int, bool>)LuaCodegenAbiV3.ExecuteSetTable).Method;
+    private static readonly MethodInfo ExecuteSetList =
+        ((Action<LuaThread, LuaFrame, int, int, int, int>)LuaCodegenAbiV3.ExecuteSetList).Method;
+    private static readonly MethodInfo ExecuteClosure =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int>)LuaCodegenAbiV3.ExecuteClosure).Method;
+    private static readonly MethodInfo ExecuteVarArg =
+        ((Action<LuaThread, LuaFrame, int, int>)LuaCodegenAbiV3.ExecuteVarArg).Method;
+    private static readonly MethodInfo TryExecuteTableGetPic =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, LuaCodegenTableSiteCache, int, int, int, LuaCodegenPicExecutionResult>)LuaCodegenAbiV3.TryExecuteTableGetPic).Method;
+    private static readonly MethodInfo TryExecuteTableSetPic =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, LuaCodegenTableSiteCache, int, int, int, LuaCodegenPicExecutionResult>)LuaCodegenAbiV3.TryExecuteTableSetPic).Method;
+    private static readonly MethodInfo TryExecuteCompilerProvenTableGetPic =
+        ((CompilerProvenTablePicSignature)LuaCodegenAbiV3.TryExecuteCompilerProvenTableGetPic).Method;
+    private static readonly MethodInfo TryExecuteCompilerProvenTableSetPic =
+        ((CompilerProvenTablePicSignature)LuaCodegenAbiV3.TryExecuteCompilerProvenTableSetPic).Method;
+    private static readonly MethodInfo TryExecuteCompilerProvenIntegerTableGetPic =
+        ((CompilerProvenTablePicSignature)LuaCodegenAbiV3.TryExecuteCompilerProvenIntegerTableGetPic).Method;
+    private static readonly MethodInfo TryExecuteCompilerProvenIntegerTableSetPic =
+        ((CompilerProvenTablePicSignature)LuaCodegenAbiV3.TryExecuteCompilerProvenIntegerTableSetPic).Method;
+    private static readonly MethodInfo CanExecuteKnownClosureCall =
+        ((Func<LuaThread, LuaFrame, LuaCodegenCallSiteCache, int, int, bool>)LuaCodegenAbiV3.CanExecuteKnownClosureCall).Method;
+    private static readonly MethodInfo TryExecuteDirectCompiledCall =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, LuaCodegenCallSiteCache, int, int, int, int, bool>)LuaCodegenAbiV4.TryExecuteDirectCompiledCall).Method;
+    private static readonly MethodInfo TryExecuteFramelessCall =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, int, int, int, int>)LuaCodegenAbiV3.TryExecuteFramelessCall).Method;
+    private static readonly MethodInfo CanContinueAfterFramelessCall =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, bool>)LuaCodegenAbiV3.CanContinueAfterFramelessCall).Method;
+    private static readonly MethodInfo PollGcSafepoint =
+        ((Func<LuaExecutionContext, LuaThread, LuaFrame, bool>)LuaCodegenAbiV3.PollGcSafepoint).Method;
+    private static readonly MethodInfo ExecuteKnownClosureCall =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int, int>)LuaCodegenAbiV3.ExecuteKnownClosureCall).Method;
+    private static readonly MethodInfo ExecuteKnownClosureTailCall =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int>)LuaCodegenAbiV3.ExecuteKnownClosureTailCall).Method;
+    private static readonly MethodInfo GetTableSite =
+        ((Func<int, LuaCodegenTableSiteCache>)TokenBindingSites.GetTableSite).Method;
+    private static readonly MethodInfo GetCallSite =
+        ((Func<int, string, LuaCodegenCallSiteCache>)TokenBindingSites.GetCallSite).Method;
+    private static readonly MethodInfo RecordInlineDirectCallCompletion =
+        ((Action)TokenBindingSites.RecordInlineDirectCallCompletion).Method;
+    private static readonly MethodInfo RecordInlineDirectCallFallback =
+        ((Action)TokenBindingSites.RecordInlineDirectCallFallback).Method;
+    private static readonly MethodInfo CanSkipClose =
+        ((Func<LuaThread, LuaFrame, int, bool>)LuaCodegenAbiV2.CanSkipClose).Method;
+    private static readonly MethodInfo CanExecuteUnaryPrimitive =
+        ((Func<LuaThread, LuaFrame, int, int, bool>)LuaCodegenAbiV2.CanExecuteUnaryPrimitive).Method;
+    private static readonly MethodInfo ExecuteUnaryPrimitive =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int, int>)LuaCodegenAbiV2.ExecuteUnaryPrimitive).Method;
+    private static readonly MethodInfo CanExecuteBinaryPrimitive =
+        ((Func<LuaThread, LuaFrame, int, int, int, bool>)LuaCodegenAbiV2.CanExecuteBinaryPrimitive).Method;
+    private static readonly MethodInfo ExecuteBinaryPrimitive =
+        ((Action<LuaExecutionContext, LuaThread, LuaFrame, int, int, int, int>)LuaCodegenAbiV2.ExecuteBinaryPrimitive).Method;
+    // Instance method on LuaExecutionContext: the context constructor needs a live LuaState and
+    // LuaThread, so no receiver exists at type-initialization time. Keep the reflection lookup.
     private static readonly MethodInfo ReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
@@ -335,58 +159,32 @@ internal static class ReflectionEmitLuaTier2Compiler
     private static readonly MethodInfo IsTruthy = PropertyGetter(
         typeof(LuaValue),
         nameof(LuaValue.IsTruthy));
-    private static readonly MethodInfo UnaryInteger = Method(
-        typeof(LuaValueOperations),
-        "UnaryIntegerSpecialized",
-        [typeof(LuaIrUnaryOperator), typeof(LuaValue)]);
-    private static readonly MethodInfo UnaryFloat = Method(
-        typeof(LuaValueOperations),
-        "UnaryFloatSpecialized",
-        [typeof(LuaIrUnaryOperator), typeof(LuaValue)]);
-    private static readonly MethodInfo GenericUnary = Method(
-        typeof(LuaValueOperations),
-        nameof(LuaValueOperations.Unary),
-        [typeof(LuaIrUnaryOperator), typeof(LuaValue)]);
-    private static readonly MethodInfo BinaryInteger = Method(
-        typeof(LuaValueOperations),
-        "BinaryIntegerSpecialized",
-        [typeof(LuaIrBinaryOperator), typeof(LuaValue), typeof(LuaValue)]);
-    private static readonly MethodInfo BinaryFloat = Method(
-        typeof(LuaValueOperations),
-        "BinaryFloatSpecialized",
-        [typeof(LuaIrBinaryOperator), typeof(LuaValue), typeof(LuaValue)]);
-    private static readonly MethodInfo BinaryMixedNumeric = Method(
-        typeof(LuaValueOperations),
-        "BinaryMixedNumericSpecialized",
-        [typeof(LuaIrBinaryOperator), typeof(LuaValue), typeof(LuaValue)]);
-    private static readonly MethodInfo BinaryPrimitive = Method(
-        typeof(LuaValueOperations),
-        "BinaryPrimitiveSpecialized",
-        [typeof(LuaIrBinaryOperator), typeof(LuaValue), typeof(LuaValue)]);
-    private static readonly MethodInfo PollExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Poll),
-        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
-    private static readonly MethodInfo ReturnExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Return),
-        [typeof(int), typeof(long)]);
-    private static readonly MethodInfo ContinueExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Continue),
-        [typeof(int), typeof(long)]);
-    private static readonly MethodInfo CallExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Call),
-        [typeof(int), typeof(long)]);
-    private static readonly MethodInfo TailCallExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.TailCall),
-        [typeof(int), typeof(long)]);
-    private static readonly MethodInfo DeoptExit = Method(
-        typeof(LuaCompiledExit),
-        nameof(LuaCompiledExit.Deopt),
-        [typeof(int), typeof(long), typeof(LuaCompiledExitReason)]);
+    private static readonly MethodInfo UnaryInteger =
+        ((Func<LuaIrUnaryOperator, LuaValue, LuaValue>)LuaValueOperations.UnaryIntegerSpecialized).Method;
+    private static readonly MethodInfo UnaryFloat =
+        ((Func<LuaIrUnaryOperator, LuaValue, LuaValue>)LuaValueOperations.UnaryFloatSpecialized).Method;
+    private static readonly MethodInfo GenericUnary =
+        ((Func<LuaIrUnaryOperator, LuaValue, LuaValue>)LuaValueOperations.Unary).Method;
+    private static readonly MethodInfo BinaryInteger =
+        ((Func<LuaIrBinaryOperator, LuaValue, LuaValue, LuaValue>)LuaValueOperations.BinaryIntegerSpecialized).Method;
+    private static readonly MethodInfo BinaryFloat =
+        ((Func<LuaIrBinaryOperator, LuaValue, LuaValue, LuaValue>)LuaValueOperations.BinaryFloatSpecialized).Method;
+    private static readonly MethodInfo BinaryMixedNumeric =
+        ((Func<LuaIrBinaryOperator, LuaValue, LuaValue, LuaValue>)LuaValueOperations.BinaryMixedNumericSpecialized).Method;
+    private static readonly MethodInfo BinaryPrimitive =
+        ((Func<LuaIrBinaryOperator, LuaValue, LuaValue, LuaValue>)LuaValueOperations.BinaryPrimitiveSpecialized).Method;
+    private static readonly MethodInfo PollExit =
+        ((Func<int, long, LuaCompiledExitReason, LuaCompiledExit>)LuaCompiledExit.Poll).Method;
+    private static readonly MethodInfo ReturnExit =
+        ((Func<int, long, LuaCompiledExit>)LuaCompiledExit.Return).Method;
+    private static readonly MethodInfo ContinueExit =
+        ((Func<int, long, LuaCompiledExit>)LuaCompiledExit.Continue).Method;
+    private static readonly MethodInfo CallExit =
+        ((Func<int, long, LuaCompiledExit>)LuaCompiledExit.Call).Method;
+    private static readonly MethodInfo TailCallExit =
+        ((Func<int, long, LuaCompiledExit>)LuaCompiledExit.TailCall).Method;
+    private static readonly MethodInfo DeoptExit =
+        ((Func<int, long, LuaCompiledExitReason, LuaCompiledExit>)LuaCompiledExit.Deopt).Method;
     [RequiresDynamicCode("Tier 2 CIL specialization requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
         "AOT",
@@ -397,6 +195,7 @@ internal static class ReflectionEmitLuaTier2Compiler
         ImmutableDictionary<int, ProfileGuidedLuaTier2Compiler.OptimizedInstruction> optimized,
         ImmutableHashSet<int> numericRegionProgramCounters,
         IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
         [NotNullWhen(true)] out LuaTier2RuntimeSites? runtimeSites,
@@ -557,7 +356,8 @@ internal static class ReflectionEmitLuaTier2Compiler
             typeof(LuaCompiledMethodWithSites));
         var createdRuntimeSites = new LuaTier2RuntimeSites(
             function.Instructions.Length,
-            boundDirectCalls);
+            boundDirectCalls,
+            moduleIdentity);
         runtimeSites = createdRuntimeSites;
         method = (context, thread, frame) =>
             compiledWithSites(context, thread, frame, createdRuntimeSites);

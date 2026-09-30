@@ -236,7 +236,7 @@ internal sealed partial class LuaTieredJitRegistry
             Tier: LuaJitCompilationTier.Tier2));
     }
 
-    private static void RecordTier2GuardFailureProfile(
+    private void RecordTier2GuardFailureProfile(
         FunctionEntry entry,
         LuaExecutionContext context,
         LuaThread thread,
@@ -741,7 +741,7 @@ internal sealed partial class LuaTieredJitRegistry
         try
         {
             var function = module.Functions[entry.Key.FunctionId];
-            var plans = LuaLoopOsrAnalyzer.Analyze(module, entry.Key.FunctionId).ToArray();
+            var plans = _loopOsrAnalyzer.Analyze(module, entry.Key.FunctionId).ToArray();
             if (plans.Length == 0 || plans.Any(plan =>
                     LuaLoopOsrEligibilityEvaluator.Evaluate(function, plan).IsAutoEligible))
             {
@@ -819,8 +819,8 @@ internal sealed partial class LuaTieredJitRegistry
         }
     }
 
-    private static string GetModuleContentId(LuaIrModule module) =>
-        LuaJitModuleIdentity.Create(module);
+    private string GetModuleContentId(LuaIrModule module) =>
+        _moduleIdentity.Create(module);
 
     private FunctionEntry? FindEntry(LuaIrModule module, int functionId)
     {

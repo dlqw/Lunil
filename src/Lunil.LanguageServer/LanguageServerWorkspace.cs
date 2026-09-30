@@ -47,7 +47,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
         string Text,
         ImmutableDictionary<string, LuaType> Globals);
 
-    private static readonly Lazy<bool> CompilerWarmup = new(() =>
+    private readonly Lazy<bool> _compilerWarmup = new(() =>
     {
         _ = new LuaCompiler().CompileUtf8("return nil", "@lunil/language-server-warmup.lua");
         return true;
@@ -297,7 +297,7 @@ internal sealed class LanguageServerWorkspace : IDisposable
 
     public LanguageServerWorkspace()
     {
-        _ = CompilerWarmup.Value;
+        _ = _compilerWarmup.Value;
         _workspace = CreateWorkspace(hostContract: null);
     }
 

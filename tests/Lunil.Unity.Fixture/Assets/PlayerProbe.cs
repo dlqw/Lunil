@@ -232,7 +232,6 @@ namespace Lunil.Unity.Fixture
                         AllowedEventNames = ImmutableArray.Create(
                             targetName + "." + nameof(UnityBindingTarget.Changed)),
                         BindingRegistry = registry,
-                        BindingMode = LuaClrBindingMode.RegistryOnly,
                         InstallGlobalModule = true
                     }
                 }
@@ -340,7 +339,7 @@ namespace Lunil.Unity.Fixture
             if (!asset.Found || asset.Value.Length == 0)
                 throw new InvalidOperationException("Unity resource resolver lost the entry asset.");
             Debug.Log("LUNIL_UNITY_RESOURCE_TRACE asset=" + Loop.EntryScript.AssetId +
-                " bytes=" + asset.Value.Length + " hosts=" + LuaUnityRuntimeRegistry.ActiveHostCount);
+                " bytes=" + asset.Value.Length + " hosts=" + LuaUnityRuntimeRegistry.Process.ActiveHostCount);
         }
 
         private void VerifySignedPatchAndStaleRejection()
@@ -412,7 +411,7 @@ namespace Lunil.Unity.Fixture
 
         private AsyncOperation BeginSceneUnload(out int baseline)
         {
-            baseline = LuaUnityRuntimeRegistry.ActiveHostCount;
+            baseline = LuaUnityRuntimeRegistry.Process.ActiveHostCount;
             var scene = SceneManager.CreateScene("LunilIl2CppUnloadFixture");
             var temporaryObject = new GameObject("LunilTemporaryHost");
             temporaryObject.SetActive(false);
@@ -421,7 +420,7 @@ namespace Lunil.Unity.Fixture
             SceneManager.MoveGameObjectToScene(temporaryObject, scene);
             temporaryObject.SetActive(true);
             temporaryLoop.Initialize();
-            if (LuaUnityRuntimeRegistry.ActiveHostCount != baseline + 1)
+            if (LuaUnityRuntimeRegistry.Process.ActiveHostCount != baseline + 1)
                 throw new InvalidOperationException("The additive Unity scene host was not registered.");
             var unload = SceneManager.UnloadSceneAsync(scene);
             if (unload == null) throw new InvalidOperationException("Unity refused additive scene unload.");
@@ -430,7 +429,7 @@ namespace Lunil.Unity.Fixture
 
         private static void VerifySceneUnloadCompleted(int baseline)
         {
-            if (LuaUnityRuntimeRegistry.ActiveHostCount != baseline)
+            if (LuaUnityRuntimeRegistry.Process.ActiveHostCount != baseline)
                 throw new InvalidOperationException("Scene unload did not dispose its Unity host.");
         }
 

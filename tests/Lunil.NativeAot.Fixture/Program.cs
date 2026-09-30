@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Lunil.CodeGen.Cil;
 using Lunil.CodeGen.Cil.Jit;
 using Lunil.Compiler;
@@ -15,6 +16,8 @@ using Lunil.Workspace;
     nameof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue.Add),
     nameof(Lunil.NativeAot.Fixture.Program.ClrFixtureValue.Async))]
 [assembly: LuaClrGenerateBinding(typeof(Func<int, int>))]
+
+[assembly: LuaFfiGenerateBinding("fixture", "add", "i32(i32,i32)")]
 
 namespace Lunil.NativeAot.Fixture;
 
@@ -218,7 +221,7 @@ public static class Program
     private static bool VerifyFfi()
     {
         var registry = new LuaFfiBindingRegistry();
-        registry.Register("fixture", "add", "i32(i32,i32)", AddNative);
+        new Lunil.Generated.LuaFfiGeneratedBindings().RegisterBindings(registry);
         var options = new LuaStandardLibraryOptions
         {
             Ffi = new LuaFfiOptions
@@ -242,8 +245,8 @@ public static class Program
         return result.Values[0].AsInteger() == 42;
     }
 
-    private static object? AddNative(ReadOnlySpan<object?> arguments) =>
-        checked((int)arguments[0]! + (int)arguments[1]!);
+    [UnmanagedCallersOnly]
+    private static int AddNative(int left, int right) => left + right;
 
     private static bool VerifyClrInterop()
     {
@@ -273,7 +276,6 @@ public static class Program
                 ],
                 AllowedDelegateTypeNames = [delegateName],
                 BindingRegistry = registry,
-                BindingMode = LuaClrBindingMode.RegistryOnly,
                 InstallGlobalModule = true,
             },
         });
@@ -360,8 +362,12 @@ public static class Program
 
         public IntPtr Load(string libraryName) => new(1);
 
-        public IntPtr GetExport(IntPtr libraryHandle, string symbolName) =>
-            throw new InvalidOperationException("The registry-only fixture must not resolve dynamic symbols.");
+        public unsafe IntPtr GetExport(IntPtr libraryHandle, string symbolName) => symbolName switch
+        {
+            "add" => (nint)(delegate* unmanaged<int, int, int>)&AddNative,
+            _ => throw new InvalidOperationException(
+                "The registry-only fixture must not resolve dynamic symbols."),
+        };
 
         public void Free(IntPtr libraryHandle)
         {

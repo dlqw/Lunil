@@ -7,7 +7,7 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.StandardLibrary;
 
-internal static class LuaIoLibrary
+internal sealed class LuaIoLibrary
 {
     private static readonly LuaNativeFunction LinesIteratorDescriptor =
         new("for iterator", IterateLineStep);
@@ -17,14 +17,12 @@ internal static class LuaIoLibrary
         int _,
         ReadOnlySpan<LuaValue> __) => IterateLine(context);
 
-    public static LuaTable Install(LuaState state, LuaStandardLibraryOptions? options)
-    {
-        if (options is not null)
-        {
-            LuaStandardLibraryContext.Configure(state, options);
-        }
+    private readonly LuaStandardLibraryOptions _options;
 
-        var context = LuaStandardLibraryContext.Get(state);
+    internal LuaIoLibrary(LuaStandardLibraryOptions options) => _options = options;
+
+    public LuaTable Install(LuaState state)
+    {
         var module = state.CreateTable();
         var methods = state.CreateTable();
         var metatable = state.CreateTable();
@@ -37,11 +35,11 @@ internal static class LuaIoLibrary
         AddFileMethods(state, methods);
         AddModuleFunctions(state, module);
 
-        var input = CreateFile(state, context.Options.Console.OpenStandardInput(), metatable,
+        var input = CreateFile(state, _options.Console.OpenStandardInput(), metatable,
             standard: true, readable: true, writable: false, append: false);
-        var output = CreateFile(state, context.Options.Console.OpenStandardOutput(), metatable,
+        var output = CreateFile(state, _options.Console.OpenStandardOutput(), metatable,
             standard: true, readable: false, writable: true, append: false);
-        var error = CreateFile(state, context.Options.Console.OpenStandardError(), metatable,
+        var error = CreateFile(state, _options.Console.OpenStandardError(), metatable,
             standard: true, readable: false, writable: true, append: false);
         LuaLibraryHelpers.Set(state, module, "stdin", input);
         LuaLibraryHelpers.Set(state, module, "stdout", output);
@@ -52,7 +50,7 @@ internal static class LuaIoLibrary
         return module;
     }
 
-    private static void AddModuleFunctions(LuaState state, LuaTable module)
+    private void AddModuleFunctions(LuaState state, LuaTable module)
     {
         LuaLibraryHelpers.SetFunction(state, module, "close", IoClose, "io.close");
         LuaLibraryHelpers.SetFunction(state, module, "flush", IoFlush, "io.flush");
@@ -78,7 +76,7 @@ internal static class LuaIoLibrary
         LuaLibraryHelpers.SetFunction(state, methods, "write", FileWrite);
     }
 
-    private static LuaValue[] IoOpen(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] IoOpen(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var path = Utf8(arguments, 0, "open");
         var modeText = arguments.Length < 2 || arguments[1].IsNil
@@ -91,7 +89,7 @@ internal static class LuaIoLibrary
 
         try
         {
-            var stream = LuaStandardLibraryContext.Get(state).Options.FileSystem.Open(path, mode);
+            var stream = _options.FileSystem.Open(path, mode);
             return [CreateFile(state, stream, GetFileMetatable(state), false, readable, writable, append)];
         }
         catch (Exception exception) when (IsIoException(exception))
@@ -100,11 +98,11 @@ internal static class LuaIoLibrary
         }
     }
 
-    private static LuaValue[] IoTemporaryFile(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] IoTemporaryFile(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         try
         {
-            var stream = LuaStandardLibraryContext.Get(state).Options.FileSystem.OpenTemporary(out _);
+            var stream = _options.FileSystem.OpenTemporary(out _);
             return [CreateFile(state, stream, GetFileMetatable(state), false, true, true, false)];
         }
         catch (Exception exception) when (IsIoException(exception))
@@ -113,7 +111,7 @@ internal static class LuaIoLibrary
         }
     }
 
-    private static LuaValue[] IoPopen(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] IoPopen(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var command = Utf8(arguments, 0, "popen");
         var mode = arguments.Length < 2 || arguments[1].IsNil
@@ -126,7 +124,7 @@ internal static class LuaIoLibrary
 
         try
         {
-            var stream = LuaStandardLibraryContext.Get(state).Options.OperatingSystem
+            var stream = _options.OperatingSystem
                 .OpenPipe(command, mode == "r", out var process);
             var file = new LuaFileHandle(stream, false, mode == "r", mode == "w", false, process);
             return [CreateFile(state, file, GetFileMetatable(state))];
@@ -137,13 +135,13 @@ internal static class LuaIoLibrary
         }
     }
 
-    private static LuaValue[] IoInput(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
+    private LuaValue[] IoInput(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
         SetOrGetDefault(state, arguments, "input", "_IO_input", LuaFileMode.Read);
 
-    private static LuaValue[] IoOutput(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
+    private LuaValue[] IoOutput(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
         SetOrGetDefault(state, arguments, "output", "_IO_output", LuaFileMode.Write);
 
-    private static LuaValue[] SetOrGetDefault(
+    private LuaValue[] SetOrGetDefault(
         LuaState state,
         ReadOnlySpan<LuaValue> arguments,
         string function,
@@ -161,7 +159,7 @@ internal static class LuaIoLibrary
             var path = arguments[0].AsString().ToString();
             try
             {
-                var stream = LuaStandardLibraryContext.Get(state).Options.FileSystem.Open(path, mode);
+                var stream = _options.FileSystem.Open(path, mode);
                 file = CreateFile(
                     state, stream, GetFileMetatable(state), false,
                     readable: mode == LuaFileMode.Read,
@@ -200,7 +198,7 @@ internal static class LuaIoLibrary
         return Close(state, file, "close");
     }
 
-    private static LuaValue[] IoLines(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] IoLines(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         LuaValue file;
         var formatStart = 0;
@@ -210,7 +208,7 @@ internal static class LuaIoLibrary
             var path = Utf8(arguments, 0, "lines");
             try
             {
-                var stream = LuaStandardLibraryContext.Get(state).Options.FileSystem
+                var stream = _options.FileSystem
                     .Open(path, LuaFileMode.Read);
                 file = CreateFile(state, stream, GetFileMetatable(state), false, true, false, false);
                 autoClose = true;

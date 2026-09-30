@@ -7,7 +7,7 @@
 
 ## 前置条件
 
-- Lunil `0.15.0` 或更新版本，并引用 `Lunil.StandardLibrary` 包。
+- Lunil `0.22.0`，并引用 `Lunil.StandardLibrary` 包。
 - 受信任的 host 决策：授予 native loading，并提供精确的 library 与 symbol 身份。
 - AOT 或 trimmed 发布需要精确的 host 注册绑定（见 [AOT bindings](aot-bindings.zh-CN.pub.md)）。
 
@@ -126,6 +126,10 @@ private static object? AddNative(ReadOnlySpan<object?> arguments) =>
 无法提供动态代码时，registry 路径是唯一受支持的路由，任何动态解析尝试以
 `DynamicCodeUnavailable` 失败。registry 选项同样通过 [第 1 节](#1-通过标准库选项授予-ffi)
 的 `LuaStandardLibrary.InstallFfi(state, options)` 安装步骤应用。
+
+除了手写 invoker，也可以用 `[assembly: LuaFfiGenerateBinding]` 声明要绑定的签名，让 FFI
+binding generator 生成可在 NativeAOT 与 trimmed 运行时使用的强类型版本；见
+[生成 FFI binding](ffi-bindings.zh-CN.pub.md)。
 
 ## 6. 诊断失败
 

@@ -769,9 +769,7 @@ internal sealed partial class LuaExecutionEngine
                     LuaOperationResolution resolved;
                     try
                     {
-                        resolved = LuaRuntimeOperations.ResolveCall(
-                            state,
-                            step.Callable,
+                        resolved = state.Operations.ResolveCall(step.Callable,
                             step.Values);
                     }
                     catch (LuaRuntimeException exception) when (step.CallIsProtected)

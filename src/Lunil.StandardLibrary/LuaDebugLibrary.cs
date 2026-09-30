@@ -12,9 +12,16 @@ using Lunil.Syntax.Parsing;
 
 namespace Lunil.StandardLibrary;
 
-internal static class LuaDebugLibrary
+internal sealed class LuaDebugLibrary
 {
-    public static LuaTable Install(LuaState state)
+    private static readonly LuaNativeFunction DebugConsoleDescriptor =
+        new("debug", DebugConsole);
+
+    private readonly LuaStandardLibraryOptions _options;
+
+    internal LuaDebugLibrary(LuaStandardLibraryOptions options) => _options = options;
+
+    public LuaTable Install(LuaState state)
     {
         var module = state.CreateTable();
         var hooks = state.CreateTable();
@@ -22,7 +29,7 @@ internal static class LuaDebugLibrary
         LuaLibraryHelpers.Set(state, hooksMetatable, "__mode", LuaLibraryHelpers.String(state, "k"));
         hooks.SetMetatable(hooksMetatable);
         LuaLibraryHelpers.Set(state, state.Registry, "_HOOKKEY", LuaValue.FromTable(hooks));
-        LuaLibraryHelpers.SetFunction(state, module, "debug", DebugConsole);
+        LuaLibraryHelpers.Set(state, module, "debug", SelfStep(state, DebugConsoleDescriptor));
         LuaLibraryHelpers.SetFunction(state, module, "gethook", GetHook);
         LuaLibraryHelpers.SetFunction(state, module, "getinfo", GetInfo);
         LuaLibraryHelpers.SetFunction(state, module, "getlocal", GetLocal);
@@ -51,16 +58,29 @@ internal static class LuaDebugLibrary
         return module;
     }
 
+    /// <summary>
+    /// Registers a resumable body as a native closure carrying this module as a light
+    /// userdata capture; resumable descriptors must stay capture-free method groups.
+    /// </summary>
+    private LuaValue SelfStep(LuaState state, LuaNativeFunction descriptor) =>
+        LuaValue.FromFunction(state.CreateNativeClosure(
+            descriptor,
+            [LuaValue.FromLightUserdata(new LuaLightUserdata(this))]));
+
+    private static LuaDebugLibrary Self(LuaNativeCallContext context) =>
+        (LuaDebugLibrary)context.Captures[0].AsLightUserdata().Identity;
+
     private static LuaNativeStep DebugConsole(
         LuaNativeCallContext context,
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
+        var self = Self(context);
         LuaValue[] lines;
         var index = 0;
         if (continuationId == 0)
         {
-            var input = LuaStandardLibraryContext.Get(context.State).Options.Console
+            var input = self._options.Console
                 .ReadStandardInput();
             lines = Encoding.UTF8.GetString(input)
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
@@ -73,7 +93,7 @@ internal static class LuaDebugLibrary
             lines = context.InvocationState.Skip(1).ToArray();
             if (values.Length > 0 && !values[0].IsTruthy && values.Length > 1)
             {
-                var console = LuaStandardLibraryContext.Get(context.State).Options.Console;
+                var console = self._options.Console;
                 console.WriteError(Encoding.UTF8.GetBytes($"{values[1]}\n"));
             }
         }
@@ -101,7 +121,7 @@ internal static class LuaDebugLibrary
                 var message = lowering.Diagnostics.IsEmpty
                     ? "failed to compile debug command"
                     : lowering.Diagnostics[0].Message;
-                LuaStandardLibraryContext.Get(context.State).Options.Console
+                self._options.Console
                     .WriteError(Encoding.UTF8.GetBytes(message + "\n"));
                 continue;
             }

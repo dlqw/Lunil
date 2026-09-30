@@ -313,9 +313,19 @@ public interface ILuaPatchDeploymentJournal
 /// <summary>Coordinates barrier commits and ordered canary/ring rollout inside one process.</summary>
 public sealed class LuaPatchCoordinator
 {
-    private static readonly object ProcessGate = new();
-    private static bool _operationActive;
-    private readonly object _gate = ProcessGate;
+    private readonly LuaPatchRolloutGate _gate;
+
+    /// <summary>Shares the process-wide rollout barrier with every coordinator instance.</summary>
+    public LuaPatchCoordinator()
+        : this(LuaPatchRolloutGate.Process)
+    {
+    }
+
+    internal LuaPatchCoordinator(LuaPatchRolloutGate gate)
+    {
+        LunilGuard.NotNull(gate);
+        _gate = gate;
+    }
 
     public LuaPatchRolloutResult Deploy(
         LuaPatchRolloutPlan plan,
@@ -330,10 +340,10 @@ public sealed class LuaPatchCoordinator
             plan.Rings[0].Targets[0].PreparedPatch.Manifest.PatchId,
             plan.RolloutId);
         activity?.SetTag("lunil.rollout.ring_count", plan.Rings.Length);
-        lock (_gate)
+        lock (_gate.SyncRoot)
         {
             ThrowIfReentrant();
-            _operationActive = true;
+            _gate.OperationActive = true;
             try
             {
                 var results = ImmutableArray.CreateBuilder<LuaPatchRingCommitResult>(
@@ -362,7 +372,7 @@ public sealed class LuaPatchCoordinator
             }
             finally
             {
-                _operationActive = false;
+                _gate.OperationActive = false;
             }
         }
     }
@@ -377,10 +387,10 @@ public sealed class LuaPatchCoordinator
         LunilGuard.NotNull(ring);
         options ??= LuaPatchCoordinatorOptions.Default;
         ValidateRing(ring, options);
-        lock (_gate)
+        lock (_gate.SyncRoot)
         {
             ThrowIfReentrant();
-            _operationActive = true;
+            _gate.OperationActive = true;
             try
             {
                 var result = CommitRingCore(rolloutId, ring, options, cancellationToken);
@@ -389,7 +399,7 @@ public sealed class LuaPatchCoordinator
             }
             finally
             {
-                _operationActive = false;
+                _gate.OperationActive = false;
             }
         }
     }
@@ -1323,9 +1333,9 @@ public sealed class LuaPatchCoordinator
         not StackOverflowException and
         not AccessViolationException;
 
-    private static void ThrowIfReentrant()
+    private void ThrowIfReentrant()
     {
-        if (_operationActive)
+        if (_gate.OperationActive)
         {
             throw new InvalidOperationException(
                 "A patch coordinator operation cannot be entered recursively.");

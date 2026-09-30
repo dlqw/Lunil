@@ -8,10 +8,11 @@ public sealed class LuaIrVerificationCacheTests
     [Fact]
     public void VerificationResultsAreReusedWithoutHidingInvalidModules()
     {
+        var cache = new LuaIrVerificationCache();
         var module = new LuaIrModule();
 
-        var first = LuaIrVerificationCache.Verify(module);
-        var second = LuaIrVerificationCache.Verify(module);
+        var first = cache.Verify(module);
+        var second = cache.Verify(module);
 
         Assert.NotEmpty(first);
         Assert.True(first == second);

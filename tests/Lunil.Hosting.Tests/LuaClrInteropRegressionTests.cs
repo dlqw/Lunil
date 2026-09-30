@@ -1,5 +1,22 @@
 using Lunil.Runtime.Values;
 
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.AllowlistFirst),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.AllowlistFirst.Value))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.AllowlistSecond))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.CacheBoundary),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.CacheBoundary.First),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.CacheBoundary.Second))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.ConversionBoundary),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.ConversionBoundary.LargeUInt64),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.ConversionBoundary.Rectangular),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.ConversionBoundary.NonZeroLowerBound),
+    nameof(Lunil.Hosting.Tests.LuaClrInteropRegressionTests.ConversionBoundary.PendingAsync))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(typeof(Func<int, int>))]
+
 namespace Lunil.Hosting.Tests;
 
 public sealed class LuaClrInteropRegressionTests
@@ -24,7 +41,7 @@ public sealed class LuaClrInteropRegressionTests
     }
 
     [Fact]
-    public void MemberCacheLimitFailsExplicitlyInsteadOfSilentlyDroppingCandidates()
+    public void GeneratedMemberDispatchIsExactInsteadOfCacheBounded()
     {
         var typeName = typeof(CacheBoundary).FullName!;
         using var host = CreateHost(
@@ -34,10 +51,27 @@ public sealed class LuaClrInteropRegressionTests
             maximumCachedMembers: 1);
         var target = LuaValue.FromUserdata(host.ClrBridge.CreateInstance(typeName));
 
-        var exception = Assert.Throws<LuaClrException>(() =>
-            host.ClrBridge.GetMember(target, "First"));
+        // Registry dispatch resolves every registered member exactly; the legacy
+        // reflection member cache no longer truncates allowlisted candidates.
+        Assert.Equal(1, host.ClrBridge.GetMember(target, "First").AsInteger());
+        Assert.Equal(2, host.ClrBridge.GetMember(target, "Second").AsInteger());
+    }
 
-        Assert.Equal(LuaClrErrorCode.MemberNotFound, exception.Code);
+    [Fact]
+    public void UnboundAllowlistedTypesFailWithTheStableNoBindingError()
+    {
+        var typeName = typeof(CacheBoundary).FullName!;
+        var registry = new LuaClrBindingRegistry();
+        using var host = CreateHost(
+            LuaClrCapabilities.MemberAccess,
+            [typeName],
+            [$"{typeName}.First"],
+            registry: registry);
+
+        var missing = Assert.Throws<LuaClrException>(() =>
+            host.ClrBridge.InvokeStatic(typeName, "First"));
+        Assert.Equal(LuaClrErrorCode.TypeNotFound, missing.Code);
+        Assert.Contains("no registered static binding", missing.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -112,6 +146,7 @@ public sealed class LuaClrInteropRegressionTests
                 AllowedTypeNames = [delegateName],
                 AllowedDelegateTypeNames = [delegateName],
                 ThreadPolicy = LuaClrThreadPolicy.AnyThreadWhenIdle,
+                BindingRegistry = CreateRegistry(),
             },
         });
         var function = host.RunUtf8("return function(value) return value+1 end").Execution!.Values[0];
@@ -135,12 +170,20 @@ public sealed class LuaClrInteropRegressionTests
         }
     }
 
+    private static LuaClrBindingRegistry CreateRegistry()
+    {
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+        return registry;
+    }
+
     private static LuaHost CreateHost(
         LuaClrCapabilities capabilities,
         string[] typeNames,
         string[] memberNames,
         int maximumCachedMembers = 256,
-        bool installGlobalModule = false) =>
+        bool installGlobalModule = false,
+        LuaClrBindingRegistry? registry = null) =>
         new(new LuaHostOptions
         {
             ExecutionBackend = LuaHostExecutionBackend.Interpreter,
@@ -152,6 +195,7 @@ public sealed class LuaClrInteropRegressionTests
                 AllowedMemberNames = [.. memberNames],
                 MaximumCachedMembers = maximumCachedMembers,
                 InstallGlobalModule = installGlobalModule,
+                BindingRegistry = registry ?? CreateRegistry(),
             },
         });
 

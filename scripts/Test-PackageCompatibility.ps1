@@ -324,7 +324,6 @@ namespace PackageBindingConsumer
                     AllowedMemberNames = System.Collections.Immutable.ImmutableArray.Create(
                         typeName + "." + nameof(Target.Add)),
                     BindingRegistry = registry,
-                    BindingMode = LuaClrBindingMode.RegistryOnly,
                 },
             }))
             {

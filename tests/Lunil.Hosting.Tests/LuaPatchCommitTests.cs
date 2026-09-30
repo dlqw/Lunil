@@ -8,6 +8,17 @@ using Lunil.Runtime.Execution;
 using Lunil.Runtime.Values;
 using Lunil.StandardLibrary;
 
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaPatchCommitTests.CallbackEventSource),
+    nameof(Lunil.Hosting.Tests.LuaPatchCommitTests.CallbackEventSource.Changed))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaPatchCommitTests.FaultingCallbackEventSource),
+    nameof(Lunil.Hosting.Tests.LuaPatchCommitTests.FaultingCallbackEventSource.Changed))]
+[assembly: Lunil.Hosting.LuaClrGenerateBinding(
+    typeof(Lunil.Hosting.Tests.LuaPatchCommitTests.PatchTaskSource),
+    nameof(Lunil.Hosting.Tests.LuaPatchCommitTests.PatchTaskSource.Create),
+    nameof(Lunil.Hosting.Tests.LuaPatchCommitTests.PatchTaskSource.CreatePending))]
+
 namespace Lunil.Hosting.Tests;
 
 public sealed class LuaPatchCommitTests
@@ -2093,6 +2104,7 @@ public sealed class LuaPatchCommitTests
                 AllowedMemberNames = [nameof(CallbackEventSource.Changed)],
                 AllowedDelegateTypeNames = [delegateName],
                 AllowedEventNames = [nameof(CallbackEventSource.Changed)],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
     }
@@ -2117,6 +2129,7 @@ public sealed class LuaPatchCommitTests
                     nameof(PatchTaskSource.Create),
                     nameof(PatchTaskSource.CreatePending),
                 ],
+                BindingRegistry = CreateClrRegistry(),
                 InstallGlobalModule = true,
             },
         });
@@ -2134,10 +2147,18 @@ public sealed class LuaPatchCommitTests
             Clr = new LuaClrOptions
             {
                 Capabilities = LuaClrCapabilities.Timers,
+                BindingRegistry = new LuaClrBindingRegistry(),
                 InstallGlobalModule = true,
                 TimeProvider = timeProvider,
             },
         });
+
+    private static LuaClrBindingRegistry CreateClrRegistry()
+    {
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+        return registry;
+    }
 
     private static LuaClrTask TaskPayload(LuaValue value) =>
         Assert.IsType<LuaClrTask>(value.AsUserdata().Payload);

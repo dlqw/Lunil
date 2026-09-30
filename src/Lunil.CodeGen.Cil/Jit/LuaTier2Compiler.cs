@@ -102,15 +102,33 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     internal const long MaximumInlineDirectCallCodeBytes = 32 * 1024;
 
     public static ProfileGuidedLuaTier2Compiler Instance { get; } = new();
-    [UnconditionalSuppressMessage(
-        "AOT",
-        "IL3050",
-        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
-    private static readonly Lazy<bool> CompilerPrepared = new(
-        PrepareCompilerCore,
-        LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
+    /// <summary>
+    /// The owner-scoped analysis memos this compiler compiles with. The tiered registry adopts
+    /// them for its promotion-eligibility passes so one backend evaluates and then compiles a
+    /// module through the same liveness memo.
+    /// </summary>
+    internal LuaRegisterLivenessCache Liveness => _liveness;
+
+    private readonly LuaIrVerificationCache _verification = new();
+
+    private readonly LuaRegisterLivenessCache _liveness = new();
+
+    private readonly LuaNumericRegionAnalyzer _regions;
+
+    private readonly LuaJitModuleIdentity _identity = new();
+
+    private readonly Lazy<bool> _compilerPrepared;
+
+    public ProfileGuidedLuaTier2Compiler()
+    {
+        _regions = new LuaNumericRegionAnalyzer(_liveness);
+        _compilerPrepared = new(
+            PrepareCompilerCore,
+            LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    public void PrepareCompiler() => _ = _compilerPrepared.Value;
 
     public LuaTier2CompilationResult Compile(
         LuaIrModule module,
@@ -121,7 +139,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         cancellationToken.ThrowIfCancellationRequested();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         var verificationStarted = Stopwatch.GetTimestamp();
-        var errors = LuaIrVerificationCache.Verify(module);
+        var errors = _verification.Verify(module);
         var canonicalVerificationDuration = Stopwatch.GetElapsedTime(verificationStarted);
         if (!errors.IsEmpty || functionId < 0 || functionId >= module.Functions.Length)
         {
@@ -149,7 +167,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
         var function = module.Functions[functionId];
         var livenessStarted = Stopwatch.GetTimestamp();
-        var liveness = LuaRegisterLiveness.AnalyzeCached(
+        var liveness = _liveness.AnalyzeCached(
             module,
             function,
             out var livenessCacheHit,
@@ -167,6 +185,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             profile,
             optimized,
             module.LanguageVersion,
+            _identity,
             cancellationToken,
             out var boundDirectCallCodeBytes);
         var numericRegionPlans = BuildNumericRegionPlans(
@@ -200,7 +219,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 PendingTransformMaterialized: true))
             .ToImmutableArray();
         var plan = new LuaJitTier2Plan(functionId, optimizationDescriptions, deoptMap);
-        var program = new Tier2Program(function, optimized, boundDirectCalls);
+        var program = new Tier2Program(function, optimized, boundDirectCalls, _identity);
         var optimizationPlanningDuration = Stopwatch.GetElapsedTime(optimizationStarted);
         LuaCompiledMethod method = program.Execute;
         var estimatedCodeBytes = checked(
@@ -213,6 +232,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 function,
                 numericRegionPlans,
                 boundDirectCalls,
+                _identity,
                 cancellationToken,
                 out var numericRegions) &&
             TryCompileNumericSpecializedCil(
@@ -222,6 +242,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     .SelectMany(static region => region.Region.ProgramCounters)
                     .ToImmutableHashSet(),
                 boundDirectCalls,
+                _identity,
                 cancellationToken,
                 out var specializedMethod,
                 out var outerRuntimeSites,
@@ -266,6 +287,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                 optimized,
                 [],
                 boundDirectCalls,
+                _identity,
                 cancellationToken,
                 out var fallbackSpecializedMethod,
                 out var fallbackRuntimeSites,
@@ -333,11 +355,13 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
     }
 
     internal static LuaJitTier2Eligibility EvaluateAutoPromotionEligibility(
+        LuaRegisterLivenessCache liveness,
         LuaIrModule module,
         int functionId,
         LuaJitFunctionProfile profile,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(liveness);
         ArgumentNullException.ThrowIfNull(module);
         ArgumentNullException.ThrowIfNull(profile);
         if ((uint)functionId >= (uint)module.Functions.Length)
@@ -347,7 +371,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
 
         cancellationToken.ThrowIfCancellationRequested();
         var function = module.Functions[functionId];
-        var liveness = LuaRegisterLiveness.AnalyzeCached(
+        var livenessResult = liveness.AnalyzeCached(
             module,
             function,
             out _,
@@ -355,7 +379,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         var optimized = BuildOptimizations(
             function,
             profile,
-            liveness,
+            livenessResult,
             module.LanguageVersion);
         var numericOptimizationCount = optimized.Values.Count(static optimization =>
             optimization.Kind is LuaJitOptimizationKind.NumericUnary or
@@ -470,7 +494,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             LuaJitOptimizationKind.TableSetPic or
             LuaJitOptimizationKind.KnownClosureCall);
 
-    internal static ImmutableArray<LuaNumericRegionPlan> BuildNumericRegionPlans(
+    internal ImmutableArray<LuaNumericRegionPlan> BuildNumericRegionPlans(
         LuaIrModule module,
         LuaIrFunction function,
         LuaJitFunctionProfile profile,
@@ -492,7 +516,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                         ? LuaNumericRegionTableOperation.Get
                         : LuaNumericRegionTableOperation.Set));
         var candidates = ImmutableArray.CreateBuilder<LuaNumericRegionPlan>();
-        foreach (var region in LuaNumericRegionAnalyzer.AnalyzeNaturalLoops(
+        foreach (var region in _regions.AnalyzeNaturalLoops(
             module,
             function.Id,
             out _,
@@ -1039,6 +1063,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaJitFunctionProfile profile,
         ImmutableDictionary<int, OptimizedInstruction> optimized,
         LuaLanguageVersion languageVersion,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         out long estimatedCodeBytes)
     {
@@ -1046,7 +1071,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             (int FunctionId, UInt128 ArgumentKinds),
             LuaCompiledDirectCall?>();
         var result = ImmutableDictionary.CreateBuilder<int, LuaBoundDirectCall>();
-        var moduleContentId = LuaJitModuleIdentity.Create(module);
+        var moduleContentId = moduleIdentity.Create(module);
         estimatedCodeBytes = 0;
         foreach (var (programCounter, optimization) in optimized)
         {
@@ -1144,6 +1169,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         LuaIrFunction function,
         ImmutableArray<LuaNumericRegionPlan> plans,
         IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         out ImmutableArray<LuaCompiledNumericRegion> regions)
     {
@@ -1157,6 +1183,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     RequireLoopOsrEntry: false,
                     ObserveLoopOsrBackedge: false),
                 boundDirectCalls,
+                moduleIdentity,
                 cancellationToken,
                 out var region))
             {
@@ -1180,6 +1207,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         ImmutableDictionary<int, OptimizedInstruction> optimized,
         ImmutableHashSet<int> numericRegionProgramCounters,
         IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
+        LuaJitModuleIdentity moduleIdentity,
         CancellationToken cancellationToken,
         [NotNullWhen(true)] out LuaCompiledMethod? method,
         [NotNullWhen(true)] out LuaTier2RuntimeSites? runtimeSites,
@@ -1189,6 +1217,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
             optimized,
             numericRegionProgramCounters,
             boundDirectCalls,
+            moduleIdentity,
             cancellationToken,
             out method,
             out runtimeSites,
@@ -1199,7 +1228,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         "AOT",
         "IL3050",
         Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
-    private static bool PrepareCompilerCore()
+    private bool PrepareCompilerCore()
     {
         var instructions = ImmutableArray.Create(
             new LuaIrInstruction(
@@ -1301,7 +1330,7 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
                     TableShapes: [],
                     CallTargets: []),
             ]);
-        var result = Instance.Compile(module, 0, profile, CancellationToken.None);
+        var result = Compile(module, 0, profile, CancellationToken.None);
         if (!result.Succeeded || result.Plan?.CodeKind !=
             LuaJitTier2CodeKind.ExactNumericSpecializedCil ||
             result.Plan.NumericRegionCount == 0)
@@ -1678,13 +1707,15 @@ internal sealed class ProfileGuidedLuaTier2Compiler : ILuaTier2Compiler
         public Tier2Program(
             LuaIrFunction function,
             ImmutableDictionary<int, OptimizedInstruction> optimized,
-            IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls)
+            IReadOnlyDictionary<int, LuaBoundDirectCall> boundDirectCalls,
+            LuaJitModuleIdentity moduleIdentity)
         {
             _function = function;
             _optimized = new OptimizedInstruction?[function.Instructions.Length];
             _runtimeSites = new LuaTier2RuntimeSites(
                 function.Instructions.Length,
-                boundDirectCalls);
+                boundDirectCalls,
+                moduleIdentity);
             foreach (var pair in optimized)
             {
                 _optimized[pair.Key] = pair.Value;

@@ -261,12 +261,83 @@ public sealed class LuaFfiSignature : IEquatable<LuaFfiSignature>
 /// <summary>Invokes one already-adapted native binding without reflection.</summary>
 public delegate object? LuaFfiNativeInvoker(ReadOnlySpan<object?> arguments);
 
+/// <summary>
+/// Invokes one native binding at a resolved symbol address. Unlike
+/// <see cref="LuaFfiNativeInvoker"/>, the address is supplied per call site, so generated
+/// bindings can build strongly typed native delegates without runtime delegate generation.
+/// </summary>
+public delegate object? LuaFfiAddressedNativeInvoker(IntPtr address, ReadOnlySpan<object?> arguments);
+
 /// <summary>One exact, host-registered native binding for AOT and trimmed hosts.</summary>
 public sealed record LuaFfiNativeBinding(
     string LibraryName,
     string SymbolName,
     LuaFfiSignature Signature,
-    LuaFfiNativeInvoker Invoker);
+    LuaFfiNativeInvoker Invoker)
+{
+    /// <summary>Creates a binding whose invoker receives the resolved symbol address.</summary>
+    public LuaFfiNativeBinding(
+        string libraryName,
+        string symbolName,
+        LuaFfiSignature signature,
+        LuaFfiAddressedNativeInvoker addressedInvoker)
+        : this(libraryName, symbolName, signature, ThrowWhenNotAddressed)
+    {
+        AddressedInvoker = addressedInvoker;
+    }
+
+    /// <summary>
+    /// Optional address-resolved invoker used instead of <see cref="Invoker"/> when set. The
+    /// runtime resolves the symbol address from the loaded library at bind time and passes it
+    /// to this invoker on every call.
+    /// </summary>
+    public LuaFfiAddressedNativeInvoker? AddressedInvoker { get; init; }
+
+    private static readonly LuaFfiNativeInvoker ThrowWhenNotAddressed =
+        static _ => throw new InvalidOperationException(
+            "This binding is address-resolved; the plain invoker is never called.");
+}
+
+/// <summary>Registers generated native bindings deterministically.</summary>
+public interface ILuaFfiBindingProvider
+{
+    /// <summary>Registers the generated bindings into <paramref name="registry"/>.</summary>
+    void RegisterBindings(LuaFfiBindingRegistry registry);
+}
+
+/// <summary>
+/// Requests a compile-time generated native binding for one library symbol. The generated
+/// invoker marshals arguments and results from the declared signature without runtime
+/// delegate generation, so it works on AOT and trimmed runtimes.
+/// </summary>
+[AttributeUsage(AttributeTargets.Assembly, AllowMultiple = true)]
+public sealed class LuaFfiGenerateBindingAttribute : Attribute
+{
+    /// <summary>Requests a generated binding for one exact library symbol.</summary>
+    public LuaFfiGenerateBindingAttribute(
+        string libraryName,
+        string symbolName,
+        string signature,
+        string callingConvention = "platform")
+    {
+        LibraryName = libraryName;
+        SymbolName = symbolName;
+        Signature = signature;
+        CallingConvention = callingConvention;
+    }
+
+    /// <summary>The library name used by <c>ffi.load</c> at runtime.</summary>
+    public string LibraryName { get; }
+
+    /// <summary>The exported symbol name.</summary>
+    public string SymbolName { get; }
+
+    /// <summary>The compact signature declaration, for example <c>i32(i32, cstring)</c>.</summary>
+    public string Signature { get; }
+
+    /// <summary>The calling convention: <c>platform</c> (default), <c>cdecl</c>, or <c>stdcall</c>.</summary>
+    public string CallingConvention { get; }
+}
 
 /// <summary>Registry for exact native bindings that do not require runtime delegate generation.</summary>
 public sealed class LuaFfiBindingRegistry

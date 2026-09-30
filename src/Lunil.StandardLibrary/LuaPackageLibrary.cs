@@ -6,7 +6,7 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.StandardLibrary;
 
-internal static class LuaPackageLibrary
+internal sealed class LuaPackageLibrary
 {
     private const string LoadedRegistryKey = "_LOADED";
     private const string PreloadRegistryKey = "_PRELOAD";
@@ -18,18 +18,22 @@ internal static class LuaPackageLibrary
         new("require", Require);
     private static readonly LuaNativeFunction PreloadSearcherDescriptor =
         new("package.searcher.preload", PreloadSearcher);
-    private static readonly LuaNativeFunction LuaSearcherDescriptor =
-        new("package.searcher.lua", LuaSearcher);
-    private static readonly LuaNativeFunction NativeSearcherDescriptor =
-        new("package.searcher.native", NativeSearcher);
-    private static readonly LuaNativeFunction NativeRootSearcherDescriptor =
-        new("package.searcher.native-root", NativeRootSearcher);
+    private readonly LuaNativeFunction _luaSearcherDescriptor;
+    private readonly LuaNativeFunction _nativeSearcherDescriptor;
+    private readonly LuaNativeFunction _nativeRootSearcherDescriptor;
 
-    public static LuaTable Install(
-        LuaState state,
-        LuaStandardLibraryOptions? options = null)
+    private readonly LuaStandardLibraryOptions _options;
+
+    internal LuaPackageLibrary(LuaStandardLibraryOptions options)
     {
-        options ??= LuaStandardLibraryContext.Get(state).Options;
+        _options = options;
+        _luaSearcherDescriptor = new("package.searcher.lua", LuaSearcher);
+        _nativeSearcherDescriptor = new("package.searcher.native", NativeSearcher);
+        _nativeRootSearcherDescriptor = new("package.searcher.native-root", NativeRootSearcher);
+    }
+
+    public LuaTable Install(LuaState state)
+    {
         var loaded = GetOrCreateRegistryTable(state, LoadedRegistryKey);
         state.AttachLoadedModuleCache(loaded);
         var preload = GetOrCreateRegistryTable(state, PreloadRegistryKey);
@@ -69,13 +73,13 @@ internal static class LuaPackageLibrary
             LuaValue.FromFunction(PreloadSearcherDescriptor));
         searchers.Set(
             LuaValue.FromInteger(2),
-            LuaValue.FromFunction(LuaSearcherDescriptor));
+            LuaValue.FromFunction(_luaSearcherDescriptor));
         searchers.Set(
             LuaValue.FromInteger(3),
-            LuaValue.FromFunction(NativeSearcherDescriptor));
+            LuaValue.FromFunction(_nativeSearcherDescriptor));
         searchers.Set(
             LuaValue.FromInteger(4),
-            LuaValue.FromFunction(NativeRootSearcherDescriptor));
+            LuaValue.FromFunction(_nativeRootSearcherDescriptor));
         if (features.HasPackageSearchers)
         {
             LuaLibraryHelpers.Set(state, package, "searchers", LuaValue.FromTable(searchers));
@@ -85,9 +89,15 @@ internal static class LuaPackageLibrary
             LuaLibraryHelpers.Set(state, package, "loaders", LuaValue.FromTable(searchers));
         }
 
+        // The module rides along as the final capture; resumable descriptors must stay
+        // capture-free method groups, so require recovers this instance from its closure.
         var require = LuaValue.FromFunction(state.CreateNativeClosure(
             RequireDescriptor,
-            [LuaValue.FromTable(loaded), LuaValue.FromTable(searchers)]));
+            [
+                LuaValue.FromTable(loaded),
+                LuaValue.FromTable(searchers),
+                LuaValue.FromLightUserdata(new LuaLightUserdata(this)),
+            ]));
         state.SetGlobal("package", packageValue);
         state.SetGlobal("require", require);
         loaded.Set(LuaLibraryHelpers.String(state, "package"), packageValue);
@@ -119,6 +129,7 @@ internal static class LuaPackageLibrary
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
+        var self = (LuaPackageLibrary)context.Captures[2].AsLightUserdata().Identity;
         var loaded = context.Captures[0].AsTable();
         var searchers = context.Captures[1].AsTable();
         if (continuationId == 0)
@@ -131,7 +142,7 @@ internal static class LuaPackageLibrary
                 return LuaNativeStep.Completed(cached);
             }
 
-            return CallSearcher(context, searchers, name, 1, string.Empty);
+            return self.CallSearcher(context, searchers, name, 1, string.Empty);
         }
 
         var state = context.InvocationState;
@@ -157,7 +168,7 @@ internal static class LuaPackageLibrary
                 errors += "\n\t" + values[0].AsString();
             }
 
-            return CallSearcher(context, searchers, moduleName, index + 1, errors);
+            return self.CallSearcher(context, searchers, moduleName, index + 1, errors);
         }
 
         var result = values.Length > 0 ? values[0] : LuaValue.Nil;
@@ -186,7 +197,7 @@ internal static class LuaPackageLibrary
         return LuaNativeStep.Completed(loadedResult, state[1]);
     }
 
-    private static LuaNativeStep CallSearcher(
+    private LuaNativeStep CallSearcher(
         LuaNativeCallContext context,
         LuaTable searchers,
         LuaValue moduleName,
@@ -219,7 +230,7 @@ internal static class LuaPackageLibrary
             callIsYieldable: false);
     }
 
-    private static LuaModuleLoaderKind GetLoaderKind(LuaValue searcher)
+    private LuaModuleLoaderKind GetLoaderKind(LuaValue searcher)
     {
         var descriptor = searcher.TryGetNativeFunction();
         if (ReferenceEquals(descriptor, PreloadSearcherDescriptor))
@@ -227,7 +238,7 @@ internal static class LuaPackageLibrary
             return LuaModuleLoaderKind.Preload;
         }
 
-        return ReferenceEquals(descriptor, LuaSearcherDescriptor)
+        return ReferenceEquals(descriptor, _luaSearcherDescriptor)
             ? LuaModuleLoaderKind.LuaFile
             : LuaModuleLoaderKind.CustomSearcher;
     }
@@ -245,7 +256,7 @@ internal static class LuaPackageLibrary
             ];
     }
 
-    private static LuaValue[] LuaSearcher(LuaState state, ReadOnlySpan<LuaValue> values)
+    private LuaValue[] LuaSearcher(LuaState state, ReadOnlySpan<LuaValue> values)
     {
         var name = LuaLibraryHelpers.CheckStringBytes(values, 0, "package.searcher.lua");
         var path = GetPackageString(state, GetPackage(state), "path");
@@ -258,7 +269,7 @@ internal static class LuaPackageLibrary
         LuaValue[] loaded;
         try
         {
-            var bytes = LuaStandardLibraryContext.Get(state).Options.FileSystem.ReadAllBytes(found.Path);
+            var bytes = _options.FileSystem.ReadAllBytes(found.Path);
             loaded = LuaBasicLibrary.FinishLoad(
                 state,
                 bytes,
@@ -286,13 +297,13 @@ internal static class LuaPackageLibrary
             $"error loading module '{Encoding.UTF8.GetString(name)}' from file '{found.Path}':\n\t{detail}");
     }
 
-    private static LuaValue[] NativeSearcher(LuaState state, ReadOnlySpan<LuaValue> values) =>
+    private LuaValue[] NativeSearcher(LuaState state, ReadOnlySpan<LuaValue> values) =>
         SearchNative(state, values, rootOnly: false);
 
-    private static LuaValue[] NativeRootSearcher(LuaState state, ReadOnlySpan<LuaValue> values) =>
+    private LuaValue[] NativeRootSearcher(LuaState state, ReadOnlySpan<LuaValue> values) =>
         SearchNative(state, values, rootOnly: true);
 
-    private static LuaValue[] SearchNative(
+    private LuaValue[] SearchNative(
         LuaState state,
         ReadOnlySpan<LuaValue> values,
         bool rootOnly)
@@ -321,7 +332,7 @@ internal static class LuaPackageLibrary
         ];
     }
 
-    private static LuaValue[] SearchPath(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] SearchPath(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var name = LuaLibraryHelpers.CheckStringBytes(arguments, 0, "searchpath");
         var path = LuaLibraryHelpers.CheckStringBytes(arguments, 1, "searchpath");
@@ -368,7 +379,7 @@ internal static class LuaPackageLibrary
         return [module];
     }
 
-    private static SearchResult FindPath(
+    private SearchResult FindPath(
         LuaState state,
         ReadOnlySpan<byte> name,
         ReadOnlySpan<byte> path,
@@ -382,7 +393,7 @@ internal static class LuaPackageLibrary
         foreach (var template in pathText.Split(';'))
         {
             var candidate = template.Replace("?", nameText, StringComparison.Ordinal);
-            if (LuaStandardLibraryContext.Get(state).Options.FileSystem.FileExists(candidate))
+            if (_options.FileSystem.FileExists(candidate))
             {
                 return new SearchResult(candidate, string.Empty);
             }
@@ -459,14 +470,14 @@ internal static class LuaPackageLibrary
     private static LuaTable GetPackage(LuaState state) =>
         state.Registry.Get(LuaLibraryHelpers.String(state, PackageRegistryKey)).AsTable();
 
-    private static string GetPath(
+    private string GetPath(
         LuaState state,
         string versionedName,
         string fallbackName,
         string defaultPath)
     {
         var noEnvironment = state.Registry.Get(LuaLibraryHelpers.String(state, "LUA_NOENV")).IsTruthy;
-        var environment = LuaStandardLibraryContext.Get(state).Options.Environment;
+        var environment = _options.Environment;
         var configured = noEnvironment
             ? null
             : environment.GetEnvironmentVariable(versionedName) ??

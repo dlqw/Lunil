@@ -459,6 +459,11 @@ internal sealed class DapSession : IDisposable
     {
         try
         {
+            // Deliberately minimal composition: a debug target is a bare state with the
+            // reference interpreter and the debug session attached. Hosts that need the
+            // full embedding graph (standard library, workspace, module resolution) compose
+            // through LuaHost instead; the adapter keeps debugged scripts free of library
+            // and host noise.
             var state = new LuaState();
             var compilation = new LuaCompiler().CompileUtf8(source, "@" + programPath);
             if (!compilation.Succeeded)

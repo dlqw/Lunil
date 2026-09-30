@@ -1,9 +1,6 @@
 using System.Collections.Immutable;
-using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 #if NETSTANDARD2_1
@@ -209,9 +206,6 @@ public sealed record LuaClrOptions
     /// <summary>Gets the optional reflection-free binding registry.</summary>
     public LuaClrBindingRegistry? BindingRegistry { get; init; }
 
-    /// <summary>Gets whether missing static bindings may use the exact-allowlist reflection bridge.</summary>
-    public LuaClrBindingMode BindingMode { get; init; } = LuaClrBindingMode.RegistryThenReflection;
-
     /// <summary>Gets the CLR enum representation policy.</summary>
     public LuaClrEnumRepresentation EnumRepresentation { get; init; } = LuaClrEnumRepresentation.Name;
 
@@ -299,14 +293,14 @@ public sealed class LuaClrInvocationResult
 public sealed class LuaClrTask : IDisposable
 {
     private readonly Task _task;
-    private readonly PropertyInfo? _resultProperty;
+    private readonly Func<Task, object?> _getResult;
     private readonly LuaClrTaskRegistration _registration;
     private int _disposed;
 
     internal LuaClrTask(Task task, LuaClrBridge bridge)
     {
         _task = task;
-        _resultProperty = FindResultProperty(task.GetType());
+        _getResult = bridge.GetTaskResultAccessor(task.GetType());
         Bridge = bridge;
         _registration = bridge.CreateTaskRegistration();
     }
@@ -344,45 +338,10 @@ public sealed class LuaClrTask : IDisposable
         EnsureConsumable();
         _task.GetAwaiter().GetResult();
         EnsureConsumable();
-        if (_resultProperty is null)
-        {
-            if (FindGenericTaskType(_task.GetType()) is not null)
-            {
-                throw new LuaClrException(
-                    LuaClrErrorCode.AsyncFailed,
-                    "The CLR task result metadata is unavailable.");
-            }
-
-            return null;
-        }
-
-        return _resultProperty.GetValue(_task);
+        return _getResult(_task);
     }
 
     internal void EnsureConsumable() => Bridge.EnsureTaskConsumable(_registration);
-
-    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(Task<>))]
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2075",
-        Justification = "Task<TResult>.Result metadata is rooted for every closed Task<TResult> instance.")]
-    private static PropertyInfo? FindResultProperty(Type taskType) =>
-        FindGenericTaskType(taskType)?.GetProperty(
-            nameof(Task<int>.Result),
-            BindingFlags.Public | BindingFlags.Instance);
-
-    private static Type? FindGenericTaskType(Type taskType)
-    {
-        for (var current = taskType; current is not null; current = current.BaseType)
-        {
-            if (current.IsGenericType && current.GetGenericTypeDefinition() == typeof(Task<>))
-            {
-                return current;
-            }
-        }
-
-        return null;
-    }
 }
 
 /// <summary>Bridge-owned cancellation source passed to allowlisted CLR calls.</summary>
@@ -543,7 +502,6 @@ public sealed partial class LuaClrBridge
     private readonly ImmutableHashSet<string> _allowedDelegates;
     private readonly ImmutableHashSet<string> _allowedEvents;
     private readonly LuaClrBindingRegistry? _bindings;
-    private readonly ConcurrentDictionary<Type, ImmutableArray<MemberInfo>> _memberCache = [];
     private readonly object _callbackGate = new();
     private readonly int _ownerThreadId;
     private LuaInterpreterOptions _timerExecutionOptions = LuaInterpreterOptions.Default;
@@ -582,8 +540,7 @@ public sealed partial class LuaClrBridge
         _allowedDelegates = NormalizeNames(_options.AllowedDelegateTypeNames, nameof(options));
         _allowedEvents = NormalizeNames(_options.AllowedEventNames, nameof(options));
         _bindings = _options.BindingRegistry;
-        if ((byte)_options.BindingMode > (byte)LuaClrBindingMode.RegistryThenReflection ||
-            (byte)_options.EnumRepresentation > (byte)LuaClrEnumRepresentation.NameAndInteger ||
+        if ((byte)_options.EnumRepresentation > (byte)LuaClrEnumRepresentation.NameAndInteger ||
             (byte)_options.DecimalRepresentation > (byte)LuaClrDecimalRepresentation.LossyFloat ||
             (byte)_options.CollectionProjection > (byte)LuaClrCollectionProjection.TablesAndIterators ||
             (byte)_options.RefOutRepresentation > (byte)LuaClrRefOutRepresentation.PositionalAndNamedTable)
@@ -599,10 +556,6 @@ public sealed partial class LuaClrBridge
                 "CLR conversion limits are outside their supported ranges.");
         }
         ValidateAllowlistConflicts();
-        if (_options.BindingMode == LuaClrBindingMode.RegistryOnly && _bindings is null && IsEnabled)
-        {
-            throw new ArgumentException("Registry-only CLR interop requires a binding registry.", nameof(options));
-        }
         if (_options.MaximumCachedMembers is < 1 or > 16_384)
         {
             throw new ArgumentOutOfRangeException(nameof(options), _options.MaximumCachedMembers,
@@ -654,6 +607,12 @@ public sealed partial class LuaClrBridge
         {
             throw new ArgumentException(
                 "Delegate conversion requires at least one allowed delegate type name.", nameof(options));
+        }
+
+        if (_bindings is null && IsEnabled)
+        {
+            throw new ArgumentException(
+                "Enabled CLR interop requires a binding registry.", nameof(options));
         }
 
         _ownerThreadId = Environment.CurrentManagedThreadId;
@@ -724,13 +683,12 @@ public sealed partial class LuaClrBridge
         }
     }
 
-    /// <summary>Returns a description of an allowed type in an already loaded assembly.</summary>
+    /// <summary>Returns a description of an allowed type registered with the binding registry.</summary>
     public LuaClrTypeInfo ResolveType(string typeName)
     {
         RequireCapability(LuaClrCapabilities.TypeDiscovery);
-        var type = ResolveAllowedType(typeName);
-        var binding = GetRegisteredBinding(typeName);
-        return binding is null ? Describe(type) : Describe(binding);
+        _ = ResolveAllowedType(typeName);
+        return Describe(GetRegisteredBinding(typeName)!);
     }
 
     internal Type ResolveAllowedTypeForHost(string typeName) => ResolveAllowedType(typeName);
@@ -773,12 +731,8 @@ public sealed partial class LuaClrBridge
 
         var binding = GetRegisteredBinding(typeName);
         object?[] generatedArguments = [];
-        object?[] converted = [];
         var generated = binding is null ? null : SelectConstructor(binding, arguments, out generatedArguments);
-        var constructor = generated is null && ReflectionFallbackAllowed
-            ? SelectConstructor(type, arguments, out converted)
-            : null;
-        if (generated is null && constructor is null && !(type.IsValueType && arguments.Length == 0))
+        if (generated is null && !(type.IsValueType && arguments.Length == 0))
         {
             throw new LuaClrException(
                 LuaClrErrorCode.NoMatchingConstructor,
@@ -790,16 +744,7 @@ public sealed partial class LuaClrBridge
         {
             instance = generated is not null
                 ? generated.Invoker(generatedArguments)
-                : constructor is not null
-                    ? constructor.Invoke(converted)!
-                    : CreateDefaultValueType(type);
-        }
-        catch (TargetInvocationException exception) when (exception.InnerException is not null)
-        {
-            throw new LuaClrException(
-                LuaClrErrorCode.ConstructionFailed,
-                $"CLR constructor for '{type.FullName}' failed.",
-                exception.InnerException);
+                : CreateDefaultValueType(type);
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
         {
@@ -875,14 +820,14 @@ public sealed partial class LuaClrBridge
         }
     }
 
-    /// <summary>Returns allowlisted public members for an exact type.</summary>
+    /// <summary>Returns allowlisted registered members for an exact type.</summary>
     public ImmutableArray<LuaClrMemberInfo> ResolveMembers(string typeName)
     {
         RequireCapability(LuaClrCapabilities.MemberAccess);
         var type = ResolveAllowedType(typeName);
-        var binding = GetRegisteredBinding(typeName);
-        return (binding is null ? GetMembers(type).Select(static member => DescribeMember(member)) :
-                binding.Members.Where(member => IsMemberNameAllowed(type, member.Name)).Select(DescribeMember))
+        return GetRegisteredBinding(typeName)!.Members
+            .Where(member => IsMemberNameAllowed(type, member.Name))
+            .Select(DescribeMember)
             .OrderBy(static member => member.Name, StringComparer.Ordinal)
             .ThenBy(static member => member.Kind)
             .ToImmutableArray();
@@ -908,32 +853,7 @@ public sealed partial class LuaClrBridge
         {
             return GetGeneratedMember(generatedBinding, target, instance, memberName, indexArguments);
         }
-        EnsureReflectionFallback(type);
-        var member = SelectMember(type, memberName, indexArguments, forWrite: false,
-            requireStatic: instance is null);
-        try
-        {
-            return ToLuaValue(member switch
-            {
-                PropertyInfo property => property.GetValue(instance, ConvertArguments(indexArguments, property.GetIndexParameters())),
-                FieldInfo field => field.GetValue(instance),
-                MethodInfo method => CreateBoundMethod(target, type, method.Name),
-                _ => throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-                    $"CLR member '{memberName}' is not readable."),
-            });
-        }
-        catch (LuaClrException)
-        {
-            throw;
-        }
-        catch (TargetInvocationException exception) when (exception.InnerException is not null)
-        {
-            throw InvocationFailure(memberName, exception.InnerException);
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-        {
-            throw InvocationFailure(memberName, exception);
-        }
+        throw NoRegisteredBinding(type);
     }
 
     /// <summary>Writes an allowlisted instance or static property/field.</summary>
@@ -949,46 +869,7 @@ public sealed partial class LuaClrBridge
             SetGeneratedMember(generatedBinding, instance, memberName, value);
             return;
         }
-        EnsureReflectionFallback(type);
-        var member = SelectMember(type, memberName, [value], forWrite: true,
-            requireStatic: instance is null);
-        try
-        {
-            switch (member)
-            {
-                case PropertyInfo property when property.SetMethod is not null:
-                    if (!TryConvert(value, property.PropertyType, out var propertyValue, out _))
-                    {
-                        throw NoMatchingMember(memberName);
-                    }
-
-                    property.SetValue(instance, propertyValue);
-                    return;
-                case FieldInfo field when !field.IsInitOnly:
-                    if (!TryConvert(value, field.FieldType, out var fieldValue, out _))
-                    {
-                        throw NoMatchingMember(memberName);
-                    }
-
-                    field.SetValue(instance, fieldValue);
-                    return;
-                default:
-                    throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-                        $"CLR member '{memberName}' is not writable.");
-            }
-        }
-        catch (LuaClrException)
-        {
-            throw;
-        }
-        catch (TargetInvocationException exception) when (exception.InnerException is not null)
-        {
-            throw InvocationFailure(memberName, exception.InnerException);
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-        {
-            throw InvocationFailure(memberName, exception);
-        }
+        throw NoRegisteredBinding(type);
     }
 
     /// <summary>Invokes an allowlisted method, operator, or indexer.</summary>
@@ -1007,59 +888,7 @@ public sealed partial class LuaClrBridge
         {
             return InvokeGeneratedMember(generatedBinding, instance, memberName, arguments, namedArguments);
         }
-        EnsureReflectionFallback(type);
-        var methods = GetMembers(type).OfType<MethodInfo>()
-            .Where(method => string.Equals(method.Name, memberName, StringComparison.Ordinal))
-            .Where(method => instance is null ? method.IsStatic : !method.IsStatic)
-            .ToArray();
-        if (methods.Length == 0)
-        {
-            throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-                $"CLR method '{memberName}' was not found.");
-        }
-
-        var selected = SelectMethod(methods, arguments, namedArguments);
-        if (selected is null)
-        {
-            if (methods.SelectMany(static method => method.GetParameters()).Any(static parameter =>
-                    parameter.ParameterType.IsByRef &&
-                    (parameter.ParameterType.GetElementType()!.IsByRefLike ||
-                     parameter.ParameterType.GetElementType()!.IsPointer)))
-            {
-                throw new LuaClrException(LuaClrErrorCode.InvalidRefOut,
-                    $"CLR method '{memberName}' contains an unsupported ref-like ref/out parameter.");
-            }
-            throw NoMatchingMember(memberName);
-        }
-
-        try
-        {
-            var result = selected.Value.Method.Invoke(instance, selected.Value.Arguments);
-            var refOut = ImmutableArray.CreateBuilder<LuaValue>();
-            var namedRefOut = ImmutableArray.CreateBuilder<LuaClrRefOutValue>();
-            var parameters = selected.Value.Method.GetParameters();
-            for (var index = 0; index < parameters.Length; index++)
-            {
-                if (parameters[index].ParameterType.IsByRef)
-                {
-                    var converted = ToLuaValue(selected.Value.Arguments[index]);
-                    refOut.Add(converted);
-                    namedRefOut.Add(new LuaClrRefOutValue(
-                        parameters[index].Name ?? $"arg{index}", converted));
-                }
-            }
-
-            return new LuaClrInvocationResult(
-                ToLuaValue(result), refOut.ToImmutable(), namedRefOut.ToImmutable());
-        }
-        catch (TargetInvocationException exception) when (exception.InnerException is not null)
-        {
-            throw InvocationFailure(memberName, exception.InnerException);
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
-        {
-            throw InvocationFailure(memberName, exception);
-        }
+        throw NoRegisteredBinding(type);
     }
 
     /// <summary>Invokes an allowlisted static method on an exact type.</summary>
@@ -1093,17 +922,13 @@ public sealed partial class LuaClrBridge
         }
 
         var registration = CreateCallbackRegistration(function);
-        if (binding?.DelegateFactory is not null)
+        if (binding?.DelegateFactory is null)
         {
-            var returnType = binding.DelegateReturnType!;
-            return binding.DelegateFactory(arguments =>
-                InvokeDelegateCore(registration, arguments, returnType));
+            throw NoRegisteredBinding(type);
         }
-        var invoke = type.GetMethod("Invoke") ?? throw new LuaClrException(
-            LuaClrErrorCode.InvalidDelegate, $"CLR delegate type '{delegateTypeName}' has no Invoke method.");
-        ValidateDelegateSignature(invoke);
-        EnsureReflectionFallback(type);
-        return BuildDelegate(type, registration);
+        var returnType = binding.DelegateReturnType!;
+        return binding.DelegateFactory(arguments =>
+            InvokeDelegateCore(registration, arguments, returnType));
     }
 
     /// <summary>Subscribes a Lua function to an allowlisted CLR event.</summary>
@@ -1125,16 +950,11 @@ public sealed partial class LuaClrBridge
                 member.Kind == LuaClrMemberKind.Event &&
                 member.IsStatic == (instance is null) &&
                 string.Equals(member.Name, eventName, StringComparison.Ordinal));
-            EventInfo? eventInfo = null;
-            var handlerType = eventBinding?.Parameters.FirstOrDefault()?.ParameterType;
-            if (handlerType is null)
+            if (eventBinding is null)
             {
-                EnsureReflectionFallback(type);
-                eventInfo = type.GetEvent(eventName, BindingFlags.Public | BindingFlags.Instance |
-                    BindingFlags.Static) ?? throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-                        $"CLR event '{eventName}' was not found.");
-                handlerType = eventInfo.EventHandlerType;
+                throw NoRegisteredBinding(type);
             }
+            var handlerType = eventBinding.Parameters.FirstOrDefault()?.ParameterType;
             if (handlerType is null)
             {
                 throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
@@ -1152,29 +972,21 @@ public sealed partial class LuaClrBridge
 
             var registration = CreateCallbackRegistration(callback);
             var delegateBinding = GetRegisteredBinding(handlerTypeName);
-            var handler = delegateBinding?.DelegateFactory is not null
-                ? delegateBinding.DelegateFactory(arguments =>
-                    InvokeDelegateCore(registration, arguments, typeof(void)))
-                : BuildReflectionDelegate(handlerType, registration);
+            if (delegateBinding?.DelegateFactory is null)
+            {
+                throw NoRegisteredBinding(handlerType);
+            }
+            // The handler delegate's declared return type drives conversion; void
+            // handlers discard the Lua result exactly as before.
+            var handler = delegateBinding.DelegateFactory(arguments =>
+                InvokeDelegateCore(registration, arguments, delegateBinding.DelegateReturnType!));
             var handle = _state.CreateHandle(callback);
             try
             {
-                if (eventBinding is not null)
-                {
-                    eventBinding.Invoker(instance, [handler, true]);
-                }
-                else
-                {
-                    EnsureReflectionFallback(type);
-                    eventInfo!.AddEventHandler(instance, handler);
-                }
+                eventBinding.Invoker(instance, [handler, true]);
                 registration.AttachSubscription(
-                    eventBinding is not null
-                        ? () => eventBinding.Invoker(instance, [handler, true])
-                        : () => eventInfo!.AddEventHandler(instance, handler),
-                    eventBinding is not null
-                        ? () => eventBinding.Invoker(instance, [handler, false])
-                        : () => eventInfo!.RemoveEventHandler(instance, handler));
+                    () => eventBinding.Invoker(instance, [handler, true]),
+                    () => eventBinding.Invoker(instance, [handler, false]));
                 var subscription = new LuaClrSubscription(
                     this,
                     registration,
@@ -1195,15 +1007,6 @@ public sealed partial class LuaClrBridge
         {
             stableLease?.Dispose();
         }
-    }
-
-    private Delegate BuildReflectionDelegate(Type handlerType, LuaClrCallbackRegistration registration)
-    {
-        EnsureReflectionFallback(handlerType);
-        var invoke = handlerType.GetMethod("Invoke") ?? throw new LuaClrException(
-            LuaClrErrorCode.InvalidDelegate, $"CLR delegate type '{handlerType.FullName}' has no Invoke method.");
-        ValidateDelegateSignature(invoke);
-        return BuildDelegate(handlerType, registration);
     }
 
     /// <summary>
@@ -1932,46 +1735,6 @@ public sealed partial class LuaClrBridge
             "A CLR userdata or allowlisted static type is required.");
     }
 
-    private MemberInfo[] GetMembers(Type type)
-    {
-        return _memberCache.GetOrAdd(type, static (current, state) =>
-        {
-            var flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
-            var members = current.GetMembers(flags)
-                .Where(member => member is MethodInfo or PropertyInfo or FieldInfo or EventInfo)
-                .Where(member => member switch
-                {
-                    MethodInfo method => method.IsPublic,
-                    PropertyInfo property => property.GetMethod?.IsPublic == true || property.SetMethod?.IsPublic == true,
-                    FieldInfo field => field.IsPublic,
-                    EventInfo @event => @event.AddMethod?.IsPublic == true,
-                    _ => false,
-                })
-                .Where(member => state.IsMemberNameAllowed(current, member.Name))
-                .OrderBy(member => member.Name, StringComparer.Ordinal)
-                .ThenBy(static member => member switch
-                {
-                    MethodInfo method => string.Join('|', method.GetParameters().Select(parameter =>
-                        parameter.ParameterType.FullName ?? parameter.ParameterType.Name)),
-                    PropertyInfo property => property.PropertyType.FullName ?? property.PropertyType.Name,
-                    FieldInfo field => field.FieldType.FullName ?? field.FieldType.Name,
-                    EventInfo @event => @event.EventHandlerType?.FullName ?? string.Empty,
-                    _ => string.Empty,
-                }, StringComparer.Ordinal)
-                .Take(state._options.MaximumCachedMembers + 1)
-                .ToArray();
-            if (members.Length > state._options.MaximumCachedMembers)
-            {
-                throw new LuaClrException(
-                    LuaClrErrorCode.MemberNotFound,
-                    $"CLR type '{current.FullName}' exposes more than " +
-                    $"{state._options.MaximumCachedMembers} allowlisted member candidates.");
-            }
-
-            return members.ToImmutableArray();
-        }, this).ToArray();
-    }
-
     private bool IsMemberNameAllowed(Type type, string name) =>
         _allowedMembers.Contains(name) ||
         _allowedMembers.Contains($"{type.FullName}.{name}") ||
@@ -1997,188 +1760,9 @@ public sealed partial class LuaClrBridge
         }
     }
 
-    private static LuaClrMemberInfo DescribeMember(MemberInfo member) => member switch
-    {
-        MethodInfo method => new LuaClrMemberInfo(method.Name,
-            method.Name.StartsWith("op_", StringComparison.Ordinal) ? LuaClrMemberKind.Operator : LuaClrMemberKind.Method,
-            method.IsStatic, false, false,
-            [.. method.GetParameters().Select(parameter => parameter.ParameterType.FullName ?? parameter.ParameterType.Name)],
-            method.ReturnType.FullName ?? method.ReturnType.Name),
-        PropertyInfo property => new LuaClrMemberInfo(property.Name, property.GetIndexParameters().Length > 0
-                ? LuaClrMemberKind.Indexer : LuaClrMemberKind.Property,
-            (property.GetMethod ?? property.SetMethod)?.IsStatic == true,
-            property.GetMethod?.IsPublic == true, property.SetMethod?.IsPublic == true,
-            [.. property.GetIndexParameters().Select(parameter => parameter.ParameterType.FullName ?? parameter.ParameterType.Name)],
-            property.PropertyType.FullName ?? property.PropertyType.Name),
-        FieldInfo field => new LuaClrMemberInfo(field.Name, LuaClrMemberKind.Field, field.IsStatic,
-            true, !field.IsInitOnly, [], field.FieldType.FullName ?? field.FieldType.Name),
-        EventInfo @event => new LuaClrMemberInfo(@event.Name, LuaClrMemberKind.Event,
-            (@event.AddMethod ?? @event.RemoveMethod)?.IsStatic == true, false, false, [],
-            @event.EventHandlerType?.FullName ?? "System.Delegate"),
-        _ => throw new InvalidOperationException("Unsupported CLR member."),
-    };
-
-    private MemberInfo SelectMember(
-        Type type,
-        string name,
-        ReadOnlySpan<LuaValue> arguments,
-        bool forWrite,
-        bool requireStatic)
-    {
-        var members = GetMembers(type)
-            .Where(member => string.Equals(member.Name, name, StringComparison.Ordinal))
-            .Where(member => IsStatic(member) == requireStatic);
-        if (forWrite)
-        {
-            members = members.Where(member => member switch
-            {
-                PropertyInfo property => property.SetMethod is not null,
-                FieldInfo field => !field.IsInitOnly,
-                _ => false,
-            });
-        }
-        else if (arguments.Length > 0)
-        {
-            var argumentCount = arguments.Length;
-            members = members.Where(member => member is PropertyInfo property &&
-                property.GetIndexParameters().Length == argumentCount);
-        }
-
-        var selected = members.FirstOrDefault(member => member switch
-        {
-            PropertyInfo property => property.GetMethod is not null,
-            FieldInfo field => true,
-            MethodInfo => true,
-            _ => false,
-        });
-        return selected ?? throw new LuaClrException(LuaClrErrorCode.MemberNotFound,
-            $"CLR member '{name}' was not found.");
-    }
-
-    private static bool IsStatic(MemberInfo member) => member switch
-    {
-        MethodInfo method => method.IsStatic,
-        PropertyInfo property => (property.GetMethod ?? property.SetMethod)?.IsStatic == true,
-        FieldInfo field => field.IsStatic,
-        EventInfo @event => (@event.AddMethod ?? @event.RemoveMethod)?.IsStatic == true,
-        _ => false,
-    };
-
-    private (MethodInfo Method, object?[] Arguments)? SelectMethod(
-        IEnumerable<MethodInfo> methods,
-        ReadOnlySpan<LuaValue> arguments,
-        ReadOnlySpan<LuaClrNamedArgument> namedArguments)
-    {
-        var candidates = new List<(MethodInfo Method, object?[] Arguments, int Score, string Signature)>();
-        foreach (var method in methods)
-        {
-            var parameters = method.GetParameters();
-            if (arguments.Length > parameters.Length ||
-                arguments.Length + namedArguments.Length > parameters.Length)
-            {
-                continue;
-            }
-
-            var values = new object?[parameters.Length];
-            var assigned = new bool[parameters.Length];
-            var score = 0;
-            var valid = true;
-            for (var index = 0; index < arguments.Length; index++)
-            {
-                var parameter = parameters[index];
-                var targetType = parameter.ParameterType.IsByRef ? parameter.ParameterType.GetElementType()! : parameter.ParameterType;
-                if (!TryConvert(arguments[index], targetType, out values[index], out var cost))
-                {
-                    valid = false;
-                    break;
-                }
-                assigned[index] = true;
-                score += cost;
-            }
-
-            if (!valid)
-            {
-                continue;
-            }
-
-            foreach (var named in namedArguments)
-            {
-                var parameterIndex = Array.FindIndex(parameters, parameter =>
-                    string.Equals(parameter.Name, named.Name, StringComparison.Ordinal));
-                if (parameterIndex < 0 || assigned[parameterIndex])
-                {
-                    valid = false;
-                    break;
-                }
-
-                var targetType = parameters[parameterIndex].ParameterType.IsByRef
-                    ? parameters[parameterIndex].ParameterType.GetElementType()!
-                    : parameters[parameterIndex].ParameterType;
-                if (!TryConvert(named.Value, targetType, out values[parameterIndex], out var cost))
-                {
-                    valid = false;
-                    break;
-                }
-                assigned[parameterIndex] = true;
-                score += cost;
-            }
-
-            if (!valid)
-            {
-                continue;
-            }
-
-            for (var index = 0; index < parameters.Length; index++)
-            {
-                if (assigned[index])
-                {
-                    continue;
-                }
-
-                if (parameters[index].IsOut)
-                {
-                    values[index] = parameters[index].ParameterType.GetElementType()!.IsValueType
-                        ? Activator.CreateInstance(parameters[index].ParameterType.GetElementType()!) : null;
-                    assigned[index] = true;
-                    continue;
-                }
-
-                if (parameters[index].HasDefaultValue)
-                {
-                    values[index] = parameters[index].DefaultValue;
-                    assigned[index] = true;
-                    score += 1;
-                    continue;
-                }
-
-                valid = false;
-                break;
-            }
-
-            if (valid)
-            {
-                candidates.Add((method, values, score,
-                    string.Join('|', parameters.Select(parameter => parameter.ParameterType.FullName ?? parameter.ParameterType.Name))));
-            }
-        }
-
-        var selected = candidates.OrderBy(candidate => candidate.Score)
-            .ThenBy(candidate => candidate.Signature, StringComparer.Ordinal).FirstOrDefault();
-        return selected.Method is null ? null : (selected.Method, selected.Arguments);
-    }
-
-    private object?[] ConvertArguments(ReadOnlySpan<LuaValue> values, ParameterInfo[] parameters)
-    {
-        var converted = new object?[parameters.Length];
-        for (var index = 0; index < parameters.Length; index++)
-        {
-            if (!TryConvert(values[index], parameters[index].ParameterType, out converted[index], out _))
-            {
-                throw new LuaClrException(LuaClrErrorCode.NoMatchingMember, "Index argument conversion failed.");
-            }
-        }
-        return converted;
-    }
+    private static LuaClrException NoRegisteredBinding(Type type) => new(
+        LuaClrErrorCode.TypeNotAllowed,
+        $"CLR type '{type.FullName}' has no registered static binding.");
 
     private LuaValue CreateBoundMethod(LuaValue target, Type type, string memberName)
     {
@@ -2286,48 +1870,7 @@ public sealed partial class LuaClrBridge
     private static LuaClrException NoMatchingMember(string memberName) =>
         new(LuaClrErrorCode.NoMatchingMember, $"No allowlisted CLR overload of '{memberName}' accepts the supplied values.");
 
-    private static void ValidateDelegateSignature(MethodInfo invoke)
-    {
-        if (invoke.ReturnType != typeof(void) && !IsSupportedClrType(invoke.ReturnType))
-        {
-            throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
-                $"Delegate return type '{invoke.ReturnType.FullName}' is unsupported.");
-        }
-
-        foreach (var parameter in invoke.GetParameters())
-        {
-            if (parameter.ParameterType.IsByRef || !IsSupportedClrType(parameter.ParameterType))
-            {
-                throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
-                    $"Delegate parameter '{parameter.Name}' has an unsupported type.");
-            }
-        }
-    }
-
     [DynamicDependency(nameof(InvokeDelegateCore), typeof(LuaClrBridge))]
-    private Delegate BuildDelegate(
-        Type delegateType,
-        LuaClrCallbackRegistration registration)
-    {
-        var invoke = delegateType.GetMethod("Invoke")!;
-        var parameters = invoke.GetParameters()
-            .Select(parameter => Expression.Parameter(parameter.ParameterType, parameter.Name))
-            .ToArray();
-        var boxed = Expression.NewArrayInit(typeof(object), parameters.Select(parameter =>
-            Expression.Convert(parameter, typeof(object))));
-        var call = Expression.Call(
-            Expression.Constant(this),
-            nameof(InvokeDelegateCore),
-            Type.EmptyTypes,
-            Expression.Constant(registration),
-            boxed,
-            Expression.Constant(invoke.ReturnType, typeof(Type)));
-        Expression body = invoke.ReturnType == typeof(void)
-            ? Expression.Block(call, Expression.Empty())
-            : Expression.Convert(call, invoke.ReturnType);
-        return Expression.Lambda(delegateType, body, parameters).Compile(preferInterpretation: true);
-    }
-
     private object? InvokeDelegateCore(
         LuaClrCallbackRegistration registration,
         object?[] arguments,
@@ -2435,31 +1978,8 @@ public sealed partial class LuaClrBridge
 
     [UnconditionalSuppressMessage(
         "Trimming",
-        "IL2070",
-        Justification = "The embedding application must preserve public constructors for each exact-allowlist type.")]
-    private static LuaClrTypeInfo Describe(Type type)
-    {
-        var constructors = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
-            .Select(static constructor => new LuaClrConstructorInfo(
-                [.. constructor.GetParameters().Select(parameter =>
-                    parameter.ParameterType.FullName ?? parameter.ParameterType.Name)]))
-            .OrderBy(static constructor => string.Join('|', constructor.ParameterTypeNames), StringComparer.Ordinal)
-            .ToImmutableArray();
-        var constructible = !type.IsAbstract &&
-            !type.IsInterface &&
-            (constructors.Length > 0 || type.IsValueType);
-        return new LuaClrTypeInfo(
-            type.FullName ?? type.Name,
-            type.Assembly.GetName().Name ?? string.Empty,
-            type.IsValueType,
-            constructible,
-            constructors);
-    }
-
-    [UnconditionalSuppressMessage(
-        "Trimming",
         "IL2026",
-        Justification = "The bridge searches only already loaded assemblies; applications preserve exact-allowlist type metadata.")]
+        Justification = "The bridge resolves types only through the host-owned static binding registry.")]
     private Type ResolveAllowedType(string typeName)
     {
         if (string.IsNullOrWhiteSpace(typeName) || typeName.Length > _options.MaximumTypeNameLength)
@@ -2477,45 +1997,17 @@ public sealed partial class LuaClrBridge
         }
 
         var binding = GetRegisteredBinding(typeName);
-        if (binding is not null)
-        {
-            if (!_allowedAssemblies.Contains(binding.AssemblyName) || !IsPubliclyVisible(binding.ClrType))
-            {
-                throw new LuaClrException(LuaClrErrorCode.BindingConflict,
-                    $"Static binding '{typeName}' conflicts with the exact assembly or visibility boundary.");
-            }
-            return binding.ClrType;
-        }
-        if (!ReflectionFallbackAllowed)
+        if (binding is null)
         {
             throw new LuaClrException(LuaClrErrorCode.TypeNotFound,
                 $"Allowlisted CLR type '{typeName}' has no registered static binding.");
         }
-
-        var matches = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(assembly => _allowedAssemblies.Contains(assembly.GetName().Name ?? string.Empty))
-            .Select(assembly => assembly.GetType(typeName, throwOnError: false, ignoreCase: false))
-            .Where(static type => type is not null)
-            .Cast<Type>()
-            .ToArray();
-        var match = matches.Length switch
+        if (!_allowedAssemblies.Contains(binding.AssemblyName) || !IsPubliclyVisible(binding.ClrType))
         {
-            0 => throw new LuaClrException(
-                LuaClrErrorCode.TypeNotFound,
-                $"Allowlisted CLR type '{typeName}' is not loaded."),
-            1 => matches[0],
-            _ => throw new LuaClrException(
-                LuaClrErrorCode.AmbiguousType,
-                $"Allowlisted CLR type '{typeName}' resolves to multiple assemblies."),
-        };
-        if (!IsPubliclyVisible(match))
-        {
-            throw new LuaClrException(
-                LuaClrErrorCode.TypeNotAllowed,
-                $"CLR type '{typeName}' is not publicly visible.");
+            throw new LuaClrException(LuaClrErrorCode.BindingConflict,
+                $"Static binding '{typeName}' conflicts with the exact assembly or visibility boundary.");
         }
-
-        return match;
+        return binding.ClrType;
     }
 
     private static bool IsPubliclyVisible(Type type)
@@ -2529,63 +2021,6 @@ public sealed partial class LuaClrBridge
         }
 
         return true;
-    }
-
-    [UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2070",
-        Justification = "The embedding application must preserve public constructors for each exact-allowlist type.")]
-    private ConstructorInfo? SelectConstructor(
-        Type type,
-        ReadOnlySpan<LuaValue> arguments,
-        out object?[] converted)
-    {
-        converted = [];
-        var candidates = new List<(ConstructorInfo Constructor, object?[] Arguments, int Score, string Signature)>();
-        foreach (var constructor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
-        {
-            var parameters = constructor.GetParameters();
-            if (parameters.Length != arguments.Length)
-            {
-                continue;
-            }
-
-            var values = new object?[parameters.Length];
-            var score = 0;
-            var valid = true;
-            for (var index = 0; index < parameters.Length; index++)
-            {
-                if (!TryConvert(arguments[index], parameters[index].ParameterType, out values[index], out var cost))
-                {
-                    valid = false;
-                    break;
-                }
-
-                score += cost;
-            }
-
-            if (valid)
-            {
-                candidates.Add((
-                    constructor,
-                    values,
-                    score,
-                    string.Join('|', parameters.Select(parameter =>
-                        parameter.ParameterType.FullName ?? parameter.ParameterType.Name))));
-            }
-        }
-
-        var selected = candidates
-            .OrderBy(static candidate => candidate.Score)
-            .ThenBy(static candidate => candidate.Signature, StringComparer.Ordinal)
-            .FirstOrDefault();
-        if (selected.Constructor is null)
-        {
-            return null;
-        }
-
-        converted = selected.Arguments;
-        return selected.Constructor;
     }
 
     private static bool IsNumeric(Type type) => type == typeof(byte) ||
@@ -2608,8 +2043,6 @@ public sealed partial class LuaClrBridge
         "Trimming",
         "IL2067",
         Justification = "The embedding application must preserve public constructors for each exact-allowlist type.")]
-    private static object CreateDefaultValueType(Type type) => Activator.CreateInstance(type)!;
-
     private void RequireCapability(LuaClrCapabilities capability)
     {
         if ((_options.Capabilities & capability) != capability)

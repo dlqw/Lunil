@@ -6,11 +6,11 @@
 
 | Field | Value |
 | --- | --- |
-| NuGet package | `Lunil.Godot` `0.14.0` |
+| NuGet package | `Lunil.Godot` `0.22.0` |
 | Addon path | `res://addons/lunil` |
 | Supported Godot | 4.4 and 4.6 .NET |
 | Runtime backend | Portable interpreter |
-| Default CLR mode | Disabled; generated `RegistryOnly` is recommended |
+| Default CLR interop | Disabled; enabling it requires a binding registry |
 
 The addon exposes editor-facing `LunilGameLoop` and `LunilScript` classes. They derive from the
 `Lunil.Godot` NuGet package's `LuaGodotGameLoop` and `LuaGodotScriptResource` public types,
@@ -26,7 +26,7 @@ directly from C# without the addon wrappers.
 | Linux/macOS desktop | Stable | Export compatibility |
 | Android | Stable | Godot 4.4 uses .NET 8; Godot 4.6 export templates require .NET 9 |
 | iOS | Preview | Official C# exporter and Apple build toolchain require macOS |
-| Web | Not in 0.14 | No compatibility commitment |
+| Web | Not in 0.22 | No compatibility commitment |
 
 ## `LuaGodotGameLoop` and addon `LunilGameLoop`
 
@@ -40,6 +40,7 @@ directly from C# without the addon wrappers.
 | `GameLoop` | Active `LuaGameLoopHost`; throws before initialization |
 | `EntryOperation` | Scheduled entry operation or `null` |
 | `ConfigureHostOptions` | Last pre-initialization options transform; returning `null` fails |
+| `Registry` | `LuaGodotRuntimeRegistry` tracking this loop; defaults to `Process`, or a dedicated instance to isolate scene-reload shutdowns |
 | `TickCompleted` | Raised after each completed process or physics tick |
 | `HostFailed` | Raised when ticking throws; otherwise Godot receives `GD.PushError` |
 | `Initialize()` | Idempotently creates, registers, compiles, and starts the host |
@@ -47,8 +48,8 @@ directly from C# without the addon wrappers.
 | `TickPhysics()` | Drains dispatcher work and ticks `LuaGameLoopPhase.FixedUpdate` |
 | `Shutdown()` | Unregisters, closes the dispatcher, and disposes the host |
 
-`_ExitTree` and `NotificationPredelete` call `Shutdown`. `LuaGodotRuntimeRegistry.DisposeAll()` closes
-all registered adapters, and `ActiveHostCount` exposes the current count.
+`_ExitTree` and `NotificationPredelete` call `Shutdown`. `LuaGodotRuntimeRegistry.Process.DisposeAll()` closes
+all registered adapters, and `Process.ActiveHostCount` exposes the current count.
 
 ## Resources and services
 

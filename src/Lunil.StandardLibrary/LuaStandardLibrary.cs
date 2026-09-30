@@ -118,7 +118,8 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaBasicLibrary.Install(state, options);
+        var context = LuaStandardLibraryContext.Configure(state, options);
+        return new LuaBasicLibrary(context).Install(state);
     }
 
     /// <summary>Installs the version-selected math module into the global environment.</summary>
@@ -163,9 +164,8 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaPackageLibrary.Install(
-            state,
-            options ?? LuaStandardLibraryContext.Get(state).Options);
+        return new LuaPackageLibrary(options ?? LuaStandardLibraryContext.Get(state).Options)
+            .Install(state);
     }
 
     /// <summary>Installs the opt-in native FFI module.</summary>
@@ -187,7 +187,7 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaIoLibrary.Install(state, options);
+        return new LuaIoLibrary(ConfigureOptions(state, options)).Install(state);
     }
 
     /// <summary>Installs the version-selected operating-system module.</summary>
@@ -197,7 +197,7 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaOsLibrary.Install(state, options);
+        return new LuaOsLibrary(ConfigureOptions(state, options)).Install(state);
     }
 
     /// <summary>Installs the version-selected debug module and runtime hook bridge.</summary>
@@ -205,7 +205,7 @@ public static class LuaStandardLibrary
     {
         LunilGuard.NotNull(state);
         EnsureImplemented(state);
-        return LuaDebugLibrary.Install(state);
+        return new LuaDebugLibrary(LuaStandardLibraryContext.Get(state).Options).Install(state);
     }
 
     /// <summary>Installs the version-selected coroutine module into the global environment.</summary>
@@ -225,6 +225,13 @@ public static class LuaStandardLibrary
                 "is not implemented yet.");
         }
     }
+
+    private static LuaStandardLibraryOptions ConfigureOptions(
+        LuaState state,
+        LuaStandardLibraryOptions? options) =>
+        options is null
+            ? LuaStandardLibraryContext.Get(state).Options
+            : LuaStandardLibraryContext.Configure(state, options).Options;
 
     private static void Remove(LuaState state, LuaTable table, string name) =>
         table.Set(LuaLibraryHelpers.String(state, name), LuaValue.Nil);

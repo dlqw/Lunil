@@ -11,7 +11,9 @@ ownership、callback admission 与热更新 fencing 时，参阅 [CLR bridge 生
 
 ## 1. 配置 Host
 
-从 restricted Host 开始，只授予所需 capability，并使用完全限定的 allowlist entry：
+从 restricted Host 开始，只授予所需 capability，并使用完全限定的 allowlist entry。启用 interop 需要
+registry；示例假设 `Example.Contracts.Point` 的 binding 已按[第 5 节](#5-注册-binding)与
+[生成 AOT-safe CLR binding](aot-bindings.zh-CN.pub.md) 的说明生成并注册：
 
 ```csharp
 var options = LuaHostOptions.Restricted with
@@ -28,6 +30,7 @@ var options = LuaHostOptions.Restricted with
             "Example.Contracts.Point.Value",
             "Example.Contracts.Point.Translate",
         ],
+        BindingRegistry = registry,
         InstallGlobalModule = true,
     },
 };
@@ -96,23 +99,22 @@ placeholder，不得构造第二个 native resource。发布与 rollback 行为�
 [热更新生命周期原理](signed-patch-publication.zh-CN.pub.md) 和
 [patch manifest 参考](signed-patch-bundles.zh-CN.pub.md)。
 
-## 5. 选择 Binding Mode
+## 5. 注册 binding
 
-Trusted .NET Host 可以使用 `LuaClrBindingMode.RegistryThenReflection`：它保留准确 allowlist，并对
-registry 中没有的 entry 使用 reflection。NativeAOT、Unity IL2CPP、严格 trimming 与 deterministic
-Host 应生成准确 binding，通过 `LuaClrOptions.BindingRegistry` 传入 `LuaClrBindingRegistry`，并选择
-`LuaClrBindingMode.RegistryOnly`。缺少 registry entry 时会直接 fail closed，不会使用 reflection。
+CLR dispatch 对每个类型、constructor、member 与 delegate 都通过 binding registry 解析。使用
+`[LuaClrGenerateBinding]` 生成准确 binding，通过 `LuaClrOptions.BindingRegistry` 传入 registry，并保持
+准确 allowlist。没有注册 binding 的 allowlist 类型会以 `no registered static binding` 错误 fail
+closed；启用 CLR interop 而未提供 registry 属于配置错误。
 
 声明 request、注册生成 provider、配置 allowlist 与生成 Unity linker metadata 的步骤见
 [生成 AOT-safe CLR binding](aot-bindings.zh-CN.pub.md)。
 
 ## 6. 准备 trimming 与 NativeAOT 发布
 
-在 trimmed 应用中使用 `RegistryThenReflection` 时，应通过 `DynamicDependency` 等 linker metadata
-保留被反射的 public constructor、member 与 delegate signature。生成的 `RegistryOnly` invoker 不需要
-应用自有的 runtime reflection metadata。完整发布流程见
-[如何使用 .NET NativeAOT 与 trimming 发布](nativeaot-build-integration.zh-CN.pub.md)。
+生成的 invoker 通过编译期 delegate 调用绑定的 member，不需要应用侧的运行时 reflection
+metadata，因此 trimmed 与 NativeAOT 发布无需为已绑定表面保留 `DynamicDependency`。
+完整发布流程见 [使用 .NET NativeAOT 与 trimming 发布](nativeaot-build-integration.zh-CN.pub.md)。
 
 配置完成后，bridge 只暴露已请求的 CLR 表面。`NoMatchingConstructor`、`NoMatchingMember`、
-`ThreadDenied` 与 generation-closed error 会标明拒绝 operation 的边界；具体规则见
+`ThreadDenied` 与 generation-closed 错误标识拒绝操作的边界；适用规则见
 [参考页](clr-interop-reference.zh-CN.pub.md)。

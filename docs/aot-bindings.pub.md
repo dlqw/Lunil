@@ -2,8 +2,9 @@
 
 [简体中文](aot-bindings.zh-CN.pub.md)
 
-This how-to replaces runtime member discovery with exact C# bindings for NativeAOT, Unity IL2CPP,
-trimming, and other hosts where reflection metadata is unavailable or intentionally disabled.
+This how-to declares the exact C# bindings that CLR interoperation requires on every runtime.
+NativeAOT, Unity IL2CPP, trimming, and deterministic hosts get the same registry dispatch as
+trusted .NET hosts; no runtime falls back to reflection.
 
 ## 1. Declare exact binding requests
 
@@ -36,7 +37,7 @@ new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
 Registration is deterministic. Conflicting type, signature, or closed-generic registrations fail
 with `LuaClrErrorCode.BindingConflict` instead of choosing one entry.
 
-## 3. Configure a registry-only bridge
+## 3. Configure the bridge with a registry
 
 Generated bindings do not grant access by themselves. Keep the capability and exact allowlist
 policy alongside the registry:
@@ -56,15 +57,14 @@ var hostOptions = LuaHostOptions.Restricted with
         AllowedTypeNames = [typeName],
         AllowedMemberNames = [$"{typeName}.Add", $"{typeName}.Count"],
         BindingRegistry = registry,
-        BindingMode = LuaClrBindingMode.RegistryOnly,
         InstallGlobalModule = true,
     },
 };
 ```
 
-`RegistryOnly` requires a registry whenever CLR interoperation is enabled. A missing type or member
-fails closed; it never falls back to reflection. `RegistryThenReflection` preserves the exact-
-allowlist reflection fallback for trusted .NET hosts, but it is not suitable as an AOT guarantee.
+A registry is required whenever CLR interoperation is enabled. A missing type or member
+fails closed; dispatch never falls back to reflection on any runtime, and generated bindings
+need no runtime reflection metadata on AOT and trimmed hosts.
 
 ## 4. Preserve Unity types
 
@@ -85,7 +85,8 @@ types instead of open generic definitions.
 
 ## Expected result
 
-Construction, methods, properties, fields, indexers, delegate conversion, and event access use
-static invokers from the registry. Runtime allowlists and conversion budgets still apply. See
+Construction, methods, properties, fields, delegate conversion, and event access use
+static invokers from the registry; indexers cannot be bound and fail closed. Runtime
+allowlists and conversion budgets still apply. See
 [CLR interoperation](clr-interop.pub.md) for conversion and ownership rules and
 [.NET NativeAOT and trimming](nativeaot-build-integration.pub.md) for publishing.

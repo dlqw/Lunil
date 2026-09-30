@@ -52,15 +52,25 @@ internal interface ILuaTier1Compiler
 internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
 {
     public static ReflectionEmitLuaTier1Compiler Instance { get; } = new();
-    [UnconditionalSuppressMessage(
-        "AOT",
-        "IL3050",
-        Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
-    private static readonly Lazy<bool> CompilerPrepared = new(
+
+    /// <summary>
+    /// The owner-scoped plan memos this compiler plans with. The tiered registry adopts them for
+    /// its Tier 1 eligibility passes so one backend evaluates and then compiles a function
+    /// through the same plan memo.
+    /// </summary>
+    internal LuaCilPlanCache Plans => _plans;
+
+    private readonly LuaCilPlanCache _plans = new();
+
+    private readonly ReflectionEmitRuntimeAbiCache _runtimeAbi = new();
+
+    private readonly Lazy<bool> _compilerPrepared;
+
+    public ReflectionEmitLuaTier1Compiler() => _compilerPrepared = new(
         PrepareCompilerCore,
         LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public static void PrepareCompiler() => _ = CompilerPrepared.Value;
+    public void PrepareCompiler() => _ = _compilerPrepared.Value;
 
     [RequiresDynamicCode("Tier 1 JIT compilation requires Reflection.Emit support.")]
     [UnconditionalSuppressMessage(
@@ -89,7 +99,7 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
     {
         cancellationToken.ThrowIfCancellationRequested();
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        var planning = LuaCilCodeGenerator.PlanFunction(
+        var planning = _plans.PlanFunction(
             module,
             functionId,
             includeInstructionObservation: includeInstructionObservation,
@@ -122,6 +132,7 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
         var emission = ReflectionEmitCilPlanSink.Compile(
             plan,
             planning.Verification!,
+            _runtimeAbi,
             cancellationToken);
         var estimatedCodeBytes = checked(plan.Instructions.Length * 8L);
         var planningMetrics = planning.Metrics;
@@ -221,9 +232,8 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
         "AOT",
         "IL3050",
         Justification = "The JIT executor checks RuntimeFeature before preparing the compiler.")]
-    private static bool PrepareCompilerCore()
+    private bool PrepareCompilerCore()
     {
-        ReflectionEmitCilPlanSink.PrepareRuntimeAbi();
         var instructions = ImmutableArray.Create(
             new LuaIrInstruction(LuaIrOpcode.Return, a: 0, b: 0));
         var module = new LuaIrModule
@@ -242,7 +252,8 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
                 },
             ],
         };
-        var result = Instance.Compile(
+        _runtimeAbi.PrepareRuntimeAbi();
+        var result = Compile(
             module,
             0,
             includeInstructionObservation: false,
@@ -257,15 +268,23 @@ internal sealed class ReflectionEmitLuaTier1Compiler : ILuaTier1Compiler
     }
 }
 
-internal static class LuaJitModuleIdentity
+/// <summary>
+/// Owner-scoped memo for canonical module content identities. Each owner (tier compilers, the
+/// tiered registry) holds one instance; identities are deterministic SHA-256 digests, so owners
+/// that do not share an instance simply recompute them.
+/// </summary>
+internal sealed class LuaJitModuleIdentity
 {
-    private static readonly ConditionalWeakTable<LuaIrModule, Identity> Identities = new();
+    private readonly ConditionalWeakTable<LuaIrModule, Identity> _identities = new();
 
-    public static string Create(LuaIrModule module) => Identities.GetValue(
+    public string Create(LuaIrModule module) => _identities.GetValue(
         module,
-        static module => new Identity(LuaCanonicalModuleSerializer.Sha256Hex(
-            LuaCanonicalModuleSerializer.Serialize(module))))
+        static module => new Identity(Compute(module)))
         .ContentId;
+
+    internal static string Compute(LuaIrModule module) =>
+        LuaCanonicalModuleSerializer.Sha256Hex(
+            LuaCanonicalModuleSerializer.Serialize(module));
 
     private sealed record Identity(string ContentId);
 }

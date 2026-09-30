@@ -2252,6 +2252,13 @@ public sealed class LuaPatchCoordinatorTests
         }
     }
 
+    private static LuaClrBindingRegistry CreateClrRegistry()
+    {
+        var registry = new LuaClrBindingRegistry();
+        new Lunil.Generated.LuaClrGeneratedBindings().RegisterBindings(registry);
+        return registry;
+    }
+
     private static LuaHost CreateClrCallbackHost(string source)
     {
         var delegateName = typeof(Func<int, int>).FullName!;
@@ -2268,6 +2275,7 @@ public sealed class LuaPatchCoordinatorTests
                 AllowedAssemblyNames = [typeof(Func<int, int>).Assembly.GetName().Name!],
                 AllowedTypeNames = [delegateName],
                 AllowedDelegateTypeNames = [delegateName],
+                BindingRegistry = CreateClrRegistry(),
             },
         });
     }

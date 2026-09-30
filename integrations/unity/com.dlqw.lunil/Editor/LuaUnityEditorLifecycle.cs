@@ -7,7 +7,7 @@ namespace Lunil.Unity.Editor
     {
         static LuaUnityEditorLifecycle()
         {
-            AssemblyReloadEvents.beforeAssemblyReload += LuaUnityRuntimeRegistry.DisposeAll;
+            AssemblyReloadEvents.beforeAssemblyReload += LuaUnityRuntimeRegistry.Process.DisposeAll;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
         }
 
@@ -15,7 +15,7 @@ namespace Lunil.Unity.Editor
         {
             if (change == PlayModeStateChange.ExitingPlayMode ||
                 change == PlayModeStateChange.ExitingEditMode)
-                LuaUnityRuntimeRegistry.DisposeAll();
+                LuaUnityRuntimeRegistry.Process.DisposeAll();
         }
     }
 }

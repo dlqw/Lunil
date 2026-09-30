@@ -7,15 +7,16 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.StandardLibrary;
 
-internal static class LuaOsLibrary
+internal sealed class LuaOsLibrary
 {
-    public static LuaTable Install(LuaState state, LuaStandardLibraryOptions? options)
-    {
-        if (options is not null)
-        {
-            LuaStandardLibraryContext.Configure(state, options);
-        }
+    private static readonly LuaNativeFunction TimeDescriptor = new("time", Time);
 
+    private readonly LuaStandardLibraryOptions _options;
+
+    internal LuaOsLibrary(LuaStandardLibraryOptions options) => _options = options;
+
+    public LuaTable Install(LuaState state)
+    {
         var module = state.CreateTable();
         LuaLibraryHelpers.SetFunction(state, module, "clock", Clock);
         LuaLibraryHelpers.SetFunction(state, module, "date", Date);
@@ -26,21 +27,33 @@ internal static class LuaOsLibrary
         LuaLibraryHelpers.SetFunction(state, module, "remove", Remove);
         LuaLibraryHelpers.SetFunction(state, module, "rename", Rename);
         LuaLibraryHelpers.SetFunction(state, module, "setlocale", SetLocale);
-        LuaLibraryHelpers.SetFunction(state, module, "time", Time);
+        LuaLibraryHelpers.Set(state, module, "time", SelfStep(state, TimeDescriptor));
         LuaLibraryHelpers.SetFunction(state, module, "tmpname", TemporaryName);
         LuaLibraryHelpers.Set(state, state.Globals, "os", LuaValue.FromTable(module));
         return module;
     }
 
-    private static LuaValue[] Clock(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
-        [LuaValue.FromFloat(LuaStandardLibraryContext.Get(state).Options.OperatingSystem.Clock)];
+    /// <summary>
+    /// Registers a resumable body as a native closure carrying this module as a light
+    /// userdata capture; resumable descriptors must stay capture-free method groups.
+    /// </summary>
+    private LuaValue SelfStep(LuaState state, LuaNativeFunction descriptor) =>
+        LuaValue.FromFunction(state.CreateNativeClosure(
+            descriptor,
+            [LuaValue.FromLightUserdata(new LuaLightUserdata(this))]));
 
-    private static LuaValue[] Date(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private static LuaOsLibrary Self(LuaNativeCallContext context) =>
+        (LuaOsLibrary)context.Captures[0].AsLightUserdata().Identity;
+
+    private LuaValue[] Clock(LuaState state, ReadOnlySpan<LuaValue> arguments) =>
+        [LuaValue.FromFloat(_options.OperatingSystem.Clock)];
+
+    private LuaValue[] Date(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var format = arguments.Length == 0 || arguments[0].IsNil
             ? "%c"
             : Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 0, "date"));
-        var system = LuaStandardLibraryContext.Get(state).Options.OperatingSystem;
+        var system = _options.OperatingSystem;
         var utc = format.StartsWith('!');
         if (utc)
         {
@@ -83,7 +96,7 @@ internal static class LuaOsLibrary
         return [LuaValue.FromFloat(end - beginning)];
     }
 
-    private static LuaValue[] Execute(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] Execute(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         string? command = null;
         if (arguments.Length > 0 && !arguments[0].IsNil)
@@ -94,7 +107,7 @@ internal static class LuaOsLibrary
 
         try
         {
-            var result = LuaStandardLibraryContext.Get(state).Options.OperatingSystem.Execute(command);
+            var result = _options.OperatingSystem.Execute(command);
             if (command is null)
             {
                 return [LuaValue.FromBoolean(result.Started)];
@@ -115,7 +128,7 @@ internal static class LuaOsLibrary
         }
     }
 
-    private static LuaValue[] Exit(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] Exit(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var status = 0;
         if (arguments.Length > 0 && !arguments[0].IsNil)
@@ -126,26 +139,26 @@ internal static class LuaOsLibrary
         }
 
         var close = arguments.Length > 1 && arguments[1].IsTruthy;
-        LuaStandardLibraryContext.Get(state).Options.OperatingSystem.Terminate(status, close);
+        _options.OperatingSystem.Terminate(status, close);
         return [];
     }
 
-    private static LuaValue[] GetEnvironmentVariable(
+    private LuaValue[] GetEnvironmentVariable(
         LuaState state,
         ReadOnlySpan<LuaValue> arguments)
     {
         var name = Encoding.UTF8.GetString(
             LuaLibraryHelpers.CheckStringBytes(arguments, 0, "getenv"));
-        var value = LuaStandardLibraryContext.Get(state).Options.Environment.GetEnvironmentVariable(name);
+        var value = _options.Environment.GetEnvironmentVariable(name);
         return [value is null ? LuaValue.Nil : LuaLibraryHelpers.String(state, value)];
     }
 
-    private static LuaValue[] Remove(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] Remove(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var path = Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 0, "remove"));
         try
         {
-            LuaStandardLibraryContext.Get(state).Options.FileSystem.Delete(path);
+            _options.FileSystem.Delete(path);
             return [LuaValue.FromBoolean(true)];
         }
         catch (Exception exception) when (IsFileException(exception))
@@ -154,13 +167,13 @@ internal static class LuaOsLibrary
         }
     }
 
-    private static LuaValue[] Rename(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] Rename(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         var from = Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 0, "rename"));
         var to = Encoding.UTF8.GetString(LuaLibraryHelpers.CheckStringBytes(arguments, 1, "rename"));
         try
         {
-            LuaStandardLibraryContext.Get(state).Options.FileSystem.Move(from, to);
+            _options.FileSystem.Move(from, to);
             return [LuaValue.FromBoolean(true)];
         }
         catch (Exception exception) when (IsFileException(exception))
@@ -169,7 +182,7 @@ internal static class LuaOsLibrary
         }
     }
 
-    private static LuaValue[] SetLocale(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] SetLocale(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         string? locale = null;
         if (arguments.Length > 0 && !arguments[0].IsNil)
@@ -186,7 +199,7 @@ internal static class LuaOsLibrary
             throw LuaLibraryHelpers.BadArgument("setlocale", 1, "invalid option");
         }
 
-        var result = LuaStandardLibraryContext.Get(state).Options.OperatingSystem
+        var result = _options.OperatingSystem
             .SetLocale(locale, category);
         return [result is null ? LuaValue.Nil : LuaLibraryHelpers.String(state, result)];
     }
@@ -202,7 +215,7 @@ internal static class LuaOsLibrary
         int continuationId,
         ReadOnlySpan<LuaValue> values)
     {
-        var system = LuaStandardLibraryContext.Get(context.State).Options.OperatingSystem;
+        var system = Self(context)._options.OperatingSystem;
         if (continuationId == 0 && (values.Length == 0 || values[0].IsNil))
         {
             return LuaNativeStep.Completed(LuaValue.FromInteger(system.Now.ToUnixTimeSeconds()));
@@ -234,9 +247,7 @@ internal static class LuaOsLibrary
 
         while (fieldIndex < TimeReadFields.Length)
         {
-            var get = LuaRuntimeOperations.GetIndex(
-                context.State,
-                tableValue,
+            var get = context.State.Operations.GetIndex(tableValue,
                 LuaLibraryHelpers.String(context.State, TimeReadFields[fieldIndex]));
             fieldIndex++;
             if (get.RequiresCall)
@@ -297,9 +308,7 @@ internal static class LuaOsLibrary
         var writeValues = state.Skip(3).ToArray();
         while (index < TimeWriteFields.Length)
         {
-            var set = LuaRuntimeOperations.SetIndex(
-                context.State,
-                table,
+            var set = context.State.Operations.SetIndex(table,
                 LuaLibraryHelpers.String(context.State, TimeWriteFields[index]),
                 writeValues[index]);
             index++;
@@ -365,11 +374,11 @@ internal static class LuaOsLibrary
         LuaValue.FromBoolean(isDst),
     ];
 
-    private static LuaValue[] TemporaryName(LuaState state, ReadOnlySpan<LuaValue> arguments)
+    private LuaValue[] TemporaryName(LuaState state, ReadOnlySpan<LuaValue> arguments)
     {
         try
         {
-            var name = LuaStandardLibraryContext.Get(state).Options.FileSystem.CreateTemporaryName();
+            var name = _options.FileSystem.CreateTemporaryName();
             return [LuaLibraryHelpers.String(state, name)];
         }
         catch (Exception exception) when (IsFileException(exception))

@@ -6109,7 +6109,7 @@ public sealed class LuaJitExecutorTests
         LuaIrFunction caller,
         LuaIrFunction callee)
     {
-        var moduleContentId = LuaJitModuleIdentity.Create(module);
+        var moduleContentId = new LuaJitModuleIdentity().Create(module);
         var target = new LuaJitCallTargetProfile(
             LuaJitCallTargetKind.Lua,
             moduleContentId,

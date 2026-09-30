@@ -68,82 +68,52 @@ internal static class ReflectionEmitLuaDirectCallCompiler
         typeof(int),
     ];
 
-    private static readonly MethodInfo ReadRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.ReadRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
-    private static readonly MethodInfo WriteRegister = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.WriteRegisterUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int), typeof(LuaValue)]);
-    private static readonly MethodInfo SetFrameTop = Method(
-        typeof(LuaCodegenAbiV2),
-        nameof(LuaCodegenAbiV2.SetFrameTopUnchecked),
-        [typeof(LuaThread), typeof(LuaFrame), typeof(int)]);
+    // Method tokens are obtained by creating a delegate of the exact signature and reading its
+    // Method property, so overload selection happens at compile time and no reflection lookup is
+    // required. Instance-method tokens bind through a method group over a default receiver value.
+    private delegate int PrepareIntegerForLoopDelegate(long initial, long limit, long step, out long counter);
+
+    private static readonly MethodInfo ReadRegister =
+        ((Func<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.ReadRegisterUnchecked).Method;
+    private static readonly MethodInfo WriteRegister =
+        ((Action<LuaThread, LuaFrame, int, LuaValue>)LuaCodegenAbiV2.WriteRegisterUnchecked).Method;
+    private static readonly MethodInfo SetFrameTop =
+        ((Action<LuaThread, LuaFrame, int>)LuaCodegenAbiV2.SetFrameTopUnchecked).Method;
     private static readonly MethodInfo GetValueKind = PropertyGetter(
         typeof(LuaValue),
         nameof(LuaValue.Kind));
-    private static readonly MethodInfo AsInteger = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsInteger),
-        []);
-    private static readonly MethodInfo AsFloat = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsFloat),
-        []);
-    private static readonly MethodInfo AsBoolean = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.AsBoolean),
-        []);
-    private static readonly MethodInfo FromInteger = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromInteger),
-        [typeof(long)]);
-    private static readonly MethodInfo FromFloat = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromFloat),
-        [typeof(double)]);
-    private static readonly MethodInfo FromBoolean = Method(
-        typeof(LuaValue),
-        nameof(LuaValue.FromBoolean),
-        [typeof(bool)]);
+    private static readonly MethodInfo AsInteger =
+        ((Func<long>)default(LuaValue).AsInteger).Method;
+    private static readonly MethodInfo AsFloat =
+        ((Func<double>)default(LuaValue).AsFloat).Method;
+    private static readonly MethodInfo AsBoolean =
+        ((Func<bool>)default(LuaValue).AsBoolean).Method;
+    private static readonly MethodInfo FromInteger =
+        ((Func<long, LuaValue>)LuaValue.FromInteger).Method;
+    private static readonly MethodInfo FromFloat =
+        ((Func<double, LuaValue>)LuaValue.FromFloat).Method;
+    private static readonly MethodInfo FromBoolean =
+        ((Func<bool, LuaValue>)LuaValue.FromBoolean).Method;
+    // Instance method on LuaExecutionContext: the context constructor needs a live LuaState and
+    // LuaThread, so no receiver exists at type-initialization time. Keep the reflection lookup.
     private static readonly MethodInfo TryReserveInstructions = Method(
         typeof(LuaExecutionContext),
         nameof(LuaExecutionContext.TryReserveInstructions),
         [typeof(int)]);
-    private static readonly MethodInfo CanExecuteBoundDirectCall = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.CanExecuteBoundDirectCall),
-        [typeof(LuaExecutionContext)]);
-    private static readonly MethodInfo MathFloor = Method(
-        typeof(Math),
-        nameof(Math.Floor),
-        [typeof(double)]);
-    private static readonly MethodInfo MathPow = Method(
-        typeof(Math),
-        nameof(Math.Pow),
-        [typeof(double), typeof(double)]);
-    private static readonly MethodInfo Shift = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.Shift),
-        [typeof(long), typeof(long), typeof(bool)]);
-    private static readonly MethodInfo FloatingModulo = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.FloatingModulo),
-        [typeof(double), typeof(double)]);
-    private static readonly MethodInfo CompareMixed = Method(
-        typeof(LuaCodegenAbiV4),
-        nameof(LuaCodegenAbiV4.CompareMixed),
-        [typeof(long), typeof(double), typeof(bool), typeof(int)]);
+    private static readonly MethodInfo CanExecuteBoundDirectCall =
+        ((Func<LuaExecutionContext, bool>)LuaCodegenAbiV4.CanExecuteBoundDirectCall).Method;
+    private static readonly MethodInfo MathFloor =
+        ((Func<double, double>)Math.Floor).Method;
+    private static readonly MethodInfo MathPow =
+        ((Func<double, double, double>)Math.Pow).Method;
+    private static readonly MethodInfo Shift =
+        ((Func<long, long, bool, long>)LuaCodegenAbiV4.Shift).Method;
+    private static readonly MethodInfo FloatingModulo =
+        ((Func<double, double, double>)LuaCodegenAbiV4.FloatingModulo).Method;
+    private static readonly MethodInfo CompareMixed =
+        ((Func<long, double, bool, int, bool>)LuaCodegenAbiV4.CompareMixed).Method;
     private static readonly MethodInfo PrepareIntegerFor =
-        typeof(ReflectionEmitLuaDirectCallCompiler).GetMethod(
-            nameof(PrepareIntegerForLoop),
-            BindingFlags.NonPublic | BindingFlags.Static,
-            binder: null,
-            [typeof(long), typeof(long), typeof(long), typeof(long).MakeByRefType()],
-            modifiers: null) ?? throw new MissingMethodException(
-                typeof(ReflectionEmitLuaDirectCallCompiler).FullName,
-                nameof(PrepareIntegerForLoop));
+        ((PrepareIntegerForLoopDelegate)PrepareIntegerForLoop).Method;
 
     [RequiresDynamicCode("Direct compiled calls require Reflection.Emit support.")]
     [UnconditionalSuppressMessage(

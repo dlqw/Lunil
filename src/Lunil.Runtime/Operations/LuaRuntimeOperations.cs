@@ -3,14 +3,32 @@ using Lunil.Runtime.Values;
 
 namespace Lunil.Runtime.Operations;
 
-public static class LuaRuntimeOperations
+/// <summary>
+/// Semantic operations for one Lua state: indexing, assignment, arithmetic, comparison,
+/// and call resolution including metamethod dispatch and per-version coercion rules. The
+/// service is owned by its <see cref="LuaState"/> and captures the state's immutable
+/// version profile at construction.
+/// </summary>
+public sealed class LuaRuntimeOperations
 {
     private const int MaximumMetamethodChainLength = 2_000;
 
-    public static LuaOperationResolution GetIndex(
-        LuaState state,
-        LuaValue target,
-        LuaValue key)
+    private readonly LuaState _state;
+    private readonly bool _coercesNumericStringsForBitwiseOperations;
+    private readonly bool _orderingRequiresSameType;
+    private readonly bool _allowsLessThanOrEqualFallback;
+    private readonly bool _arithmeticStringCoercionProducesFloat;
+
+    internal LuaRuntimeOperations(LuaState state)
+    {
+        _state = state;
+        _coercesNumericStringsForBitwiseOperations = state.CoercesNumericStringsForBitwiseOperations;
+        _orderingRequiresSameType = state.OrderingRequiresSameType;
+        _allowsLessThanOrEqualFallback = state.AllowsLessThanOrEqualFallback;
+        _arithmeticStringCoercionProducesFloat = state.ArithmeticStringCoercionProducesFloat;
+    }
+
+    public LuaOperationResolution GetIndex(LuaValue target, LuaValue key)
     {
         for (var iteration = 0; iteration < MaximumMetamethodChainLength; iteration++)
         {
@@ -29,7 +47,7 @@ public static class LuaRuntimeOperations
                 }
             }
 
-            var metamethod = GetMetamethod(state, target, LuaMetamethod.Index);
+            var metamethod = GetMetamethod(target, LuaMetamethod.Index);
             if (metamethod.IsNil)
             {
                 if (target.Kind == LuaValueKind.Table)
@@ -54,11 +72,7 @@ public static class LuaRuntimeOperations
         throw new LuaRuntimeException("'__index' chain is too long; possible loop.");
     }
 
-    public static LuaOperationResolution SetIndex(
-        LuaState state,
-        LuaValue target,
-        LuaValue key,
-        LuaValue value)
+    public LuaOperationResolution SetIndex(LuaValue target, LuaValue key, LuaValue value)
     {
         for (var iteration = 0; iteration < MaximumMetamethodChainLength; iteration++)
         {
@@ -78,7 +92,7 @@ public static class LuaRuntimeOperations
                 }
             }
 
-            var metamethod = GetMetamethod(state, target, LuaMetamethod.NewIndex);
+            var metamethod = GetMetamethod(target, LuaMetamethod.NewIndex);
             if (metamethod.IsNil)
             {
                 if (target.Kind == LuaValueKind.Table)
@@ -104,10 +118,7 @@ public static class LuaRuntimeOperations
         throw new LuaRuntimeException("'__newindex' chain is too long; possible loop.");
     }
 
-    public static LuaOperationResolution Unary(
-        LuaState state,
-        LuaIrUnaryOperator operation,
-        LuaValue operand)
+    public LuaOperationResolution Unary(LuaIrUnaryOperator operation, LuaValue operand)
     {
         if (operation == LuaIrUnaryOperator.Negate &&
             LuaValueOperations.TryToNumber(operand, out var numericOperand))
@@ -115,11 +126,11 @@ public static class LuaRuntimeOperations
             return LuaOperationResolution.Immediate(
                 LuaValueOperations.Unary(
                     operation,
-                    NormalizeArithmeticOperand(state, operand, numericOperand)));
+                    NormalizeArithmeticOperand(operand, numericOperand)));
         }
 
         if (operation == LuaIrUnaryOperator.BitwiseNot &&
-            state.CoercesNumericStringsForBitwiseOperations &&
+            _coercesNumericStringsForBitwiseOperations &&
             LuaValueOperations.TryToNumber(operand, out var numericBitwiseOperand))
         {
             if (!numericBitwiseOperand.TryGetInteger(out var integerOperand))
@@ -144,7 +155,7 @@ public static class LuaRuntimeOperations
             return LuaOperationResolution.Immediate(LuaValueOperations.Unary(operation, operand));
         }
 
-        var metamethod = GetMetamethod(state, operand, operation switch
+        var metamethod = GetMetamethod(operand, operation switch
         {
             LuaIrUnaryOperator.Negate => LuaMetamethod.UnaryMinus,
             LuaIrUnaryOperator.BitwiseNot => LuaMetamethod.BitwiseNot,
@@ -171,25 +182,21 @@ public static class LuaRuntimeOperations
         return LuaOperationResolution.Call(metamethod, operand, operand);
     }
 
-    public static LuaOperationResolution Binary(
-        LuaState state,
-        LuaIrBinaryOperator operation,
-        LuaValue left,
-        LuaValue right)
+    public LuaOperationResolution Binary(LuaIrBinaryOperator operation, LuaValue left, LuaValue right)
     {
         if (operation is LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual)
         {
-            return Equal(state, left, right, operation == LuaIrBinaryOperator.NotEqual);
+            return Equal(left, right, operation == LuaIrBinaryOperator.NotEqual);
         }
 
         if (operation == LuaIrBinaryOperator.GreaterThan)
         {
-            return Binary(state, LuaIrBinaryOperator.LessThan, right, left);
+            return Binary(LuaIrBinaryOperator.LessThan, right, left);
         }
 
         if (operation == LuaIrBinaryOperator.GreaterThanOrEqual)
         {
-            return Binary(state, LuaIrBinaryOperator.LessThanOrEqual, right, left);
+            return Binary(LuaIrBinaryOperator.LessThanOrEqual, right, left);
         }
 
         if (IsArithmetic(operation) &&
@@ -198,13 +205,13 @@ public static class LuaRuntimeOperations
         {
             return LuaOperationResolution.Immediate(
                 LuaValueOperations.Binary(
-                    state,
+                    _state,
                     operation,
-                    NormalizeArithmeticOperand(state, left, numericLeft),
-                    NormalizeArithmeticOperand(state, right, numericRight)));
+                    NormalizeArithmeticOperand(left, numericLeft),
+                    NormalizeArithmeticOperand(right, numericRight)));
         }
 
-        if (IsBitwise(operation) && state.CoercesNumericStringsForBitwiseOperations)
+        if (IsBitwise(operation) && _coercesNumericStringsForBitwiseOperations)
         {
             var leftNumber = LuaValueOperations.TryToNumber(left, out var numericLeftBitwise);
             var rightNumber = LuaValueOperations.TryToNumber(right, out var numericRightBitwise);
@@ -219,14 +226,14 @@ public static class LuaRuntimeOperations
 
                 return LuaOperationResolution.Immediate(
                     LuaValueOperations.Binary(
-                        state,
+                        _state,
                         operation,
                         LuaValue.FromInteger(leftValue),
                         LuaValue.FromInteger(rightValue)));
             }
         }
 
-        if (IsBitwise(operation) && !state.CoercesNumericStringsForBitwiseOperations &&
+        if (IsBitwise(operation) && !_coercesNumericStringsForBitwiseOperations &&
             IsNumber(left) && IsNumber(right))
         {
             if (!left.TryGetInteger(out _) || !right.TryGetInteger(out _))
@@ -236,19 +243,19 @@ public static class LuaRuntimeOperations
             }
 
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Binary(state, operation, left, right));
+                LuaValueOperations.Binary(_state, operation, left, right));
         }
 
         if (CanExecutePrimitive(operation, left, right))
         {
             return LuaOperationResolution.Immediate(
-                LuaValueOperations.Binary(state, operation, left, right));
+                LuaValueOperations.Binary(_state, operation, left, right));
         }
 
         // PUC Lua 5.1 rejects ordering operands of different types outright; 5.2
         // and later instead consult the ordering metamethod of either operand.
         if (operation is LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual &&
-            state.OrderingRequiresSameType &&
+            _orderingRequiresSameType &&
             left.Kind != right.Kind)
         {
             throw new LuaRuntimeException(BinaryTypeError(operation, left, right));
@@ -256,15 +263,15 @@ public static class LuaRuntimeOperations
 
         if (operation == LuaIrBinaryOperator.LessThanOrEqual)
         {
-            var lessOrEqual = GetBinaryMetamethod(state, left, right, LuaMetamethod.LessThanOrEqual);
+            var lessOrEqual = GetBinaryMetamethod(left, right, LuaMetamethod.LessThanOrEqual);
             if (!lessOrEqual.IsNil)
             {
                 return LuaOperationResolution.Call(lessOrEqual, left, right);
             }
 
-            if (state.AllowsLessThanOrEqualFallback)
+            if (_allowsLessThanOrEqualFallback)
             {
-                var lessThan = GetBinaryMetamethod(state, right, left, LuaMetamethod.LessThan);
+                var lessThan = GetBinaryMetamethod(right, left, LuaMetamethod.LessThan);
                 if (!lessThan.IsNil)
                 {
                     return LuaOperationResolution.Call(
@@ -277,7 +284,7 @@ public static class LuaRuntimeOperations
         }
 
         var metamethodName = GetBinaryMetamethod(operation);
-        var metamethod = GetBinaryMetamethod(state, left, right, metamethodName);
+        var metamethod = GetBinaryMetamethod(left, right, metamethodName);
         if (metamethod.IsNil)
         {
             throw new LuaRuntimeException(BinaryTypeError(operation, left, right));
@@ -286,10 +293,7 @@ public static class LuaRuntimeOperations
         return LuaOperationResolution.Call(metamethod, left, right);
     }
 
-    public static LuaOperationResolution ResolveCall(
-        LuaState state,
-        LuaValue callable,
-        ReadOnlySpan<LuaValue> arguments)
+    public LuaOperationResolution ResolveCall(LuaValue callable, ReadOnlySpan<LuaValue> arguments)
     {
         var resolvedArguments = arguments;
         for (var iteration = 0; iteration < MaximumMetamethodChainLength; iteration++)
@@ -299,7 +303,7 @@ public static class LuaRuntimeOperations
                 return LuaOperationResolution.Call(callable, resolvedArguments);
             }
 
-            var metamethod = GetMetamethod(state, callable, LuaMetamethod.Call);
+            var metamethod = GetMetamethod(callable, LuaMetamethod.Call);
             if (metamethod.IsNil)
             {
                 throw new LuaRuntimeException(
@@ -413,32 +417,18 @@ public static class LuaRuntimeOperations
         return false;
     }
 
-    private static bool IsNumberSpecializedOperation(LuaIrBinaryOperator operation) => operation is
-        LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or LuaIrBinaryOperator.Multiply or
-        LuaIrBinaryOperator.Divide or LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
-        LuaIrBinaryOperator.Power or LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
-        LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
-        LuaIrBinaryOperator.GreaterThan or LuaIrBinaryOperator.GreaterThanOrEqual;
-
-    internal static LuaValue GetMetamethod(
-        LuaState state,
-        LuaValue value,
-        LuaMetamethod metamethod)
+    internal LuaValue GetMetamethod(LuaValue value, LuaMetamethod metamethod)
     {
         var metatable = value.Kind switch
         {
             LuaValueKind.Table => value.AsTable().Metatable,
             LuaValueKind.Userdata => value.AsUserdata().Metatable,
-            _ => state.GetTypeMetatable(value.Kind),
+            _ => _state.GetTypeMetatable(value.Kind),
         };
         return metatable?.GetMetamethodField(metamethod) ?? LuaValue.Nil;
     }
 
-    private static LuaOperationResolution Equal(
-        LuaState state,
-        LuaValue left,
-        LuaValue right,
-        bool negate)
+    private LuaOperationResolution Equal(LuaValue left, LuaValue right, bool negate)
     {
         if (left == right || left.Kind != right.Kind ||
             left.Kind is not (LuaValueKind.Table or LuaValueKind.Userdata))
@@ -447,7 +437,7 @@ public static class LuaRuntimeOperations
             return LuaOperationResolution.Immediate(LuaValue.FromBoolean(negate ? !equal : equal));
         }
 
-        var metamethod = GetBinaryMetamethod(state, left, right, LuaMetamethod.Equal);
+        var metamethod = GetBinaryMetamethod(left, right, LuaMetamethod.Equal);
         if (metamethod.IsNil)
         {
             return LuaOperationResolution.Immediate(LuaValue.FromBoolean(negate));
@@ -460,14 +450,10 @@ public static class LuaRuntimeOperations
             negate ? LuaResultTransform.LogicalNot : LuaResultTransform.None);
     }
 
-    private static LuaValue GetBinaryMetamethod(
-        LuaState state,
-        LuaValue left,
-        LuaValue right,
-        LuaMetamethod metamethod)
+    private LuaValue GetBinaryMetamethod(LuaValue left, LuaValue right, LuaMetamethod metamethod)
     {
-        var value = GetMetamethod(state, left, metamethod);
-        return value.IsNil ? GetMetamethod(state, right, metamethod) : value;
+        var value = GetMetamethod(left, metamethod);
+        return value.IsNil ? GetMetamethod(right, metamethod) : value;
     }
 
     private static string BinaryTypeError(
@@ -509,6 +495,20 @@ public static class LuaRuntimeOperations
 
         return $"attempt to {action} a {LuaValueOperations.TypeName(offender)} value";
     }
+
+    internal LuaValue NormalizeArithmeticOperand(LuaValue original, LuaValue numeric) =>
+        _arithmeticStringCoercionProducesFloat &&
+        original.Kind == LuaValueKind.String &&
+        numeric.Kind == LuaValueKind.Integer
+            ? LuaValue.FromFloat(numeric.AsInteger())
+            : numeric;
+
+    private static bool IsNumberSpecializedOperation(LuaIrBinaryOperator operation) => operation is
+        LuaIrBinaryOperator.Add or LuaIrBinaryOperator.Subtract or LuaIrBinaryOperator.Multiply or
+        LuaIrBinaryOperator.Divide or LuaIrBinaryOperator.FloorDivide or LuaIrBinaryOperator.Modulo or
+        LuaIrBinaryOperator.Power or LuaIrBinaryOperator.Equal or LuaIrBinaryOperator.NotEqual or
+        LuaIrBinaryOperator.LessThan or LuaIrBinaryOperator.LessThanOrEqual or
+        LuaIrBinaryOperator.GreaterThan or LuaIrBinaryOperator.GreaterThanOrEqual;
 
     private static bool IsConcatenable(LuaValue value) =>
         value.Kind is LuaValueKind.String or LuaValueKind.Integer or LuaValueKind.Float;
@@ -562,16 +562,6 @@ public static class LuaRuntimeOperations
                 left.Kind == LuaValueKind.String && right.Kind == LuaValueKind.String,
             _ => false,
         };
-
-    internal static LuaValue NormalizeArithmeticOperand(
-        LuaState state,
-        LuaValue original,
-        LuaValue numeric) =>
-        state.ArithmeticStringCoercionProducesFloat &&
-        original.Kind == LuaValueKind.String &&
-        numeric.Kind == LuaValueKind.Integer
-            ? LuaValue.FromFloat(numeric.AsInteger())
-            : numeric;
 
     private static bool IsNumber(LuaValue value) =>
         value.Kind is LuaValueKind.Integer or LuaValueKind.Float;

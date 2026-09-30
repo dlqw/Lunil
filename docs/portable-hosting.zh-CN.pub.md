@@ -8,12 +8,12 @@
 ## 前置条件
 
 - 面向 .NET 8+ 或兼容 `netstandard2.1` runtime 的项目。
-- 来自 release package source 的 `Lunil.Hosting` `0.14.0`。
+- 来自 release package source 的 `Lunil.Hosting` `0.22.0`。
 
 ## 1. 引用 host
 
 ```xml
-<PackageReference Include="Lunil.Hosting" Version="0.14.0" />
+<PackageReference Include="Lunil.Hosting" Version="0.22.0" />
 ```
 
 可移植应用不要引用 `Lunil.CodeGen.Cil`。它是 .NET 10 dynamic-code backend，不会进入
@@ -78,8 +78,8 @@ dotnet run --project samples/Lunil.Portable.Hosting
 ## 可移植限制
 
 - JIT 资产不存在，因此 `LuaHostExecutionBackend.Jit` 会失败。
-- 只有提供精确 capability 和 allowlist 后才会启用 CLR 互操作。
-- AOT 或 IL2CPP 必须使用生成 binding 的 `LuaClrBindingMode.RegistryOnly`。
+- 只有提供精确 capability、allowlist 与 binding registry 后才会启用 CLR 互操作。
+- CLR dispatch 在任何运行时（包括 AOT 与 IL2CPP）都通过生成 binding 与 registry 解析。
 - 除非宿主提供实现，否则不能加载 native module。
 
 下一步：[engine-neutral game-loop hosting](game-engine-hosting.zh-CN.pub.md)与

@@ -8,7 +8,7 @@ keep the restricted behavior unchanged.
 
 ## Prerequisites
 
-- Lunil `0.15.0` or newer with the `Lunil.StandardLibrary` package referenced.
+- Lunil `0.22.0` with the `Lunil.StandardLibrary` package referenced.
 - A trusted host decision to grant native loading, plus exact library and symbol identities.
 - For AOT or trimmed publication, exact host-registered bindings (see [AOT bindings](aot-bindings.pub.md)).
 
@@ -134,6 +134,11 @@ fails with `InvalidSignature`. When the runtime cannot provide dynamic code, the
 is the only supported route and any dynamic resolution attempt fails with
 `DynamicCodeUnavailable`. Apply the registry options with the same
 `LuaStandardLibrary.InstallFfi(state, options)` step from [step 1](#1-grant-ffi-through-standard-library-options).
+
+Instead of hand-writing invokers, declare the signatures you bind with
+`[assembly: LuaFfiGenerateBinding]` and let the FFI binding generator produce strongly typed
+ones that work on NativeAOT and trimmed runtimes; see
+[Generate FFI bindings](ffi-bindings.pub.md).
 
 ## 6. Diagnose failures
 

@@ -46,7 +46,6 @@ internal static class LuaFfiLibrary
 
 internal sealed class LuaFfiContext : IDisposable
 {
-    private static long _nextMetatableId;
     private readonly LuaState _state;
     private readonly LuaFfiOptions _options;
     private readonly ImmutableHashSet<string> _allowedLibraries;
@@ -152,7 +151,7 @@ internal sealed class LuaFfiContext : IDisposable
             CloseBufferMetamethod,
             "ffi.buffer.__close");
 
-        var metatableRoot = $"_LUNIL_FFI_METATABLE_{Interlocked.Increment(ref _nextMetatableId)}";
+        var metatableRoot = $"_LUNIL_FFI_METATABLE_{state.NextUniqueId()}";
         LuaLibraryHelpers.Set(
             state,
             state.Registry,
@@ -233,11 +232,14 @@ internal sealed class LuaFfiContext : IDisposable
                     "The native FFI library limit has been reached.");
             }
 
-            var hasRegisteredBinding = _options.BindingRegistry?.GetBindings()
-                .Any(binding => string.Equals(binding.LibraryName, libraryName, StringComparison.Ordinal))
-                == true;
+            var libraryBindings = (_options.BindingRegistry?.GetBindings() ?? [])
+                .Where(binding => string.Equals(binding.LibraryName, libraryName, StringComparison.Ordinal))
+                .ToImmutableArray();
+            var hasRegisteredBinding = !libraryBindings.IsEmpty;
+            var hasAddressedBinding = hasRegisteredBinding &&
+                libraryBindings.Any(static binding => binding.AddressedInvoker is not null);
             var nativeHandle = IntPtr.Zero;
-            if (!hasRegisteredBinding || RuntimeFeature.IsDynamicCodeSupported)
+            if (!hasRegisteredBinding || RuntimeFeature.IsDynamicCodeSupported || hasAddressedBinding)
             {
                 try
                 {
@@ -311,7 +313,17 @@ internal sealed class LuaFfiContext : IDisposable
                         $"The requested signature does not match the registered binding for '{library.Name}!{symbolName}'.");
                 }
 
-                invoker = binding.Invoker;
+                if (binding.AddressedInvoker is { } addressed)
+                {
+                    // Generated bindings resolve the symbol from the live library handle and
+                    // marshal through a strongly typed delegate without runtime codegen.
+                    var address = library.GetExport(symbolName);
+                    invoker = arguments => addressed(address, arguments);
+                }
+                else
+                {
+                    invoker = binding.Invoker;
+                }
             }
             else
             {

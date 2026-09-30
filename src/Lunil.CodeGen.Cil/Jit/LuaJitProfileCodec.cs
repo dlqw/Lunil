@@ -70,10 +70,11 @@ public static class LuaJitProfileCodec
                 profiles[function.Id]))
             .OrderBy(static entry => entry.FunctionId)
             .ToImmutableArray();
+        var moduleContentId = LuaJitModuleIdentity.Compute(module);
         var profile = new LuaJitModuleProfile(
-            LuaJitModuleIdentity.Create(module),
+            moduleContentId,
             entries);
-        Validate(module, profile);
+        Validate(module, profile, moduleContentId);
 
         using var coreStream = new MemoryStream();
         using (var writer = new BinaryWriter(coreStream, Encoding.UTF8, leaveOpen: true))
@@ -140,7 +141,7 @@ public static class LuaJitProfileCodec
             var moduleContentId = ReadString(reader);
             if (!string.Equals(
                 moduleContentId,
-                LuaJitModuleIdentity.Create(module),
+                LuaJitModuleIdentity.Compute(module),
                 StringComparison.Ordinal))
             {
                 throw Incompatible("Profile module identity does not match the requested module.");
@@ -168,7 +169,7 @@ public static class LuaJitProfileCodec
                 functions
                     .OrderBy(static entry => entry.FunctionId)
                     .ToImmutableArray());
-            Validate(module, profile);
+            Validate(module, profile, moduleContentId);
             return profile;
         }
         catch (ProfileFormatException)
@@ -330,11 +331,14 @@ public static class LuaJitProfileCodec
                 sites.MoveToImmutable()));
     }
 
-    private static void Validate(LuaIrModule module, LuaJitModuleProfile profile)
+    private static void Validate(
+        LuaIrModule module,
+        LuaJitModuleProfile profile,
+        string moduleContentId)
     {
         if (!IsHash(profile.ModuleContentId) || !string.Equals(
             profile.ModuleContentId,
-            LuaJitModuleIdentity.Create(module),
+            moduleContentId,
             StringComparison.Ordinal))
         {
             throw Incompatible("Profile module identity is incompatible.");

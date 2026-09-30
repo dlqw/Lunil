@@ -108,6 +108,7 @@ internal sealed partial class LuaTieredJitRegistry
         }
 
         return ProfileGuidedLuaTier2Compiler.EvaluateAutoPromotionEligibility(
+            _liveness,
             module,
             functionId,
             profile,
@@ -313,7 +314,7 @@ internal sealed partial class LuaTieredJitRegistry
             }
         }
 
-        return LuaLoopOsrAnalyzer.Analyze(module, functionId)
+        return _loopOsrAnalyzer.Analyze(module, functionId)
             .Select(plan => plan with
             {
                 CodeKind = LuaLoopOsrEligibilityEvaluator.Evaluate(
@@ -373,7 +374,7 @@ internal sealed partial class LuaTieredJitRegistry
 
         if (!IsLoopOsrEnabled)
         {
-            var plan = LuaLoopOsrAnalyzer.Analyze(module, functionId).FirstOrDefault(candidate =>
+            var plan = _loopOsrAnalyzer.Analyze(module, functionId).FirstOrDefault(candidate =>
                 candidate.HeaderProgramCounter == headerProgramCounter &&
                 candidate.BackedgeProgramCounter == backedgeProgramCounter) ??
                 throw new ArgumentException(
