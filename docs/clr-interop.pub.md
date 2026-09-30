@@ -13,7 +13,9 @@ reasoning behind state ownership, callback admission, and hot-update fencing, re
 ## 1. Configure the host
 
 Start from a restricted host, grant only the required capabilities, and use fully qualified
-allowlist entries:
+allowlist entries. Enabled interop requires a registry; the example assumes the bindings for
+`Example.Contracts.Point` are generated and registered as described in
+[step 5](#5-register-bindings) and [Generate AOT-safe CLR bindings](aot-bindings.pub.md):
 
 ```csharp
 var options = LuaHostOptions.Restricted with
@@ -30,6 +32,7 @@ var options = LuaHostOptions.Restricted with
             "Example.Contracts.Point.Value",
             "Example.Contracts.Point.Translate",
         ],
+        BindingRegistry = registry,
         InstallGlobalModule = true,
     },
 };
@@ -99,22 +102,22 @@ place a placeholder at that path rather than constructing another native resourc
 [hot-update lifecycle explanation](signed-patch-publication.pub.md) and
 [patch manifest reference](signed-patch-bundles.pub.md) for publication and rollback behavior.
 
-## 5. Select a binding mode
+## 5. Register bindings
 
-Trusted .NET hosts can use `LuaClrBindingMode.RegistryThenReflection`, which keeps exact allowlists
-while using reflection for entries that are not present in a registry. NativeAOT, Unity IL2CPP,
-strict trimming, and deterministic hosts should generate exact bindings, pass their
-`LuaClrBindingRegistry` through `LuaClrOptions.BindingRegistry`, and select
-`LuaClrBindingMode.RegistryOnly`. A missing registry entry then fails closed without reflection.
+CLR dispatch resolves every type, constructor, member, and delegate through the binding registry.
+Generate exact bindings with `[LuaClrGenerateBinding]`, pass the registry through
+`LuaClrOptions.BindingRegistry`, and keep the exact allowlists. An allowlisted type without a
+registered binding fails closed with a `no registered static binding` error, and enabling CLR
+interop without a registry is a configuration error.
 
 Follow [Generate AOT-safe CLR bindings](aot-bindings.pub.md) to declare requests, register the
 generated provider, configure allowlists, and emit Unity linker metadata.
 
 ## 6. Prepare trimming and NativeAOT publication
 
-When `RegistryThenReflection` is used in a trimmed application, preserve the reflected public
-constructors, members, and delegate signatures with linker metadata such as `DynamicDependency`.
-Generated `RegistryOnly` invokers do not require application-owned runtime reflection metadata.
+Generated invokers call bound members through compile-time delegates and do not require
+application-owned runtime reflection metadata, so trimmed and NativeAOT publications need no
+`DynamicDependency` preservation for the bound surface.
 Follow [How to publish with .NET NativeAOT and trimming](nativeaot-build-integration.pub.md) for the
 complete publish procedure.
 

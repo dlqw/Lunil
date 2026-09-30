@@ -1,7 +1,6 @@
 <Project>
   <PropertyGroup>
     <VersionPrefix>0.22.0</VersionPrefix>
-    <VersionSuffix>alpha.10</VersionSuffix>
     <!-- stable -->
     <Product>Lunil</Product>
     <Authors>rdququ</Authors>

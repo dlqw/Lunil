@@ -25,8 +25,8 @@ interpreter.
 
 ## 2. Generate CLR bindings
 
-Reflection-based discovery is not an AOT contract. Request exact bindings and configure the bridge
-with `LuaClrBindingMode.RegistryOnly`:
+Reflection-based discovery is not part of the interop contract on any runtime. Request exact
+bindings and configure the bridge with their registry:
 
 ```csharp
 using Lunil.Hosting;
@@ -52,7 +52,6 @@ using var host = new LuaHost(LuaHostOptions.Restricted with
         AllowedTypeNames = [typeName],
         AllowedMemberNames = [$"{typeName}.Add"],
         BindingRegistry = registry,
-        BindingMode = LuaClrBindingMode.RegistryOnly,
         InstallGlobalModule = true,
     },
 });

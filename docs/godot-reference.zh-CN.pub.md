@@ -6,11 +6,11 @@
 
 | 字段 | 值 |
 | --- | --- |
-| NuGet package | `Lunil.Godot` `0.14.0` |
+| NuGet package | `Lunil.Godot` `0.22.0` |
 | Addon 路径 | `res://addons/lunil` |
 | 支持的 Godot | 4.4 与 4.6 .NET |
 | Runtime backend | 可移植解释器 |
-| 默认 CLR mode | 关闭；推荐生成的 `RegistryOnly` |
+| 默认 CLR interop | 关闭；启用时必须提供 binding registry |
 
 Addon 暴露供 editor 使用的 `LunilGameLoop` 与 `LunilScript` class；它们分别派生自
 `Lunil.Godot` NuGet package 的公开类型 `LuaGodotGameLoop` 与 `LuaGodotScriptResource`。在 scene/
@@ -25,7 +25,7 @@ resource 中使用 addon 名称；不经过 addon wrapper、直接从 C# 集成�
 | Linux/macOS desktop | 稳定 | 导出兼容性 |
 | Android | 稳定 | Godot 4.4 使用 .NET 8；Godot 4.6 export template 需要 .NET 9 |
 | iOS | Preview | 官方 C# exporter 与 Apple build toolchain 需要 macOS |
-| Web | 不在 0.14 范围 | 不提供兼容性承诺 |
+| Web | 不在 0.22 范围 | 不提供兼容性承诺 |
 
 ## `LuaGodotGameLoop` 与 addon `LunilGameLoop`
 
@@ -39,6 +39,7 @@ resource 中使用 addon 名称；不经过 addon wrapper、直接从 C# 集成�
 | `GameLoop` | 当前 `LuaGameLoopHost`；初始化前访问会抛出异常 |
 | `EntryOperation` | 已调度的 entry operation，或 `null` |
 | `ConfigureHostOptions` | 初始化前最后一次 options 转换；返回 `null` 会失败 |
+| `Registry` | 跟踪此循环的 `LuaGodotRuntimeRegistry`；默认 `Process`，可指向专用实例以隔离 scene-reload 关闭 |
 | `TickCompleted` | 每次 process 或 physics tick 完成后触发 |
 | `HostFailed` | Tick 抛出异常时触发；无 handler 时使用 `GD.PushError` |
 | `Initialize()` | 幂等创建、注册、编译并启动 host |
@@ -46,8 +47,8 @@ resource 中使用 addon 名称；不经过 addon wrapper、直接从 C# 集成�
 | `TickPhysics()` | Drain dispatcher 后执行 `LuaGameLoopPhase.FixedUpdate` |
 | `Shutdown()` | 注销、关闭 dispatcher 并 dispose host |
 
-`_ExitTree` 与 `NotificationPredelete` 会调用 `Shutdown`。`LuaGodotRuntimeRegistry.DisposeAll()`
-关闭所有已注册 adapter，`ActiveHostCount` 提供当前数量。
+`_ExitTree` 与 `NotificationPredelete` 会调用 `Shutdown`。`LuaGodotRuntimeRegistry.Process.DisposeAll()`
+关闭所有已注册 adapter，`Process.ActiveHostCount` 提供当前数量。
 
 ## Resource 与 service
 

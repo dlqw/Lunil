@@ -7,10 +7,10 @@
 | 字段 | 值 |
 | --- | --- |
 | Package ID | `com.dlqw.lunil` |
-| 版本 | `0.14.0` |
+| 版本 | `0.22.0` |
 | 最低 Unity | `2022.3` |
 | Runtime backend | 可移植解释器 |
-| 默认 CLR mode | 关闭；推荐生成的 `RegistryOnly` |
+| 默认 CLR interop | 关闭；启用时必须提供 binding registry |
 
 ## 已验证矩阵
 
@@ -34,6 +34,7 @@
 | `GameLoop` | 当前 `LuaGameLoopHost`；初始化前访问会抛出异常 |
 | `EntryOperation` | 已调度的 entry operation，或 `null` |
 | `ConfigureHostOptions` | 初始化前最后一次 options 转换；返回 `null` 会失败 |
+| `Registry` | 跟踪此循环的 `LuaUnityRuntimeRegistry`；默认 `Process`，可指向专用实例以隔离 play-mode 关闭 |
 | `TickCompleted` | 成功完成 Update 或 FixedUpdate tick 后触发 |
 | `HostFailed` | Tick 抛出异常时触发；无 handler 时由 Unity 记录 |
 | `Initialize()` | 幂等创建并注册 host |
@@ -50,7 +51,7 @@ assembly reload 和 play-mode transition 前关闭 active host，包括关闭 do
 - `LuaUnityConsole`：把标准输出和错误路由到 Unity Console。
 - `LuaUnityAssetResolver`：解析导入 Lua script 的 asset、module 与 file-system 访问。
 - `LuaUnityPersistentStore`：默认在 `Application.persistentDataPath/Lunil` 下存储精确 bytes。
-- `LuaUnityRuntimeRegistry`：跟踪 active component 以完成 lifecycle shutdown。
+- `LuaUnityRuntimeRegistry.Process`：跟踪 active component 以完成 lifecycle shutdown；每个 component 也可通过 `Registry` 属性指向独立实例。
 
 ## Unity 6 隔离
 

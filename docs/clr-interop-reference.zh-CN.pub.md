@@ -12,7 +12,7 @@ ownership 契约。配置步骤见 [如何配置 CLR 互操作](clr-interop.zh-C
 | `clr.type(fullName)` | 返回 allowlisted type metadata 与 public constructor 描述。 |
 | `clr.new(fullName, ...)` | 确定性选择 constructor，并返回 owned userdata。 |
 | `clr.members(fullName)` | 返回 allowlisted member metadata。 |
-| `clr.get(target, name [, index...])` | 读取 allowlisted property、field 或 indexer。 |
+| `clr.get(target, name [, index...])` | 读取 allowlisted property 或 field；因 indexer 无法绑定，带 index 参数的形式以 member-not-found 错误 fail closed。 |
 | `clr.set(target, name, value)` | 写入 allowlisted property 或 field。 |
 | `clr.call(target, name, ...)` | 调用 instance method/operator；target 为 type 名时选择 static member。 |
 | `clr.on(target, event, callback)` | 返回可释放的 `LuaClrSubscription`。 |
@@ -27,7 +27,7 @@ ownership 契约。配置步骤见 [如何配置 CLR 互操作](clr-interop.zh-C
 | `clr.link_iterator(iterator, cancellation)` | 把 iterator disposal 连接到 bridge cancellation。 |
 
 构造出的 userdata 也可通过普通 Lua indexing 与 call 访问 allowlisted property、field、method、
-indexer 与 CLR operator。Method 查询返回 bound function；`object.method(x)` 与 `object:method(x)`
+与 CLR operator；indexer 无法绑定，以 member-not-found 错误 fail closed。Method 查询返回 bound function；`object.method(x)` 与 `object:method(x)`
 都可用。
 
 ## Allowlist 匹配与上限
@@ -103,7 +103,7 @@ Timer 数量、单次 poll dispatch、duration 与 catch-up 上限会在调度�
 `TimeProvider` 的 monotonic timestamp。从 busy state 或非 owner thread dispatch 会 fail closed；callback 使用
 Host 的 interpreter budget。
 
-## Ownership 与 Binding Mode
+## Ownership 与 dispatch
 
 `LuaClrObject` 默认拥有构造出的 `IDisposable` instance，最多调用一次 `Dispose`。Host-owned instance
 应设置 `OwnConstructedObjects=false`。Userdata、callback、subscription、task、timer 与 stable-resource
@@ -114,7 +114,8 @@ userdata 都属于一个 `LuaState`，不能移动到其他 state。
 `IDisposable` 或 `IAsyncDisposable` resource 在最后一个 lease 结束后释放；non-owning handle 只关闭
 access。
 
-`RegistryThenReflection` 是 trusted .NET Host 的 compatibility 默认值，仍要求准确 allowlist。
-`RegistryOnly` 要求 `LuaClrOptions.BindingRegistry` 且绝不 fallback 到 reflection，适用于 NativeAOT、
-Unity IL2CPP、严格 trimming 与 deterministic Host。生成 binding 在缺少匹配 capability 与 allowlist
+dispatch 对每个 entry 都通过 `LuaClrOptions.BindingRegistry` 解析，在任何运行时（包括 trusted .NET
+Host、NativeAOT、Unity IL2CPP、严格 trimming 与 deterministic Host）都不会 fallback 到 reflection。
+没有注册 binding 的 allowlist 类型会以 `no registered static binding` 错误 fail closed；启用 CLR
+interop 而未提供 registry 属于配置错误。生成 binding 在缺少匹配 capability 与 allowlist
 时不会授予访问权限。

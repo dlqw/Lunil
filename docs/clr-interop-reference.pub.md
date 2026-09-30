@@ -13,7 +13,7 @@ and ownership contracts of Lunil's CLR bridge. For setup steps, see
 | `clr.type(fullName)` | Returns allowlisted type metadata and public constructor descriptions. |
 | `clr.new(fullName, ...)` | Selects a constructor deterministically and returns owned userdata. |
 | `clr.members(fullName)` | Returns metadata for allowlisted members. |
-| `clr.get(target, name [, index...])` | Reads an allowlisted property, field, or indexer. |
+| `clr.get(target, name [, index...])` | Reads an allowlisted property or field; the index-argument form fails closed with a member-not-found error because indexers cannot be bound. |
 | `clr.set(target, name, value)` | Writes an allowlisted property or field. |
 | `clr.call(target, name, ...)` | Invokes an instance method/operator; a type name target selects a static member. |
 | `clr.on(target, event, callback)` | Returns a disposable `LuaClrSubscription`. |
@@ -27,8 +27,8 @@ and ownership contracts of Lunil's CLR bridge. For setup steps, see
 | `clr.next(iterator)` | Advances one bounded projected iterator. |
 | `clr.link_iterator(iterator, cancellation)` | Links iterator disposal to bridge cancellation. |
 
-Constructed userdata also exposes allowlisted properties, fields, methods, indexers, and CLR
-operators through ordinary Lua indexing and calls. Method lookup returns a bound function;
+Constructed userdata also exposes allowlisted properties, fields, methods, and CLR operators;
+indexers cannot be bound and fail closed with a member-not-found error through ordinary Lua indexing and calls. Method lookup returns a bound function;
 `object.method(x)` and `object:method(x)` are both accepted.
 
 ## Allowlist matching and limits
@@ -112,7 +112,7 @@ Timer count, per-poll dispatch, duration, and catch-up limits are validated befo
 Scheduling uses the configured `TimeProvider` monotonic timestamp. Dispatch from a busy state or a
 non-owner thread fails closed, and callbacks use the host's interpreter budgets.
 
-## Ownership and binding modes
+## Ownership and dispatch
 
 `LuaClrObject` owns constructed `IDisposable` instances by default and calls `Dispose` at most once.
 Set `OwnConstructedObjects=false` for host-owned instances. Userdata, callbacks, subscriptions,
@@ -123,7 +123,9 @@ lease for the invocation; event subscriptions retain one until unsubscribe. Disp
 access. An owned `IDisposable` or `IAsyncDisposable` resource is released after its final lease;
 non-owning handles only close access.
 
-`RegistryThenReflection` is the compatibility default for trusted .NET hosts and still requires
-exact allowlists. `RegistryOnly` requires `LuaClrOptions.BindingRegistry` and never falls back to
-reflection; it is the binding mode for NativeAOT, Unity IL2CPP, strict trimming, and deterministic
-hosts. Generated bindings do not grant access without matching capabilities and allowlists.
+Dispatch resolves every entry through `LuaClrOptions.BindingRegistry` and never falls back to
+reflection, on every runtime including trusted .NET hosts, NativeAOT, Unity IL2CPP, strict
+trimming, and deterministic hosts. An allowlisted type without a registered binding fails closed
+with a `no registered static binding` error, and enabling CLR interop without a registry is a
+configuration error. Generated bindings do not grant access without matching capabilities and
+allowlists.
