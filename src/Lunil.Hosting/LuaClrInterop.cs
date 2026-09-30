@@ -941,73 +941,73 @@ public sealed partial class LuaClrBridge
             throw new LuaClrException(LuaClrErrorCode.InvalidDelegate, "A Lua function is required.");
         }
 
-            var (instance, type, stableLease) = UnwrapTarget(target);
+        var (instance, type, stableLease) = UnwrapTarget(target);
+        try
+        {
+            EnsureEventAllowed(type, eventName);
+            var typeBinding = GetRegisteredBinding(type.FullName ?? type.Name);
+            var eventBinding = typeBinding?.Members.SingleOrDefault(member =>
+                member.Kind == LuaClrMemberKind.Event &&
+                member.IsStatic == (instance is null) &&
+                string.Equals(member.Name, eventName, StringComparison.Ordinal));
+            if (eventBinding is null)
+            {
+                throw NoRegisteredBinding(type);
+            }
+            var handlerType = eventBinding.Parameters.FirstOrDefault()?.ParameterType;
+            if (handlerType is null)
+            {
+                throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
+                    $"CLR event '{eventName}' has no handler type.");
+            }
+
+            var handlerTypeName = handlerType.FullName ?? handlerType.Name;
+            handlerType = ResolveAllowedType(handlerTypeName);
+            if (!_allowedDelegates.Contains(handlerTypeName))
+            {
+                throw new LuaClrException(
+                    LuaClrErrorCode.InvalidDelegate,
+                    $"CLR type '{handlerTypeName}' is not an allowed delegate type.");
+            }
+
+            var registration = CreateCallbackRegistration(callback);
+            var delegateBinding = GetRegisteredBinding(handlerTypeName);
+            if (delegateBinding?.DelegateFactory is null)
+            {
+                throw NoRegisteredBinding(handlerType);
+            }
+            // The handler delegate's declared return type drives conversion; void
+            // handlers discard the Lua result exactly as before.
+            var handler = delegateBinding.DelegateFactory(arguments =>
+                InvokeDelegateCore(registration, arguments, delegateBinding.DelegateReturnType!));
+            var handle = _state.CreateHandle(callback);
             try
             {
-                EnsureEventAllowed(type, eventName);
-                var typeBinding = GetRegisteredBinding(type.FullName ?? type.Name);
-                var eventBinding = typeBinding?.Members.SingleOrDefault(member =>
-                    member.Kind == LuaClrMemberKind.Event &&
-                    member.IsStatic == (instance is null) &&
-                    string.Equals(member.Name, eventName, StringComparison.Ordinal));
-                if (eventBinding is null)
-                {
-                    throw NoRegisteredBinding(type);
-                }
-                var handlerType = eventBinding.Parameters.FirstOrDefault()?.ParameterType;
-                if (handlerType is null)
-                {
-                    throw new LuaClrException(LuaClrErrorCode.InvalidDelegate,
-                        $"CLR event '{eventName}' has no handler type.");
-                }
-
-                var handlerTypeName = handlerType.FullName ?? handlerType.Name;
-                handlerType = ResolveAllowedType(handlerTypeName);
-                if (!_allowedDelegates.Contains(handlerTypeName))
-                {
-                    throw new LuaClrException(
-                        LuaClrErrorCode.InvalidDelegate,
-                        $"CLR type '{handlerTypeName}' is not an allowed delegate type.");
-                }
-
-                var registration = CreateCallbackRegistration(callback);
-                var delegateBinding = GetRegisteredBinding(handlerTypeName);
-                if (delegateBinding?.DelegateFactory is null)
-                {
-                    throw NoRegisteredBinding(handlerType);
-                }
-                // The handler delegate's declared return type drives conversion; void
-                // handlers discard the Lua result exactly as before.
-                var handler = delegateBinding.DelegateFactory(arguments =>
-                    InvokeDelegateCore(registration, arguments, delegateBinding.DelegateReturnType!));
-                var handle = _state.CreateHandle(callback);
-                try
-                {
-                    eventBinding.Invoker(instance, [handler, true]);
-                    registration.AttachSubscription(
-                        () => eventBinding.Invoker(instance, [handler, true]),
-                        () => eventBinding.Invoker(instance, [handler, false]));
-                    var subscription = new LuaClrSubscription(
-                        this,
-                        registration,
-                        callback,
-                        handle,
-                        stableLease);
-                    stableLease = null;
-                    return subscription;
-                }
-                catch
-                {
-                    CloseCallbackRegistration(registration);
-                    handle.Dispose();
-                    throw;
-                }
+                eventBinding.Invoker(instance, [handler, true]);
+                registration.AttachSubscription(
+                    () => eventBinding.Invoker(instance, [handler, true]),
+                    () => eventBinding.Invoker(instance, [handler, false]));
+                var subscription = new LuaClrSubscription(
+                    this,
+                    registration,
+                    callback,
+                    handle,
+                    stableLease);
+                stableLease = null;
+                return subscription;
             }
-            finally
+            catch
             {
-                stableLease?.Dispose();
+                CloseCallbackRegistration(registration);
+                handle.Dispose();
+                throw;
             }
         }
+        finally
+        {
+            stableLease?.Dispose();
+        }
+    }
 
     /// <summary>
     /// Synchronously awaits a bridge task and converts its result to Lua. Incomplete tasks are
